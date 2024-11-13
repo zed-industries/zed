@@ -1,25 +1,58 @@
+use std::path::PathBuf;
 use std::sync::{atomic::AtomicBool, Arc};
 
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
-    SlashCommandResult,
-};
-use extension_host::extension_lsp_adapter::WorktreeDelegateAdapter;
+use async_trait::async_trait;
+use extension::{Extension, WorktreeDelegate};
 use futures::FutureExt as _;
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
-use wasmtime_wasi::WasiView;
 use workspace::Workspace;
 
-use extension_host::wasm_host::{WasmExtension, WasmHost};
+use crate::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
+
+/// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
+struct WorktreeDelegateAdapter(Arc<dyn LspAdapterDelegate>);
+
+#[async_trait]
+impl WorktreeDelegate for WorktreeDelegateAdapter {
+    fn id(&self) -> u64 {
+        self.0.worktree_id().to_proto()
+    }
+
+    fn root_path(&self) -> String {
+        self.0.worktree_root_path().to_string_lossy().to_string()
+    }
+
+    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+        self.0.read_text_file(path).await
+    }
+
+    async fn which(&self, binary_name: String) -> Option<String> {
+        self.0
+            .which(binary_name.as_ref())
+            .await
+            .map(|path| path.to_string_lossy().to_string())
+    }
+
+    async fn shell_env(&self) -> Vec<(String, String)> {
+        self.0.shell_env().await.into_iter().collect()
+    }
+}
 
 pub struct ExtensionSlashCommand {
-    pub(crate) extension: WasmExtension,
-    #[allow(unused)]
-    pub(crate) host: Arc<WasmHost>,
-    pub(crate) command: extension_host::wasm_host::SlashCommand,
+    extension: Arc<dyn Extension>,
+    command: extension::SlashCommand,
+}
+
+impl ExtensionSlashCommand {
+    pub fn new(extension: Arc<dyn Extension>, command: extension::SlashCommand) -> Self {
+        Self { extension, command }
+    }
 }
 
 impl SlashCommand for ExtensionSlashCommand {

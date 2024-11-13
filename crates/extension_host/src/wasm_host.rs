@@ -3,7 +3,10 @@ pub mod wit;
 use crate::{ExtensionManifest, ExtensionRegistrationHooks};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
-use extension::KeyValueStoreDelegate;
+use extension::{
+    KeyValueStoreDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput,
+    WorktreeDelegate,
+};
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
 use futures::{
@@ -29,7 +32,7 @@ use wasmtime::{
 };
 use wasmtime_wasi::{self as wasi, WasiView};
 use wit::Extension;
-pub use wit::{ExtensionProject, SlashCommand};
+pub use wit::ExtensionProject;
 
 pub struct WasmHost {
     engine: Engine,
@@ -60,6 +63,82 @@ impl extension::Extension for WasmExtension {
 
     fn work_dir(&self) -> Arc<Path> {
         self.work_dir.clone()
+    }
+
+    async fn complete_slash_command_argument(
+        &self,
+        command: SlashCommand,
+        arguments: &[String],
+    ) -> Result<Vec<SlashCommandArgumentCompletion>> {
+        self.call(|extension, store| {
+            async move {
+                let completions = extension
+                    .call_complete_slash_command_argument(store, command.into(), &arguments)
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(completions)
+            }
+            .boxed()
+        })
+        .await
+
+        // self.extension
+        //     .call({
+        //         let this = self.clone();
+        //         move |extension, store| {
+        //             async move {
+        //                 let completions = extension
+        //                     .call_complete_slash_command_argument(
+        //                         store,
+        //                         &this.command,
+        //                         &arguments,
+        //                     )
+        //                     .await?
+        //                     .map_err(|e| anyhow!("{}", e))?;
+
+        //                 anyhow::Ok(
+        //                     completions
+        //                         .into_iter()
+        //                         .map(|completion| ArgumentCompletion {
+        //                             label: completion.label.into(),
+        //                             new_text: completion.new_text,
+        //                             replace_previous_arguments: false,
+        //                             after_completion: completion.run_command.into(),
+        //                         })
+        //                         .collect(),
+        //                 )
+        //             }
+        //             .boxed()
+        //         }
+    }
+
+    async fn run_slash_command(
+        &self,
+        command: SlashCommand,
+        arguments: &[String],
+        delegate: Option<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<SlashCommandOutput> {
+        let command = wit::SlashCommand::from(command);
+
+        self.call(|extension, store| {
+            async move {
+                let resource = if let Some(delegate) = delegate {
+                    Some(store.data_mut().table().push(delegate)?)
+                } else {
+                    None
+                };
+
+                let output = extension
+                    .call_run_slash_command(store, &command, &arguments, resource)
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(output.into())
+            }
+            .boxed()
+        })
+        .await
     }
 
     async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>> {

@@ -54,6 +54,23 @@ pub fn linker() -> &'static Linker<WasmState> {
     LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
 }
 
+impl From<extension::SlashCommand> for SlashCommand {
+    fn from(value: extension::SlashCommand) -> Self {
+        Self {
+            name: value.name,
+            description: value.description,
+            tooltip_text: value.tooltip_text,
+            requires_argument: value.requires_argument,
+        }
+    }
+}
+
+impl From<SlashCommandOutput> for extension::SlashCommandOutput {
+    fn from(value: SlashCommandOutput) -> Self {
+        todo!()
+    }
+}
+
 #[async_trait]
 impl HostKeyValueStore for WasmState {
     async fn insert(
