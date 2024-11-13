@@ -1,4 +1,4 @@
-name: Docs
+name: Script Checks
 
 on:
   pull_request:
