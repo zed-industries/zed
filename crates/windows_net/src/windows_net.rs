@@ -9,7 +9,6 @@ use windows::Win32::Networking::WinSock::{
 pub mod listener;
 pub mod socket;
 pub mod stream;
-pub mod util;
 
 fn init() {
     static ONCE: Once = Once::new();
@@ -93,7 +92,7 @@ fn map_ret(ret: i32) -> std::io::Result<usize> {
 //     fn test_listener() -> std::io::Result<()> {
 //         async fn client(addr: PathBuf) -> std::io::Result<()> {
 //             // Connect to the address.
-//             let stream = UnixStream::new(Arc::new(Async::new(uds_windows::UnixStream::connect(
+//             let stream = UnixStream::new(Arc::new(Async::new(UnixStream::connect(
 //                 addr,
 //             )?)?));
 //             println!("Connected to {:?}", stream.peer_addr()?);

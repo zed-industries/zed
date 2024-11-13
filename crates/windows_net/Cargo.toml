@@ -17,7 +17,6 @@ smol.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
-uds_windows = "*"
 
 [dev-dependencies]
 # futures-lite = "*"
