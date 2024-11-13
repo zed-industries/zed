@@ -63,7 +63,6 @@ impl Vim {
         self.marks.insert("<".to_string(), starts);
         self.marks.insert(">".to_string(), ends);
         self.stored_visual_mode.replace((mode, reversed));
-        self.clear_operator(cx);
     }
 
     pub fn jump(&mut self, text: Arc<str>, line: bool, cx: &mut ViewContext<Self>) {

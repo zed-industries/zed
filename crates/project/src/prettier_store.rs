@@ -15,9 +15,9 @@ use futures::{
 use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, Task, WeakModel};
 use language::{
     language_settings::{Formatter, LanguageSettings, SelectedFormatter},
-    Buffer, LanguageRegistry, LanguageServerName, LocalFile,
+    Buffer, LanguageRegistry, LocalFile,
 };
-use lsp::{LanguageServer, LanguageServerId};
+use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use prettier::Prettier;
@@ -30,7 +30,7 @@ use crate::{
 };
 
 pub struct PrettierStore {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
     worktree_store: Model<WorktreeStore>,
@@ -52,7 +52,7 @@ impl EventEmitter<PrettierStoreEvent> for PrettierStore {}
 
 impl PrettierStore {
     pub fn new(
-        node: Arc<dyn NodeRuntime>,
+        node: NodeRuntime,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
         worktree_store: Model<WorktreeStore>,
@@ -212,7 +212,7 @@ impl PrettierStore {
     }
 
     fn start_prettier(
-        node: Arc<dyn NodeRuntime>,
+        node: NodeRuntime,
         prettier_dir: PathBuf,
         worktree_id: Option<WorktreeId>,
         cx: &mut ModelContext<Self>,
@@ -241,7 +241,7 @@ impl PrettierStore {
     }
 
     fn start_default_prettier(
-        node: Arc<dyn NodeRuntime>,
+        node: NodeRuntime,
         worktree_id: Option<WorktreeId>,
         cx: &mut ModelContext<PrettierStore>,
     ) -> Task<anyhow::Result<PrettierTask>> {
@@ -610,11 +610,13 @@ impl PrettierStore {
     ) {
         let mut prettier_plugins_by_worktree = HashMap::default();
         for (worktree, language_settings) in language_formatters_to_check {
-            if let Some(plugins) = prettier_plugins_for_language(&language_settings) {
-                prettier_plugins_by_worktree
-                    .entry(worktree)
-                    .or_insert_with(HashSet::default)
-                    .extend(plugins.iter().cloned());
+            if language_settings.prettier.allowed {
+                if let Some(plugins) = prettier_plugins_for_language(&language_settings) {
+                    prettier_plugins_by_worktree
+                        .entry(worktree)
+                        .or_insert_with(HashSet::default)
+                        .extend(plugins.iter().cloned());
+                }
             }
         }
         for (worktree, prettier_plugins) in prettier_plugins_by_worktree {
@@ -749,7 +751,7 @@ impl DefaultPrettier {
 
     pub fn prettier_task(
         &mut self,
-        node: &Arc<dyn NodeRuntime>,
+        node: &NodeRuntime,
         worktree_id: Option<WorktreeId>,
         cx: &mut ModelContext<PrettierStore>,
     ) -> Option<Task<anyhow::Result<PrettierTask>>> {
@@ -767,7 +769,7 @@ impl DefaultPrettier {
 impl PrettierInstance {
     pub fn prettier_task(
         &mut self,
-        node: &Arc<dyn NodeRuntime>,
+        node: &NodeRuntime,
         prettier_dir: Option<&Path>,
         worktree_id: Option<WorktreeId>,
         cx: &mut ModelContext<PrettierStore>,
@@ -786,7 +788,7 @@ impl PrettierInstance {
             None => match prettier_dir {
                 Some(prettier_dir) => {
                     let new_task = PrettierStore::start_prettier(
-                        Arc::clone(node),
+                        node.clone(),
                         prettier_dir.to_path_buf(),
                         worktree_id,
                         cx,
@@ -797,7 +799,7 @@ impl PrettierInstance {
                 }
                 None => {
                     self.attempt += 1;
-                    let node = Arc::clone(node);
+                    let node = node.clone();
                     cx.spawn(|prettier_store, mut cx| async move {
                         prettier_store
                             .update(&mut cx, |_, cx| {
@@ -818,7 +820,7 @@ impl PrettierInstance {
 async fn install_prettier_packages(
     fs: &dyn Fs,
     plugins_to_install: HashSet<Arc<str>>,
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 ) -> anyhow::Result<()> {
     let packages_to_versions = future::try_join_all(
         plugins_to_install

@@ -18,7 +18,7 @@ pub struct SelectPrevious {
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct MoveToBeginningOfLine {
     #[serde(default = "default_true")]
-    pub(super) stop_at_soft_wraps: bool,
+    pub stop_at_soft_wraps: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -80,6 +80,8 @@ pub struct ConfirmCodeAction {
 pub struct ToggleComments {
     #[serde(default)]
     pub advance_downwards: bool,
+    #[serde(default)]
+    pub ignore_indent: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -153,6 +155,17 @@ pub struct DeleteToPreviousWordStart {
     pub ignore_newlines: bool,
 }
 
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct FoldAtLevel {
+    pub level: u32,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct SpawnNearestTask {
+    #[serde(default)]
+    pub reveal: task::RevealStrategy,
+}
+
 impl_actions!(
     editor,
     [
@@ -178,10 +191,12 @@ impl_actions!(
         SelectToBeginningOfLine,
         SelectToEndOfLine,
         SelectUpByLines,
+        SpawnNearestTask,
         ShowCompletions,
         ToggleCodeActions,
         ToggleComments,
         UnfoldAt,
+        FoldAtLevel
     ]
 );
 
@@ -193,6 +208,8 @@ gpui::actions!(
         AcceptPartialInlineCompletion,
         AddSelectionAbove,
         AddSelectionBelow,
+        ApplyAllDiffHunks,
+        ApplyDiffHunk,
         Backspace,
         Cancel,
         CancelLanguageServerWork,
@@ -230,8 +247,13 @@ gpui::actions!(
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
+        FoldAll,
+        FoldRecursive,
         FoldSelectedRanges,
+        ToggleFold,
+        ToggleFoldRecursive,
         Format,
+        FormatSelections,
         GoToDeclaration,
         GoToDeclarationSplit,
         GoToDefinition,
@@ -289,6 +311,7 @@ gpui::actions!(
         RevealInFileManager,
         ReverseLines,
         RevertFile,
+        ReloadFile,
         RevertSelectedHunks,
         Rewrap,
         ScrollCursorBottom,
@@ -340,7 +363,9 @@ gpui::actions!(
         Transpose,
         Undo,
         UndoSelection,
+        UnfoldAll,
         UnfoldLines,
+        UnfoldRecursive,
         UniqueLinesCaseInsensitive,
         UniqueLinesCaseSensitive,
     ]

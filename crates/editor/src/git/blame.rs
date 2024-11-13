@@ -29,7 +29,7 @@ pub struct GitBlameEntrySummary {
 impl sum_tree::Item for GitBlameEntry {
     type Summary = GitBlameEntrySummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         GitBlameEntrySummary { rows: self.rows }
     }
 }
@@ -207,6 +207,27 @@ impl GitBlame {
         })
     }
 
+    pub fn max_author_length(&mut self, cx: &mut ModelContext<Self>) -> usize {
+        self.sync(cx);
+
+        let mut max_author_length = 0;
+
+        for entry in self.entries.iter() {
+            let author_len = entry
+                .blame
+                .as_ref()
+                .and_then(|entry| entry.author.as_ref())
+                .map(|author| author.len());
+            if let Some(author_len) = author_len {
+                if author_len > max_author_length {
+                    max_author_length = author_len;
+                }
+            }
+        }
+
+        max_author_length
+    }
+
     pub fn blur(&mut self, _: &mut ModelContext<Self>) {
         self.focused = false;
     }
@@ -347,12 +368,15 @@ impl GitBlame {
                 .spawn({
                     let snapshot = snapshot.clone();
                     async move {
-                        let Blame {
+                        let Some(Blame {
                             entries,
                             permalinks,
                             messages,
                             remote_url,
-                        } = blame.await?;
+                        }) = blame.await?
+                        else {
+                            return Ok(None);
+                        };
 
                         let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
                         let commit_details = parse_commit_messages(
@@ -364,13 +388,16 @@ impl GitBlame {
                         )
                         .await;
 
-                        anyhow::Ok((entries, commit_details))
+                        anyhow::Ok(Some((entries, commit_details)))
                     }
                 })
                 .await;
 
             this.update(&mut cx, |this, cx| match result {
-                Ok((entries, commit_details)) => {
+                Ok(None) => {
+                    // Nothing to do, e.g. no repository found
+                }
+                Ok(Some((entries, commit_details))) => {
                     this.buffer_edits = buffer_edits;
                     this.buffer_snapshot = snapshot;
                     this.entries = entries;
@@ -382,15 +409,14 @@ impl GitBlame {
                     if this.user_triggered {
                         log::error!("failed to get git blame data: {error:?}");
                         let notification = format!("{:#}", error).trim().to_string();
-                        cx.emit(project::Event::Notification(notification));
+                        cx.emit(project::Event::Toast {
+                            notification_id: "git-blame".into(),
+                            message: notification,
+                        });
                     } else {
                         // If we weren't triggered by a user, we just log errors in the background, instead of sending
                         // notifications.
-                        // Except for `NoRepositoryError`, which can  happen often if a user has inline-blame turned on
-                        // and opens a non-git file.
-                        if error.downcast_ref::<project::NoRepositoryError>().is_none() {
-                            log::error!("failed to get git blame data: {error:?}");
-                        }
+                        log::error!("failed to get git blame data: {error:?}");
                     }
                 }),
             })
@@ -598,9 +624,11 @@ mod tests {
         let event = project.next_event(cx).await;
         assert_eq!(
             event,
-            project::Event::Notification(
-                "Failed to blame \"file.txt\": failed to get blame for \"file.txt\"".to_string()
-            )
+            project::Event::Toast {
+                notification_id: "git-blame".into(),
+                message: "Failed to blame \"file.txt\": failed to get blame for \"file.txt\""
+                    .to_string()
+            }
         );
 
         blame.update(cx, |blame, cx| {

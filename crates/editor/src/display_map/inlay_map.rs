@@ -74,7 +74,7 @@ impl Inlay {
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         match self {
             Transform::Isomorphic(summary) => TransformSummary {
                 input: summary.clone(),
@@ -255,6 +255,22 @@ impl<'a> InlayChunks<'a> {
         self.buffer_chunk = None;
         self.output_offset = new_range.start;
         self.max_output_offset = new_range.end;
+
+        let mut highlight_endpoints = Vec::new();
+        if let Some(text_highlights) = self.highlights.text_highlights {
+            if !text_highlights.is_empty() {
+                self.snapshot.apply_text_highlights(
+                    &mut self.transforms,
+                    &new_range,
+                    text_highlights,
+                    &mut highlight_endpoints,
+                );
+                self.transforms.seek(&new_range.start, Bias::Right, &());
+                highlight_endpoints.sort();
+            }
+        }
+        self.highlight_endpoints = highlight_endpoints.into_iter().peekable();
+        self.active_highlights.clear();
     }
 
     pub fn offset(&self) -> InlayOffset {

@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use crate::prelude::*;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]

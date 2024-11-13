@@ -3,8 +3,9 @@ use crate::{
     platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DisplayLink,
     ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
+    RequestFrameOptions, ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -324,7 +325,7 @@ struct MacWindowState {
     native_view: NonNull<Object>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
-    request_frame_callback: Option<Box<dyn FnMut()>>,
+    request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
@@ -706,7 +707,7 @@ impl MacWindow {
                 }
             }
 
-            if focus {
+            if focus && show {
                 native_window.makeKeyAndOrderFront_(nil);
             } else if show {
                 native_window.orderFront_(nil);
@@ -767,6 +768,7 @@ impl Drop for MacWindow {
         unsafe {
             this.native_window.setDelegate_(nil);
         }
+        this.input_handler.take();
         this.executor
             .spawn(async move {
                 unsafe {
@@ -1072,7 +1074,7 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.0.as_ref().lock().request_frame_callback = Some(callback);
     }
 
@@ -1119,7 +1121,7 @@ impl PlatformWindow for MacWindow {
         None
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
         unsafe {
             let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
             let _: () = msg_send![input_context, invalidateCharacterCoordinates];
@@ -1644,7 +1646,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
         lock.renderer.set_presents_with_transaction(true);
         lock.stop_display_link();
         drop(lock);
-        callback();
+        callback(Default::default());
 
         let mut lock = window_state.lock();
         lock.request_frame_callback = Some(callback);
@@ -1661,7 +1663,7 @@ unsafe extern "C" fn step(view: *mut c_void) {
 
     if let Some(mut callback) = lock.request_frame_callback.take() {
         drop(lock);
-        callback();
+        callback(Default::default());
         window_state.lock().request_frame_callback = Some(callback);
     }
 }

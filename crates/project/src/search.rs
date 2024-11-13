@@ -1,9 +1,9 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
+use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Model;
 use language::{Buffer, BufferSnapshot};
-use regex::{Captures, Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
     borrow::Cow,
@@ -125,10 +125,9 @@ impl SearchQuery {
             query = word_query
         }
 
-        let multiline = query.contains('\n') || query.contains("\\n");
+        let multiline = query.contains('\n') || query.contains("\\n") || query.contains("\\s");
         let regex = RegexBuilder::new(&query)
             .case_insensitive(!case_sensitive)
-            .multi_line(multiline)
             .build()?;
         let inner = SearchInputs {
             query: initial_query,
@@ -145,30 +144,6 @@ impl SearchQuery {
             include_ignored,
             inner,
         })
-    }
-
-    pub fn from_proto_v1(message: proto::SearchProject) -> Result<Self> {
-        if message.regex {
-            Self::regex(
-                message.query,
-                message.whole_word,
-                message.case_sensitive,
-                message.include_ignored,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
-                None,
-            )
-        } else {
-            Self::text(
-                message.query,
-                message.whole_word,
-                message.case_sensitive,
-                message.include_ignored,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
-                None,
-            )
-        }
     }
 
     pub fn from_proto(message: proto::SearchQuery) -> Result<Self> {
@@ -194,6 +169,7 @@ impl SearchQuery {
             )
         }
     }
+
     pub fn with_replacement(mut self, new_replacement: String) -> Self {
         match self {
             Self::Text {
@@ -207,18 +183,6 @@ impl SearchQuery {
                 *replacement = Some(new_replacement);
                 self
             }
-        }
-    }
-    pub fn to_protov1(&self, project_id: u64) -> proto::SearchProject {
-        proto::SearchProject {
-            project_id,
-            query: self.as_str().to_string(),
-            regex: self.is_regex(),
-            whole_word: self.whole_word(),
-            case_sensitive: self.case_sensitive(),
-            include_ignored: self.include_ignored(),
-            files_to_include: self.files_to_include().sources().join(","),
-            files_to_exclude: self.files_to_exclude().sources().join(","),
         }
     }
 
@@ -257,12 +221,12 @@ impl SearchQuery {
                     if let Err(err) = reader.read_to_string(&mut text) {
                         Err(err.into())
                     } else {
-                        Ok(regex.find(&text).is_some())
+                        Ok(regex.find(&text)?.is_some())
                     }
                 } else {
                     for line in reader.lines() {
                         let line = line?;
-                        if regex.find(&line).is_some() {
+                        if regex.find(&line)?.is_some() {
                             return Ok(true);
                         }
                     }
@@ -367,7 +331,9 @@ impl SearchQuery {
                             yield_now().await;
                         }
 
-                        matches.push(mat.start()..mat.end());
+                        if let Ok(mat) = mat {
+                            matches.push(mat.start()..mat.end());
+                        }
                     }
                 } else {
                     let mut line = String::new();
@@ -379,7 +345,7 @@ impl SearchQuery {
 
                         for (newline_ix, text) in chunk.split('\n').enumerate() {
                             if newline_ix > 0 {
-                                for mat in regex.find_iter(&line) {
+                                for mat in regex.find_iter(&line).flatten() {
                                     let start = line_offset + mat.start();
                                     let end = line_offset + mat.end();
                                     matches.push(start..end);

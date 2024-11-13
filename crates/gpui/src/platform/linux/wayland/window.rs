@@ -26,14 +26,14 @@ use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, AnyWindowHandle, Bounds, Decorations, GPUSpecs, Globals, Modifiers, Output, Pixels,
-    PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling,
-    WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowParams,
+    PlatformDisplay, PlatformInput, Point, PromptLevel, RequestFrameOptions, ResizeEdge,
+    ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams,
 };
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
-    request_frame: Option<Box<dyn FnMut()>>,
+    request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     input: Option<Box<dyn FnMut(crate::PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
@@ -323,7 +323,7 @@ impl WaylandWindowStatePtr {
 
         let mut cb = self.callbacks.borrow_mut();
         if let Some(fun) = cb.request_frame.as_mut() {
-            fun();
+            fun(Default::default());
         }
     }
 
@@ -902,7 +902,7 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().fullscreen
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
@@ -1010,7 +1010,7 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+    fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
         let state = self.borrow();
         state.client.update_ime_position(bounds);
     }
@@ -1046,8 +1046,8 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         && state.decorations == WindowDecorations::Server
     {
         // Promise the compositor that this region of the window surface
-        // contains no transparent pixels. This allows the compositor to
-        // do skip whatever is behind the surface for better performance.
+        // contains no transparent pixels. This allows the compositor to skip
+        // updating whatever is behind the surface for better performance.
         state.surface.set_opaque_region(Some(&region));
     } else {
         state.surface.set_opaque_region(None);
@@ -1057,7 +1057,6 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         if state.background_appearance == WindowBackgroundAppearance::Blurred {
             if state.blur.is_none() {
                 let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
-                blur.set_region(Some(&region));
                 state.blur = Some(blur);
             }
             state.blur.as_ref().unwrap().commit();

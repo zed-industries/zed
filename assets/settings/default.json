@@ -68,9 +68,17 @@
   "ui_font_size": 16,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
-  // The factor to grow the active pane by. Defaults to 1.0
-  // which gives the same size as all other panes.
-  "active_pane_magnification": 1.0,
+  // Active pane styling settings.
+  "active_pane_modifiers": {
+    // The factor to grow the active pane by. Defaults to 1.0
+    // which gives the same size as all other panes.
+    "magnification": 1.0,
+    // Inset border size of the active pane, in pixels.
+    "border_size": 0.0,
+    // Opacity of the inactive panes. 0 means transparent, 1 means opaque.
+    // Values are clamped to the [0.0, 1.0] range.
+    "inactive_opacity": 1.0
+  },
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
@@ -118,8 +126,8 @@
   //     "bar"
   //  2. A block that surrounds the following character
   //     "block"
-  //  3. An underline that runs along the following character
-  //     "underscore"
+  //  3. An underline / underscore that runs along the following character
+  //     "underline"
   //  4. A box drawn around the following character
   //     "hollow"
   //
@@ -152,7 +160,7 @@
   "show_signature_help_after_edits": true,
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
-  // if softwrap is set to 'preferred_line_length', and will show any
+  // if 'soft_wrap' is set to 'preferred_line_length', and will show any
   // additional guides as specified by the 'wrap_guides' setting.
   "show_wrap_guides": true,
   // Character counts at which to show wrap guides in the editor.
@@ -174,6 +182,8 @@
   // bracket, brace, single or double quote characters.
   // For example, when you select text and type (, Zed will surround the text with ().
   "use_auto_surround": true,
+  // Whether indentation of pasted content should be adjusted based on the context.
+  "auto_indent_on_paste": true,
   // Controls how the editor handles the autoclosed characters.
   // When set to `false`(default), skipping over and auto-removing of the closing characters
   // happen only for auto-inserted characters.
@@ -183,6 +193,9 @@
   // Controls whether inline completions are shown immediately (true)
   // or manually by triggering `editor::ShowInlineCompletion` (false).
   "show_inline_completions": true,
+  // Controls whether inline completions are shown in a given language scope.
+  // Example: ["string", "comment"]
+  "inline_completions_disabled_in": [],
   // Whether to show tabs and spaces in the editor.
   // This setting can take three values:
   //
@@ -356,8 +369,39 @@
     /// Scrollbar-related settings
     "scrollbar": {
       /// When to show the scrollbar in the project panel.
+      /// This setting can take four values:
       ///
-      /// Default: always
+      /// 1. null (default): Inherit editor settings
+      /// 2. Show the scrollbar if there's important information or
+      ///    follow the system's configured behavior (default):
+      ///   "auto"
+      /// 3. Match the system's configured behavior:
+      ///    "system"
+      /// 4. Always show the scrollbar:
+      ///    "always"
+      /// 5. Never show the scrollbar:
+      ///    "never"
+      "show": null
+    },
+    /// Which files containing diagnostic errors/warnings to mark in the project panel.
+    /// This setting can take the following three values:
+    ///
+    /// 1. Do not mark any files:
+    ///    "off"
+    /// 2. Only mark files with errors:
+    ///    "errors"
+    /// 3. Mark files with errors and warnings:
+    ///    "all"
+    "show_diagnostics": "all",
+    // Settings related to indent guides in the project panel.
+    "indent_guides": {
+      // When to show indent guides in the project panel.
+      // This setting can take two values:
+      //
+      // 1. Always show indent guides:
+      //    "always"
+      // 2. Never show indent guides:
+      //    "never"
       "show": "always"
     }
   },
@@ -382,7 +426,35 @@
     "auto_reveal_entries": true,
     /// Whether to fold directories automatically
     /// when a directory has only one directory inside.
-    "auto_fold_dirs": true
+    "auto_fold_dirs": true,
+    // Settings related to indent guides in the outline panel.
+    "indent_guides": {
+      // When to show indent guides in the outline panel.
+      // This setting can take two values:
+      //
+      // 1. Always show indent guides:
+      //    "always"
+      // 2. Never show indent guides:
+      //    "never"
+      "show": "always"
+    },
+    /// Scrollbar-related settings
+    "scrollbar": {
+      /// When to show the scrollbar in the project panel.
+      /// This setting can take four values:
+      ///
+      /// 1. null (default): Inherit editor settings
+      /// 2. Show the scrollbar if there's important information or
+      ///    follow the system's configured behavior (default):
+      ///   "auto"
+      /// 3. Match the system's configured behavior:
+      ///    "system"
+      /// 4. Always show the scrollbar:
+      ///    "always"
+      /// 5. Never show the scrollbar:
+      ///    "never"
+      "show": null
+    }
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -426,7 +498,7 @@
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
-    // The default model to use when creating new contexts.
+    // The default model to use when creating new chats.
     "default_model": {
       // The provider to use.
       "provider": "zed.dev",
@@ -484,7 +556,14 @@
     // Position of the close button on the editor tabs.
     "close_position": "right",
     // Whether to show the file icon for a tab.
-    "file_icons": false
+    "file_icons": false,
+    // What to do after closing the current tab.
+    //
+    // 1. Activate the tab that was open previously (default)
+    //     "History"
+    // 2. Activate the neighbour tab (prefers the right one, if present)
+    //     "Neighbour"
+    "activate_on_close": "history"
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -535,17 +614,16 @@
   // How to soft-wrap long lines of text.
   // Possible values:
   //
-  // 1. Do not soft wrap.
+  // 1. Prefer a single line generally, unless an overly long line is encountered.
   //      "soft_wrap": "none",
-  // 2. Prefer a single line generally, unless an overly long line is encountered.
-  //      "soft_wrap": "prefer_line",
-  // 3. Soft wrap lines that overflow the editor.
+  //      "soft_wrap": "prefer_line", // (deprecated, same as "none")
+  // 2. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
-  // 4. Soft wrap lines at the preferred line length.
+  // 3. Soft wrap lines at the preferred line length.
   //      "soft_wrap": "preferred_line_length",
-  // 5. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
+  // 4. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
   //      "soft_wrap": "bounded",
-  "soft_wrap": "prefer_line",
+  "soft_wrap": "none",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
@@ -597,16 +675,20 @@
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       // "delay_ms": 600
+      //
+      // Whether or not do display the git commit summary on the same line.
+      // "show_commit_summary": false
+      //
+      // The minimum column number to show the inline blame information at
+      // "min_column": 0
     }
   },
   // Configuration for how direnv configuration should be loaded. May take 2 values:
-  // 1. Load direnv configuration through the shell hook, works for POSIX shells and fish.
-  //      "load_direnv": "shell_hook"
-  // 2. Load direnv configuration using `direnv export json` directly.
-  //    This can help with some shells that otherwise would not detect
-  //    the direnv environment, such as nushell or elvish.
+  // 1. Load direnv configuration using `direnv export json` directly.
   //      "load_direnv": "direct"
-  "load_direnv": "shell_hook",
+  // 2. Load direnv configuration through the shell hook, works for POSIX shells and fish.
+  //      "load_direnv": "shell_hook"
+  "load_direnv": "direct",
   "inline_completions": {
     // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
@@ -672,6 +754,18 @@
     //  3. Always blink the cursor, ignoring the terminal mode
     //         "blinking": "on",
     "blinking": "terminal_controlled",
+    // Default cursor shape for the terminal.
+    //  1. A block that surrounds the following character
+    //     "block"
+    //  2. A vertical bar
+    //     "bar"
+    //  3. An underline / underscore that runs along the following character
+    //     "underline"
+    //  4. A box drawn around the following character
+    //     "hollow"
+    //
+    // Default: not set, defaults to "block"
+    "cursor_shape": null,
     // Set whether Alternate Scroll mode (code: ?1007) is active by default.
     // Alternate Scroll mode converts mouse scroll events into up / down key
     // presses when in the alternate screen (e.g. when running applications
@@ -686,10 +780,10 @@
     // May take 2 values:
     //  1. Rely on default platform handling of option key, on macOS
     //     this means generating certain unicode characters
-    //         "option_to_meta": false,
+    //         "option_as_meta": false,
     //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
-    //         "option_to_meta": true,
-    "option_as_meta": true,
+    //         "option_as_meta": true,
+    "option_as_meta": false,
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
@@ -762,6 +856,7 @@
   // }
   //
   "file_types": {
+    "Plain Text": ["txt"],
     "JSON": ["flake.lock"],
     "JSONC": [
       "**/.zed/**/*.json",
@@ -769,8 +864,24 @@
       "**/Zed/**/*.json",
       "tsconfig.json",
       "pyrightconfig.json"
-    ]
+    ],
+    "TOML": ["uv.lock"]
   },
+  /// By default use a recent system version of node, or install our own.
+  /// You can override this to use a version of node that is not in $PATH with:
+  /// {
+  ///   "node": {
+  ///     "path": "/path/to/node"
+  ///     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
+  ///   }
+  /// }
+  /// or to ensure Zed always downloads and installs an isolated version of node:
+  /// {
+  ///   "node": {
+  ///     "ignore_system_version": true,
+  ///   }
+  /// NOTE: changing this setting currently requires restarting Zed.
+  "node": {},
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings
@@ -781,6 +892,7 @@
   // Different settings for specific languages.
   "languages": {
     "Astro": {
+      "language_servers": ["astro-language-server", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["prettier-plugin-astro"]
@@ -803,6 +915,13 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "Dart": {
+      "tab_size": 2
+    },
+    "Diff": {
+      "remove_trailing_whitespace_on_save": false,
+      "ensure_final_newline_on_save": false
     },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
@@ -1048,13 +1167,13 @@
   // }
   "command_aliases": {},
   // ssh_connections is an array of ssh connections.
-  // By default this setting is null, which disables the direct ssh connection support.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.
   // Examples:
   // [
   //   {
   //     "host": "example-box",
+  //     // "port": 22, "username": "test", "args": ["-i", "/home/user/.ssh/id_rsa"]
   //     "projects": [
   //       {
   //         "paths": ["/home/user/code/zed"]
@@ -1062,16 +1181,7 @@
   //     ]
   //   }
   // ]
-  "ssh_connections": null,
-  // Configures the Context Server Protocol binaries
-  //
-  // Examples:
-  // {
-  //   "id": "server-1",
-  //   "executable": "/path",
-  //   "args": ['arg1", "args2"]
-  // }
-  "experimental.context_servers": {
-    "servers": []
-  }
+  "ssh_connections": [],
+  // Configures context servers for use in the Assistant.
+  "context_servers": {}
 }

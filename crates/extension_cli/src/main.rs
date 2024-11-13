@@ -13,9 +13,8 @@ use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
     ExtensionManifest,
 };
-use isahc_http_client::IsahcHttpClient;
 use language::LanguageConfig;
-use theme::ThemeRegistry;
+use reqwest_client::ReqwestClient;
 use tree_sitter::{Language, Query, WasmStore};
 
 #[derive(Parser, Debug)]
@@ -66,12 +65,7 @@ async fn main() -> Result<()> {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
-    let http_client = Arc::new(
-        IsahcHttpClient::builder()
-            .default_header("User-Agent", user_agent)
-            .build()
-            .map(IsahcHttpClient::from)?,
-    );
+    let http_client = Arc::new(ReqwestClient::user_agent(&user_agent)?);
 
     let builder = ExtensionBuilder::new(http_client, scratch_dir);
     builder
@@ -272,7 +266,7 @@ async fn test_themes(
 ) -> Result<()> {
     for relative_theme_path in &manifest.themes {
         let theme_path = extension_path.join(relative_theme_path);
-        let theme_family = ThemeRegistry::read_user_theme(&theme_path, fs.clone()).await?;
+        let theme_family = theme::read_user_theme(&theme_path, fs.clone()).await?;
         log::info!("loaded theme family {}", theme_family.name);
     }
 

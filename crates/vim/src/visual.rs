@@ -15,7 +15,7 @@ use util::ResultExt;
 use workspace::searchable::Direction;
 
 use crate::{
-    motion::{start_of_line, Motion},
+    motion::{first_non_whitespace, next_line_end, start_of_line, Motion},
     object::Object,
     state::{Mode, Operator},
     Vim,
@@ -37,6 +37,8 @@ actions!(
         SelectNextMatch,
         SelectPreviousMatch,
         RestoreVisualSelection,
+        VisualInsertEndOfLine,
+        VisualInsertFirstNonWhiteSpace,
     ]
 );
 
@@ -51,6 +53,8 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.toggle_mode(Mode::VisualBlock, cx)
     });
     Vim::action(editor, cx, Vim::other_end);
+    Vim::action(editor, cx, Vim::visual_insert_end_of_line);
+    Vim::action(editor, cx, Vim::visual_insert_first_non_white_space);
     Vim::action(editor, cx, |vim, _: &VisualDelete, cx| {
         vim.record_current_action(cx);
         vim.visual_delete(false, cx);
@@ -59,12 +63,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.record_current_action(cx);
         vim.visual_delete(true, cx);
     });
-    Vim::action(editor, cx, |vim, _: &VisualYank, cx| {
-        vim.visual_yank(false, cx)
-    });
-    Vim::action(editor, cx, |vim, _: &VisualYankLine, cx| {
-        vim.visual_yank(true, cx)
-    });
+    Vim::action(editor, cx, |vim, _: &VisualYank, cx| vim.visual_yank(cx));
 
     Vim::action(editor, cx, Vim::select_next);
     Vim::action(editor, cx, Vim::select_previous);
@@ -374,6 +373,39 @@ impl Vim {
         }
     }
 
+    fn visual_insert_end_of_line(&mut self, _: &VisualInsertEndOfLine, cx: &mut ViewContext<Self>) {
+        self.update_editor(cx, |_, editor, cx| {
+            editor.split_selection_into_lines(&Default::default(), cx);
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.move_cursors_with(|map, cursor, _| {
+                    (next_line_end(map, cursor, 1), SelectionGoal::None)
+                });
+            });
+        });
+
+        self.switch_mode(Mode::Insert, false, cx);
+    }
+
+    fn visual_insert_first_non_white_space(
+        &mut self,
+        _: &VisualInsertFirstNonWhiteSpace,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.update_editor(cx, |_, editor, cx| {
+            editor.split_selection_into_lines(&Default::default(), cx);
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.move_cursors_with(|map, cursor, _| {
+                    (
+                        first_non_whitespace(map, false, cursor),
+                        SelectionGoal::None,
+                    )
+                });
+            });
+        });
+
+        self.switch_mode(Mode::Insert, false, cx);
+    }
+
     fn toggle_mode(&mut self, mode: Mode, cx: &mut ViewContext<Self>) {
         if self.mode == mode {
             self.switch_mode(Mode::Normal, false, cx);
@@ -384,7 +416,7 @@ impl Vim {
 
     pub fn other_end(&mut self, _: &OtherEnd, cx: &mut ViewContext<Self>) {
         self.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|_, selection| {
                     selection.reversed = !selection.reversed;
                 })
@@ -446,11 +478,10 @@ impl Vim {
         self.switch_mode(Mode::Normal, true, cx);
     }
 
-    pub fn visual_yank(&mut self, line_mode: bool, cx: &mut ViewContext<Self>) {
+    pub fn visual_yank(&mut self, cx: &mut ViewContext<Self>) {
         self.store_visual_marks(cx);
         self.update_editor(cx, |vim, editor, cx| {
-            let line_mode = line_mode || editor.selections.line_mode;
-            editor.selections.line_mode = line_mode;
+            let line_mode = editor.selections.line_mode;
             vim.yank_selections_content(editor, line_mode, cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
@@ -499,9 +530,7 @@ impl Vim {
                     }
                 }
 
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                });
+                editor.edit(edits, cx);
                 editor.change_selections(None, cx, |s| s.select_ranges(stable_anchors));
             });
         });
@@ -545,14 +574,9 @@ impl Vim {
 
     pub fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         let count = self.take_count(cx).unwrap_or(1);
-        let Some(workspace) = self
-            .editor
-            .upgrade()
-            .and_then(|editor| editor.read(cx).workspace())
-        else {
+        let Some(pane) = self.pane(cx) else {
             return;
         };
-        let pane = workspace.read(cx).active_pane().clone();
         let vim_is_normal = self.mode == Mode::Normal;
         let mut start_selection = 0usize;
         let mut end_selection = 0usize;
@@ -620,7 +644,7 @@ impl Vim {
                 self.stop_recording(cx);
                 self.visual_delete(false, cx)
             }
-            Some(Operator::Yank) => self.visual_yank(false, cx),
+            Some(Operator::Yank) => self.visual_yank(cx),
             _ => {} // Ignoring other operators
         }
     }
@@ -712,6 +736,52 @@ mod test {
             a
             b
             ˇ"});
+    }
+
+    #[gpui::test]
+    async fn test_visual_insert_first_non_whitespace(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {
+                "«The quick brown
+                fox jumps over
+                the lazy dogˇ»"
+            },
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes("g shift-i");
+        cx.assert_state(
+            indoc! {
+                "ˇThe quick brown
+                ˇfox jumps over
+                ˇthe lazy dog"
+            },
+            Mode::Insert,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_visual_insert_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {
+                "«The quick brown
+                fox jumps over
+                the lazy dogˇ»"
+            },
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes("g shift-a");
+        cx.assert_state(
+            indoc! {
+                "The quick brownˇ
+                fox jumps overˇ
+                the lazy dogˇ"
+            },
+            Mode::Insert,
+        );
     }
 
     #[gpui::test]

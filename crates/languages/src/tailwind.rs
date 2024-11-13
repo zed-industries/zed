@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::AsyncAppContext;
-use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp::LanguageServerBinary;
+use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::lsp_store::language_server_settings;
 use serde_json::{json, Value};
@@ -28,14 +28,14 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 pub struct TailwindLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl TailwindLspAdapter {
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("tailwindcss-language-server");
 
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         TailwindLspAdapter { node }
     }
 }
@@ -44,38 +44,6 @@ impl TailwindLspAdapter {
 impl LspAdapter for TailwindLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME.clone()
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncAppContext,
-    ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx
-            .update(|cx| {
-                language_server_settings(delegate, &Self::SERVER_NAME, cx)
-                    .and_then(|s| s.binary.clone())
-            })
-            .ok()??;
-
-        let path = if let Some(configured_path) = configured_binary.path.map(PathBuf::from) {
-            configured_path
-        } else {
-            self.node.binary_path().await.ok()?
-        };
-
-        let arguments = configured_binary
-            .arguments
-            .unwrap_or_default()
-            .iter()
-            .map(|arg| arg.into())
-            .collect();
-
-        Some(LanguageServerBinary {
-            path,
-            arguments,
-            env: None,
-        })
     }
 
     async fn fetch_latest_server_version(
@@ -122,14 +90,7 @@ impl LspAdapter for TailwindLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
+        get_cached_server_binary(container_dir, &self.node).await
     }
 
     async fn initialization_options(
@@ -150,33 +111,22 @@ impl LspAdapter for TailwindLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        let tailwind_user_settings = cx.update(|cx| {
+        let mut tailwind_user_settings = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
         })?;
 
-        let mut configuration = json!({
-            "tailwindCSS": {
-                "emmetCompletions": true,
-            }
-        });
-
-        if let Some(experimental) = tailwind_user_settings.get("experimental").cloned() {
-            configuration["tailwindCSS"]["experimental"] = experimental;
+        if tailwind_user_settings.get("emmetCompletions").is_none() {
+            tailwind_user_settings["emmetCompletions"] = Value::Bool(true);
         }
 
-        if let Some(class_attributes) = tailwind_user_settings.get("classAttributes").cloned() {
-            configuration["tailwindCSS"]["classAttributes"] = class_attributes;
-        }
-
-        if let Some(include_languages) = tailwind_user_settings.get("includeLanguages").cloned() {
-            configuration["tailwindCSS"]["includeLanguages"] = include_languages;
-        }
-
-        Ok(configuration)
+        Ok(json!({
+            "tailwindCSS": tailwind_user_settings,
+        }))
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
@@ -198,7 +148,7 @@ impl LspAdapter for TailwindLspAdapter {
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         let mut last_version_dir = None;

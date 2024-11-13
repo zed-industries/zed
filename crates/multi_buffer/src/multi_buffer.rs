@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
-use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext};
+use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext, Task};
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, LanguageSettings},
@@ -94,6 +94,7 @@ pub enum Event {
         transaction_id: TransactionId,
     },
     Reloaded,
+    ReloadNeeded,
     DiffBaseChanged,
     DiffUpdated {
         buffer: Model<Buffer>,
@@ -189,6 +190,7 @@ pub struct MultiBufferSnapshot {
     show_headers: bool,
 }
 
+#[derive(Clone)]
 pub struct ExcerptInfo {
     pub id: ExcerptId,
     pub buffer: BufferSnapshot,
@@ -201,6 +203,7 @@ impl std::fmt::Debug for ExcerptInfo {
         f.debug_struct(type_name::<Self>())
             .field("id", &self.id)
             .field("buffer_id", &self.buffer_id)
+            .field("path", &self.buffer.file().map(|f| f.path()))
             .field("range", &self.range)
             .finish()
     }
@@ -515,7 +518,7 @@ impl MultiBuffer {
     }
 
     pub fn edit<I, S, T>(
-        &mut self,
+        &self,
         edits: I,
         mut autoindent_mode: Option<AutoindentMode>,
         cx: &mut ModelContext<Self>,
@@ -664,7 +667,7 @@ impl MultiBuffer {
         drop(snapshot);
         // Non-generic part of edit, hoisted out to avoid blowing up LLVM IR.
         fn tail(
-            this: &mut MultiBuffer,
+            this: &MultiBuffer,
             buffer_edits: HashMap<BufferId, Vec<BufferEdit>>,
             autoindent_mode: Option<AutoindentMode>,
             edited_excerpt_ids: Vec<ExcerptId>,
@@ -724,7 +727,7 @@ impl MultiBuffer {
                                     original_indent_columns: Default::default(),
                                 })
                             } else {
-                                None
+                                autoindent_mode.clone()
                             };
                         let insertion_autoindent_mode =
                             if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
@@ -732,7 +735,7 @@ impl MultiBuffer {
                                     original_indent_columns,
                                 })
                             } else {
-                                None
+                                autoindent_mode.clone()
                             };
 
                         buffer.edit(deletions, deletion_autoindent_mode, cx);
@@ -928,7 +931,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T, cx: &mut ModelContext<Self>)
+    pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T, cx: &ModelContext<Self>)
     where
         T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {
@@ -952,7 +955,7 @@ impl MultiBuffer {
     }
 
     pub fn set_active_selections(
-        &mut self,
+        &self,
         selections: &[Selection<Anchor>],
         line_mode: bool,
         cursor_shape: CursorShape,
@@ -1028,7 +1031,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn remove_active_selections(&self, cx: &mut ModelContext<Self>) {
         for buffer in self.buffers.borrow().values() {
             buffer
                 .buffer
@@ -1130,66 +1133,6 @@ impl MultiBuffer {
         }
     }
 
-    pub fn stream_excerpts_with_context_lines(
-        &mut self,
-        buffer: Model<Buffer>,
-        ranges: Vec<Range<text::Anchor>>,
-        context_line_count: u32,
-        cx: &mut ModelContext<Self>,
-    ) -> mpsc::Receiver<Range<Anchor>> {
-        let (buffer_id, buffer_snapshot) =
-            buffer.update(cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
-
-        let (mut tx, rx) = mpsc::channel(256);
-        cx.spawn(move |this, mut cx| async move {
-            let mut excerpt_ranges = Vec::new();
-            let mut range_counts = Vec::new();
-            cx.background_executor()
-                .scoped(|scope| {
-                    scope.spawn(async {
-                        let (ranges, counts) =
-                            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
-                        excerpt_ranges = ranges;
-                        range_counts = counts;
-                    });
-                })
-                .await;
-
-            let mut ranges = ranges.into_iter();
-            let mut range_counts = range_counts.into_iter();
-            for excerpt_ranges in excerpt_ranges.chunks(100) {
-                let excerpt_ids = match this.update(&mut cx, |this, cx| {
-                    this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
-                }) {
-                    Ok(excerpt_ids) => excerpt_ids,
-                    Err(_) => return,
-                };
-
-                for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.by_ref())
-                {
-                    for range in ranges.by_ref().take(range_count) {
-                        let start = Anchor {
-                            buffer_id: Some(buffer_id),
-                            excerpt_id,
-                            text_anchor: range.start,
-                        };
-                        let end = Anchor {
-                            buffer_id: Some(buffer_id),
-                            excerpt_id,
-                            text_anchor: range.end,
-                        };
-                        if tx.send(start..end).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        })
-        .detach();
-
-        rx
-    }
-
     pub fn push_excerpts<O>(
         &mut self,
         buffer: Model<Buffer>,
@@ -1237,6 +1180,91 @@ impl MultiBuffer {
             }))
         }
         anchor_ranges
+    }
+
+    pub fn push_multiple_excerpts_with_context_lines(
+        &self,
+        buffers_with_ranges: Vec<(Model<Buffer>, Vec<Range<text::Anchor>>)>,
+        context_line_count: u32,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Vec<Range<Anchor>>> {
+        use futures::StreamExt;
+
+        let (excerpt_ranges_tx, mut excerpt_ranges_rx) = mpsc::channel(256);
+
+        let mut buffer_ids = Vec::with_capacity(buffers_with_ranges.len());
+
+        for (buffer, ranges) in buffers_with_ranges {
+            let (buffer_id, buffer_snapshot) =
+                buffer.update(cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
+
+            buffer_ids.push(buffer_id);
+
+            cx.background_executor()
+                .spawn({
+                    let mut excerpt_ranges_tx = excerpt_ranges_tx.clone();
+
+                    async move {
+                        let (excerpt_ranges, counts) =
+                            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+                        excerpt_ranges_tx
+                            .send((buffer_id, buffer.clone(), ranges, excerpt_ranges, counts))
+                            .await
+                            .ok();
+                    }
+                })
+                .detach()
+        }
+
+        cx.spawn(move |this, mut cx| async move {
+            let mut results_by_buffer_id = HashMap::default();
+            while let Some((buffer_id, buffer, ranges, excerpt_ranges, range_counts)) =
+                excerpt_ranges_rx.next().await
+            {
+                results_by_buffer_id
+                    .insert(buffer_id, (buffer, ranges, excerpt_ranges, range_counts));
+            }
+
+            let mut multi_buffer_ranges = Vec::default();
+            'outer: for buffer_id in buffer_ids {
+                let Some((buffer, ranges, excerpt_ranges, range_counts)) =
+                    results_by_buffer_id.remove(&buffer_id)
+                else {
+                    continue;
+                };
+
+                let mut ranges = ranges.into_iter();
+                let mut range_counts = range_counts.into_iter();
+                for excerpt_ranges in excerpt_ranges.chunks(100) {
+                    let excerpt_ids = match this.update(&mut cx, |this, cx| {
+                        this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
+                    }) {
+                        Ok(excerpt_ids) => excerpt_ids,
+                        Err(_) => continue 'outer,
+                    };
+
+                    for (excerpt_id, range_count) in
+                        excerpt_ids.into_iter().zip(range_counts.by_ref())
+                    {
+                        for range in ranges.by_ref().take(range_count) {
+                            let start = Anchor {
+                                buffer_id: Some(buffer_id),
+                                excerpt_id,
+                                text_anchor: range.start,
+                            };
+                            let end = Anchor {
+                                buffer_id: Some(buffer_id),
+                                excerpt_id,
+                                text_anchor: range.end,
+                            };
+                            multi_buffer_ranges.push(start..end);
+                        }
+                    }
+                }
+            }
+
+            multi_buffer_ranges
+        })
     }
 
     pub fn insert_excerpts_after<O>(
@@ -1708,6 +1736,7 @@ impl MultiBuffer {
             language::BufferEvent::Saved => Event::Saved,
             language::BufferEvent::FileHandleChanged => Event::FileHandleChanged,
             language::BufferEvent::Reloaded => Event::Reloaded,
+            language::BufferEvent::ReloadNeeded => Event::ReloadNeeded,
             language::BufferEvent::DiffBaseChanged => Event::DiffBaseChanged,
             language::BufferEvent::DiffUpdated => Event::DiffUpdated { buffer },
             language::BufferEvent::LanguageChanged => {
@@ -1721,7 +1750,6 @@ impl MultiBuffer {
                 self.capability = buffer.read(cx).capability();
                 Event::CapabilityChanged
             }
-
             //
             language::BufferEvent::Operation { .. } => return,
         });
@@ -1751,7 +1779,7 @@ impl MultiBuffer {
         &self,
         point: T,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
+    ) -> Cow<'a, LanguageSettings> {
         let mut language = None;
         let mut file = None;
         if let Some((buffer, offset, _)) = self.point_to_buffer_offset(point, cx) {
@@ -1759,7 +1787,7 @@ impl MultiBuffer {
             language = buffer.language_at(offset);
             file = buffer.file();
         }
-        language_settings(language.as_ref(), file, cx)
+        language_settings(language.map(|l| l.name()), file, cx)
     }
 
     pub fn for_each_buffer(&self, mut f: impl FnMut(&Model<Buffer>)) {
@@ -2834,6 +2862,30 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn indent_and_comment_for_line(&self, row: MultiBufferRow, cx: &AppContext) -> String {
+        let mut indent = self.indent_size_for_line(row).chars().collect::<String>();
+
+        if self.settings_at(0, cx).extend_comment_on_newline {
+            if let Some(language_scope) = self.language_scope_at(Point::new(row.0, 0)) {
+                let delimiters = language_scope.line_comment_prefixes();
+                for delimiter in delimiters {
+                    if *self
+                        .chars_at(Point::new(row.0, indent.len() as u32))
+                        .take(delimiter.chars().count())
+                        .collect::<String>()
+                        .as_str()
+                        == **delimiter
+                    {
+                        indent.push_str(&delimiter);
+                        break;
+                    }
+                }
+            }
+        }
+
+        indent
+    }
+
     pub fn prev_non_blank_row(&self, mut row: MultiBufferRow) -> Option<MultiBufferRow> {
         while row.0 > 0 {
             row.0 -= 1;
@@ -3029,6 +3081,58 @@ impl MultiBufferSnapshot {
         }
 
         summaries
+    }
+
+    pub fn dimensions_from_points<'a, D>(
+        &'a self,
+        points: impl 'a + IntoIterator<Item = Point>,
+    ) -> impl 'a + Iterator<Item = D>
+    where
+        D: TextDimension,
+    {
+        let mut cursor = self.excerpts.cursor::<TextSummary>(&());
+        let mut memoized_source_start: Option<Point> = None;
+        let mut points = points.into_iter();
+        std::iter::from_fn(move || {
+            let point = points.next()?;
+
+            // Clear the memoized source start if the point is in a different excerpt than previous.
+            if memoized_source_start.map_or(false, |_| point >= cursor.end(&()).lines) {
+                memoized_source_start = None;
+            }
+
+            // Now determine where the excerpt containing the point starts in its source buffer.
+            // We'll use this value to calculate overshoot next.
+            let source_start = if let Some(source_start) = memoized_source_start {
+                source_start
+            } else {
+                cursor.seek_forward(&point, Bias::Right, &());
+                if let Some(excerpt) = cursor.item() {
+                    let source_start = excerpt.range.context.start.to_point(&excerpt.buffer);
+                    memoized_source_start = Some(source_start);
+                    source_start
+                } else {
+                    return Some(D::from_text_summary(cursor.start()));
+                }
+            };
+
+            // First, assume the output dimension is at least the start of the excerpt containing the point
+            let mut output = D::from_text_summary(cursor.start());
+
+            // If the point lands within its excerpt, calculate and add the overshoot in dimension D.
+            if let Some(excerpt) = cursor.item() {
+                let overshoot = point - cursor.start().lines;
+                if !overshoot.is_zero() {
+                    let end_in_excerpt = source_start + overshoot;
+                    output.add_assign(
+                        &excerpt
+                            .buffer
+                            .text_summary_for_range::<D, _>(source_start..end_in_excerpt),
+                    );
+                }
+            }
+            Some(output)
+        })
     }
 
     pub fn refresh_anchors<'a, I>(&'a self, anchors: I) -> Vec<(usize, Anchor, bool)>
@@ -3553,14 +3657,14 @@ impl MultiBufferSnapshot {
         &'a self,
         point: T,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
+    ) -> Cow<'a, LanguageSettings> {
         let mut language = None;
         let mut file = None;
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
             language = buffer.language_at(offset);
             file = buffer.file();
         }
-        language_settings(language, file, cx)
+        language_settings(language.map(|l| l.name()), file, cx)
     }
 
     pub fn language_scope_at<T: ToOffset>(&self, point: T) -> Option<LanguageScope> {
@@ -4183,7 +4287,7 @@ impl History {
         &mut self,
         buffer_transactions: T,
         now: Instant,
-        cx: &mut ModelContext<MultiBuffer>,
+        cx: &ModelContext<MultiBuffer>,
     ) where
         T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {
@@ -4571,7 +4675,7 @@ impl fmt::Debug for Excerpt {
 impl sum_tree::Item for Excerpt {
     type Summary = ExcerptSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         let mut text = self.text_summary.clone();
         if self.has_trailing_newline {
             text += TextSummary::from("\n");
@@ -4588,7 +4692,7 @@ impl sum_tree::Item for Excerpt {
 impl sum_tree::Item for ExcerptIdMapping {
     type Summary = ExcerptId;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         self.id
     }
 }
@@ -4651,6 +4755,12 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for usize {
 impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for usize {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
         Ord::cmp(self, &cursor_location.text.len)
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, TextSummary> for Point {
+    fn cmp(&self, cursor_location: &TextSummary, _: &()) -> cmp::Ordering {
+        Ord::cmp(self, &cursor_location.lines)
     }
 }
 
@@ -5052,7 +5162,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::StreamExt;
     use gpui::{AppContext, Context, TestAppContext};
     use language::{Buffer, Rope};
     use parking_lot::RwLock;
@@ -5601,41 +5710,67 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    async fn test_stream_excerpts_with_context_lines(cx: &mut TestAppContext) {
-        let buffer = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
-        let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
-            let snapshot = buffer.read(cx);
-            let ranges = vec![
-                snapshot.anchor_before(Point::new(3, 2))..snapshot.anchor_before(Point::new(4, 2)),
-                snapshot.anchor_before(Point::new(7, 1))..snapshot.anchor_before(Point::new(7, 3)),
-                snapshot.anchor_before(Point::new(15, 0))
-                    ..snapshot.anchor_before(Point::new(15, 0)),
-            ];
-            multibuffer.stream_excerpts_with_context_lines(buffer.clone(), ranges, 2, cx)
-        });
+    #[gpui::test(iterations = 100)]
+    async fn test_push_multiple_excerpts_with_context_lines(cx: &mut TestAppContext) {
+        let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(15, 4, 'a'), cx));
+        let snapshot_1 = buffer_1.update(cx, |buffer, _| buffer.snapshot());
+        let snapshot_2 = buffer_2.update(cx, |buffer, _| buffer.snapshot());
+        let ranges_1 = vec![
+            snapshot_1.anchor_before(Point::new(3, 2))..snapshot_1.anchor_before(Point::new(4, 2)),
+            snapshot_1.anchor_before(Point::new(7, 1))..snapshot_1.anchor_before(Point::new(7, 3)),
+            snapshot_1.anchor_before(Point::new(15, 0))
+                ..snapshot_1.anchor_before(Point::new(15, 0)),
+        ];
+        let ranges_2 = vec![
+            snapshot_2.anchor_before(Point::new(2, 1))..snapshot_2.anchor_before(Point::new(3, 1)),
+            snapshot_2.anchor_before(Point::new(10, 0))
+                ..snapshot_2.anchor_before(Point::new(10, 2)),
+        ];
 
-        let anchor_ranges = anchor_ranges.collect::<Vec<_>>().await;
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+        let anchor_ranges = multibuffer
+            .update(cx, |multibuffer, cx| {
+                multibuffer.push_multiple_excerpts_with_context_lines(
+                    vec![(buffer_1.clone(), ranges_1), (buffer_2.clone(), ranges_2)],
+                    2,
+                    cx,
+                )
+            })
+            .await;
 
         let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
         assert_eq!(
             snapshot.text(),
             concat!(
-                "bbb\n", //
+                "bbb\n", // buffer_1
                 "ccc\n", //
-                "ddd\n", //
-                "eee\n", //
+                "ddd\n", // <-- excerpt 1
+                "eee\n", // <-- excerpt 1
                 "fff\n", //
                 "ggg\n", //
-                "hhh\n", //
+                "hhh\n", // <-- excerpt 2
                 "iii\n", //
                 "jjj\n", //
+                //
                 "nnn\n", //
                 "ooo\n", //
-                "ppp\n", //
+                "ppp\n", // <-- excerpt 3
                 "qqq\n", //
-                "rrr",   //
+                "rrr\n", //
+                //
+                "aaaa\n", // buffer 2
+                "bbbb\n", //
+                "cccc\n", // <-- excerpt 4
+                "dddd\n", // <-- excerpt 4
+                "eeee\n", //
+                "ffff\n", //
+                //
+                "iiii\n", //
+                "jjjj\n", //
+                "kkkk\n", // <-- excerpt 5
+                "llll\n", //
+                "mmmm",   //
             )
         );
 
@@ -5647,7 +5782,9 @@ mod tests {
             vec![
                 Point::new(2, 2)..Point::new(3, 2),
                 Point::new(6, 1)..Point::new(6, 3),
-                Point::new(11, 0)..Point::new(11, 0)
+                Point::new(11, 0)..Point::new(11, 0),
+                Point::new(16, 1)..Point::new(17, 1),
+                Point::new(22, 0)..Point::new(22, 2)
             ]
         );
     }
@@ -6345,11 +6482,21 @@ mod tests {
     fn test_history(cx: &mut AppContext) {
         let test_settings = SettingsStore::test(cx);
         cx.set_global(test_settings);
-
-        let buffer_1 = cx.new_model(|cx| Buffer::local("1234", cx));
-        let buffer_2 = cx.new_model(|cx| Buffer::local("5678", cx));
+        let group_interval: Duration = Duration::from_millis(1);
+        let buffer_1 = cx.new_model(|cx| {
+            let mut buf = Buffer::local("1234", cx);
+            buf.set_group_interval(group_interval);
+            buf
+        });
+        let buffer_2 = cx.new_model(|cx| {
+            let mut buf = Buffer::local("5678", cx);
+            buf.set_group_interval(group_interval);
+            buf
+        });
         let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
-        let group_interval = multibuffer.read(cx).history.group_interval;
+        multibuffer.update(cx, |this, _| {
+            this.history.group_interval = group_interval;
+        });
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts(
                 buffer_1.clone(),

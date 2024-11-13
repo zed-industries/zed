@@ -1,7 +1,7 @@
 use crate::{
     px, AbsoluteLength, AppContext, Asset, Bounds, DefiniteLength, Element, ElementId,
     GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    Length, ObjectFit, Pixels, RenderImage, SharedString, SharedUri, Size, StyleRefinement, Styled,
+    Length, ObjectFit, Pixels, RenderImage, SharedString, SharedUri, StyleRefinement, Styled,
     SvgSize, UriOrPath, WindowContext,
 };
 use futures::{AsyncReadExt, Future};
@@ -89,6 +89,12 @@ impl From<PathBuf> for ImageSource {
 impl From<Arc<RenderImage>> for ImageSource {
     fn from(value: Arc<RenderImage>) -> Self {
         Self::Render(value)
+    }
+}
+
+impl From<Arc<Image>> for ImageSource {
+    fn from(value: Arc<Image>) -> Self {
+        Self::Image(value)
     }
 }
 
@@ -187,16 +193,30 @@ impl Element for Img {
 
                         let image_size = data.size(frame_index);
 
-                        if let (Length::Auto, Length::Auto) = (style.size.width, style.size.height)
-                        {
-                            style.size = Size {
-                                width: Length::Definite(DefiniteLength::Absolute(
-                                    AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
-                                )),
-                                height: Length::Definite(DefiniteLength::Absolute(
-                                    AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
-                                )),
-                            }
+                        if let Length::Auto = style.size.width {
+                            style.size.width = match style.size.height {
+                                Length::Definite(DefiniteLength::Absolute(
+                                    AbsoluteLength::Pixels(height),
+                                )) => Length::Definite(
+                                    px(image_size.width.0 as f32 * height.0
+                                        / image_size.height.0 as f32)
+                                    .into(),
+                                ),
+                                _ => Length::Definite(px(image_size.width.0 as f32).into()),
+                            };
+                        }
+
+                        if let Length::Auto = style.size.height {
+                            style.size.height = match style.size.width {
+                                Length::Definite(DefiniteLength::Absolute(
+                                    AbsoluteLength::Pixels(width),
+                                )) => Length::Definite(
+                                    px(image_size.height.0 as f32 * width.0
+                                        / image_size.width.0 as f32)
+                                    .into(),
+                                ),
+                                _ => Length::Definite(px(image_size.height.0 as f32).into()),
+                            };
                         }
 
                         if global_id.is_some() && data.frame_count() > 1 {

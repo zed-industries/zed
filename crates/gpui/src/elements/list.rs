@@ -1,8 +1,9 @@
 //! A list element that can be used to render a large number of differently sized elements
 //! efficiently. Clients of this API need to ensure that elements outside of the scrolled
-//! area do not change their height for this element to function correctly. In order to minimize
-//! re-renders, this element's state is stored intrusively on your own views, so that your code
-//! can coordinate directly with the list element's cached state.
+//! area do not change their height for this element to function correctly. If your elements
+//! do change height, notify the list element via [`ListState::splice`] or [`ListState::reset`].
+//! In order to minimize re-renders, this element's state is stored intrusively
+//! on your own views, so that your code can coordinate directly with the list element's cached state.
 //!
 //! If all of your elements are the same height, see [`UniformList`] for a simpler API
 
@@ -87,6 +88,16 @@ pub enum ListSizingBehavior {
     /// The list should not calculate a fixed size.
     #[default]
     Auto,
+}
+
+/// The horizontal sizing behavior to apply during layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ListHorizontalSizingBehavior {
+    /// List items' width can never exceed the width of the list.
+    #[default]
+    FitList,
+    /// List items' width may go over the width of the list, if any item is wider.
+    Unconstrained,
 }
 
 struct LayoutItemsResponse {
@@ -858,7 +869,7 @@ impl Styled for List {
 impl sum_tree::Item for ListItem {
     type Summary = ListItemSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _: &()) -> Self::Summary {
         match self {
             ListItem::Unmeasured { focus_handle } => ListItemSummary {
                 count: 1,

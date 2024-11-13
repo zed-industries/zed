@@ -10,10 +10,28 @@ use proto::{
     error::ErrorExt as _, AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage,
     RequestMessage, TypedEnvelope,
 };
-use std::{any::TypeId, sync::Arc};
+use std::{
+    any::TypeId,
+    sync::{Arc, Weak},
+};
 
 #[derive(Clone)]
 pub struct AnyProtoClient(Arc<dyn ProtoClient>);
+
+impl AnyProtoClient {
+    pub fn downgrade(&self) -> AnyWeakProtoClient {
+        AnyWeakProtoClient(Arc::downgrade(&self.0))
+    }
+}
+
+#[derive(Clone)]
+pub struct AnyWeakProtoClient(Weak<dyn ProtoClient>);
+
+impl AnyWeakProtoClient {
+    pub fn upgrade(&self) -> Option<AnyProtoClient> {
+        self.0.upgrade().map(AnyProtoClient)
+    }
+}
 
 pub trait ProtoClient: Send + Sync {
     fn request(
@@ -105,7 +123,6 @@ impl ProtoMessageHandlerSet {
             let extract_entity_id = *this.entity_id_extractors.get(&payload_type_id)?;
             let entity_type_id = *this.entity_types_by_message_type.get(&payload_type_id)?;
             let entity_id = (extract_entity_id)(message.as_ref());
-
             match this
                 .entities_by_type_and_remote_id
                 .get_mut(&(entity_type_id, entity_id))?
@@ -125,6 +142,26 @@ impl ProtoMessageHandlerSet {
 pub enum EntityMessageSubscriber {
     Entity { handle: AnyWeakModel },
     Pending(Vec<Box<dyn AnyTypedEnvelope>>),
+}
+
+impl std::fmt::Debug for EntityMessageSubscriber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EntityMessageSubscriber::Entity { handle } => f
+                .debug_struct("EntityMessageSubscriber::Entity")
+                .field("handle", handle)
+                .finish(),
+            EntityMessageSubscriber::Pending(vec) => f
+                .debug_struct("EntityMessageSubscriber::Pending")
+                .field(
+                    "envelopes",
+                    &vec.iter()
+                        .map(|envelope| envelope.payload_type_name())
+                        .collect::<Vec<_>>(),
+                )
+                .finish(),
+        }
+    }
 }
 
 impl<T> From<Arc<T>> for AnyProtoClient

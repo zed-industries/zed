@@ -26,7 +26,9 @@ actions!(
     zed,
     [
         OpenSettings,
+        OpenDefaultKeymap,
         OpenAccountSettings,
+        OpenServerSettings,
         Quit,
         OpenKeymap,
         About,

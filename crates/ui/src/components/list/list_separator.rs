@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use crate::prelude::*;
 
 #[derive(IntoElement)]
@@ -8,7 +10,7 @@ impl RenderOnce for ListSeparator {
         div()
             .h_px()
             .w_full()
-            .my(Spacing::Medium.rems(cx))
+            .my(DynamicSpacing::Base06.rems(cx))
             .bg(cx.theme().colors().border_variant)
     }
 }

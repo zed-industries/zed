@@ -156,6 +156,8 @@ pub struct Style {
     pub overflow: Point<Overflow>,
     /// How much space (in points) should be reserved for the scrollbars of `Overflow::Scroll` and `Overflow::Auto` nodes.
     pub scrollbar_width: f32,
+    /// Whether both x and y axis should be scrollable at the same time.
+    pub allow_concurrent_scroll: bool,
 
     // Position properties
     /// What should the `position` value of this struct use as a base offset?
@@ -342,7 +344,7 @@ impl Default for TextStyle {
         TextStyle {
             color: black(),
             // todo(linux) make this configurable or choose better default
-            font_family: if cfg!(target_os = "linux") {
+            font_family: if cfg!(any(target_os = "linux", target_os = "freebsd")) {
                 "FreeMono".into()
             } else if cfg!(target_os = "windows") {
                 "Segoe UI".into()
@@ -667,6 +669,7 @@ impl Default for Style {
                 x: Overflow::Visible,
                 y: Overflow::Visible,
             },
+            allow_concurrent_scroll: false,
             scrollbar_width: 0.0,
             position: Position::Relative,
             inset: Edges::auto(),

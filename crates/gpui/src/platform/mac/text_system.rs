@@ -470,9 +470,10 @@ impl MacTextSystemState {
 
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
         let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
-
-        let mut runs = Vec::new();
-        for run in line.glyph_runs().into_iter() {
+        let glyph_runs = line.glyph_runs();
+        let mut runs = Vec::with_capacity(glyph_runs.len() as usize);
+        let mut ix_converter = StringIndexConverter::new(text);
+        for run in glyph_runs.into_iter() {
             let attributes = run.attributes().unwrap();
             let font = unsafe {
                 attributes
@@ -482,7 +483,6 @@ impl MacTextSystemState {
             };
             let font_id = self.id_for_native_font(font);
 
-            let mut ix_converter = StringIndexConverter::new(text);
             let mut glyphs = SmallVec::new();
             for ((glyph_id, position), glyph_utf16_ix) in run
                 .glyphs()
@@ -491,6 +491,10 @@ impl MacTextSystemState {
                 .zip(run.string_indices().iter())
             {
                 let glyph_utf16_ix = usize::try_from(*glyph_utf16_ix).unwrap();
+                if ix_converter.utf16_ix > glyph_utf16_ix {
+                    // We cannot reuse current index converter, as it can only seek forward. Restart the search.
+                    ix_converter = StringIndexConverter::new(text);
+                }
                 ix_converter.advance_to_utf16_ix(glyph_utf16_ix);
                 glyphs.push(ShapedGlyph {
                     id: GlyphId(*glyph_id as u32),
@@ -500,9 +504,8 @@ impl MacTextSystemState {
                 });
             }
 
-            runs.push(ShapedRun { font_id, glyphs })
+            runs.push(ShapedRun { font_id, glyphs });
         }
-
         let typographic_bounds = line.get_typographic_bounds();
         LineLayout {
             runs,

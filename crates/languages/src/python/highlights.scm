@@ -1,6 +1,14 @@
-(parameter (identifier) @variable)
 (attribute attribute: (identifier) @property)
 (type (identifier) @type)
+(generic_type (identifier) @type)
+
+; Type alias
+(type_alias_statement "type" @keyword)
+
+; TypeVar with constraints in type parameters
+(type
+  (tuple (identifier) @type)
+)
 
 ; Function calls
 
@@ -55,7 +63,7 @@
 
 (comment) @comment
 (string) @string
-(escape_sequence) @escape
+(escape_sequence) @string.escape
 
 [
   "("

@@ -1178,7 +1178,7 @@ impl Room {
             this.update(&mut cx, |this, cx| {
                 this.joined_projects.retain(|project| {
                     if let Some(project) = project.upgrade() {
-                        !project.read(cx).is_disconnected()
+                        !project.read(cx).is_disconnected(cx)
                     } else {
                         false
                     }
@@ -1194,26 +1194,15 @@ impl Room {
         project: Model<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<u64>> {
-        let request = if let Some(dev_server_project_id) = project.read(cx).dev_server_project_id()
-        {
-            self.client.request(proto::ShareProject {
-                room_id: self.id(),
-                worktrees: vec![],
-                dev_server_project_id: Some(dev_server_project_id.0),
-                is_ssh_project: false,
-            })
-        } else {
-            if let Some(project_id) = project.read(cx).remote_id() {
-                return Task::ready(Ok(project_id));
-            }
+        if let Some(project_id) = project.read(cx).remote_id() {
+            return Task::ready(Ok(project_id));
+        }
 
-            self.client.request(proto::ShareProject {
-                room_id: self.id(),
-                worktrees: project.read(cx).worktree_metadata_protos(cx),
-                dev_server_project_id: None,
-                is_ssh_project: project.read(cx).is_via_ssh(),
-            })
-        };
+        let request = self.client.request(proto::ShareProject {
+            room_id: self.id(),
+            worktrees: project.read(cx).worktree_metadata_protos(cx),
+            is_ssh_project: project.read(cx).is_via_ssh(),
+        });
 
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;

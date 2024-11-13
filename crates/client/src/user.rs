@@ -28,9 +28,6 @@ impl std::fmt::Display for ChannelId {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct ProjectId(pub u64);
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct DevServerId(pub u64);
-
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
 )]
@@ -51,6 +48,7 @@ pub struct Collaborator {
     pub peer_id: proto::PeerId,
     pub replica_id: ReplicaId,
     pub user_id: UserId,
+    pub is_host: bool,
 }
 
 impl PartialOrd for User {
@@ -138,7 +136,7 @@ enum UpdateContacts {
 }
 
 impl UserStore {
-    pub fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(client: Arc<Client>, cx: &ModelContext<Self>) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
@@ -310,7 +308,7 @@ impl UserStore {
     fn update_contacts(
         &mut self,
         message: UpdateContacts,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Task<Result<()>> {
         match message {
             UpdateContacts::Wait(barrier) => {
@@ -525,9 +523,9 @@ impl UserStore {
     }
 
     pub fn dismiss_contact_request(
-        &mut self,
+        &self,
         requester_id: u64,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.upgrade();
         cx.spawn(move |_, _| async move {
@@ -573,7 +571,7 @@ impl UserStore {
         })
     }
 
-    pub fn clear_contacts(&mut self) -> impl Future<Output = ()> {
+    pub fn clear_contacts(&self) -> impl Future<Output = ()> {
         let (tx, mut rx) = postage::barrier::channel();
         self.update_contacts_tx
             .unbounded_send(UpdateContacts::Clear(tx))
@@ -583,7 +581,7 @@ impl UserStore {
         }
     }
 
-    pub fn contact_updates_done(&mut self) -> impl Future<Output = ()> {
+    pub fn contact_updates_done(&self) -> impl Future<Output = ()> {
         let (tx, mut rx) = postage::barrier::channel();
         self.update_contacts_tx
             .unbounded_send(UpdateContacts::Wait(tx))
@@ -594,9 +592,9 @@ impl UserStore {
     }
 
     pub fn get_users(
-        &mut self,
+        &self,
         user_ids: Vec<u64>,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Task<Result<Vec<Arc<User>>>> {
         let mut user_ids_to_fetch = user_ids.clone();
         user_ids_to_fetch.retain(|id| !self.users.contains_key(id));
@@ -629,9 +627,9 @@ impl UserStore {
     }
 
     pub fn fuzzy_search_users(
-        &mut self,
+        &self,
         query: String,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Task<Result<Vec<Arc<User>>>> {
         self.load_users(proto::FuzzySearchUsers { query }, cx)
     }
@@ -640,11 +638,7 @@ impl UserStore {
         self.users.get(&user_id).cloned()
     }
 
-    pub fn get_user_optimistic(
-        &mut self,
-        user_id: u64,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Arc<User>> {
+    pub fn get_user_optimistic(&self, user_id: u64, cx: &ModelContext<Self>) -> Option<Arc<User>> {
         if let Some(user) = self.users.get(&user_id).cloned() {
             return Some(user);
         }
@@ -653,11 +647,7 @@ impl UserStore {
         None
     }
 
-    pub fn get_user(
-        &mut self,
-        user_id: u64,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Arc<User>>> {
+    pub fn get_user(&self, user_id: u64, cx: &ModelContext<Self>) -> Task<Result<Arc<User>>> {
         if let Some(user) = self.users.get(&user_id).cloned() {
             return Task::ready(Ok(user));
         }
@@ -697,7 +687,7 @@ impl UserStore {
             .map(|accepted_tos_at| accepted_tos_at.is_some())
     }
 
-    pub fn accept_terms_of_service(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn accept_terms_of_service(&self, cx: &ModelContext<Self>) -> Task<Result<()>> {
         if self.current_user().is_none() {
             return Task::ready(Err(anyhow!("no current user")));
         };
@@ -726,9 +716,9 @@ impl UserStore {
     }
 
     fn load_users(
-        &mut self,
+        &self,
         request: impl RequestMessage<Response = UsersResponse>,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Task<Result<Vec<Arc<User>>>> {
         let client = self.client.clone();
         cx.spawn(|this, mut cx| async move {
@@ -835,6 +825,7 @@ impl Collaborator {
             peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
             replica_id: message.replica_id as ReplicaId,
             user_id: message.user_id as UserId,
+            is_host: message.is_host,
         })
     }
 }

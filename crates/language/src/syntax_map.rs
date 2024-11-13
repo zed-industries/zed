@@ -794,7 +794,7 @@ impl SyntaxSnapshot {
         range: Range<usize>,
         buffer: &'a BufferSnapshot,
         query: fn(&Grammar) -> Option<&Query>,
-    ) -> SyntaxMapCaptures {
+    ) -> SyntaxMapCaptures<'a> {
         SyntaxMapCaptures::new(
             range.clone(),
             buffer.as_rope(),
@@ -808,7 +808,7 @@ impl SyntaxSnapshot {
         range: Range<usize>,
         buffer: &'a BufferSnapshot,
         query: fn(&Grammar) -> Option<&Query>,
-    ) -> SyntaxMapMatches {
+    ) -> SyntaxMapMatches<'a> {
         SyntaxMapMatches::new(
             range.clone(),
             buffer.as_rope(),
@@ -828,7 +828,7 @@ impl SyntaxSnapshot {
         range: Range<T>,
         buffer: &'a BufferSnapshot,
         include_hidden: bool,
-    ) -> impl 'a + Iterator<Item = SyntaxLayer> {
+    ) -> impl 'a + Iterator<Item = SyntaxLayer<'a>> {
         let start_offset = range.start.to_offset(buffer);
         let end_offset = range.end.to_offset(buffer);
         let start = buffer.anchor_before(start_offset);
@@ -1520,18 +1520,24 @@ impl<'a> SyntaxLayer<'a> {
         let config = self.language.grammar.as_ref()?.override_config.as_ref()?;
 
         let mut query_cursor = QueryCursorHandle::new();
-        query_cursor.set_byte_range(offset..offset);
+        query_cursor.set_byte_range(offset.saturating_sub(1)..offset.saturating_add(1));
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
         for mat in query_cursor.matches(&config.query, self.node(), text) {
             for capture in mat.captures {
-                if !config.values.contains_key(&capture.index) {
+                let Some(override_entry) = config.values.get(&capture.index) else {
                     continue;
-                }
+                };
 
                 let range = capture.node.byte_range();
-                if offset <= range.start || offset >= range.end {
-                    continue;
+                if override_entry.range_is_inclusive {
+                    if offset < range.start || offset > range.end {
+                        continue;
+                    }
+                } else {
+                    if offset <= range.start || offset >= range.end {
+                        continue;
+                    }
                 }
 
                 if let Some((_, smallest_range)) = &smallest_match {
@@ -1739,7 +1745,7 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary>
 impl sum_tree::Item for SyntaxLayerEntry {
     type Summary = SyntaxLayerSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &BufferSnapshot) -> Self::Summary {
         SyntaxLayerSummary {
             min_depth: self.depth,
             max_depth: self.depth,

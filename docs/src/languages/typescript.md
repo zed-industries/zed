@@ -68,21 +68,25 @@ Prettier will also be used for TypeScript files by default. To disable this:
 Zed sets the following initialization options to make the language server send back inlay hints
 (that is, when Zed has inlay hints enabled in the settings).
 
-You can override these settings in your configuration file:
+You can override these settings in your Zed settings file.
+
+When using `typescript-language-server`:
 
 ```json
-"lsp": {
-  "$LANGUAGE_SERVER_NAME": {
-    "initialization_options": {
-      "preferences": {
-      "includeInlayParameterNameHints": "all",
-        "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
-        "includeInlayFunctionParameterTypeHints": true,
-        "includeInlayVariableTypeHints": true,
-        "includeInlayVariableTypeHintsWhenTypeMatchesName": true,
-        "includeInlayPropertyDeclarationTypeHints": true,
-        "includeInlayFunctionLikeReturnTypeHints": true,
-        "includeInlayEnumMemberValueHints": true,
+{
+  "lsp": {
+    "typescript-language-server": {
+      "initialization_options": {
+        "preferences": {
+          "includeInlayParameterNameHints": "all",
+          "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
+          "includeInlayFunctionParameterTypeHints": true,
+          "includeInlayVariableTypeHints": true,
+          "includeInlayVariableTypeHintsWhenTypeMatchesName": true,
+          "includeInlayPropertyDeclarationTypeHints": true,
+          "includeInlayFunctionLikeReturnTypeHints": true,
+          "includeInlayEnumMemberValueHints": true
+        }
       }
     }
   }
@@ -90,6 +94,69 @@ You can override these settings in your configuration file:
 ```
 
 See [typescript-language-server inlayhints documentation](https://github.com/typescript-language-server/typescript-language-server?tab=readme-ov-file#inlay-hints-textdocumentinlayhint) for more information.
+
+When using `vtsls`:
+
+```json
+{
+  "lsp": {
+    "vtsls": {
+      "settings": {
+        // For JavaScript:
+        "javascript": {
+          "inlayHints": {
+            "parameterNames": {
+              "enabled": "all",
+              "suppressWhenArgumentMatchesName": false
+            },
+            "parameterTypes": {
+              "enabled": true
+            },
+            "variableTypes": {
+              "enabled": true,
+              "suppressWhenTypeMatchesName": true
+            },
+            "propertyDeclarationTypes": {
+              "enabled": true
+            },
+            "functionLikeReturnTypes": {
+              "enabled": true
+            },
+            "enumMemberValues": {
+              "enabled": true
+            }
+          }
+        },
+        // For TypeScript:
+        "typescript": {
+          "inlayHints": {
+            "parameterNames": {
+              "enabled": "all",
+              "suppressWhenArgumentMatchesName": false
+            },
+            "parameterTypes": {
+              "enabled": true
+            },
+            "variableTypes": {
+              "enabled": true,
+              "suppressWhenTypeMatchesName": true
+            },
+            "propertyDeclarationTypes": {
+              "enabled": true
+            },
+            "functionLikeReturnTypes": {
+              "enabled": true
+            },
+            "enumMemberValues": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 ## See also
 

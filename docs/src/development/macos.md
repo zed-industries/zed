@@ -21,6 +21,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
   ```sh
   sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+  sudo xcodebuild -license accept
   ```
 
 - Install the Rust wasm toolchain:
