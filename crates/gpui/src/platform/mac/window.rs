@@ -1257,13 +1257,13 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             msg_send![input_context, handleEvent: native_event]
         };
         window_state.as_ref().lock().keystroke_for_do_command.take();
-        if handled {
+        if handled == YES {
             return YES;
         }
 
         let mut callback = window_state.as_ref().lock().event_callback.take();
         let handled: BOOL = if let Some(callback) = callback.as_mut() {
-            !callback(PlatformInput::KeyDown(event)).propagate
+            !callback(PlatformInput::KeyDown(event)).propagate as BOOL
         } else {
             NO
         };
@@ -1273,12 +1273,12 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
     let mut callback = window_state.as_ref().lock().event_callback.take();
     let handled = if let Some(callback) = callback.as_mut() {
-        !callback(PlatformInput::KeyDown(event.clone())).propagate
+        !callback(PlatformInput::KeyDown(event.clone())).propagate as BOOL
     } else {
-        false
+        NO
     };
     window_state.as_ref().lock().event_callback = callback;
-    if handled {
+    if handled == YES {
         return YES;
     }
 
@@ -1293,7 +1293,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             }
             NO
         });
-        if handled == Some(true) {
+        if handled == Some(YES) {
             return YES;
         }
     }
