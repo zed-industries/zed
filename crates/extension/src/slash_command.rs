@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 /// A slash command for use in the Assistant.
+#[derive(Debug, Clone)]
 pub struct SlashCommand {
     /// The name of the slash command.
     pub name: String,
@@ -13,6 +14,7 @@ pub struct SlashCommand {
 }
 
 /// The output of a slash command.
+#[derive(Debug, Clone)]
 pub struct SlashCommandOutput {
     /// The text produced by the slash command.
     pub text: String,
@@ -21,6 +23,7 @@ pub struct SlashCommandOutput {
 }
 
 /// A section in the slash command output.
+#[derive(Debug, Clone)]
 pub struct SlashCommandOutputSection {
     /// The range this section occupies.
     pub range: Range<usize>,
@@ -29,6 +32,7 @@ pub struct SlashCommandOutputSection {
 }
 
 /// A completion for a slash command argument.
+#[derive(Debug, Clone)]
 pub struct SlashCommandArgumentCompletion {
     /// The label to display for this completion.
     pub label: String,

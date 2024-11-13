@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 use std::sync::{atomic::AtomicBool, Arc};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use extension::{Extension, WorktreeDelegate};
-use futures::FutureExt as _;
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
@@ -79,38 +78,25 @@ impl SlashCommand for ExtensionSlashCommand {
         _workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
+        let command = self.command.clone();
         let arguments = arguments.to_owned();
         cx.background_executor().spawn(async move {
-            self.extension
-                .call({
-                    let this = self.clone();
-                    move |extension, store| {
-                        async move {
-                            let completions = extension
-                                .call_complete_slash_command_argument(
-                                    store,
-                                    &this.command,
-                                    &arguments,
-                                )
-                                .await?
-                                .map_err(|e| anyhow!("{}", e))?;
+            let completions = self
+                .extension
+                .complete_slash_command_argument(command, arguments)
+                .await?;
 
-                            anyhow::Ok(
-                                completions
-                                    .into_iter()
-                                    .map(|completion| ArgumentCompletion {
-                                        label: completion.label.into(),
-                                        new_text: completion.new_text,
-                                        replace_previous_arguments: false,
-                                        after_completion: completion.run_command.into(),
-                                    })
-                                    .collect(),
-                            )
-                        }
-                        .boxed()
-                    }
-                })
-                .await
+            anyhow::Ok(
+                completions
+                    .into_iter()
+                    .map(|completion| ArgumentCompletion {
+                        label: completion.label.into(),
+                        new_text: completion.new_text,
+                        replace_previous_arguments: false,
+                        after_completion: completion.run_command.into(),
+                    })
+                    .collect(),
+            )
         })
     }
 
@@ -123,31 +109,17 @@ impl SlashCommand for ExtensionSlashCommand {
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<SlashCommandResult> {
+        let command = self.command.clone();
         let arguments = arguments.to_owned();
         let output = cx.background_executor().spawn(async move {
-            self.extension
-                .call({
-                    let this = self.clone();
-                    move |extension, store| {
-                        async move {
-                            let resource = if let Some(delegate) = delegate {
-                                let delegate =
-                                    Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
-                                Some(store.data_mut().table().push(delegate)?)
-                            } else {
-                                None
-                            };
-                            let output = extension
-                                .call_run_slash_command(store, &this.command, &arguments, resource)
-                                .await?
-                                .map_err(|e| anyhow!("{}", e))?;
+            let delegate =
+                delegate.map(|delegate| Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _);
+            let output = self
+                .extension
+                .run_slash_command(command, arguments, delegate)
+                .await?;
 
-                            anyhow::Ok(output)
-                        }
-                        .boxed()
-                    }
-                })
-                .await
+            anyhow::Ok(output)
         });
         cx.foreground_executor().spawn(async move {
             let output = output.await?;

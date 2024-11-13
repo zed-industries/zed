@@ -37,13 +37,13 @@ pub trait Extension: Send + Sync + 'static {
     async fn complete_slash_command_argument(
         &self,
         command: SlashCommand,
-        arguments: &[String],
+        arguments: Vec<String>,
     ) -> Result<Vec<SlashCommandArgumentCompletion>>;
 
     async fn run_slash_command(
         &self,
         command: SlashCommand,
-        arguments: &[String],
+        arguments: Vec<String>,
         resource: Option<Arc<dyn WorktreeDelegate>>,
     ) -> Result<SlashCommandOutput>;
 

@@ -68,59 +68,28 @@ impl extension::Extension for WasmExtension {
     async fn complete_slash_command_argument(
         &self,
         command: SlashCommand,
-        arguments: &[String],
+        arguments: Vec<String>,
     ) -> Result<Vec<SlashCommandArgumentCompletion>> {
         self.call(|extension, store| {
             async move {
                 let completions = extension
-                    .call_complete_slash_command_argument(store, command.into(), &arguments)
+                    .call_complete_slash_command_argument(store, &command.into(), &arguments)
                     .await?
                     .map_err(|err| anyhow!("{err}"))?;
 
-                Ok(completions)
+                Ok(completions.into_iter().map(Into::into).collect())
             }
             .boxed()
         })
         .await
-
-        // self.extension
-        //     .call({
-        //         let this = self.clone();
-        //         move |extension, store| {
-        //             async move {
-        //                 let completions = extension
-        //                     .call_complete_slash_command_argument(
-        //                         store,
-        //                         &this.command,
-        //                         &arguments,
-        //                     )
-        //                     .await?
-        //                     .map_err(|e| anyhow!("{}", e))?;
-
-        //                 anyhow::Ok(
-        //                     completions
-        //                         .into_iter()
-        //                         .map(|completion| ArgumentCompletion {
-        //                             label: completion.label.into(),
-        //                             new_text: completion.new_text,
-        //                             replace_previous_arguments: false,
-        //                             after_completion: completion.run_command.into(),
-        //                         })
-        //                         .collect(),
-        //                 )
-        //             }
-        //             .boxed()
-        //         }
     }
 
     async fn run_slash_command(
         &self,
         command: SlashCommand,
-        arguments: &[String],
+        arguments: Vec<String>,
         delegate: Option<Arc<dyn WorktreeDelegate>>,
     ) -> Result<SlashCommandOutput> {
-        let command = wit::SlashCommand::from(command);
-
         self.call(|extension, store| {
             async move {
                 let resource = if let Some(delegate) = delegate {
@@ -130,7 +99,7 @@ impl extension::Extension for WasmExtension {
                 };
 
                 let output = extension
-                    .call_run_slash_command(store, &command, &arguments, resource)
+                    .call_run_slash_command(store, &command.into(), &arguments, resource)
                     .await?
                     .map_err(|err| anyhow!("{err}"))?;
 
