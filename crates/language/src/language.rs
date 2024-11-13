@@ -1120,7 +1120,6 @@ impl Language {
             .grammar_mut()
             .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
-        dbg!(&query);
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
         get_capture_indices(
@@ -1131,13 +1130,11 @@ impl Language {
             ],
         );
         if let Some((open_capture_ix, close_capture_ix)) = open_capture_ix.zip(close_capture_ix) {
-            dbg!(&open_capture_ix, &close_capture_ix);
             grammar.brackets_config = Some(BracketConfig {
                 query,
                 open_capture_ix,
                 close_capture_ix,
             });
-            dbg!("Do we get to here?");
         }
         Ok(self)
     }
