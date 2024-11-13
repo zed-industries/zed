@@ -14,7 +14,9 @@ use file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, KeyContext, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView
+    actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, KeyContext, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
@@ -1234,33 +1236,37 @@ impl PickerDelegate for FileFinderDelegate {
                             button.child(key)
                         })
                         .child(Label::new("Open"))
-                        .on_click(|_, cx| cx.dispatch_action(menu::Confirm.boxed_clone()))
+                        .on_click(|_, cx| cx.dispatch_action(menu::Confirm.boxed_clone())),
                 )
                 .child(
-                    div()
-                        .pl_2()
-                        .child(
-                            PopoverMenu::new("menu-popover")
-                                .with_handle(self.popover_menu_handle.clone())
-                                .trigger(
-                                        ButtonLike::new("menu-trigger")
-                                            .when_some(KeyBinding::for_action_in(&OpenMenu, &self.focus_handle, cx), |button, key| {
-                                                button.child(key)
-                                            })
-                                            .child(Label::new("More actions"))
-                                )
-                                .menu({
-                                    move |cx| {
-                                        Some(ContextMenu::build(cx, move |menu, _| {
-                                            menu.action("Split left", pane::SplitLeft.boxed_clone())
-                                                .action("Split right", pane::SplitRight.boxed_clone())
-                                                .action("Split up", pane::SplitUp.boxed_clone())
-                                                .action("Split down", pane::SplitDown.boxed_clone())
-                                        }))
-                                    }
-                                }
+                    div().pl_2().child(
+                        PopoverMenu::new("menu-popover")
+                            .with_handle(self.popover_menu_handle.clone())
+                            .attach(gpui::AnchorCorner::TopRight)
+                            .anchor(gpui::AnchorCorner::BottomRight)
+                            .trigger(
+                                ButtonLike::new("menu-trigger")
+                                    .when_some(
+                                        KeyBinding::for_action_in(
+                                            &OpenMenu,
+                                            &self.focus_handle,
+                                            cx,
+                                        ),
+                                        |button, key| button.child(key),
+                                    )
+                                    .child(Label::new("More actions")),
                             )
-                        )
+                            .menu({
+                                move |cx| {
+                                    Some(ContextMenu::build(cx, move |menu, _| {
+                                        menu.action("Split left", pane::SplitLeft.boxed_clone())
+                                            .action("Split right", pane::SplitRight.boxed_clone())
+                                            .action("Split up", pane::SplitUp.boxed_clone())
+                                            .action("Split down", pane::SplitDown.boxed_clone())
+                                    }))
+                                }
+                            }),
+                    ),
                 )
                 .into_any(),
         )
