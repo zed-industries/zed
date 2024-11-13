@@ -262,29 +262,38 @@ impl ContextMenu {
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.selected_index {
-            for (ix, item) in self.items.iter().enumerate().skip(ix + 1) {
-                if item.is_selectable() {
-                    self.selected_index = Some(ix);
-                    cx.notify();
-                    break;
+            let next_index = ix + 1;
+            if self.items.len() <= next_index {
+                self.select_first(&SelectFirst, cx);
+            } else {
+                for (ix, item) in self.items.iter().enumerate().skip(next_index) {
+                    if item.is_selectable() {
+                        self.selected_index = Some(ix);
+                        cx.notify();
+                        break;
+                    }
                 }
             }
         } else {
-            self.select_first(&Default::default(), cx);
+            self.select_first(&SelectFirst, cx);
         }
     }
 
     pub fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.selected_index {
-            for (ix, item) in self.items.iter().enumerate().take(ix).rev() {
-                if item.is_selectable() {
-                    self.selected_index = Some(ix);
-                    cx.notify();
-                    break;
+            if ix == 0 {
+                self.handle_select_last(&SelectLast, cx);
+            } else {
+                for (ix, item) in self.items.iter().enumerate().take(ix).rev() {
+                    if item.is_selectable() {
+                        self.selected_index = Some(ix);
+                        cx.notify();
+                        break;
+                    }
                 }
             }
         } else {
-            self.handle_select_last(&Default::default(), cx);
+            self.handle_select_last(&SelectLast, cx);
         }
     }
 
