@@ -184,9 +184,9 @@ impl ChangedFileHeader {
 
     fn icon_for_status(&self) -> impl IntoElement {
         let (icon_name, color) = match self.changed_file.status {
-            GitFileStatus::Added => (IconName::Plus, Color::Created),
-            GitFileStatus::Modified => (IconName::Dash, Color::Modified),
-            GitFileStatus::Conflict => (IconName::X, Color::Conflict),
+            GitFileStatus::Added => (IconName::SquarePlus, Color::Created),
+            GitFileStatus::Modified => (IconName::SquareDot, Color::Modified),
+            GitFileStatus::Conflict => (IconName::SquareMinus, Color::Conflict),
         };
 
         Icon::new(icon_name).size(IconSize::Small).color(color)
@@ -465,6 +465,7 @@ impl RenderOnce for GitStagingControls {
                                     ElementId::Name(format!("{}-discard", id.clone()).into()),
                                     "Discard All",
                                 )
+                                .style(ButtonStyle::Filled)
                                 .layer(ui::ElevationIndex::ModalSurface)
                                 .size(ButtonSize::Compact)
                                 .label_size(LabelSize::Small)
@@ -477,6 +478,7 @@ impl RenderOnce for GitStagingControls {
                                     ElementId::Name(format!("{}-unstage", id.clone()).into()),
                                     "Stage All",
                                 )
+                                .style(ButtonStyle::Filled)
                                 .size(ButtonSize::Compact)
                                 .label_size(LabelSize::Small)
                                 .layer(ui::ElevationIndex::ModalSurface)
