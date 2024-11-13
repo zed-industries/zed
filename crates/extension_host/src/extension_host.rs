@@ -132,9 +132,8 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
 
     fn register_slash_command(
         &self,
-        _slash_command: wit::SlashCommand,
-        _extension: WasmExtension,
-        _host: Arc<WasmHost>,
+        _extension: Arc<dyn Extension>,
+        _command: extension::SlashCommand,
     ) {
     }
 
@@ -1250,7 +1249,8 @@ impl ExtensionStore {
 
                     for (slash_command_name, slash_command) in &manifest.slash_commands {
                         this.registration_hooks.register_slash_command(
-                            crate::wit::SlashCommand {
+                            extension.clone(),
+                            extension::SlashCommand {
                                 name: slash_command_name.to_string(),
                                 description: slash_command.description.to_string(),
                                 // We don't currently expose this as a configurable option, as it currently drives
@@ -1259,8 +1259,6 @@ impl ExtensionStore {
                                 tooltip_text: String::new(),
                                 requires_argument: slash_command.requires_argument,
                             },
-                            wasm_extension.clone(),
-                            this.wasm_host.clone(),
                         );
                     }
 

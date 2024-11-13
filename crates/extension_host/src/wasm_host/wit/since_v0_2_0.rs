@@ -1,3 +1,4 @@
+use crate::wasm_host::wit::since_v0_2_0::slash_command::SlashCommandOutputSection;
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
@@ -52,6 +53,45 @@ pub struct ExtensionProject {
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
     LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
+}
+
+impl From<extension::SlashCommand> for SlashCommand {
+    fn from(value: extension::SlashCommand) -> Self {
+        Self {
+            name: value.name,
+            description: value.description,
+            tooltip_text: value.tooltip_text,
+            requires_argument: value.requires_argument,
+        }
+    }
+}
+
+impl From<SlashCommandOutput> for extension::SlashCommandOutput {
+    fn from(value: SlashCommandOutput) -> Self {
+        Self {
+            text: value.text,
+            sections: value.sections.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<SlashCommandOutputSection> for extension::SlashCommandOutputSection {
+    fn from(value: SlashCommandOutputSection) -> Self {
+        Self {
+            range: value.range.start as usize..value.range.end as usize,
+            label: value.label,
+        }
+    }
+}
+
+impl From<SlashCommandArgumentCompletion> for extension::SlashCommandArgumentCompletion {
+    fn from(value: SlashCommandArgumentCompletion) -> Self {
+        Self {
+            label: value.label,
+            new_text: value.new_text,
+            run_command: value.run_command,
+        }
+    }
 }
 
 #[async_trait]

@@ -1,5 +1,8 @@
+mod extension_slash_command;
 mod slash_command_registry;
 
+pub use crate::extension_slash_command::*;
+pub use crate::slash_command_registry::*;
 use anyhow::Result;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
@@ -7,7 +10,6 @@ use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, Wind
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
 use serde::{Deserialize, Serialize};
-pub use slash_command_registry::*;
 use std::{
     ops::Range,
     sync::{atomic::AtomicBool, Arc},

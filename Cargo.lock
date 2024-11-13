@@ -459,8 +459,10 @@ name = "assistant_slash_command"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "collections",
  "derive_more",
+ "extension",
  "futures 0.3.30",
  "gpui",
  "language",
@@ -469,6 +471,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
+ "ui",
  "workspace",
 ]
 
