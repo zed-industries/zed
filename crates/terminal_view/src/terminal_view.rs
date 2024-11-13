@@ -1046,14 +1046,20 @@ impl Item for TerminalView {
                 .on_click(move |_, cx| {
                     cx.dispatch_action(Box::new(tasks_ui::Rerun {
                         task_id: Some(task_id.clone()),
-                        ..tasks_ui::Rerun::default()
+                        allow_concurrent_runs: Some(true),
+                        use_new_terminal: Some(false),
+                        reevaluate_context: false,
                     }));
                 })
         };
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Running => (IconName::Play, Color::Disabled, None),
+                TaskStatus::Running => (
+                    IconName::Play,
+                    Color::Disabled,
+                    Some(rerun_button(terminal_task.id.clone())),
+                ),
                 TaskStatus::Unknown => (
                     IconName::Warning,
                     Color::Warning,
