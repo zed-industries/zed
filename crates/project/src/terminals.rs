@@ -276,6 +276,18 @@ impl Project {
         cx: &AppContext,
     ) -> Option<PathBuf> {
         let venv_settings = settings.detect_venv.as_option()?;
+        if let Some(path) = self.find_venv_in_worktree(abs_path, &venv_settings, cx) {
+            return Some(path);
+        }
+        self.find_venv_on_filesystem(abs_path, &venv_settings, cx)
+    }
+
+    fn find_venv_in_worktree(
+        &self,
+        abs_path: &Path,
+        venv_settings: &terminal_settings::VenvSettingsContent,
+        cx: &AppContext,
+    ) -> Option<PathBuf> {
         let bin_dir_name = match std::env::consts::OS {
             "windows" => "Scripts",
             _ => "bin",
@@ -283,7 +295,7 @@ impl Project {
         venv_settings
             .directories
             .iter()
-            .map(|virtual_environment_name| abs_path.join(virtual_environment_name))
+            .map(|name| abs_path.join(name))
             .find(|venv_path| {
                 let bin_path = venv_path.join(bin_dir_name);
                 self.find_worktree(&bin_path, cx)
@@ -291,6 +303,32 @@ impl Project {
                         worktree.read(cx).entry_for_path(&relative_path)
                     })
                     .is_some_and(|entry| entry.is_dir())
+            })
+    }
+
+    fn find_venv_on_filesystem(
+        &self,
+        abs_path: &Path,
+        venv_settings: &terminal_settings::VenvSettingsContent,
+        cx: &AppContext,
+    ) -> Option<PathBuf> {
+        let (worktree, _) = self.find_worktree(abs_path, cx)?;
+        let fs = worktree.read(cx).as_local()?.fs();
+        let bin_dir_name = match std::env::consts::OS {
+            "windows" => "Scripts",
+            _ => "bin",
+        };
+        venv_settings
+            .directories
+            .iter()
+            .map(|name| abs_path.join(name))
+            .find(|venv_path| {
+                let bin_path = venv_path.join(bin_dir_name);
+                // One-time synchronous check is acceptable for terminal/task initialization
+                smol::block_on(fs.metadata(&bin_path))
+                    .ok()
+                    .flatten()
+                    .map_or(false, |meta| meta.is_dir)
             })
     }
 
