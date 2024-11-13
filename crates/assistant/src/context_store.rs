@@ -162,8 +162,8 @@ impl ContextStore {
                     cx.spawn(|context_store, mut cx| async move {
                         loop {
                             let mut servers_to_register = Vec::new();
-                            for (_id, factory) in
-                                context_server_factory_registry.context_server_factories()
+                            for (_id, factory) in context_server_factory_registry
+                                .read_with(&cx, |registry, _| registry.context_server_factories())?
                             {
                                 if let Some(server) = factory(project.clone(), &cx).await.log_err()
                                 {

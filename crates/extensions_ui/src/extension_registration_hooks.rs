@@ -6,7 +6,7 @@ use context_servers::ContextServerFactoryRegistry;
 use extension::Extension;
 use extension_host::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
 use fs::Fs;
-use gpui::{AppContext, BackgroundExecutor, Task};
+use gpui::{AppContext, BackgroundExecutor, Model, Task};
 use indexed_docs::{ExtensionIndexedDocsProvider, IndexedDocsRegistry, ProviderId};
 use language::{LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
 use snippet_provider::SnippetRegistry;
@@ -22,7 +22,7 @@ pub struct ConcreteExtensionRegistrationHooks {
     indexed_docs_registry: Arc<IndexedDocsRegistry>,
     snippet_registry: Arc<SnippetRegistry>,
     language_registry: Arc<LanguageRegistry>,
-    context_server_factory_registry: Arc<ContextServerFactoryRegistry>,
+    context_server_factory_registry: Model<ContextServerFactoryRegistry>,
     executor: BackgroundExecutor,
 }
 
@@ -33,7 +33,7 @@ impl ConcreteExtensionRegistrationHooks {
         indexed_docs_registry: Arc<IndexedDocsRegistry>,
         snippet_registry: Arc<SnippetRegistry>,
         language_registry: Arc<LanguageRegistry>,
-        context_server_factory_registry: Arc<ContextServerFactoryRegistry>,
+        context_server_factory_registry: Model<ContextServerFactoryRegistry>,
         cx: &AppContext,
     ) -> Arc<dyn extension_host::ExtensionRegistrationHooks> {
         Arc::new(Self {
@@ -80,24 +80,27 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
         id: Arc<str>,
         extension: wasm_host::WasmExtension,
         host: Arc<wasm_host::WasmHost>,
+        cx: &mut AppContext,
     ) {
         self.context_server_factory_registry
-            .register_server_factory(
-                id.clone(),
-                Arc::new({
-                    move |project, cx| {
-                        let id = id.clone();
-                        let extension = extension.clone();
-                        let host = host.clone();
-                        cx.spawn(|cx| async move {
-                            let context_server =
-                                ExtensionContextServer::new(extension, host, id, project, cx)
-                                    .await?;
-                            anyhow::Ok(Arc::new(context_server) as _)
-                        })
-                    }
-                }),
-            );
+            .update(cx, |registry, _| {
+                registry.register_server_factory(
+                    id.clone(),
+                    Arc::new({
+                        move |project, cx| {
+                            let id = id.clone();
+                            let extension = extension.clone();
+                            let host = host.clone();
+                            cx.spawn(|cx| async move {
+                                let context_server =
+                                    ExtensionContextServer::new(extension, host, id, project, cx)
+                                        .await?;
+                                anyhow::Ok(Arc::new(context_server) as _)
+                            })
+                        }
+                    }),
+                )
+            });
     }
 
     fn register_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
