@@ -1,7 +1,7 @@
 pub mod extension_builder;
 mod extension_manifest;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context as _, Result};
@@ -10,6 +10,15 @@ use gpui::Task;
 use semantic_version::SemanticVersion;
 
 pub use crate::extension_manifest::*;
+
+#[async_trait]
+pub trait WorktreeDelegate: Send + Sync + 'static {
+    fn id(&self) -> u64;
+    fn root_path(&self) -> String;
+    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
+    async fn which(&self, binary_name: String) -> Option<String>;
+    async fn shell_env(&self) -> Vec<(String, String)>;
+}
 
 pub trait KeyValueStoreDelegate: Send + Sync + 'static {
     fn insert(&self, key: String, docs: String) -> Task<Result<()>>;
