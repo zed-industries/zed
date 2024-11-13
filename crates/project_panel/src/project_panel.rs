@@ -2145,12 +2145,6 @@ impl ProjectPanel {
                 worktree_id,
                 entry_id,
             });
-            if cx.modifiers().shift {
-                self.marked_entries.insert(SelectedEntry {
-                    worktree_id,
-                    entry_id,
-                });
-            }
         }
     }
 
