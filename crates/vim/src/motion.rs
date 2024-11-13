@@ -1698,12 +1698,8 @@ fn end_of_document(
 }
 
 fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoint> {
-    let Some(inner) = crate::object::surrounding_html_tag(map, head, head..head, false) else {
-        return None;
-    };
-    let Some(outer) = crate::object::surrounding_html_tag(map, head, head..head, true) else {
-        return None;
-    };
+    let inner = crate::object::surrounding_html_tag(map, head, head..head, false)?;
+    let outer = crate::object::surrounding_html_tag(map, head, head..head, true)?;
 
     if head > outer.start && head < inner.start {
         let mut offset = inner.end.to_offset(map, Bias::Left);
@@ -1752,7 +1748,7 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
 
         for (open_range, close_range) in ranges {
             if map.buffer_snapshot.chars_at(open_range.start).next() == Some('<') {
-                if offset >= open_range.start + 1 && offset < close_range.start {
+                if offset > open_range.start && offset < close_range.start {
                     let mut chars = map.buffer_snapshot.chars_at(close_range.start);
                     if (Some('/'), Some('>')) == (chars.next(), chars.next()) {
                         return display_point;
