@@ -447,7 +447,7 @@ impl AssistantPanel {
                     );
                 let _pane = cx.view().clone();
                 let right_children = h_flex()
-                    .gap(Spacing::XSmall.rems(cx))
+                    .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
                         IconButton::new("new-chat", IconName::Plus)
                             .on_click(
@@ -4838,7 +4838,7 @@ impl ConfigurationView {
             )
             .child(
                 div()
-                    .p(Spacing::Large.rems(cx))
+                    .p(DynamicSpacing::Base08.rems(cx))
                     .bg(cx.theme().colors().surface_background)
                     .border_1()
                     .border_color(cx.theme().colors().border_variant)
@@ -4872,7 +4872,7 @@ impl Render for ConfigurationView {
             .overflow_y_scroll()
             .child(
                 v_flex()
-                    .p(Spacing::XXLarge.rems(cx))
+                    .p(DynamicSpacing::Base16.rems(cx))
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .gap_1()
@@ -4886,7 +4886,7 @@ impl Render for ConfigurationView {
             )
             .child(
                 v_flex()
-                    .p(Spacing::XXLarge.rems(cx))
+                    .p(DynamicSpacing::Base16.rems(cx))
                     .mt_1()
                     .gap_6()
                     .flex_1()

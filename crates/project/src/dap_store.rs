@@ -28,9 +28,8 @@ use futures::future::Shared;
 use futures::FutureExt;
 use gpui::{EventEmitter, Model, ModelContext, SharedString, Task};
 use http_client::HttpClient;
-use language::{
-    Buffer, BufferSnapshot, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName,
-};
+use language::{Buffer, BufferSnapshot, LanguageRegistry, LanguageServerBinaryStatus};
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use serde_json::Value;
 use settings::{Settings, WorktreeId};

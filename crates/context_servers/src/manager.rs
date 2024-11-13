@@ -18,7 +18,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use futures::{Future, FutureExt};
@@ -36,19 +36,25 @@ use crate::{
 
 #[derive(Deserialize, Serialize, Default, Clone, PartialEq, Eq, JsonSchema, Debug)]
 pub struct ContextServerSettings {
-    pub servers: Vec<ServerConfig>,
+    #[serde(default)]
+    pub context_servers: HashMap<Arc<str>, ServerConfig>,
+}
+
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug, Default)]
+pub struct ServerConfig {
+    pub command: Option<ServerCommand>,
+    pub settings: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
-pub struct ServerConfig {
-    pub id: String,
-    pub executable: String,
+pub struct ServerCommand {
+    pub path: String,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
 }
 
 impl Settings for ContextServerSettings {
-    const KEY: Option<&'static str> = Some("experimental.context_servers");
+    const KEY: Option<&'static str> = None;
 
     type FileContent = Self;
 
@@ -79,9 +85,9 @@ pub struct NativeContextServer {
 }
 
 impl NativeContextServer {
-    pub fn new(config: Arc<ServerConfig>) -> Self {
+    pub fn new(id: Arc<str>, config: Arc<ServerConfig>) -> Self {
         Self {
-            id: config.id.clone().into(),
+            id,
             config,
             client: RwLock::new(None),
         }
@@ -107,13 +113,16 @@ impl ContextServer for NativeContextServer {
         cx: &'a AsyncAppContext,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<()>>>> {
         async move {
-            log::info!("starting context server {}", self.config.id,);
+            log::info!("starting context server {}", self.id);
+            let Some(command) = &self.config.command else {
+                bail!("no command specified for server {}", self.id);
+            };
             let client = Client::new(
-                client::ContextServerId(self.config.id.clone()),
+                client::ContextServerId(self.id.clone()),
                 client::ModelContextServerBinary {
-                    executable: Path::new(&self.config.executable).to_path_buf(),
-                    args: self.config.args.clone(),
-                    env: self.config.env.clone(),
+                    executable: Path::new(&command.path).to_path_buf(),
+                    args: command.args.clone(),
+                    env: command.env.clone(),
                 },
                 cx.clone(),
             )?;
@@ -127,7 +136,7 @@ impl ContextServer for NativeContextServer {
 
             log::debug!(
                 "context server {} initialized: {:?}",
-                self.config.id,
+                self.id,
                 initialized_protocol.initialize,
             );
 
@@ -242,7 +251,7 @@ impl ContextServerManager {
             if let Some(server) = this.update(&mut cx, |this, _cx| this.servers.remove(&id))? {
                 server.stop()?;
                 let config = server.config();
-                let new_server = Arc::new(NativeContextServer::new(config));
+                let new_server = Arc::new(NativeContextServer::new(id.clone(), config));
                 new_server.clone().start(&cx).await?;
                 this.update(&mut cx, |this, cx| {
                     this.servers.insert(id.clone(), new_server);
@@ -270,15 +279,15 @@ impl ContextServerManager {
             .collect::<HashMap<_, _>>();
 
         let new_servers = settings
-            .servers
+            .context_servers
             .iter()
-            .map(|config| (config.id.clone(), config.clone()))
+            .map(|(id, config)| (id.clone(), config.clone()))
             .collect::<HashMap<_, _>>();
 
         let servers_to_add = new_servers
-            .values()
-            .filter(|config| !current_servers.contains_key(config.id.as_str()))
-            .cloned()
+            .iter()
+            .filter(|(id, _)| !current_servers.contains_key(id.as_ref()))
+            .map(|(id, config)| (id.clone(), config.clone()))
             .collect::<Vec<_>>();
 
         let servers_to_remove = current_servers
@@ -288,9 +297,11 @@ impl ContextServerManager {
             .collect::<Vec<_>>();
 
         log::trace!("servers_to_add={:?}", servers_to_add);
-        for config in servers_to_add {
-            let server = Arc::new(NativeContextServer::new(Arc::new(config)));
-            self.add_server(server, cx).detach_and_log_err(cx);
+        for (id, config) in servers_to_add {
+            if config.command.is_some() {
+                let server = Arc::new(NativeContextServer::new(id, Arc::new(config)));
+                self.add_server(server, cx).detach_and_log_err(cx);
+            }
         }
 
         for id in servers_to_remove {

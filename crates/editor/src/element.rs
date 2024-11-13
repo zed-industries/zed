@@ -19,8 +19,8 @@ use crate::{
     BlockId, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
-    PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
+    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp, OpenExcerpts,
+    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
     CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
@@ -652,12 +652,14 @@ impl EditorElement {
             cx.stop_propagation();
         } else if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
-        } else if cfg!(target_os = "linux") && event.button == MouseButton::Middle {
+        } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
+            && event.button == MouseButton::Middle
+        {
             if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
                 return;
             }
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             if EditorSettings::get_global(cx).middle_click_paste {
                 if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
                     let point_for_position =
@@ -2145,6 +2147,7 @@ impl EditorElement {
         block: &Block,
         available_width: AvailableSpace,
         block_id: BlockId,
+        block_row_start: DisplayRow,
         snapshot: &EditorSnapshot,
         text_x: Pixels,
         rows: &Range<DisplayRow>,
@@ -2216,14 +2219,9 @@ impl EditorElement {
                 next_excerpt,
                 show_excerpt_controls,
                 starts_new_buffer,
+                height,
                 ..
             } => {
-                #[derive(Clone)]
-                struct JumpData {
-                    position: Point,
-                    path: Option<ProjectPath>,
-                }
-
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
 
@@ -2262,9 +2260,28 @@ impl EditorElement {
                             .primary
                             .as_ref()
                             .map_or(range.context.start, |primary| primary.start);
+
+                        let excerpt_start = range.context.start;
+                        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
+                        let offset_from_excerpt_start = if jump_anchor == excerpt_start {
+                            0
+                        } else {
+                            let excerpt_start_row =
+                                language::ToPoint::to_point(&jump_anchor, buffer).row;
+                            jump_position.row - excerpt_start_row
+                        };
+                        let line_offset_from_top =
+                            block_row_start.0 + *height + offset_from_excerpt_start
+                                - snapshot
+                                    .scroll_anchor
+                                    .scroll_position(&snapshot.display_snapshot)
+                                    .y as u32;
                         JumpData {
+                            excerpt_id: next_excerpt.id,
+                            anchor: jump_anchor,
                             position: language::ToPoint::to_point(&jump_anchor, buffer),
                             path: jump_path,
+                            line_offset_from_top,
                         }
                     };
 
@@ -2332,6 +2349,7 @@ impl EditorElement {
                                         .on_click(cx.listener_for(&self.editor, {
                                             move |editor, e: &ClickEvent, cx| {
                                                 editor.open_excerpts_common(
+                                                    Some(jump_data.clone()),
                                                     e.down.modifiers.secondary(),
                                                     cx,
                                                 );
@@ -2376,39 +2394,51 @@ impl EditorElement {
                                         }),
                                 )
                                 .cursor_pointer()
-                                .on_click(cx.listener_for(&self.editor, {
-                                    move |editor, e: &ClickEvent, cx| {
-                                        cx.stop_propagation();
-                                        editor
-                                            .open_excerpts_common(e.down.modifiers.secondary(), cx);
+                                .on_click({
+                                    let jump_data = jump_data.clone();
+                                    cx.listener_for(&self.editor, {
+                                        let jump_data = jump_data.clone();
+                                        move |editor, e: &ClickEvent, cx| {
+                                            cx.stop_propagation();
+                                            editor.open_excerpts_common(
+                                                Some(jump_data.clone()),
+                                                e.down.modifiers.secondary(),
+                                                cx,
+                                            );
+                                        }
+                                    })
+                                })
+                                .tooltip({
+                                    let jump_data = jump_data.clone();
+                                    move |cx| {
+                                        let jump_message = format!(
+                                            "Jump to {}:L{}",
+                                            match &jump_data.path {
+                                                Some(project_path) =>
+                                                    project_path.path.display().to_string(),
+                                                None => {
+                                                    let editor = editor.read(cx);
+                                                    editor
+                                                        .file_at(jump_data.position, cx)
+                                                        .map(|file| {
+                                                            file.full_path(cx).display().to_string()
+                                                        })
+                                                        .or_else(|| {
+                                                            Some(
+                                                                editor
+                                                                    .tab_description(0, cx)?
+                                                                    .to_string(),
+                                                            )
+                                                        })
+                                                        .unwrap_or_else(|| {
+                                                            "Unknown buffer".to_string()
+                                                        })
+                                                }
+                                            },
+                                            jump_data.position.row + 1
+                                        );
+                                        Tooltip::for_action(jump_message, &OpenExcerpts, cx)
                                     }
-                                }))
-                                .tooltip(move |cx| {
-                                    let jump_message = format!(
-                                        "Jump to {}:L{}",
-                                        match &jump_data.path {
-                                            Some(project_path) =>
-                                                project_path.path.display().to_string(),
-                                            None => {
-                                                let editor = editor.read(cx);
-                                                editor
-                                                    .file_at(jump_data.position, cx)
-                                                    .map(|file| {
-                                                        file.full_path(cx).display().to_string()
-                                                    })
-                                                    .or_else(|| {
-                                                        Some(
-                                                            editor
-                                                                .tab_description(0, cx)?
-                                                                .to_string(),
-                                                        )
-                                                    })
-                                                    .unwrap_or_else(|| "Unknown buffer".to_string())
-                                            }
-                                        },
-                                        jump_data.position.row + 1
-                                    );
-                                    Tooltip::for_action(jump_message, &OpenExcerpts, cx)
                                 })
                                 .child(
                                     h_flex()
@@ -2543,6 +2573,7 @@ impl EditorElement {
                 block,
                 AvailableSpace::MinContent,
                 block_id,
+                row,
                 snapshot,
                 text_x,
                 &rows,
@@ -2588,6 +2619,7 @@ impl EditorElement {
                 block,
                 width.into(),
                 block_id,
+                row,
                 snapshot,
                 text_x,
                 &rows,
@@ -2634,6 +2666,7 @@ impl EditorElement {
                             &block,
                             width,
                             focused_block.id,
+                            rows.end,
                             snapshot,
                             text_x,
                             &rows,

@@ -5,7 +5,7 @@ use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
-use lsp::LanguageServerBinary;
+use lsp::{LanguageServerBinary, LanguageServerName};
 use regex::Regex;
 use serde_json::json;
 use smol::{fs, process};

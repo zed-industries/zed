@@ -83,6 +83,12 @@ world extension {
         shell-env: func() -> env-vars;
     }
 
+    /// A Zed project.
+    resource project {
+        /// Returns the IDs of all of the worktrees in this project.
+        worktree-ids: func() -> list<u64>;
+    }
+
     /// A key-value store.
     resource key-value-store {
         /// Inserts an entry under the specified key.
@@ -136,7 +142,7 @@ world extension {
     export run-slash-command: func(command: slash-command, args: list<string>, worktree: option<borrow<worktree>>) -> result<slash-command-output, string>;
 
     /// Returns the command used to start up a context server.
-    export context-server-command: func(context-server-id: string) -> result<command, string>;
+    export context-server-command: func(context-server-id: string, project: borrow<project>) -> result<command, string>;
 
     /// Returns a list of packages as suggestions to be included in the `/docs`
     /// search results.

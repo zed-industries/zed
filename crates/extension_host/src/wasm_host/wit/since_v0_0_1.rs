@@ -149,7 +149,7 @@ impl ExtensionImports for WasmState {
 
         self.host
             .registration_hooks
-            .update_lsp_status(language::LanguageServerName(server_name.into()), status);
+            .update_lsp_status(lsp::LanguageServerName(server_name.into()), status);
         Ok(())
     }
 

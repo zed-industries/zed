@@ -6,10 +6,8 @@ use collections::HashMap;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
-use language::{
-    LanguageRegistry, LanguageServerName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
-};
-use lsp::LanguageServerBinary;
+use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use serde_json::{json, Value};

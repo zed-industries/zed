@@ -5,9 +5,8 @@ use crate::lsp_log::LogMenuItem;
 use super::*;
 use futures::StreamExt;
 use gpui::{Context, SemanticVersion, TestAppContext, VisualTestContext};
-use language::{
-    tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageServerName,
-};
+use language::{tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
+use lsp::LanguageServerName;
 use lsp_log::LogKind;
 use project::{FakeFs, Project};
 use serde_json::json;

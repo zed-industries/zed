@@ -84,14 +84,14 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
             .register_server_factory(
                 id.clone(),
                 Arc::new({
-                    move |cx| {
+                    move |project, cx| {
                         let id = id.clone();
                         let extension = extension.clone();
                         let host = host.clone();
-                        cx.spawn(|_cx| async move {
+                        cx.spawn(|cx| async move {
                             let context_server =
-                                ExtensionContextServer::new(extension, host, id).await?;
-
+                                ExtensionContextServer::new(extension, host, id, project, cx)
+                                    .await?;
                             anyhow::Ok(Arc::new(context_server) as _)
                         })
                     }
@@ -121,7 +121,7 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
 
     fn update_lsp_status(
         &self,
-        server_name: language::LanguageServerName,
+        server_name: lsp::LanguageServerName,
         status: LanguageServerBinaryStatus,
     ) {
         self.language_registry
@@ -140,7 +140,7 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
     fn remove_lsp_adapter(
         &self,
         language_name: &language::LanguageName,
-        server_name: &language::LanguageServerName,
+        server_name: &lsp::LanguageServerName,
     ) {
         self.language_registry
             .remove_lsp_adapter(language_name, server_name);

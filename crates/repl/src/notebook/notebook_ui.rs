@@ -273,7 +273,7 @@ impl NotebookEditor {
 
     fn button_group(cx: &ViewContext<Self>) -> Div {
         v_flex()
-            .gap(Spacing::Small.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
             .items_center()
             .w(px(CONTROL_SIZE + 4.0))
             .overflow_hidden()
@@ -299,14 +299,14 @@ impl NotebookEditor {
         v_flex()
             .max_w(px(CONTROL_SIZE + 4.0))
             .items_center()
-            .gap(Spacing::XXLarge.rems(cx))
+            .gap(DynamicSpacing::Base16.rems(cx))
             .justify_between()
             .flex_none()
             .h_full()
-            .py(Spacing::XLarge.px(cx))
+            .py(DynamicSpacing::Base12.px(cx))
             .child(
                 v_flex()
-                    .gap(Spacing::Large.rems(cx))
+                    .gap(DynamicSpacing::Base08.rems(cx))
                     .child(
                         Self::button_group(cx)
                             .child(
@@ -390,7 +390,7 @@ impl NotebookEditor {
             )
             .child(
                 v_flex()
-                    .gap(Spacing::Large.rems(cx))
+                    .gap(DynamicSpacing::Base08.rems(cx))
                     .items_center()
                     .child(Self::render_notebook_control(
                         "more-menu",
@@ -468,8 +468,8 @@ impl Render for NotebookEditor {
             .items_start()
             .size_full()
             .overflow_hidden()
-            .px(Spacing::XLarge.px(cx))
-            .gap(Spacing::XLarge.px(cx))
+            .px(DynamicSpacing::Base12.px(cx))
+            .gap(DynamicSpacing::Base12.px(cx))
             .bg(cx.theme().colors().tab_bar_background)
             .child(
                 v_flex()
