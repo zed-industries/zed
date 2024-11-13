@@ -8,9 +8,8 @@ use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
 use collections::HashMap;
-use command_palette_hooks::CommandPaletteFilter;
-use context_servers::manager::{ContextServerManager, ContextServerSettings};
-use context_servers::{ContextServerFactoryRegistry, CONTEXT_SERVERS_NAMESPACE};
+use context_servers::manager::ContextServerManager;
+use context_servers::ContextServerFactoryRegistry;
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
@@ -22,7 +21,6 @@ use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
 use rpc::AnyProtoClient;
-use settings::{Settings as _, SettingsStore};
 use std::{
     cmp::Reverse,
     ffi::OsStr,
@@ -111,7 +109,11 @@ impl ContextStore {
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
             let this = cx.new_model(|cx: &mut ModelContext<Self>| {
-                let context_server_manager = cx.new_model(|_cx| ContextServerManager::new());
+                let context_server_factory_registry =
+                    ContextServerFactoryRegistry::default_global(cx);
+                let context_server_manager = cx.new_model(|cx| {
+                    ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
+                });
                 let mut this = Self {
                     contexts: Vec::new(),
                     contexts_metadata: Vec::new(),
@@ -148,89 +150,14 @@ impl ContextStore {
                 this.handle_project_changed(project.clone(), cx);
                 this.synchronize_contexts(cx);
                 this.register_context_server_handlers(cx);
-
-                if project.read(cx).is_local() {
-                    // TODO: At the time when we construct the `ContextStore` we may not have yet initialized the extensions.
-                    // In order to register the context servers when the extension is loaded, we're periodically looping to
-                    // see if there are context servers to register.
-                    //
-                    // I tried doing this in a subscription on the `ExtensionStore`, but it never seemed to fire.
-                    //
-                    // We should find a more elegant way to do this.
-                    let context_server_factory_registry =
-                        ContextServerFactoryRegistry::default_global(cx);
-                    cx.spawn(|context_store, mut cx| async move {
-                        loop {
-                            let mut servers_to_register = Vec::new();
-                            for (_id, factory) in
-                                context_server_factory_registry.context_server_factories()
-                            {
-                                if let Some(server) = factory(project.clone(), &cx).await.log_err()
-                                {
-                                    servers_to_register.push(server);
-                                }
-                            }
-
-                            let Some(_) = context_store
-                                .update(&mut cx, |this, cx| {
-                                    this.context_server_manager.update(cx, |this, cx| {
-                                        for server in servers_to_register {
-                                            this.add_server(server, cx).detach_and_log_err(cx);
-                                        }
-                                    })
-                                })
-                                .log_err()
-                            else {
-                                break;
-                            };
-
-                            smol::Timer::after(Duration::from_millis(100)).await;
-                        }
-
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
-                }
-
                 this
             })?;
             this.update(&mut cx, |this, cx| this.reload(cx))?
                 .await
                 .log_err();
 
-            this.update(&mut cx, |this, cx| {
-                this.watch_context_server_settings(cx);
-            })
-            .log_err();
-
             Ok(this)
         })
-    }
-
-    fn watch_context_server_settings(&self, cx: &mut ModelContext<Self>) {
-        cx.observe_global::<SettingsStore>(move |this, cx| {
-            this.context_server_manager.update(cx, |manager, cx| {
-                let location = this.project.read(cx).worktrees(cx).next().map(|worktree| {
-                    settings::SettingsLocation {
-                        worktree_id: worktree.read(cx).id(),
-                        path: Path::new(""),
-                    }
-                });
-                let settings = ContextServerSettings::get(location, cx);
-
-                manager.maintain_servers(settings, cx);
-
-                let has_any_context_servers = !manager.servers().is_empty();
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    if has_any_context_servers {
-                        filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
-                    } else {
-                        filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
-                    }
-                });
-            })
-        })
-        .detach();
     }
 
     async fn handle_advertise_contexts(
