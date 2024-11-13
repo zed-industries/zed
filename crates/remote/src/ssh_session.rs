@@ -6,6 +6,7 @@ use crate::{
     proxy::ProxyLaunchError,
 };
 use anyhow::{anyhow, Context as _, Result};
+use askpass_password::{generate_password_helper_script, AskpassPasswordHelper};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
@@ -61,7 +62,10 @@ pub struct SshProjectId(pub u64);
 #[derive(Clone)]
 pub struct SshSocket {
     connection_options: SshConnectionOptions,
+    #[cfg(not(target_os = "windows"))]
     socket_path: PathBuf,
+    #[cfg(target_os = "windows")]
+    password_helper: Option<PathBuf>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -292,14 +296,25 @@ impl SshSocket {
     }
 
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
+        #[cfg(not(target_os = "windows"))]
+        command
+            .args(["-o", "ControlMaster=no", "-o"])
+            .arg(format!("ControlPath={}", self.socket_path.display()));
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(ref askpass_script) = self.password_helper {
+                command
+                    .env("SSH_ASKPASS_REQUIRE", "force")
+                    .env("SSH_ASKPASS", &askpass_script);
+            }
+        }
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .args(["-o", "ControlMaster=no", "-o"])
-            .arg(format!("ControlPath={}", self.socket_path.display()))
     }
 
+    #[cfg(not(target_os = "windows"))]
     fn ssh_args(&self) -> Vec<String> {
         vec![
             "-o".to_string(),
@@ -308,6 +323,11 @@ impl SshSocket {
             format!("ControlPath={}", self.socket_path.display()),
             self.connection_options.ssh_url(),
         ]
+    }
+
+    #[cfg(target_os = "windows")]
+    fn ssh_args(&self) -> Vec<String> {
+        vec![self.connection_options.ssh_url()]
     }
 }
 
@@ -1390,6 +1410,8 @@ impl SshRemoteConnection {
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener = AskpassHandle::new(&askpass_handle_name)?;
         let pipe_guard = PipeGuard::new(&askpass_handle_name)?;
+        let (askpass_password, shaerd_mem_identifier) =
+            AskpassPasswordHelper::new(&askpass_handle_name)?;
 
         // let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<UnixStream>();
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<PipeStream>();
@@ -1415,7 +1437,8 @@ impl SshRemoteConnection {
                         .log_err()
                     {
                         // stream.write_all(password.as_bytes()).await.log_err();
-                        listener.send_password(password).await.log_err();
+                        listener.send_password(&password).log_err();
+                        askpass_password.write_password(&password).log_err();
                     } else {
                         if let Some(kill_tx) = kill_tx.take() {
                             kill_tx.send(stream).log_err();
@@ -1486,8 +1509,10 @@ impl SshRemoteConnection {
         let mut output = Vec::new();
         let connection_timeout = Duration::from_secs(1000);
 
+        let mut require_password = false;
         let result = select_biased! {
             _ = askpass_opened_rx.fuse() => {
+                require_password = true;
                 select_biased! {
                     stream = askpass_kill_master_rx.fuse() => {
                         master_process.kill().ok();
@@ -1530,9 +1555,20 @@ impl SshRemoteConnection {
             Err(anyhow!(error_message))?;
         }
 
+        let askpass_password_helper = if require_password {
+            Some(generate_password_helper_script(
+                &shaerd_mem_identifier,
+                &temp_dir,
+            )?)
+        } else {
+            None
+        };
         let socket = SshSocket {
             connection_options,
+            #[cfg(not(target_os = "windows"))]
             socket_path,
+            #[cfg(target_os = "windows")]
+            password_helper: askpass_password_helper,
         };
 
         let mut this = Self {
@@ -2387,7 +2423,7 @@ mod ipc {
     const SSH_NAMED_PIPE_MAX_SIZE: usize = 1024;
 
     #[derive(Debug, Clone, Copy)]
-    struct SafeHandle(HANDLE);
+    pub struct SafeHandle(HANDLE);
 
     unsafe impl Send for SafeHandle {}
     unsafe impl Sync for SafeHandle {}
@@ -2399,7 +2435,7 @@ mod ipc {
     }
 
     impl SafeHandle {
-        fn to_handle(&self) -> HANDLE {
+        pub fn to_handle(&self) -> HANDLE {
             self.0
         }
     }
@@ -2463,18 +2499,18 @@ mod ipc {
         }
 
         #[cfg(target_os = "windows")]
-        pub(super) async fn send_password(&self, password: String) -> Result<()> {
+        pub(super) fn send_password(&self, password: &str) -> Result<()> {
             use windows::Win32::Storage::FileSystem::WriteFile;
 
-            let raw_handle = self.pipe;
-            smol::unblock(move || {
-                let bytes = password.as_bytes();
-                unsafe {
-                    WriteFile(raw_handle.to_handle(), Some(bytes), None, None)?;
-                }
-                Ok(())
-            })
-            .await
+            // let raw_handle = self.pipe;
+            // smol::unblock(move || {
+            let bytes = password.as_bytes();
+            unsafe {
+                WriteFile(self.pipe.to_handle(), Some(bytes), None, None)?;
+            }
+            Ok(())
+            // })
+            // .await
         }
     }
 
@@ -2625,7 +2661,6 @@ mod ipc {
         identifier: &str,
     ) -> Result<PathBuf> {
         let pipe_identifier = format!("{}-Named-Pipe", identifier);
-        println!("=> Generating askpass script: {:?}", pipe_identifier);
         let ps1_content = format!(
             r#"
             $argsString = [String]::Join("`0", $args) + "`0"
@@ -2664,6 +2699,102 @@ mod ipc {
         let cmd_path = temp_dir.path().join("askpass.cmd");
         smol::fs::write(&cmd_path, cmd_content).await?;
         Ok(cmd_path)
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod askpass_password {
+    use std::path::PathBuf;
+
+    use tempfile::TempDir;
+    use util::ResultExt;
+    use windows::{
+        core::HSTRING,
+        Win32::{
+            Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+            Storage::FileSystem::WriteFile,
+            System::Memory::{
+                CreateFileMappingW, MapViewOfFile, UnmapViewOfFile, FILE_MAP_WRITE, PAGE_READWRITE,
+            },
+        },
+    };
+
+    use super::ipc::SafeHandle;
+
+    const APP_SHARED_MEMORY_MAX_SIZE: usize = 512;
+
+    pub(super) struct AskpassPasswordHelper(SafeHandle);
+
+    impl AskpassPasswordHelper {
+        pub(super) fn new(identifier: &str) -> anyhow::Result<(Self, String)> {
+            let identifier = format!("Local\\{}-Shared-Memory", identifier);
+            let handle = unsafe {
+                CreateFileMappingW(
+                    INVALID_HANDLE_VALUE,
+                    None,
+                    PAGE_READWRITE,
+                    0,
+                    APP_SHARED_MEMORY_MAX_SIZE as u32,
+                    &HSTRING::from(&identifier),
+                )
+            }?;
+            Ok((Self(handle.into()), identifier))
+        }
+
+        pub fn write_password(&self, password: &str) -> anyhow::Result<()> {
+            unsafe {
+                let mem_addr = MapViewOfFile(self.0.to_handle(), FILE_MAP_WRITE, 0, 0, 0);
+                std::ptr::copy_nonoverlapping(
+                    password.as_ptr(),
+                    mem_addr.Value as _,
+                    password.len(),
+                );
+                UnmapViewOfFile(mem_addr)?;
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for AskpassPasswordHelper {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0.to_handle()).log_err();
+            }
+        }
+    }
+
+    pub(super) fn generate_password_helper_script(
+        identifier: &str,
+        temp_dir: &TempDir,
+    ) -> anyhow::Result<PathBuf> {
+        let cmd_file = temp_dir.path().join("askpass_password_helper.cmd");
+        let ps1_file = temp_dir.path().join("askpass_password_helper.ps1");
+
+        let cmd_content = format!(
+            r#"
+            @echo off
+            powershell.exe -ExecutionPolicy Bypass -File "{}"
+            "#,
+            ps1_file.to_string_lossy()
+        );
+        let ps1_content = format!(
+            r#"
+            $sharedMemoryName = "{}"
+            $memoryMappedFile = [System.IO.MemoryMappedFiles.MemoryMappedFile]::OpenExisting($sharedMemoryName)
+            $streamAccessor = $memoryMappedFile.CreateViewStream()
+            $reader = New-Object System.IO.BinaryReader($streamAccessor)
+            $data = $reader.ReadBytes({})
+            $message = [System.Text.Encoding]::UTF8.GetString($data).Trim([char]0)
+            $reader.Close()
+            $streamAccessor.Close()
+            $memoryMappedFile.Dispose()
+            Write-Host $message
+            "#,
+            identifier, APP_SHARED_MEMORY_MAX_SIZE
+        );
+        std::fs::write(&cmd_file, cmd_content)?;
+        std::fs::write(&ps1_file, ps1_content)?;
+        Ok(cmd_file)
     }
 }
 
