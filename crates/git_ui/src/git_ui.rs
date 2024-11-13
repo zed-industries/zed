@@ -3,12 +3,8 @@
 use git::repository::GitFileStatus;
 use gpui::*;
 use smallvec::{smallvec, SmallVec, ToSmallVec};
-use ui::prelude::*;
-use ui::ButtonLike;
-use ui::Disclosure;
-use ui::Divider;
-use ui::DividerColor;
-use ui::Tooltip;
+use ui::{prelude::*, ElevationIndex, IconButtonShape};
+use ui::{ButtonLike, Disclosure, Divider, DividerColor, Tooltip};
 use workspace::item::TabContentParams;
 
 actions!(vcs_status, [Deploy]);
@@ -143,6 +139,9 @@ pub struct GitProjectStatus {
     staged_count: usize,
     lines_changed: GitLines,
     changed_files: Vec<ChangedFile>,
+    staged_expanded: bool,
+    unstaged_expanded: bool,
+    show_list: bool,
 }
 
 impl GitProjectStatus {
@@ -162,9 +161,13 @@ impl GitProjectStatus {
             staged_count,
             lines_changed,
             changed_files,
+            unstaged_expanded: true,
+            staged_expanded: false,
+            show_list: false,
         }
     }
 }
+
 #[derive(IntoElement)]
 pub struct ChangedFileHeader {
     id: ElementId,
@@ -194,8 +197,6 @@ impl RenderOnce for ChangedFileHeader {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let disclosure_id = ElementId::Name(format!("{}-file-disclosure", self.id.clone()).into());
 
-        let added_label: SharedString = format!("+{}", self.changed_file.lines_added).into();
-        let removed_label: SharedString = format!("-{}", self.changed_file.lines_removed).into();
         let file_path = self.changed_file.file_path.clone();
 
         h_flex()
@@ -203,10 +204,11 @@ impl RenderOnce for ChangedFileHeader {
             .justify_between()
             .w_full()
             .hover(|this| this.bg(cx.theme().status().info_background))
+            .cursor(CursorStyle::PointingHand)
             .group("")
             .rounded_sm()
             .px_2()
-            .py_2p5()
+            .py_1p5()
             .child(
                 h_flex()
                     .gap_2()
@@ -216,16 +218,20 @@ impl RenderOnce for ChangedFileHeader {
                     .child(
                         h_flex()
                             .gap_1()
-                            .child(
-                                Label::new(added_label)
-                                    .color(Color::Created)
-                                    .size(LabelSize::Small),
-                            )
-                            .child(
-                                Label::new(removed_label)
-                                    .color(Color::Deleted)
-                                    .size(LabelSize::Small),
-                            ),
+                            .when(self.changed_file.lines_added > 0, |this| {
+                                this.child(
+                                    Label::new(format!("+{}", self.changed_file.lines_added))
+                                        .color(Color::Created)
+                                        .size(LabelSize::Small),
+                                )
+                            })
+                            .when(self.changed_file.lines_removed > 0, |this| {
+                                this.child(
+                                    Label::new(format!("-{}", self.changed_file.lines_removed))
+                                        .color(Color::Deleted)
+                                        .size(LabelSize::Small),
+                                )
+                            }),
                     ),
             )
             .child(
@@ -233,10 +239,29 @@ impl RenderOnce for ChangedFileHeader {
                     .gap_2()
                     .child(
                         IconButton::new("more-menu", IconName::EllipsisVertical)
+                            .shape(IconButtonShape::Square)
+                            .size(ButtonSize::Compact)
+                            .icon_size(IconSize::XSmall)
                             .icon_color(Color::Muted),
                     )
-                    .child(IconButton::new("remove-file", IconName::X).icon_color(Color::Muted))
-                    .child(IconButton::new("check-file", IconName::Check).icon_color(Color::Muted)),
+                    .child(
+                        IconButton::new("remove-file", IconName::X)
+                            .shape(IconButtonShape::Square)
+                            .size(ButtonSize::Compact)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Error)
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::Background),
+                    )
+                    .child(
+                        IconButton::new("check-file", IconName::Check)
+                            .shape(IconButtonShape::Square)
+                            .size(ButtonSize::Compact)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Accent)
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::Background),
+                    ),
             )
     }
 }
@@ -253,6 +278,13 @@ impl GitProjectOverview {
 
         Self { id, project_status }
     }
+
+    pub fn toggle_file_list(&self, cx: &mut WindowContext) {
+        self.project_status.update(cx, |status, cx| {
+            status.show_list = !status.show_list;
+            cx.notify();
+        });
+    }
 }
 
 impl RenderOnce for GitProjectOverview {
@@ -262,8 +294,16 @@ impl RenderOnce for GitProjectOverview {
         let id = self.id.clone();
         let changed_files: SharedString = format!("{} Changed files", status.file_count).into();
 
-        let added_label: SharedString = format!("+{}", status.lines_changed.added).into();
-        let removed_label: SharedString = format!("-{}", status.lines_changed.removed).into();
+        let added_label: Option<SharedString> = if status.lines_changed.added > 0 {
+            Some(format!("+{}", status.lines_changed.added).into())
+        } else {
+            None
+        };
+        let removed_label: Option<SharedString> = if status.lines_changed.removed > 0 {
+            Some(format!("-{}", status.lines_changed.removed).into())
+        } else {
+            None
+        };
         let total_label: SharedString = "total lines changed".into();
 
         h_flex()
@@ -273,7 +313,12 @@ impl RenderOnce for GitProjectOverview {
             .px_2()
             .py_2p5()
             .gap_2()
-            .child(IconButton::new("open-sidebar", IconName::PanelLeft).icon_color(Color::Muted))
+            .child(
+                IconButton::new("open-sidebar", IconName::PanelLeft)
+                    .selected(self.project_status.read(cx).show_list)
+                    .icon_color(Color::Muted)
+                    .on_click(move |_, cx| self.toggle_file_list(cx)),
+            )
             .child(
                 h_flex()
                     .gap_4()
@@ -281,16 +326,20 @@ impl RenderOnce for GitProjectOverview {
                     .child(
                         h_flex()
                             .gap_1()
-                            .child(
-                                Label::new(added_label)
-                                    .color(Color::Created)
-                                    .size(LabelSize::Small),
-                            )
-                            .child(
-                                Label::new(removed_label)
-                                    .color(Color::Deleted)
-                                    .size(LabelSize::Small),
-                            )
+                            .when(added_label.is_some(), |this| {
+                                this.child(
+                                    Label::new(added_label.unwrap())
+                                        .color(Color::Created)
+                                        .size(LabelSize::Small),
+                                )
+                            })
+                            .when(removed_label.is_some(), |this| {
+                                this.child(
+                                    Label::new(removed_label.unwrap())
+                                        .color(Color::Deleted)
+                                        .size(LabelSize::Small),
+                                )
+                            })
                             .child(
                                 Label::new(total_label)
                                     .color(Color::Muted)
@@ -306,7 +355,6 @@ pub struct GitStagingControls {
     id: ElementId,
     project_status: Model<GitProjectStatus>,
     is_staged: bool,
-    is_expanded: bool,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -318,7 +366,6 @@ impl GitStagingControls {
             id,
             project_status,
             is_staged: true,
-            is_expanded: false,
             children: SmallVec::new(),
         }
     }
@@ -330,15 +377,8 @@ impl GitStagingControls {
             id,
             project_status,
             is_staged: false,
-            is_expanded: true,
-
             children: SmallVec::new(),
         }
-    }
-
-    pub fn on_toggle(mut self) -> Self {
-        self.is_expanded = !self.is_expanded;
-        self
     }
 }
 
@@ -359,6 +399,13 @@ impl RenderOnce for GitStagingControls {
             ("Unstaged", status.unstaged_count)
         };
 
+        // TODO: Convert staging_type to an enum so we don't have to do this
+        let is_expanded = match staging_type {
+            "Staged" => status.staged_expanded,
+            "Unstaged" => status.unstaged_expanded,
+            _ => false,
+        };
+
         let changed_files: Vec<ChangedFile> = status
             .changed_files
             .iter()
@@ -370,12 +417,24 @@ impl RenderOnce for GitStagingControls {
 
         let id = self.id.clone();
         let container_id = ElementId::Name(format!("{}-container", id.clone()).into());
+        let project_status = self.project_status.clone();
 
         v_flex()
-            .when(self.is_expanded, |this| this.flex_1().h_full())
+            .when(is_expanded, |this| this.flex_1().h_full())
             .child(
                 h_flex()
                     .id(id.clone())
+                    .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
+                    .on_click(move |_, cx| {
+                        project_status.update(cx, |status, cx| {
+                            if self.is_staged {
+                                status.staged_expanded = !status.staged_expanded;
+                            } else {
+                                status.unstaged_expanded = !status.unstaged_expanded;
+                            }
+                            cx.notify();
+                        })
+                    })
                     .flex_none()
                     .justify_between()
                     .w_full()
@@ -385,7 +444,18 @@ impl RenderOnce for GitStagingControls {
                     .child(
                         h_flex()
                             .gap_2()
-                            .child(Disclosure::new("staging-control", self.is_expanded))
+                            .child(Disclosure::new("staging-control", is_expanded).on_click(
+                                move |_, cx| {
+                                    self.project_status.clone().update(cx, |status, cx| {
+                                        if self.is_staged {
+                                            status.staged_expanded = !status.staged_expanded;
+                                        } else {
+                                            status.unstaged_expanded = !status.unstaged_expanded;
+                                        }
+                                        cx.notify();
+                                    })
+                                },
+                            ))
                             .child(Label::new(label).size(LabelSize::Small)),
                     )
                     .child(h_flex().gap_2().map(|this| {
@@ -396,6 +466,8 @@ impl RenderOnce for GitStagingControls {
                                     "Discard All",
                                 )
                                 .layer(ui::ElevationIndex::ModalSurface)
+                                .size(ButtonSize::Compact)
+                                .label_size(LabelSize::Small)
                                 .icon(IconName::X)
                                 .icon_position(IconPosition::Start)
                                 .icon_color(Color::Muted),
@@ -405,6 +477,8 @@ impl RenderOnce for GitStagingControls {
                                     ElementId::Name(format!("{}-unstage", id.clone()).into()),
                                     "Stage All",
                                 )
+                                .size(ButtonSize::Compact)
+                                .label_size(LabelSize::Small)
                                 .layer(ui::ElevationIndex::ModalSurface)
                                 .icon(IconName::Check)
                                 .icon_position(IconPosition::Start)
@@ -424,15 +498,15 @@ impl RenderOnce for GitStagingControls {
                         }
                     })),
             )
-            .when(self.is_expanded, |this| {
+            .when(is_expanded, |this| {
                 this.child(
                     v_flex()
                         .id(container_id)
                         .flex_1()
                         .overflow_x_scroll()
                         .bg(cx.theme().colors().editor_background)
-                        .px_1p5()
-                        .py_3()
+                        .px_1()
+                        .py_1p5()
                         .gap_1()
                         .when(changed_files.is_empty(), |this| {
                             this.child(
@@ -514,26 +588,46 @@ impl Render for ProjectStatusTab {
         let id = self.id.clone();
 
         let project_status = self.status.clone();
+        let project_status_read = project_status.read(cx);
 
-        v_flex()
+        h_flex()
             .id(id)
-            .h_full()
             .flex_1()
-            .bg(cx.theme().colors().elevated_surface_background)
-            .child(GitProjectOverview::new(
-                "project-overview",
-                project_status.clone(),
-            ))
-            .child(Divider::horizontal_dashed())
-            .child(GitStagingControls::unstaged(
-                "unstaged-controls",
-                project_status.clone(),
-            ))
-            .child(Divider::horizontal())
-            .child(GitStagingControls::staged(
-                "staged-controls",
-                project_status,
-            ))
+            .size_full()
+            .overflow_hidden()
+            .when(project_status_read.show_list, |this| {
+                this.child(
+                    v_flex()
+                        .bg(ElevationIndex::Surface.bg(cx))
+                        .border_r_1()
+                        .border_color(cx.theme().colors().border)
+                        .w(px(280.))
+                        .flex_none()
+                        .h_full()
+                        .child("sidebar"),
+                )
+            })
+            .child(
+                v_flex()
+                    .h_full()
+                    .flex_1()
+                    .overflow_hidden()
+                    .bg(ElevationIndex::Surface.bg(cx))
+                    .child(GitProjectOverview::new(
+                        "project-overview",
+                        project_status.clone(),
+                    ))
+                    .child(Divider::horizontal_dashed())
+                    .child(GitStagingControls::unstaged(
+                        "unstaged-controls",
+                        project_status.clone(),
+                    ))
+                    .child(Divider::horizontal())
+                    .child(GitStagingControls::staged(
+                        "staged-controls",
+                        project_status,
+                    )),
+            )
     }
 }
 
