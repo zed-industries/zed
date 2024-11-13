@@ -139,22 +139,14 @@ impl Model {
     }
 
     pub fn beta_headers(&self) -> String {
-        let default_headers =
-            "tools-2024-04-04,prompt-caching-2024-07-31,max-tokens-3-5-sonnet-2024-07-15";
-        match self {
-            Self::Custom {
-                extra_beta_headers: Some(extra_headers),
-                ..
-            } => {
-                let mut result = default_headers.to_string();
-                for header in extra_headers {
-                    result.push(',');
-                    result.push_str(&header);
-                }
-                result
-            }
-            _ => default_headers.to_string(),
-        }
+    let mut headers = vec![
+        "tools-2024-04-04", "prompt-caching-2024-07-31", "max-tokens-3-5-sonnet-2024-07-15"
+    ];
+    
+    if let Self::Custom { extra_beta_headers: Some(extra_headers), .. } = self {
+        headers.extend(extra_headers.iter().filter(|s| !s.trim().is_empty()));
+    }
+    headers.join(',').to_string()
     }
 
     pub fn tool_model_id(&self) -> &str {
