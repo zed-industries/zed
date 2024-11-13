@@ -2452,14 +2452,8 @@ impl ProjectPanel {
                         .get(&(*worktree_id, entry.path.to_path_buf()))
                         .cloned();
 
-                    let filename_text_color = if entry.kind.is_file()
-                        && diagnostic_severity
-                            .map_or(false, |severity| severity == DiagnosticSeverity::ERROR)
-                    {
-                        Color::Error
-                    } else {
-                        entry_git_aware_label_color(status, entry.is_ignored, is_marked)
-                    };
+                    let filename_text_color =
+                        entry_git_aware_label_color(status, entry.is_ignored, is_marked);
 
                     let mut details = EntryDetails {
                         filename,
