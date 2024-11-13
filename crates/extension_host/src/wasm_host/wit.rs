@@ -3,14 +3,13 @@ mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_1_0;
 mod since_v0_2_0;
-use extension::KeyValueStoreDelegate;
+use extension::{KeyValueStoreDelegate, WorktreeDelegate};
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
 use since_v0_2_0 as latest;
 
 use super::{wasm_engine, WasmState};
 use anyhow::{anyhow, Context, Result};
-use language::LspAdapterDelegate;
 use semantic_version::SemanticVersion;
 use std::{ops::RangeInclusive, sync::Arc};
 use wasmtime::{
@@ -152,7 +151,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
         config: &LanguageServerConfig,
-        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Command, String>> {
         match self {
             Extension::V020(ext) => {
@@ -183,7 +182,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
         config: &LanguageServerConfig,
-        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
             Extension::V020(ext) => {
@@ -229,7 +228,7 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
-        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
             Extension::V020(ext) => {
@@ -366,7 +365,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         command: &SlashCommand,
         arguments: &[String],
-        resource: Option<Resource<Arc<dyn LspAdapterDelegate>>>,
+        resource: Option<Resource<Arc<dyn WorktreeDelegate>>>,
     ) -> Result<Result<SlashCommandOutput, String>> {
         match self {
             Extension::V020(ext) => {
