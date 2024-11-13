@@ -23,9 +23,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::{
-    prelude::*, tooltip_container, ButtonLike, KeyBinding, ListItem, ListItemSpacing, Tooltip,
-};
+use ui::{prelude::*, tooltip_container, KeyBinding, ListItem, ListItemSpacing, Tooltip};
 use util::{paths::PathExt, ResultExt};
 use workspace::{
     CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceId,
@@ -471,27 +469,20 @@ impl PickerDelegate for RecentProjectsDelegate {
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
         Some(
             h_flex()
-                .border_t_1()
-                .py_2()
-                .pr_2()
-                .border_color(cx.theme().colors().border_variant)
+                .w_full()
+                .p_2()
+                .gap_2()
                 .justify_end()
-                .gap_4()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
                 .child(
-                    ButtonLike::new("remote")
-                        .when_some(KeyBinding::for_action(&OpenRemote, cx), |button, key| {
-                            button.child(key)
-                        })
-                        .child(Label::new("Open Remote Folder…").color(Color::Muted))
+                    Button::new("remote", "Open Remote Folder")
+                        .key_binding(KeyBinding::for_action(&OpenRemote, cx))
                         .on_click(|_, cx| cx.dispatch_action(OpenRemote.boxed_clone())),
                 )
                 .child(
-                    ButtonLike::new("local")
-                        .when_some(
-                            KeyBinding::for_action(&workspace::Open, cx),
-                            |button, key| button.child(key),
-                        )
-                        .child(Label::new("Open Local Folder…").color(Color::Muted))
+                    Button::new("local", "Open Local Folder")
+                        .key_binding(KeyBinding::for_action(&workspace::Open, cx))
                         .on_click(|_, cx| cx.dispatch_action(workspace::Open.boxed_clone())),
                 )
                 .into_any(),
