@@ -13158,7 +13158,8 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
 
             editor.insert_creases(Some(crease), cx);
             let snapshot = editor.snapshot(cx);
-            let _div = snapshot.render_fold_toggle(MultiBufferRow(1), false, cx.view().clone(), cx);
+            let _div =
+                snapshot.render_crease_toggle(MultiBufferRow(1), false, cx.view().clone(), cx);
             snapshot
         })
         .unwrap();

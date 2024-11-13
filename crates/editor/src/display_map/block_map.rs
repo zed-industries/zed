@@ -7,8 +7,7 @@ use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, EntityId, Pixels, WindowContext};
 use language::{Chunk, Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBufferRow, MultiBufferSnapshot, ToOffset as _,
-    ToPoint as _,
+    Anchor, ExcerptId, ExcerptInfo, MultiBufferRow, MultiBufferSnapshot, ToOffset, ToPoint as _,
 };
 use parking_lot::Mutex;
 use std::{
@@ -1128,15 +1127,33 @@ impl<'a> BlockMapWriter<'a> {
         self.0.sync(wrap_snapshot, edits);
     }
 
-    pub fn remove_intersecting_replace_blocks(
+    pub fn remove_intersecting_replace_blocks<T>(
         &mut self,
-        _ranges: impl IntoIterator<Item = Range<usize>>,
+        ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
-    ) {
-        todo!()
+    ) where
+        T: ToOffset,
+    {
+        let wrap_snapshot = self.0.wrap_snapshot.borrow();
+        let mut blocks_to_remove = HashSet::default();
+        for range in ranges {
+            let range = range.start.to_offset(wrap_snapshot.buffer_snapshot())
+                ..range.end.to_offset(wrap_snapshot.buffer_snapshot());
+            for block in self.blocks_intersecting_buffer_range(range, inclusive) {
+                if matches!(block.placement, BlockPlacement::Replace(_)) {
+                    blocks_to_remove.insert(block.id);
+                }
+            }
+        }
+        drop(wrap_snapshot);
+        self.remove(blocks_to_remove);
     }
 
-    fn intersecting_blocks(&self, range: Range<usize>, inclusive: bool) -> Range<usize> {
+    fn blocks_intersecting_buffer_range(
+        &self,
+        range: Range<usize>,
+        inclusive: bool,
+    ) -> &[Arc<CustomBlock>] {
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
         let start_block_ix = match self.0.custom_blocks.binary_search_by(|probe| {
@@ -1165,7 +1182,7 @@ impl<'a> BlockMapWriter<'a> {
         }) {
             Ok(ix) | Err(ix) => ix,
         };
-        start_block_ix..end_block_ix
+        &self.0.custom_blocks[start_block_ix..end_block_ix]
     }
 }
 

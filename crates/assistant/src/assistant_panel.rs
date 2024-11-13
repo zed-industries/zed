@@ -1480,7 +1480,6 @@ struct ScrollPosition {
 }
 
 struct PatchViewState {
-    block_id: CustomBlockId,
     crease_id: CreaseId,
     editor: Option<PatchEditorState>,
     update_task: Option<Task<()>>,
@@ -2221,23 +2220,32 @@ impl ContextEditor {
         cx: &mut ViewContext<ContextEditor>,
     ) {
         let this = cx.view().downgrade();
-        let mut removed_crease_ids = Vec::new();
-        let mut removed_block_ids = HashSet::default();
         let mut editors_to_close = Vec::new();
-        for range in removed {
-            if let Some(state) = self.patches.remove(range) {
-                editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
-                removed_block_ids.insert(state.block_id);
-                removed_crease_ids.push(state.crease_id);
-            }
-        }
 
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let multibuffer = &snapshot.buffer_snapshot;
             let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
 
-            let mut replaced_blocks = HashMap::default();
+            let mut removed_crease_ids = Vec::new();
+            let mut ranges_to_unfold: Vec<Range<Anchor>> = Vec::new();
+            for range in removed {
+                if let Some(state) = self.patches.remove(range) {
+                    let patch_start = multibuffer
+                        .anchor_in_excerpt(excerpt_id, range.start)
+                        .unwrap();
+                    let patch_end = multibuffer
+                        .anchor_in_excerpt(excerpt_id, range.end)
+                        .unwrap();
+
+                    editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
+                    ranges_to_unfold.push(patch_start..patch_end);
+                    removed_crease_ids.push(state.crease_id);
+                }
+            }
+            editor.unfold_ranges(&ranges_to_unfold, true, false, cx);
+            editor.remove_creases(removed_crease_ids, cx);
+
             for range in updated {
                 let Some(patch) = self.context.read(cx).patch_for_range(&range, cx).cloned() else {
                     continue;
@@ -2284,7 +2292,6 @@ impl ContextEditor {
 
                 let should_refold;
                 if let Some(state) = self.patches.get_mut(&range) {
-                    replaced_blocks.insert(state.block_id, render_block);
                     if let Some(editor_state) = &state.editor {
                         if editor_state.opened_patch != patch {
                             state.update_task = Some({
@@ -2301,24 +2308,10 @@ impl ContextEditor {
                     should_refold =
                         snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
                 } else {
-                    let block_id = editor.insert_blocks(
-                        [BlockProperties {
-                            height,
-                            style: BlockStyle::Flex,
-                            render: render_block,
-                            placement: BlockPlacement::Below(patch_start),
-                            priority: 0,
-                        }],
-                        None,
-                        cx,
-                    )[0];
-
                     let crease_id = editor.insert_creases([crease.clone()], cx)[0];
-
                     self.patches.insert(
                         range.clone(),
                         PatchViewState {
-                            block_id,
                             crease_id,
                             editor: None,
                             update_task: None,
@@ -2333,10 +2326,6 @@ impl ContextEditor {
                     editor.fold_creases(vec![crease], false, cx);
                 }
             }
-
-            editor.remove_creases(removed_crease_ids, cx);
-            editor.remove_blocks(removed_block_ids, None, cx);
-            editor.replace_blocks(replaced_blocks, None, cx);
         });
 
         for editor in editors_to_close {

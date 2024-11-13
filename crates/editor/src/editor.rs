@@ -14051,7 +14051,7 @@ impl EditorSnapshot {
         }
     }
 
-    pub fn render_fold_toggle(
+    pub fn render_crease_toggle(
         &self,
         buffer_row: MultiBufferRow,
         row_contains_cursor: bool,
@@ -14090,7 +14090,7 @@ impl EditorSnapshot {
 
         if folded || (is_foldable && (row_contains_cursor || self.gutter_hovered)) {
             Some(
-                Disclosure::new(("indent-fold-indicator", buffer_row.0), !folded)
+                Disclosure::new(("gutter_crease", buffer_row.0), !folded)
                     .selected(folded)
                     .on_click(cx.listener_for(&editor, move |this, _e, cx| {
                         if folded {

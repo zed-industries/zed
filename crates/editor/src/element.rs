@@ -1227,9 +1227,9 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn prepaint_gutter_fold_toggles(
+    fn prepaint_crease_toggles(
         &self,
-        toggles: &mut [Option<AnyElement>],
+        crease_toggles: &mut [Option<AnyElement>],
         line_height: Pixels,
         gutter_dimensions: &GutterDimensions,
         gutter_settings: crate::editor_settings::Gutter,
@@ -1237,25 +1237,25 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         cx: &mut WindowContext,
     ) {
-        for (ix, fold_indicator) in toggles.iter_mut().enumerate() {
-            if let Some(fold_indicator) = fold_indicator {
+        for (ix, crease_toggle) in crease_toggles.iter_mut().enumerate() {
+            if let Some(crease_toggle) = crease_toggle {
                 debug_assert!(gutter_settings.folds);
                 let available_space = size(
                     AvailableSpace::MinContent,
                     AvailableSpace::Definite(line_height * 0.55),
                 );
-                let fold_indicator_size = fold_indicator.layout_as_root(available_space, cx);
+                let crease_toggle_size = crease_toggle.layout_as_root(available_space, cx);
 
                 let position = point(
                     gutter_dimensions.width - gutter_dimensions.right_padding,
                     ix as f32 * line_height - (scroll_pixel_position.y % line_height),
                 );
                 let centering_offset = point(
-                    (gutter_dimensions.fold_area_width() - fold_indicator_size.width) / 2.,
-                    (line_height - fold_indicator_size.height) / 2.,
+                    (gutter_dimensions.fold_area_width() - crease_toggle_size.width) / 2.,
+                    (line_height - crease_toggle_size.height) / 2.,
                 );
                 let origin = gutter_hitbox.origin + position + centering_offset;
-                fold_indicator.prepaint_as_root(origin, available_space, cx);
+                crease_toggle.prepaint_as_root(origin, available_space, cx);
             }
         }
     }
@@ -1915,7 +1915,7 @@ impl EditorElement {
             .collect()
     }
 
-    fn layout_gutter_crease_toggles(
+    fn layout_crease_toggles(
         &self,
         rows: Range<DisplayRow>,
         buffer_rows: impl IntoIterator<Item = Option<MultiBufferRow>>,
@@ -1934,7 +1934,7 @@ impl EditorElement {
                     if let Some(multibuffer_row) = row {
                         let display_row = DisplayRow(rows.start.0 + ix as u32);
                         let active = active_rows.contains_key(&display_row);
-                        snapshot.render_fold_toggle(
+                        snapshot.render_crease_toggle(
                             multibuffer_row,
                             active,
                             self.editor.clone(),
@@ -3354,9 +3354,9 @@ impl EditorElement {
 
     fn paint_gutter_indicators(&self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            cx.with_element_namespace("gutter_fold_toggles", |cx| {
-                for fold_indicator in layout.gutter_fold_toggles.iter_mut().flatten() {
-                    fold_indicator.paint(cx);
+            cx.with_element_namespace("crease_toggles", |cx| {
+                for crease_toggle in layout.crease_toggles.iter_mut().flatten() {
+                    crease_toggle.paint(cx);
                 }
             });
 
@@ -5167,16 +5167,15 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let mut gutter_fold_toggles =
-                        cx.with_element_namespace("gutter_fold_toggles", |cx| {
-                            self.layout_gutter_crease_toggles(
-                                start_row..end_row,
-                                buffer_rows.iter().copied(),
-                                &active_rows,
-                                &snapshot,
-                                cx,
-                            )
-                        });
+                    let mut crease_toggles = cx.with_element_namespace("crease_toggles", |cx| {
+                        self.layout_crease_toggles(
+                            start_row..end_row,
+                            buffer_rows.iter().copied(),
+                            &active_rows,
+                            &snapshot,
+                            cx,
+                        )
+                    });
                     let crease_trailers = cx.with_element_namespace("crease_trailers", |cx| {
                         self.layout_crease_trailers(buffer_rows.iter().copied(), &snapshot, cx)
                     });
@@ -5556,9 +5555,9 @@ impl Element for EditorElement {
                     let mouse_context_menu =
                         self.layout_mouse_context_menu(&snapshot, start_row..end_row, cx);
 
-                    cx.with_element_namespace("gutter_fold_toggles", |cx| {
-                        self.prepaint_gutter_fold_toggles(
-                            &mut gutter_fold_toggles,
+                    cx.with_element_namespace("crease_toggles", |cx| {
+                        self.prepaint_crease_toggles(
+                            &mut crease_toggles,
                             line_height,
                             &gutter_dimensions,
                             gutter_settings,
@@ -5638,7 +5637,7 @@ impl Element for EditorElement {
                         mouse_context_menu,
                         test_indicators,
                         code_actions_indicator,
-                        gutter_fold_toggles,
+                        crease_toggles,
                         crease_trailers,
                         tab_invisible,
                         space_invisible,
@@ -5778,7 +5777,7 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
-    gutter_fold_toggles: Vec<Option<AnyElement>>,
+    crease_toggles: Vec<Option<AnyElement>>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
