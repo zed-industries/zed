@@ -157,8 +157,7 @@ impl ContextStore {
                     // I tried doing this in a subscription on the `ExtensionStore`, but it never seemed to fire.
                     //
                     // We should find a more elegant way to do this.
-                    let context_server_factory_registry =
-                        ContextServerFactoryRegistry::default_global(cx);
+                    let context_server_factory_registry = ContextServerFactoryRegistry::global(cx);
                     cx.spawn(|context_store, mut cx| async move {
                         loop {
                             let mut servers_to_register = Vec::new();

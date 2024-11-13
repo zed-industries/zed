@@ -5,6 +5,7 @@ use assistant_slash_command::SlashCommandRegistry;
 use context_servers::ContextServerFactoryRegistry;
 use extension_host::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
 use fs::Fs;
+use futures::FutureExt;
 use gpui::{AppContext, BackgroundExecutor, Task};
 use indexed_docs::{IndexedDocsRegistry, ProviderId};
 use language::{LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
@@ -83,18 +84,35 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
         self.context_server_factory_registry
             .register_server_factory(
                 id.clone(),
-                Arc::new({
-                    move |project, cx| {
-                        let id = id.clone();
-                        let extension = extension.clone();
-                        let host = host.clone();
-                        cx.spawn(|cx| async move {
-                            let context_server =
-                                ExtensionContextServer::new(extension, host, id, project, cx)
-                                    .await?;
-                            anyhow::Ok(Arc::new(context_server) as _)
-                        })
+                Arc::new(move |project, cx| {
+                    async move {
+                        let extension_project =
+                            project.update(&mut cx, |project, cx| ExtensionProject {
+                                worktree_ids: project
+                                    .visible_worktrees(cx)
+                                    .map(|worktree| worktree.read(cx).id().to_proto())
+                                    .collect(),
+                            })?;
+                        let command = extension
+                            .call({
+                                let id = id.clone();
+                                |extension, store| {
+                                    async move {
+                                        let project =
+                                            store.data_mut().table().push(extension_project)?;
+                                        let command = extension
+                                            .call_context_server_command(store, id.clone(), project)
+                                            .await?
+                                            .map_err(|e| anyhow!("{}", e))?;
+                                        anyhow::Ok(command)
+                                    }
+                                    .boxed()
+                                }
+                            })
+                            .await?;
+                        Ok(command)
                     }
+                    .boxed()
                 }),
             );
     }

@@ -21,17 +21,19 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
-use futures::{Future, FutureExt};
-use gpui::{AsyncAppContext, EventEmitter, ModelContext, Task};
+use futures::{channel::mpsc, Future, FutureExt};
+use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, Task};
 use log;
 use parking_lot::RwLock;
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsStore};
+use smol::stream::StreamExt;
 
 use crate::{
     client::{self, Client},
-    types,
+    types, ContextServerFactoryRegistry,
 };
 
 #[derive(Deserialize, Serialize, Default, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -160,8 +162,12 @@ impl ContextServer for NativeContextServer {
 /// must go through the `GlobalContextServerManager` which holds
 /// a model to the ContextServerManager.
 pub struct ContextServerManager {
-    servers: HashMap<Arc<str>, Arc<dyn ContextServer>>,
+    project: Model<Project>,
+    servers: HashMap<Arc<str>, (ServerCommand, Arc<dyn ContextServer>)>,
     pending_servers: HashSet<Arc<str>>,
+    registry: Model<ContextServerFactoryRegistry>,
+    _maintain_context_servers: Task<Result<()>>,
+    _subscriptions: [gpui::Subscription; 2],
 }
 
 pub enum Event {
@@ -171,17 +177,40 @@ pub enum Event {
 
 impl EventEmitter<Event> for ContextServerManager {}
 
-impl Default for ContextServerManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ContextServerManager {
-    pub fn new() -> Self {
+    pub fn new(
+        project: Model<Project>,
+        registry: Model<ContextServerFactoryRegistry>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        let (tx, mut rx) = mpsc::unbounded::<()>();
         Self {
-            servers: HashMap::default(),
+            project,
+            servers: Default::default(),
             pending_servers: HashSet::default(),
+            _subscriptions: [
+                cx.observe(&registry, {
+                    let tx = tx.clone();
+                    move |_this, _, _cx| {
+                        tx.unbounded_send(()).ok();
+                    }
+                }),
+                cx.observe_global::<SettingsStore>({
+                    let tx = tx.clone();
+                    move |_this, _cx| {
+                        tx.unbounded_send(()).ok();
+                    }
+                }),
+            ],
+            registry,
+            _maintain_context_servers: cx.spawn(|this, mut cx| async move {
+                while let Some(_) = rx.next().await {
+                    this.update(&mut cx, |this, cx| {
+                        this.registered_servers_changed(cx);
+                    })?;
+                }
+                Ok(())
+            }),
         }
     }
 
@@ -269,6 +298,45 @@ impl ContextServerManager {
 
     pub fn servers(&self) -> Vec<Arc<dyn ContextServer>> {
         self.servers.values().cloned().collect()
+    }
+
+    fn registered_servers_changed(
+        &mut self,
+        cx: &mut ModelContext<ContextServerManager>,
+    ) -> Task<()> {
+        let worktree_id = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).id());
+        let settings = ContextServerSettings::get(
+            worktree_id.map(|worktree_id| settings::SettingsLocation {
+                worktree_id,
+                path: Path::new(""),
+            }),
+            cx,
+        );
+
+        let registry = self.registry.read(cx);
+
+        let mut settings_iter = settings.context_servers.iter().peekable();
+        let mut registry_iter = registry.context_servers.iter().peekable();
+
+        // loop {
+        //     let mut setting_command = None;
+        //     let mut registered_command = None;
+        //     let mut server_id;
+        //     match (settings_iter.peek(), registry_iter.peek()) {
+        //         (None, None) => break,
+        //         (None, Some((id, value))) => {
+        //             server_id = id.clone();
+        //             registered_command = value;
+        //         }
+        //         (Some(_), None) => continue,
+        //         (Some(_), Some(_)) => continue,
+        //     }
+        // }
     }
 
     pub fn maintain_servers(&mut self, settings: &ContextServerSettings, cx: &ModelContext<Self>) {

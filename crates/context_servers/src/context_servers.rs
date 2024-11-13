@@ -19,7 +19,7 @@ pub const CONTEXT_SERVERS_NAMESPACE: &'static str = "context_servers";
 
 pub fn init(cx: &mut AppContext) {
     ContextServerSettings::register(cx);
-    ContextServerFactoryRegistry::default_global(cx);
+    ContextServerFactoryRegistry::global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
