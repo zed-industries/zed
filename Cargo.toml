@@ -569,7 +569,6 @@ breadcrumbs = {codegen-units = 1}
 collections = {codegen-units = 1}
 command_palette = {codegen-units = 1}
 command_palette_hooks = {codegen-units = 1}
-dev_server_projects = {codegen-units = 1}
 evals = {codegen-units = 1}
 extension_cli = {codegen-units = 1}
 feature_flags = {codegen-units = 1}
