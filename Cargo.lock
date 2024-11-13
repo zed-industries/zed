@@ -4230,6 +4230,7 @@ dependencies = [
  "http_client",
  "indexed_docs",
  "language",
+ "log",
  "lsp",
  "node_runtime",
  "num-format",

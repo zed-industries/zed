@@ -90,6 +90,11 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
                     id.clone(),
                     Arc::new({
                         move |project, cx| {
+                            log::info!(
+                                "loading command for context server {id} from extension {}",
+                                extension.manifest.id
+                            );
+
                             let id = id.clone();
                             let extension = extension.clone();
                             cx.spawn(|mut cx| async move {
@@ -124,6 +129,8 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
                                         }
                                     })
                                     .await?;
+
+                                log::info!("loaded command for context server {id}: {command:?}");
 
                                 Ok(ServerCommand {
                                     path: command.command,

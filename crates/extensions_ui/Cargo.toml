@@ -31,6 +31,7 @@ fuzzy.workspace = true
 gpui.workspace = true
 indexed_docs.workspace = true
 language.workspace = true
+log.workspace = true
 lsp.workspace = true
 num-format.workspace = true
 picker.workspace = true

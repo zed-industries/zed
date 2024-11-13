@@ -156,7 +156,7 @@ impl ContextServerManager {
         project: Model<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        Self {
+        let mut this = Self {
             _subscriptions: vec![
                 cx.observe(&registry, |this, _registry, cx| {
                     this.available_context_servers_changed(cx);
@@ -170,17 +170,12 @@ impl ContextServerManager {
             needs_server_update: false,
             servers: HashMap::default(),
             update_servers_task: None,
-        }
+        };
+        this.available_context_servers_changed(cx);
+        this
     }
 
     fn available_context_servers_changed(&mut self, cx: &mut ModelContext<Self>) {
-        let has_any_context_servers = !self.servers().is_empty();
-        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-            if has_any_context_servers {
-                filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
-            }
-        });
-
         if self.update_servers_task.is_some() {
             self.needs_server_update = true;
         } else {
@@ -192,6 +187,13 @@ impl ContextServerManager {
                 Self::maintain_servers(this.clone(), cx.clone()).await?;
 
                 this.update(&mut cx, |this, cx| {
+                    let has_any_context_servers = !this.servers().is_empty();
+                    if has_any_context_servers {
+                        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                            filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
+                        });
+                    }
+
                     this.update_servers_task.take();
                     if this.needs_server_update {
                         this.available_context_servers_changed(cx);
