@@ -9,12 +9,13 @@ pub use gpui::{
 
 pub use crate::styles::{rems_from_px, vh, vw, PlatformStyle, StyledTypography, TextSize};
 pub use crate::traits::clickable::*;
+pub use crate::traits::component_preview::*;
 pub use crate::traits::disableable::*;
 pub use crate::traits::fixed::*;
 pub use crate::traits::selectable::*;
 pub use crate::traits::styled_ext::*;
 pub use crate::traits::visible_on_hover::*;
-pub use crate::Spacing;
+pub use crate::DynamicSpacing;
 pub use crate::{h_flex, v_flex};
 pub use crate::{Button, ButtonSize, ButtonStyle, IconButton, SelectableButton};
 pub use crate::{ButtonCommon, Color};

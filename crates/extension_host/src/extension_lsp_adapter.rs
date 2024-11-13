@@ -8,10 +8,9 @@ use collections::HashMap;
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
 use language::{
-    CodeLabel, HighlightId, Language, LanguageServerName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate,
+    CodeLabel, HighlightId, Language, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
 use serde_json::Value;
 use std::ops::Range;
@@ -387,9 +386,19 @@ impl From<lsp::CompletionItem> for wit::Completion {
     fn from(value: lsp::CompletionItem) -> Self {
         Self {
             label: value.label,
+            label_details: value.label_details.map(Into::into),
             detail: value.detail,
             kind: value.kind.map(Into::into),
             insert_text_format: value.insert_text_format.map(Into::into),
+        }
+    }
+}
+
+impl From<lsp::CompletionItemLabelDetails> for wit::CompletionLabelDetails {
+    fn from(value: lsp::CompletionItemLabelDetails) -> Self {
+        Self {
+            detail: value.detail,
+            description: value.description,
         }
     }
 }

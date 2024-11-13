@@ -36,7 +36,7 @@ const WASI_ADAPTER_URL: &str =
 const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-21/";
 const WASI_SDK_ASSET_NAME: Option<&str> = if cfg!(target_os = "macos") {
     Some("wasi-sdk-21.0-macos.tar.gz")
-} else if cfg!(target_os = "linux") {
+} else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
     Some("wasi-sdk-21.0-linux.tar.gz")
 } else if cfg!(target_os = "windows") {
     Some("wasi-sdk-21.0.m-mingw.tar.gz")
@@ -135,6 +135,8 @@ impl ExtensionBuilder {
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
             .arg(extension_dir.join("target"))
+            // WASI builds do not work with sccache and just stuck, so disable it.
+            .env("RUSTC_WRAPPER", "")
             .current_dir(extension_dir)
             .output()
             .context("failed to run `cargo`")?;
@@ -363,12 +365,15 @@ impl ExtensionBuilder {
 
         let output = Command::new("rustup")
             .args(["target", "add", RUST_TARGET])
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .stdout(Stdio::inherit())
             .output()
             .context("failed to run `rustup target add`")?;
         if !output.status.success() {
-            bail!("failed to install the `{RUST_TARGET}` target");
+            bail!(
+                "failed to install the `{RUST_TARGET}` target: {}",
+                String::from_utf8_lossy(&rustc_output.stderr)
+            );
         }
 
         Ok(())

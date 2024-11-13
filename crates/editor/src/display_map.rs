@@ -36,7 +36,7 @@ use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
-use fold_map::{FoldMap, FoldSnapshot};
+use fold_map::{FoldMap, FoldMapWriter, FoldOffset, FoldSnapshot};
 use gpui::{
     AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
@@ -65,7 +65,7 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
-use text::LineIndent;
+use text::{Edit, LineIndent};
 use ui::{div, px, IntoElement, ParentElement, SharedString, Styled, WindowContext};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
@@ -207,6 +207,7 @@ impl DisplayMap {
         );
     }
 
+    /// Creates folds for the given creases.
     pub fn fold<T: Clone + ToOffset>(
         &mut self,
         creases: Vec<Crease<T>>,
@@ -234,11 +235,12 @@ impl DisplayMap {
             }
         });
         let (snapshot, edits) = fold_map.fold(inline);
+
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-
+        let mut block_map = self.block_map.write(snapshot, edits);
         let blocks = creases.into_iter().filter_map(|crease| {
             if let Crease::Block {
                 range,
@@ -260,8 +262,6 @@ impl DisplayMap {
                 None
             }
         });
-
-        let mut block_map = self.block_map.write(snapshot, edits);
         block_map.insert(
             blocks
                 .into_iter()
@@ -279,11 +279,32 @@ impl DisplayMap {
         );
     }
 
-    pub fn unfold<T: Clone + ToOffset>(
+    /// Removes any folds with the given ranges.
+    pub fn remove_folds_with_type<T: ToOffset>(
         &mut self,
-        ranges: Vec<Range<T>>,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        type_id: TypeId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.update_fold_map(cx, |fold_map| fold_map.remove_folds(ranges, type_id))
+    }
+
+    /// Removes any folds whose ranges intersect any of the given ranges.
+    pub fn unfold_intersecting<T: ToOffset>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
         cx: &mut ModelContext<Self>,
+    ) {
+        self.update_fold_map(cx, |fold_map| {
+            fold_map.unfold_intersecting(ranges, inclusive)
+        })
+    }
+
+    fn update_fold_map(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+        callback: impl FnOnce(&mut FoldMapWriter) -> (FoldSnapshot, Vec<Edit<FoldOffset>>),
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -295,7 +316,7 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-        let (snapshot, edits) = fold_map.unfold(ranges.iter().cloned(), inclusive);
+        let (snapshot, edits) = callback(&mut fold_map);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
@@ -1251,7 +1272,7 @@ impl Sub for DisplayPoint {
 #[serde(transparent)]
 pub struct DisplayRow(pub u32);
 
-impl Add for DisplayRow {
+impl Add<DisplayRow> for DisplayRow {
     type Output = Self;
 
     fn add(self, other: Self) -> Self::Output {
@@ -1259,11 +1280,27 @@ impl Add for DisplayRow {
     }
 }
 
-impl Sub for DisplayRow {
+impl Add<u32> for DisplayRow {
+    type Output = Self;
+
+    fn add(self, other: u32) -> Self::Output {
+        DisplayRow(self.0 + other)
+    }
+}
+
+impl Sub<DisplayRow> for DisplayRow {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self::Output {
         DisplayRow(self.0 - other.0)
+    }
+}
+
+impl Sub<u32> for DisplayRow {
+    type Output = Self;
+
+    fn sub(self, other: u32) -> Self::Output {
+        DisplayRow(self.0 - other)
     }
 }
 
@@ -1505,7 +1542,7 @@ pub mod tests {
                     if rng.gen() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
-                            map.unfold(ranges, true, cx);
+                            map.unfold_intersecting(ranges, true, cx);
                         });
                     } else {
                         log::info!("folding ranges: {:?}", ranges);

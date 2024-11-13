@@ -1,8 +1,9 @@
 use crate::components::KernelListItem;
-use crate::KernelStatus;
+use crate::setup_editor_session_actions;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
+    KernelStatus,
 };
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
@@ -205,6 +206,14 @@ impl Session {
             None => Subscription::new(|| {}),
         };
 
+        let editor_handle = editor.clone();
+
+        editor
+            .update(cx, |editor, _cx| {
+                setup_editor_session_actions(editor, editor_handle);
+            })
+            .ok();
+
         let mut session = Self {
             fs,
             editor,
@@ -222,7 +231,7 @@ impl Session {
     }
 
     fn start_kernel(&mut self, cx: &mut ViewContext<Self>) {
-        let kernel_language = self.kernel_specification.kernelspec.language.clone();
+        let kernel_language = self.kernel_specification.language();
         let entity_id = self.editor.entity_id();
         let working_directory = self
             .editor
@@ -231,7 +240,7 @@ impl Session {
             .unwrap_or_else(temp_dir);
 
         self.telemetry.report_repl_event(
-            kernel_language.clone(),
+            kernel_language.into(),
             KernelStatus::Starting.to_string(),
             cx.entity_id().to_string(),
         );
@@ -554,7 +563,7 @@ impl Session {
                 self.kernel.set_execution_state(&status.execution_state);
 
                 self.telemetry.report_repl_event(
-                    self.kernel_specification.kernelspec.language.clone(),
+                    self.kernel_specification.language().into(),
                     KernelStatus::from(&self.kernel).to_string(),
                     cx.entity_id().to_string(),
                 );
@@ -605,7 +614,7 @@ impl Session {
         }
 
         let kernel_status = KernelStatus::from(&kernel).to_string();
-        let kernel_language = self.kernel_specification.kernelspec.language.clone();
+        let kernel_language = self.kernel_specification.language().into();
 
         self.telemetry.report_repl_event(
             kernel_language,
@@ -747,7 +756,7 @@ impl Render for Session {
                 Kernel::Shutdown => Color::Disabled,
                 Kernel::Restarting => Color::Modified,
             })
-            .child(Label::new(self.kernel_specification.name.clone()))
+            .child(Label::new(self.kernel_specification.name()))
             .children(status_text.map(|status_text| Label::new(format!("({status_text})"))))
             .button(
                 Button::new("shutdown", "Shutdown")
