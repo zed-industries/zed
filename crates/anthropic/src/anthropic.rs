@@ -49,6 +49,7 @@ pub enum Model {
         cache_configuration: Option<AnthropicModelCacheConfiguration>,
         max_output_tokens: Option<u32>,
         default_temperature: Option<f32>,
+        extra_beta_headers: Option<Vec<String>>,
     },
 }
 
@@ -137,6 +138,17 @@ impl Model {
         }
     }
 
+    pub fn beta_headers(&self) -> String {
+    let mut headers = vec![
+        "tools-2024-04-04", "prompt-caching-2024-07-31", "max-tokens-3-5-sonnet-2024-07-15"
+    ];
+    
+    if let Self::Custom { extra_beta_headers: Some(extra_headers), .. } = self {
+        headers.extend(extra_headers.iter().filter(|s| !s.trim().is_empty()));
+    }
+    headers.join(',').to_string()
+    }
+
     pub fn tool_model_id(&self) -> &str {
         if let Self::Custom {
             tool_override: Some(tool_override),
@@ -163,7 +175,7 @@ pub async fn complete(
         .header("Anthropic-Version", "2023-06-01")
         .header(
             "Anthropic-Beta",
-            "tools-2024-04-04,prompt-caching-2024-07-31,max-tokens-3-5-sonnet-2024-07-15",
+            Model::from_id(&request.model)?.beta_headers(),
         )
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
@@ -283,7 +295,7 @@ pub async fn stream_completion_with_rate_limit_info(
         .header("Anthropic-Version", "2023-06-01")
         .header(
             "Anthropic-Beta",
-            "tools-2024-04-04,prompt-caching-2024-07-31,max-tokens-3-5-sonnet-2024-07-15",
+            Model::from_id(&request.base.model)?.beta_headers(),
         )
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
