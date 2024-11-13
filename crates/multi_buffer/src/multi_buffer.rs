@@ -125,7 +125,7 @@ pub struct MultiBufferDiffHunk {
 
 pub type MultiBufferPoint = Point;
 
-#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq, serde::Deserialize)]
+#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq, Hash, serde::Deserialize)]
 #[serde(transparent)]
 pub struct MultiBufferRow(pub u32);
 
