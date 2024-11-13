@@ -161,10 +161,7 @@ pub async fn complete(
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header(
-            "Anthropic-Beta",
-            "tools-2024-04-04,prompt-caching-2024-07-31,max-tokens-3-5-sonnet-2024-07-15",
-        )
+        .header("Anthropic-Beta", "prompt-caching-2024-07-31")
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
 
