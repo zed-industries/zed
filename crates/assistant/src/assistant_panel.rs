@@ -3533,7 +3533,7 @@ impl ContextEditor {
                                     ),
                             )
                             .child(
-                                Label::new("Generating...")
+                                Label::new("Generating…")
                                     .color(Color::Muted)
                                     .size(LabelSize::Small)
                                     .with_animation(
