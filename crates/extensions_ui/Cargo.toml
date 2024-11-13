@@ -23,6 +23,7 @@ collections.workspace = true
 context_servers.workspace = true
 db.workspace = true
 editor.workspace = true
+extension.workspace = true
 extension_host.workspace = true
 fs.workspace = true
 futures.workspace = true

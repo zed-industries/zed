@@ -4221,6 +4221,7 @@ dependencies = [
  "db",
  "editor",
  "env_logger 0.11.5",
+ "extension",
  "extension_host",
  "fs",
  "futures 0.3.30",

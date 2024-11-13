@@ -3,6 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::Result;
 use assistant_slash_command::SlashCommandRegistry;
 use context_servers::ContextServerFactoryRegistry;
+use extension::Extension;
 use extension_host::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
 use fs::Fs;
 use gpui::{AppContext, BackgroundExecutor, Task};
@@ -99,15 +100,10 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
             );
     }
 
-    fn register_docs_provider(
-        &self,
-        extension: wasm_host::WasmExtension,
-        _host: Arc<wasm_host::WasmHost>,
-        provider_id: Arc<str>,
-    ) {
+    fn register_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
         self.indexed_docs_registry
             .register_provider(Box::new(ExtensionIndexedDocsProvider::new(
-                Arc::new(extension.clone()),
+                extension,
                 ProviderId(provider_id),
             )));
     }
