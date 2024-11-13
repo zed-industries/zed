@@ -1,4 +1,4 @@
-name: Script Checks
+name: Script
 
 on:
   pull_request:
