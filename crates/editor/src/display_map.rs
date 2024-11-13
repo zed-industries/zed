@@ -660,7 +660,7 @@ impl DisplaySnapshot {
     ) -> impl Iterator<Item = Option<MultiBufferRow>> + '_ {
         self.block_snapshot
             .buffer_rows(BlockRow(start_row.0))
-            .map(|row| row.map(|row| MultiBufferRow(row.0)))
+            .map(|row| row.map(|row| MultiBufferRow(row)))
     }
 
     pub fn max_buffer_row(&self) -> MultiBufferRow {
@@ -1051,7 +1051,12 @@ impl DisplaySnapshot {
     }
 
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
-        self.fold_snapshot.is_line_folded(buffer_row)
+        self.block_snapshot.is_line_replaced(buffer_row)
+            || self.fold_snapshot.is_line_folded(buffer_row)
+    }
+
+    pub fn is_line_replaced(&self, buffer_row: MultiBufferRow) -> bool {
+        self.block_snapshot.is_line_replaced(buffer_row)
     }
 
     pub fn is_block_line(&self, display_row: DisplayRow) -> bool {

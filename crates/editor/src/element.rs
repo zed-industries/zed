@@ -1915,7 +1915,7 @@ impl EditorElement {
             .collect()
     }
 
-    fn layout_gutter_fold_toggles(
+    fn layout_gutter_crease_toggles(
         &self,
         rows: Range<DisplayRow>,
         buffer_rows: impl IntoIterator<Item = Option<MultiBufferRow>>,
@@ -5169,7 +5169,7 @@ impl Element for EditorElement {
 
                     let mut gutter_fold_toggles =
                         cx.with_element_namespace("gutter_fold_toggles", |cx| {
-                            self.layout_gutter_fold_toggles(
+                            self.layout_gutter_crease_toggles(
                                 start_row..end_row,
                                 buffer_rows.iter().copied(),
                                 &active_rows,
