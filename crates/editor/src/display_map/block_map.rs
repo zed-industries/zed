@@ -7,7 +7,8 @@ use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, EntityId, Pixels, WindowContext};
 use language::{Chunk, Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBufferRow, MultiBufferSnapshot, ToPoint as _,
+    Anchor, ExcerptId, ExcerptInfo, MultiBufferRow, MultiBufferSnapshot, ToOffset as _,
+    ToPoint as _,
 };
 use parking_lot::Mutex;
 use std::{
@@ -1125,6 +1126,46 @@ impl<'a> BlockMapWriter<'a> {
             .custom_blocks_by_id
             .retain(|id, _| !block_ids.contains(id));
         self.0.sync(wrap_snapshot, edits);
+    }
+
+    pub fn remove_intersecting_replace_blocks(
+        &mut self,
+        _ranges: impl IntoIterator<Item = Range<usize>>,
+        inclusive: bool,
+    ) {
+        todo!()
+    }
+
+    fn intersecting_blocks(&self, range: Range<usize>, inclusive: bool) -> Range<usize> {
+        let wrap_snapshot = self.0.wrap_snapshot.borrow();
+        let buffer = wrap_snapshot.buffer_snapshot();
+        let start_block_ix = match self.0.custom_blocks.binary_search_by(|probe| {
+            probe
+                .end()
+                .to_offset(buffer)
+                .cmp(&range.start)
+                .then(if inclusive {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                })
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_block_ix = match self.0.custom_blocks.binary_search_by(|probe| {
+            probe
+                .start()
+                .to_offset(buffer)
+                .cmp(&range.end)
+                .then(if inclusive {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                })
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        start_block_ix..end_block_ix
     }
 }
 

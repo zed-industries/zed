@@ -36,7 +36,7 @@ use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
-use fold_map::{FoldMap, FoldMapWriter, FoldOffset, FoldSnapshot};
+use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{
     AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
@@ -65,7 +65,7 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
-use text::{Edit, LineIndent};
+use text::LineIndent;
 use ui::{div, px, IntoElement, ParentElement, SharedString, Styled, WindowContext};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
@@ -286,26 +286,6 @@ impl DisplayMap {
         type_id: TypeId,
         cx: &mut ModelContext<Self>,
     ) {
-        self.update_fold_map(cx, |fold_map| fold_map.remove_folds(ranges, type_id))
-    }
-
-    /// Removes any folds whose ranges intersect any of the given ranges.
-    pub fn unfold_intersecting<T: ToOffset>(
-        &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
-        inclusive: bool,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.update_fold_map(cx, |fold_map| {
-            fold_map.unfold_intersecting(ranges, inclusive)
-        })
-    }
-
-    fn update_fold_map(
-        &mut self,
-        cx: &mut ModelContext<Self>,
-        callback: impl FnOnce(&mut FoldMapWriter) -> (FoldSnapshot, Vec<Edit<FoldOffset>>),
-    ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -316,12 +296,44 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-        let (snapshot, edits) = callback(&mut fold_map);
+        let (snapshot, edits) = fold_map.remove_folds(ranges, type_id);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.write(snapshot, edits);
+    }
+
+    /// Removes any folds whose ranges intersect any of the given ranges.
+    pub fn unfold_intersecting<T: ToOffset>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        inclusive: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let offset_ranges = ranges
+            .into_iter()
+            .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot))
+            .collect::<Vec<_>>();
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
+
+        let (snapshot, edits) =
+            fold_map.unfold_intersecting(offset_ranges.iter().cloned(), inclusive);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.remove_intersecting_replace_blocks(offset_ranges, inclusive);
     }
 
     pub fn insert_creases(
