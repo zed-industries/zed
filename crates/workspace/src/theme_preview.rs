@@ -502,7 +502,7 @@ impl ThemePreview {
             )
     }
 
-    fn render_components_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+    fn render_components_page(&self, cx: &mut WindowContext) -> impl IntoElement {
         let layer = ElevationIndex::Surface;
 
         v_flex()
@@ -520,8 +520,8 @@ impl ThemePreview {
             .child(Indicator::render_component_previews(cx))
             .child(Icon::render_component_previews(cx))
             .child(Table::render_component_previews(cx))
-            .child(self.render_avatars(cx))
-            .child(self.render_buttons(layer, cx))
+        // .child(self.render_avatars(cx))
+        // .child(self.render_buttons(layer, cx))
     }
 
     fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {

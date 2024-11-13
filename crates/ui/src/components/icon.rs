@@ -200,6 +200,7 @@ pub enum IconName {
     GenericRestore,
     Github,
     Globe,
+    GitBranch,
     Hash,
     HistoryRerun,
     Indicator,
@@ -233,6 +234,10 @@ pub enum IconName {
     PocketKnife,
     Public,
     PullRequest,
+
+    PhoneIncoming,
+    PanelLeft,
+    PanelRight,
     Quote,
     RefreshTitle,
     Regex,
@@ -497,7 +502,7 @@ impl RenderOnce for IconDecoration {
 }
 
 impl ComponentPreview for IconDecoration {
-    fn examples(cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
 
         let examples = all_kinds
@@ -539,7 +544,7 @@ impl RenderOnce for DecoratedIcon {
 }
 
 impl ComponentPreview for DecoratedIcon {
-    fn examples(cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         let icon_1 = Icon::new(IconName::FileDoc);
         let icon_2 = Icon::new(IconName::FileDoc);
         let icon_3 = Icon::new(IconName::FileDoc);
@@ -658,7 +663,7 @@ impl RenderOnce for IconWithIndicator {
 }
 
 impl ComponentPreview for Icon {
-    fn examples(_cx: &WindowContext) -> Vec<ComponentExampleGroup<Icon>> {
+    fn examples(_cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Icon>> {
         let arrow_icons = vec![
             IconName::ArrowDown,
             IconName::ArrowLeft,
