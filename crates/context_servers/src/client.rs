@@ -53,13 +53,22 @@ pub struct Client {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct ContextServerId(pub String);
+pub struct ContextServerId(pub Arc<str>);
+
+fn is_null_value<T: Serialize>(value: &T) -> bool {
+    if let Ok(Value::Null) = serde_json::to_value(value) {
+        true
+    } else {
+        false
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct Request<'a, T> {
     jsonrpc: &'static str,
     id: RequestId,
     method: &'a str,
+    #[serde(skip_serializing_if = "is_null_value")]
     params: T,
 }
 

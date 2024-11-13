@@ -750,49 +750,6 @@ impl Database {
         Ok((project, replica_id as ReplicaId))
     }
 
-    pub async fn leave_hosted_project(
-        &self,
-        project_id: ProjectId,
-        connection: ConnectionId,
-    ) -> Result<LeftProject> {
-        self.transaction(|tx| async move {
-            let result = project_collaborator::Entity::delete_many()
-                .filter(
-                    Condition::all()
-                        .add(project_collaborator::Column::ProjectId.eq(project_id))
-                        .add(project_collaborator::Column::ConnectionId.eq(connection.id as i32))
-                        .add(
-                            project_collaborator::Column::ConnectionServerId
-                                .eq(connection.owner_id as i32),
-                        ),
-                )
-                .exec(&*tx)
-                .await?;
-            if result.rows_affected == 0 {
-                return Err(anyhow!("not in the project"))?;
-            }
-
-            let project = project::Entity::find_by_id(project_id)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
-            let collaborators = project
-                .find_related(project_collaborator::Entity)
-                .all(&*tx)
-                .await?;
-            let connection_ids = collaborators
-                .into_iter()
-                .map(|collaborator| collaborator.connection())
-                .collect();
-            Ok(LeftProject {
-                id: project.id,
-                connection_ids,
-                should_unshare: false,
-            })
-        })
-        .await
-    }
-
     /// Removes the given connection from the specified project.
     pub async fn leave_project(
         &self,

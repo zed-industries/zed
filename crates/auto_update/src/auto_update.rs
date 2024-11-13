@@ -84,9 +84,9 @@ pub struct AutoUpdater {
 }
 
 #[derive(Deserialize)]
-struct JsonRelease {
-    version: String,
-    url: String,
+pub struct JsonRelease {
+    pub version: String,
+    pub url: String,
 }
 
 struct MacOsUnmounter {
@@ -432,6 +432,9 @@ impl AutoUpdater {
         cx.notify();
     }
 
+    // If you are packaging Zed and need to override the place it downloads SSH remotes from,
+    // you can override this function. You should also update get_remote_server_release_url to return
+    // Ok(None).
     pub async fn download_remote_server_release(
         os: &str,
         arch: &str,
@@ -482,7 +485,7 @@ impl AutoUpdater {
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> Result<(String, String)> {
+    ) -> Result<Option<(String, String)>> {
         let this = cx.update(|cx| {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
@@ -504,7 +507,7 @@ impl AutoUpdater {
         let update_request_body = build_remote_server_update_request_body(cx)?;
         let body = serde_json::to_string(&update_request_body)?;
 
-        Ok((release.url, body))
+        Ok(Some((release.url, body)))
     }
 
     async fn get_release(
@@ -686,6 +689,12 @@ async fn download_remote_server_binary(
     let request_body = AsyncBody::from(serde_json::to_string(&update_request_body)?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
+    if !response.status().is_success() {
+        return Err(anyhow!(
+            "failed to download remote server release: {:?}",
+            response.status()
+        ));
+    }
     smol::io::copy(response.body_mut(), &mut temp_file).await?;
     smol::fs::rename(&temp, &target_path).await?;
 

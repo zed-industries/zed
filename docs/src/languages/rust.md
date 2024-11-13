@@ -163,6 +163,23 @@ Here's a snippet for Zed settings.json (the language server will restart automat
 }
 ```
 
+### Multi-project workspaces
+
+If you want rust-analyzer to analyze multiple Rust projects in the same folder that are not listed in `[members]` in the Cargo workspace,
+you can list them in `linkedProjects` in the local project settings:
+
+```json
+{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "linkedProjects": ["./path/to/a/Cargo.toml", "./path/to/b/Cargo.toml"]
+      }
+    }
+  }
+}
+```
+
 ### Snippets
 
 There's a way get custom completion items from rust-analyzer, that will transform the code according to the snippet body:

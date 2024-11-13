@@ -425,7 +425,11 @@ impl PickerDelegate for TasksModalDelegate {
         )
     }
 
-    fn confirm_completion(&self, _: String) -> Option<String> {
+    fn confirm_completion(
+        &mut self,
+        _: String,
+        _: &mut ViewContext<Picker<Self>>,
+    ) -> Option<String> {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;

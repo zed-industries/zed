@@ -10,6 +10,7 @@ use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
 use text::OffsetRangeExt;
+use ui::prelude::*;
 use workspace::Workspace;
 
 pub(crate) struct DeltaSlashCommand;
@@ -25,6 +26,10 @@ impl SlashCommand for DeltaSlashCommand {
 
     fn menu_text(&self) -> String {
         self.description()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Diff
     }
 
     fn requires_argument(&self) -> bool {
@@ -53,6 +58,7 @@ impl SlashCommand for DeltaSlashCommand {
         let mut paths = HashSet::default();
         let mut file_command_old_outputs = Vec::new();
         let mut file_command_new_outputs = Vec::new();
+
         for section in context_slash_command_output_sections.iter().rev() {
             if let Some(metadata) = section
                 .metadata
@@ -79,6 +85,7 @@ impl SlashCommand for DeltaSlashCommand {
 
         cx.background_executor().spawn(async move {
             let mut output = SlashCommandOutput::default();
+            let mut changes_detected = false;
 
             let file_command_new_outputs = future::join_all(file_command_new_outputs).await;
             for (old_text, new_output) in file_command_old_outputs
@@ -91,6 +98,7 @@ impl SlashCommand for DeltaSlashCommand {
                         if let Some(file_command_range) = new_output.sections.first() {
                             let new_text = &new_output.text[file_command_range.range.clone()];
                             if old_text.chars().ne(new_text.chars()) {
+                                changes_detected = true;
                                 output.sections.extend(new_output.sections.into_iter().map(
                                     |section| SlashCommandOutputSection {
                                         range: output.text.len() + section.range.start
@@ -105,6 +113,10 @@ impl SlashCommand for DeltaSlashCommand {
                         }
                     }
                 }
+            }
+
+            if !changes_detected {
+                return Err(anyhow!("no new changes detected"));
             }
 
             Ok(output.to_event_stream())

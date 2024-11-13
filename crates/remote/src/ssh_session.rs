@@ -20,7 +20,10 @@ use gpui::{
     AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Global, Model,
     ModelContext, SemanticVersion, Task, WeakModel,
 };
+use itertools::Itertools;
 use parking_lot::Mutex;
+use paths;
+use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
     proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
@@ -33,15 +36,14 @@ use smol::{
 use std::{
     any::TypeId,
     collections::VecDeque,
-    ffi::OsStr,
-    fmt,
+    fmt, iter,
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU32, Ordering::SeqCst},
+        atomic::{AtomicU32, AtomicU64, Ordering::SeqCst},
         Arc, Weak,
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use tempfile::TempDir;
 use util::ResultExt;
@@ -67,6 +69,18 @@ pub struct SshConnectionOptions {
 
     pub nickname: Option<String>,
     pub upload_binary_over_ssh: bool,
+}
+
+#[macro_export]
+macro_rules! shell_script {
+    ($fmt:expr, $($name:ident = $arg:expr),+ $(,)?) => {{
+        format!(
+            $fmt,
+            $(
+                $name = shlex::try_quote($arg).unwrap()
+            ),+
+        )
+    }};
 }
 
 impl SshConnectionOptions {
@@ -189,17 +203,6 @@ impl SshConnectionOptions {
             host
         }
     }
-
-    // Uniquely identifies dev server projects on a remote host. Needs to be
-    // stable for the same dev server project.
-    pub fn remote_server_identifier(&self) -> String {
-        let mut identifier = format!("dev-server-{:?}", self.host);
-        if let Some(username) = self.username.as_ref() {
-            identifier.push('-');
-            identifier.push_str(&username);
-        }
-        identifier
-    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -222,38 +225,65 @@ impl SshPlatform {
     }
 }
 
-pub enum ServerBinary {
-    LocalBinary(PathBuf),
-    ReleaseUrl { url: String, body: String },
-}
-
 pub trait SshClientDelegate: Send + Sync {
     fn ask_password(
         &self,
         prompt: String,
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<String>>;
-    fn remote_server_binary_path(
+    fn get_download_params(
         &self,
         platform: SshPlatform,
+        release_channel: ReleaseChannel,
+        version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf>;
-    fn get_server_binary(
+    ) -> Task<Result<Option<(String, String)>>>;
+
+    fn download_server_binary_locally(
         &self,
         platform: SshPlatform,
-        upload_binary_over_ssh: bool,
+        release_channel: ReleaseChannel,
+        version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>>;
+    ) -> Task<Result<PathBuf>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
 }
 
 impl SshSocket {
-    fn ssh_command<S: AsRef<OsStr>>(&self, program: S) -> process::Command {
+    // :WARNING: ssh unquotes arguments when executing on the remote :WARNING:
+    // e.g. $ ssh host sh -c 'ls -l' is equivalent to $ ssh host sh -c ls -l
+    // and passes -l as an argument to sh, not to ls.
+    // You need to do it like this: $ ssh host "sh -c 'ls -l /tmp'"
+    fn ssh_command(&self, program: &str, args: &[&str]) -> process::Command {
         let mut command = process::Command::new("ssh");
+        let to_run = iter::once(&program)
+            .chain(args.iter())
+            .map(|token| {
+                // We're trying to work with: sh, bash, zsh, fish, tcsh, ...?
+                debug_assert!(
+                    !token.contains('\n'),
+                    "multiline arguments do not work in all shells"
+                );
+                shlex::try_quote(token).unwrap()
+            })
+            .join(" ");
+        log::debug!("ssh {} {:?}", self.connection_options.ssh_url(), to_run);
         self.ssh_options(&mut command)
             .arg(self.connection_options.ssh_url())
-            .arg(program);
+            .arg(to_run);
         command
+    }
+
+    async fn run_command(&self, program: &str, args: &[&str]) -> Result<String> {
+        let output = self.ssh_command(program, args).output().await?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(anyhow!(
+                "failed to run command: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
     }
 
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
@@ -273,18 +303,6 @@ impl SshSocket {
             format!("ControlPath={}", self.socket_path.display()),
             self.connection_options.ssh_url(),
         ]
-    }
-}
-
-async fn run_cmd(command: &mut process::Command) -> Result<String> {
-    let output = command.output().await?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        Err(anyhow!(
-            "failed to run command: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ))
     }
 }
 
@@ -463,14 +481,48 @@ pub enum SshRemoteEvent {
 
 impl EventEmitter<SshRemoteEvent> for SshRemoteClient {}
 
+// Identifies the socket on the remote server so that reconnects
+// can re-join the same project.
+pub enum ConnectionIdentifier {
+    Setup(u64),
+    Workspace(i64),
+}
+
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+impl ConnectionIdentifier {
+    pub fn setup() -> Self {
+        Self::Setup(NEXT_ID.fetch_add(1, SeqCst))
+    }
+    // This string gets used in a socket name, and so must be relatively short.
+    // The total length of:
+    //   /home/{username}/.local/share/zed/server_state/{name}/stdout.sock
+    // Must be less than about 100 characters
+    //   https://unix.stackexchange.com/questions/367008/why-is-socket-path-length-limited-to-a-hundred-chars
+    // So our strings should be at most 20 characters or so.
+    fn to_string(&self, cx: &AppContext) -> String {
+        let identifier_prefix = match ReleaseChannel::global(cx) {
+            ReleaseChannel::Stable => "".to_string(),
+            release_channel => format!("{}-", release_channel.dev_name()),
+        };
+        match self {
+            Self::Setup(setup_id) => format!("{identifier_prefix}setup-{setup_id}"),
+            Self::Workspace(workspace_id) => {
+                format!("{identifier_prefix}workspace-{workspace_id}",)
+            }
+        }
+    }
+}
+
 impl SshRemoteClient {
     pub fn new(
-        unique_identifier: String,
+        unique_identifier: ConnectionIdentifier,
         connection_options: SshConnectionOptions,
         cancellation: oneshot::Receiver<()>,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AppContext,
     ) -> Task<Result<Option<Model<Self>>>> {
+        let unique_identifier = unique_identifier.to_string(cx);
         cx.spawn(|mut cx| async move {
             let success = Box::pin(async move {
                 let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -494,12 +546,8 @@ impl SshRemoteClient {
                     })?
                     .await
                     .map_err(|e| e.cloned())?;
-                let remote_binary_path = ssh_connection
-                    .get_remote_binary_path(&delegate, false, &mut cx)
-                    .await?;
 
                 let io_task = ssh_connection.start_proxy(
-                    remote_binary_path,
                     unique_identifier,
                     false,
                     incoming_tx,
@@ -678,12 +726,7 @@ impl SshRemoteClient {
                     .await
                     .map_err(|error| error.cloned())?;
 
-                let remote_binary_path = ssh_connection
-                    .get_remote_binary_path(&delegate, true, &mut cx)
-                    .await?;
-
                 let io_task = ssh_connection.start_proxy(
-                    remote_binary_path,
                     unique_identifier,
                     true,
                     incoming_tx,
@@ -947,6 +990,19 @@ impl SshRemoteClient {
             .map(|ssh_connection| ssh_connection.ssh_args())
     }
 
+    pub fn upload_directory(
+        &self,
+        src_path: PathBuf,
+        dest_path: PathBuf,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        let state = self.state.lock();
+        let Some(connection) = state.as_ref().and_then(|state| state.ssh_connection()) else {
+            return Task::ready(Err(anyhow!("no ssh connection")));
+        };
+        connection.upload_directory(src_path, dest_path, cx)
+    }
+
     pub fn proto_client(&self) -> AnyProtoClient {
         self.client.clone().into()
     }
@@ -1009,7 +1065,7 @@ impl SshRemoteClient {
             server_cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server"));
         let connection: Arc<dyn RemoteConnection> = Arc::new(fake::FakeRemoteConnection {
             connection_options: opts.clone(),
-            server_cx: fake::SendableCx::new(server_cx.to_async()),
+            server_cx: fake::SendableCx::new(server_cx),
             server_channel: server_client.clone(),
         });
 
@@ -1039,7 +1095,15 @@ impl SshRemoteClient {
     ) -> Model<Self> {
         let (_tx, rx) = oneshot::channel();
         client_cx
-            .update(|cx| Self::new("fake".to_string(), opts, rx, Arc::new(fake::Delegate), cx))
+            .update(|cx| {
+                Self::new(
+                    ConnectionIdentifier::setup(),
+                    opts,
+                    rx,
+                    Arc::new(fake::Delegate),
+                    cx,
+                )
+            })
             .await
             .unwrap()
             .unwrap()
@@ -1135,7 +1199,6 @@ trait RemoteConnection: Send + Sync {
     #[allow(clippy::too_many_arguments)]
     fn start_proxy(
         &self,
-        remote_binary_path: PathBuf,
         unique_identifier: String,
         reconnect: bool,
         incoming_tx: UnboundedSender<Envelope>,
@@ -1144,12 +1207,12 @@ trait RemoteConnection: Send + Sync {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Task<Result<i32>>;
-    async fn get_remote_binary_path(
+    fn upload_directory(
         &self,
-        delegate: &Arc<dyn SshClientDelegate>,
-        reconnect: bool,
-        cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf>;
+        src_path: PathBuf,
+        dest_path: PathBuf,
+        cx: &AppContext,
+    ) -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
     fn ssh_args(&self) -> Vec<String>;
@@ -1162,7 +1225,7 @@ trait RemoteConnection: Send + Sync {
 struct SshRemoteConnection {
     socket: SshSocket,
     master_process: Mutex<Option<process::Child>>,
-    platform: SshPlatform,
+    remote_binary_path: Option<PathBuf>,
     _temp_dir: TempDir,
 }
 
@@ -1189,27 +1252,50 @@ impl RemoteConnection for SshRemoteConnection {
         self.socket.connection_options.clone()
     }
 
-    async fn get_remote_binary_path(
+    fn upload_directory(
         &self,
-        delegate: &Arc<dyn SshClientDelegate>,
-        reconnect: bool,
-        cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf> {
-        let platform = self.platform;
-        let remote_binary_path = delegate.remote_server_binary_path(platform, cx)?;
-        if !reconnect {
-            self.ensure_server_binary(&delegate, &remote_binary_path, platform, cx)
-                .await?;
-        }
+        src_path: PathBuf,
+        dest_path: PathBuf,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        let mut command = process::Command::new("scp");
+        let output = self
+            .socket
+            .ssh_options(&mut command)
+            .args(
+                self.socket
+                    .connection_options
+                    .port
+                    .map(|port| vec!["-P".to_string(), port.to_string()])
+                    .unwrap_or_default(),
+            )
+            .arg("-r")
+            .arg(&src_path)
+            .arg(format!(
+                "{}:{}",
+                self.socket.connection_options.scp_url(),
+                dest_path.display()
+            ))
+            .output();
 
-        let socket = self.socket.clone();
-        run_cmd(socket.ssh_command(&remote_binary_path).arg("version")).await?;
-        Ok(remote_binary_path)
+        cx.background_executor().spawn(async move {
+            let output = output.await?;
+
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "failed to upload directory {} -> {}: {}",
+                    src_path.display(),
+                    dest_path.display(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+
+            Ok(())
+        })
     }
 
     fn start_proxy(
         &self,
-        remote_binary_path: PathBuf,
         unique_identifier: String,
         reconnect: bool,
         incoming_tx: UnboundedSender<Envelope>,
@@ -1220,20 +1306,37 @@ impl RemoteConnection for SshRemoteConnection {
     ) -> Task<Result<i32>> {
         delegate.set_status(Some("Starting proxy"), cx);
 
-        let mut start_proxy_command = format!(
-            "RUST_LOG={} RUST_BACKTRACE={} {:?} proxy --identifier {}",
-            std::env::var("RUST_LOG").unwrap_or_default(),
-            std::env::var("RUST_BACKTRACE").unwrap_or_default(),
-            remote_binary_path,
-            unique_identifier,
+        let Some(remote_binary_path) = self.remote_binary_path.clone() else {
+            return Task::ready(Err(anyhow!("Remote binary path not set")));
+        };
+
+        let mut start_proxy_command = shell_script!(
+            "exec {binary_path} proxy --identifier {identifier}",
+            binary_path = &remote_binary_path.to_string_lossy(),
+            identifier = &unique_identifier,
         );
+
+        if let Some(rust_log) = std::env::var("RUST_LOG").ok() {
+            start_proxy_command = format!(
+                "RUST_LOG={} {}",
+                shlex::try_quote(&rust_log).unwrap(),
+                start_proxy_command
+            )
+        }
+        if let Some(rust_backtrace) = std::env::var("RUST_BACKTRACE").ok() {
+            start_proxy_command = format!(
+                "RUST_BACKTRACE={} {}",
+                shlex::try_quote(&rust_backtrace).unwrap(),
+                start_proxy_command
+            )
+        }
         if reconnect {
             start_proxy_command.push_str(" --reconnect");
         }
 
         let ssh_proxy_process = match self
             .socket
-            .ssh_command(start_proxy_command)
+            .ssh_command("sh", &["-c", &start_proxy_command])
             // IMPORTANT: we kill this process when we drop the task that uses it.
             .kill_on_drop(true)
             .spawn()
@@ -1272,6 +1375,7 @@ impl SshRemoteConnection {
     ) -> Result<Self> {
         use futures::AsyncWriteExt as _;
         use futures::{io::BufReader, AsyncBufReadExt as _};
+        use smol::net::unix::UnixStream;
         use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
 
@@ -1287,6 +1391,9 @@ impl SshRemoteConnection {
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
+
+        let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<UnixStream>();
+        let mut kill_tx = Some(askpass_kill_master_tx);
 
         let askpass_task = cx.spawn({
             let delegate = delegate.clone();
@@ -1311,6 +1418,11 @@ impl SshRemoteConnection {
                         .log_err()
                     {
                         stream.write_all(password.as_bytes()).await.log_err();
+                    } else {
+                        if let Some(kill_tx) = kill_tx.take() {
+                            kill_tx.send(stream).log_err();
+                            break;
+                        }
                     }
                 }
             }
@@ -1331,6 +1443,7 @@ impl SshRemoteConnection {
         // the connection and keep it open, allowing other ssh commands to reuse it
         // via a control socket.
         let socket_path = temp_dir.path().join("ssh.sock");
+
         let mut master_process = process::Command::new("ssh")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -1353,20 +1466,28 @@ impl SshRemoteConnection {
 
         // Wait for this ssh process to close its stdout, indicating that authentication
         // has completed.
-        let stdout = master_process.stdout.as_mut().unwrap();
+        let mut stdout = master_process.stdout.take().unwrap();
         let mut output = Vec::new();
         let connection_timeout = Duration::from_secs(10);
 
         let result = select_biased! {
             _ = askpass_opened_rx.fuse() => {
-                // If the askpass script has opened, that means the user is typing
-                // their password, in which case we don't want to timeout anymore,
-                // since we know a connection has been established.
-                stdout.read_to_end(&mut output).await?;
-                Ok(())
+                select_biased! {
+                    stream = askpass_kill_master_rx.fuse() => {
+                        master_process.kill().ok();
+                        drop(stream);
+                        Err(anyhow!("SSH connection canceled"))
+                    }
+                    // If the askpass script has opened, that means the user is typing
+                    // their password, in which case we don't want to timeout anymore,
+                    // since we know a connection has been established.
+                    result = stdout.read_to_end(&mut output).fuse() => {
+                        result?;
+                        Ok(())
+                    }
+                }
             }
-            result = stdout.read_to_end(&mut output).fuse() => {
-                result?;
+            _ = stdout.read_to_end(&mut output).fuse() => {
                 Ok(())
             }
             _ = futures::FutureExt::fuse(smol::Timer::after(connection_timeout)) => {
@@ -1397,30 +1518,52 @@ impl SshRemoteConnection {
             socket_path,
         };
 
-        let os = run_cmd(socket.ssh_command("uname").arg("-s")).await?;
-        let arch = run_cmd(socket.ssh_command("uname").arg("-m")).await?;
+        let mut this = Self {
+            socket,
+            master_process: Mutex::new(Some(master_process)),
+            _temp_dir: temp_dir,
+            remote_binary_path: None,
+        };
+
+        let (release_channel, version, commit) = cx.update(|cx| {
+            (
+                ReleaseChannel::global(cx),
+                AppVersion::global(cx),
+                AppCommitSha::try_global(cx),
+            )
+        })?;
+        this.remote_binary_path = Some(
+            this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
+                .await?,
+        );
+
+        Ok(this)
+    }
+
+    async fn platform(&self) -> Result<SshPlatform> {
+        let uname = self.socket.run_command("uname", &["-sm"]).await?;
+        let Some((os, arch)) = uname.split_once(" ") else {
+            Err(anyhow!("unknown uname: {uname:?}"))?
+        };
 
         let os = match os.trim() {
             "Darwin" => "macos",
             "Linux" => "linux",
-            _ => Err(anyhow!("unknown uname os {os:?}"))?,
+            _ => Err(anyhow!(
+                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
+            ))?,
         };
         let arch = if arch.starts_with("arm") || arch.starts_with("aarch64") {
             "aarch64"
         } else if arch.starts_with("x86") || arch.starts_with("i686") {
             "x86_64"
         } else {
-            Err(anyhow!("unknown uname architecture {arch:?}"))?
+            Err(anyhow!(
+                "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
+            ))?
         };
 
-        let platform = SshPlatform { os, arch };
-
-        Ok(Self {
-            socket,
-            master_process: Mutex::new(Some(master_process)),
-            platform,
-            _temp_dir: temp_dir,
-        })
+        Ok(SshPlatform { os, arch })
     }
 
     fn multiplex(
@@ -1525,324 +1668,189 @@ impl SshRemoteConnection {
         })
     }
 
+    #[allow(unused)]
     async fn ensure_server_binary(
         &self,
         delegate: &Arc<dyn SshClientDelegate>,
-        dst_path: &Path,
-        platform: SshPlatform,
+        release_channel: ReleaseChannel,
+        version: SemanticVersion,
+        commit: Option<AppCommitSha>,
         cx: &mut AsyncAppContext,
-    ) -> Result<()> {
-        let lock_file = dst_path.with_extension("lock");
-        let lock_content = {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .context("failed to get timestamp")?
-                .as_secs();
-            let source_port = self.get_ssh_source_port().await?;
-            format!("{} {}", source_port, timestamp)
+    ) -> Result<PathBuf> {
+        let version_str = match release_channel {
+            ReleaseChannel::Nightly => {
+                let commit = commit.map(|s| s.0.to_string()).unwrap_or_default();
+
+                format!("{}-{}", version, commit)
+            }
+            ReleaseChannel::Dev => "build".to_string(),
+            _ => version.to_string(),
         };
+        let binary_name = format!(
+            "zed-remote-server-{}-{}",
+            release_channel.dev_name(),
+            version_str
+        );
+        let dst_path = paths::remote_server_dir_relative().join(binary_name);
+        let tmp_path_gz = PathBuf::from(format!(
+            "{}-download-{}.gz",
+            dst_path.to_string_lossy(),
+            std::process::id()
+        ));
 
-        let lock_stale_age = Duration::from_secs(10 * 60);
-        let max_wait_time = Duration::from_secs(10 * 60);
-        let check_interval = Duration::from_secs(5);
-        let start_time = Instant::now();
-
-        loop {
-            let lock_acquired = self.create_lock_file(&lock_file, &lock_content).await?;
-            if lock_acquired {
-                delegate.set_status(Some("Acquired lock file on host"), cx);
-                let result = self
-                    .update_server_binary_if_needed(delegate, dst_path, platform, cx)
-                    .await;
-
-                self.remove_lock_file(&lock_file).await.ok();
-
-                return result;
-            } else {
-                if let Ok(is_stale) = self.is_lock_stale(&lock_file, &lock_stale_age).await {
-                    if is_stale {
-                        delegate.set_status(
-                            Some("Detected lock file on host being stale. Removing"),
-                            cx,
-                        );
-                        self.remove_lock_file(&lock_file).await?;
-                        continue;
-                    } else {
-                        if start_time.elapsed() > max_wait_time {
-                            return Err(anyhow!("Timeout waiting for lock to be released"));
-                        }
-                        log::info!(
-                            "Found lockfile: {:?}. Will check again in {:?}",
-                            lock_file,
-                            check_interval
-                        );
-                        delegate.set_status(
-                            Some("Waiting for another Zed instance to finish uploading binary"),
-                            cx,
-                        );
-                        smol::Timer::after(check_interval).await;
-                        continue;
-                    }
-                } else {
-                    // Unable to check lock, assume it's valid and wait
-                    if start_time.elapsed() > max_wait_time {
-                        return Err(anyhow!("Timeout waiting for lock to be released"));
-                    }
-                    smol::Timer::after(check_interval).await;
-                    continue;
-                }
-            }
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_BUILD_REMOTE_SERVER").is_ok() {
+            let src_path = self
+                .build_local(self.platform().await?, delegate, cx)
+                .await?;
+            self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
+                .await?;
+            self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+                .await?;
+            return Ok(dst_path);
         }
-    }
 
-    async fn get_ssh_source_port(&self) -> Result<String> {
-        let output = run_cmd(
-            self.socket
-                .ssh_command("sh")
-                .arg("-c")
-                .arg(r#""echo $SSH_CLIENT | cut -d' ' -f2""#),
-        )
-        .await
-        .context("failed to get source port from SSH_CLIENT on host")?;
-
-        Ok(output.trim().to_string())
-    }
-
-    async fn create_lock_file(&self, lock_file: &Path, content: &str) -> Result<bool> {
-        let parent_dir = lock_file
-            .parent()
-            .ok_or_else(|| anyhow!("Lock file path has no parent directory"))?;
-
-        let script = format!(
-            r#"'mkdir -p "{parent_dir}" && [ ! -f "{lock_file}" ] && echo "{content}" > "{lock_file}" && echo "created" || echo "exists"'"#,
-            parent_dir = parent_dir.display(),
-            lock_file = lock_file.display(),
-            content = content,
-        );
-
-        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(&script))
+        if self
+            .socket
+            .run_command(&dst_path.to_string_lossy(), &["version"])
             .await
-            .with_context(|| format!("failed to create a lock file at {:?}", lock_file))?;
+            .is_ok()
+        {
+            return Ok(dst_path);
+        }
 
-        Ok(output.trim() == "created")
-    }
+        let wanted_version = cx.update(|cx| match release_channel {
+            ReleaseChannel::Nightly => Ok(None),
+            ReleaseChannel::Dev => {
+                anyhow::bail!(
+                    "ZED_BUILD_REMOTE_SERVER is not set and no remote server exists at ({:?})",
+                    dst_path
+                )
+            }
+            _ => Ok(Some(AppVersion::global(cx))),
+        })??;
 
-    fn generate_stale_check_script(lock_file: &Path, max_age: u64) -> String {
-        format!(
-            r#"
-            if [ ! -f "{lock_file}" ]; then
-                echo "lock file does not exist"
-                exit 0
-            fi
+        let platform = self.platform().await?;
 
-            read -r port timestamp < "{lock_file}"
-
-            # Check if port is still active
-            if command -v ss >/dev/null 2>&1; then
-                if ! ss -n | grep -q ":$port[[:space:]]"; then
-                    echo "ss reports port $port is not open"
-                    exit 0
-                fi
-            elif command -v netstat >/dev/null 2>&1; then
-                if ! netstat -n | grep -q ":$port[[:space:]]"; then
-                    echo "netstat reports port $port is not open"
-                    exit 0
-                fi
-            fi
-
-            # Check timestamp
-            if [ $(( $(date +%s) - timestamp )) -gt {max_age} ]; then
-                echo "timestamp in lockfile is too old"
-            else
-                echo "recent"
-            fi"#,
-            lock_file = lock_file.display(),
-            max_age = max_age
-        )
-    }
-
-    async fn is_lock_stale(&self, lock_file: &Path, max_age: &Duration) -> Result<bool> {
-        let script = format!(
-            "'{}'",
-            Self::generate_stale_check_script(lock_file, max_age.as_secs())
-        );
-
-        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(&script))
-            .await
-            .with_context(|| {
-                format!("failed to check whether lock file {:?} is stale", lock_file)
-            })?;
-
-        let trimmed = output.trim();
-        let is_stale = trimmed != "recent";
-        log::info!("checked lockfile for staleness. stale: {is_stale}, output: {trimmed:?}");
-        Ok(is_stale)
-    }
-
-    async fn remove_lock_file(&self, lock_file: &Path) -> Result<()> {
-        run_cmd(self.socket.ssh_command("rm").arg("-f").arg(lock_file))
-            .await
-            .context("failed to remove lock file")?;
-        Ok(())
-    }
-
-    async fn update_server_binary_if_needed(
-        &self,
-        delegate: &Arc<dyn SshClientDelegate>,
-        dst_path: &Path,
-        platform: SshPlatform,
-        cx: &mut AsyncAppContext,
-    ) -> Result<()> {
-        if std::env::var("ZED_USE_CACHED_REMOTE_SERVER").is_ok() {
-            if let Ok(installed_version) =
-                run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
+        if !self.socket.connection_options.upload_binary_over_ssh {
+            if let Some((url, body)) = delegate
+                .get_download_params(platform, release_channel, wanted_version, cx)
+                .await?
             {
-                log::info!("using cached server binary version {}", installed_version);
-                return Ok(());
-            }
-        }
-
-        if self.is_binary_in_use(dst_path).await? {
-            log::info!("server binary is opened by another process. not updating");
-            delegate.set_status(
-                Some("Skipping update of remote development server, since it's still in use"),
-                cx,
-            );
-            return Ok(());
-        }
-
-        let upload_binary_over_ssh = self.socket.connection_options.upload_binary_over_ssh;
-        let (binary, version) = delegate
-            .get_server_binary(platform, upload_binary_over_ssh, cx)
-            .await??;
-
-        let mut remote_version = None;
-        if cfg!(not(debug_assertions)) {
-            if let Ok(installed_version) =
-                run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
-            {
-                if let Ok(version) = installed_version.trim().parse::<SemanticVersion>() {
-                    remote_version = Some(version);
-                } else {
-                    log::warn!("failed to parse version of remote server: {installed_version:?}",);
-                }
-            }
-
-            if let Some(remote_version) = remote_version {
-                if remote_version == version {
-                    log::info!("remote development server present and matching client version");
-                    return Ok(());
-                } else if remote_version > version {
-                    let error = anyhow!("The version of the remote server ({}) is newer than the Zed version ({}). Please update Zed.", remote_version, version);
-                    return Err(error);
-                } else {
-                    log::info!(
-                        "remote development server has older version: {}. updating...",
-                        remote_version
-                    );
+                match self
+                    .download_binary_on_server(&url, &body, &tmp_path_gz, delegate, cx)
+                    .await
+                {
+                    Ok(_) => {
+                        self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+                            .await?;
+                        return Ok(dst_path);
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to download binary on server, attempting to upload server: {}",
+                            e
+                        )
+                    }
                 }
             }
         }
 
-        match binary {
-            ServerBinary::LocalBinary(src_path) => {
-                self.upload_local_server_binary(&src_path, dst_path, delegate, cx)
-                    .await
-            }
-            ServerBinary::ReleaseUrl { url, body } => {
-                self.download_binary_on_server(&url, &body, dst_path, delegate, cx)
-                    .await
-            }
-        }
-    }
-
-    async fn is_binary_in_use(&self, binary_path: &Path) -> Result<bool> {
-        let script = format!(
-            r#"'
-            if command -v lsof >/dev/null 2>&1; then
-                if lsof "{}" >/dev/null 2>&1; then
-                    echo "in_use"
-                    exit 0
-                fi
-            elif command -v fuser >/dev/null 2>&1; then
-                if fuser "{}" >/dev/null 2>&1; then
-                    echo "in_use"
-                    exit 0
-                fi
-            fi
-            echo "not_in_use"
-            '"#,
-            binary_path.display(),
-            binary_path.display(),
-        );
-
-        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(script))
-            .await
-            .context("failed to check if binary is in use")?;
-
-        Ok(output.trim() == "in_use")
+        let src_path = delegate
+            .download_server_binary_locally(platform, release_channel, wanted_version, cx)
+            .await?;
+        self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
+            .await?;
+        self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+            .await?;
+        return Ok(dst_path);
     }
 
     async fn download_binary_on_server(
         &self,
         url: &str,
         body: &str,
-        dst_path: &Path,
+        tmp_path_gz: &Path,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let mut dst_path_gz = dst_path.to_path_buf();
-        dst_path_gz.set_extension("gz");
-
-        if let Some(parent) = dst_path.parent() {
-            run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
+        if let Some(parent) = tmp_path_gz.parent() {
+            self.socket
+                .run_command("mkdir", &["-p", &parent.to_string_lossy()])
+                .await?;
         }
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
-        let script = format!(
-            r#"
-            if command -v wget >/dev/null 2>&1; then
-                wget --max-redirect=5 --method=GET --header="Content-Type: application/json" --body-data='{}' '{}' -O '{}' && echo "wget"
-            elif command -v curl >/dev/null 2>&1; then
-                curl -L -X GET -H "Content-Type: application/json" -d '{}' '{}' -o '{}' && echo "curl"
-            else
-                echo "Neither curl nor wget is available" >&2
-                exit 1
-            fi
-            "#,
-            body.replace("'", r#"\'"#),
-            url,
-            dst_path_gz.display(),
-            body.replace("'", r#"\'"#),
-            url,
-            dst_path_gz.display(),
-        );
-
-        let output = run_cmd(self.socket.ssh_command("bash").arg("-c").arg(script))
+        match self
+            .socket
+            .run_command(
+                "curl",
+                &[
+                    "-f",
+                    "-L",
+                    "-X",
+                    "GET",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-d",
+                    &body,
+                    &url,
+                    "-o",
+                    &tmp_path_gz.to_string_lossy(),
+                ],
+            )
             .await
-            .context("Failed to download server binary")?;
+        {
+            Ok(_) => {}
+            Err(e) => {
+                if self.socket.run_command("which", &["curl"]).await.is_ok() {
+                    return Err(e);
+                }
 
-        if !output.contains("curl") && !output.contains("wget") {
-            return Err(anyhow!("Failed to download server binary: {}", output));
+                match self
+                    .socket
+                    .run_command(
+                        "wget",
+                        &[
+                            "--max-redirect=5",
+                            "--method=GET",
+                            "--header=Content-Type: application/json",
+                            "--body-data",
+                            &body,
+                            &url,
+                            "-O",
+                            &tmp_path_gz.to_string_lossy(),
+                        ],
+                    )
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(e) => {
+                        if self.socket.run_command("which", &["wget"]).await.is_ok() {
+                            return Err(e);
+                        } else {
+                            anyhow::bail!("Neither curl nor wget is available");
+                        }
+                    }
+                }
+            }
         }
 
-        self.extract_server_binary(dst_path, &dst_path_gz, delegate, cx)
-            .await
+        Ok(())
     }
 
     async fn upload_local_server_binary(
         &self,
         src_path: &Path,
-        dst_path: &Path,
+        tmp_path_gz: &Path,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let mut dst_path_gz = dst_path.to_path_buf();
-        dst_path_gz.set_extension("gz");
-
-        if let Some(parent) = dst_path.parent() {
-            run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
+        if let Some(parent) = tmp_path_gz.parent() {
+            self.socket
+                .run_command("mkdir", &["-p", &parent.to_string_lossy()])
+                .await?;
         }
 
         let src_stat = fs::metadata(&src_path).await?;
@@ -1850,46 +1858,41 @@ impl SshRemoteConnection {
 
         let t0 = Instant::now();
         delegate.set_status(Some("Uploading remote development server"), cx);
-        log::info!("uploading remote development server ({}kb)", size / 1024);
-        self.upload_file(&src_path, &dst_path_gz)
+        log::info!(
+            "uploading remote development server to {:?} ({}kb)",
+            tmp_path_gz,
+            size / 1024
+        );
+        self.upload_file(&src_path, &tmp_path_gz)
             .await
             .context("failed to upload server binary")?;
         log::info!("uploaded remote development server in {:?}", t0.elapsed());
-
-        self.extract_server_binary(dst_path, &dst_path_gz, delegate, cx)
-            .await
+        Ok(())
     }
 
     async fn extract_server_binary(
         &self,
         dst_path: &Path,
-        dst_path_gz: &Path,
+        tmp_path_gz: &Path,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
         delegate.set_status(Some("Extracting remote development server"), cx);
-        run_cmd(
-            self.socket
-                .ssh_command("gunzip")
-                .arg("--force")
-                .arg(&dst_path_gz),
-        )
-        .await?;
-
         let server_mode = 0o755;
-        delegate.set_status(Some("Marking remote development server executable"), cx);
-        run_cmd(
-            self.socket
-                .ssh_command("chmod")
-                .arg(format!("{:o}", server_mode))
-                .arg(dst_path),
-        )
-        .await?;
 
+        let script = shell_script!(
+            "gunzip -f {tmp_path_gz} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
+            tmp_path_gz = &tmp_path_gz.to_string_lossy(),
+            tmp_path = &tmp_path_gz.to_string_lossy().strip_suffix(".gz").unwrap(),
+            server_mode = &format!("{:o}", server_mode),
+            dst_path = &dst_path.to_string_lossy()
+        );
+        self.socket.run_command("sh", &["-c", &script]).await?;
         Ok(())
     }
 
     async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
+        log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
         let mut command = process::Command::new("scp");
         let output = self
             .socket
@@ -1920,6 +1923,113 @@ impl SshRemoteConnection {
                 String::from_utf8_lossy(&output.stderr)
             ))
         }
+    }
+
+    #[cfg(debug_assertions)]
+    async fn build_local(
+        &self,
+        platform: SshPlatform,
+        delegate: &Arc<dyn SshClientDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<PathBuf> {
+        use smol::process::{Command, Stdio};
+
+        async fn run_cmd(command: &mut Command) -> Result<()> {
+            let output = command
+                .kill_on_drop(true)
+                .stderr(Stdio::inherit())
+                .output()
+                .await?;
+            if !output.status.success() {
+                Err(anyhow!("Failed to run command: {:?}", command))?;
+            }
+            Ok(())
+        }
+
+        if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
+            delegate.set_status(Some("Building remote server binary from source"), cx);
+            log::info!("building remote server binary from source");
+            run_cmd(Command::new("cargo").args([
+                "build",
+                "--package",
+                "remote_server",
+                "--features",
+                "debug-embed",
+                "--target-dir",
+                "target/remote_server",
+            ]))
+            .await?;
+
+            delegate.set_status(Some("Compressing binary"), cx);
+
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                "target/remote_server/debug/remote_server",
+            ]))
+            .await?;
+
+            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
+            return Ok(path);
+        }
+        let Some(triple) = platform.triple() else {
+            anyhow::bail!("can't cross compile for: {:?}", platform);
+        };
+        smol::fs::create_dir_all("target/remote_server").await?;
+
+        delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
+        log::info!("installing cross");
+        run_cmd(Command::new("cargo").args([
+            "install",
+            "cross",
+            "--git",
+            "https://github.com/cross-rs/cross",
+        ]))
+        .await?;
+
+        delegate.set_status(
+            Some(&format!(
+                "Building remote server binary from source for {} with Docker",
+                &triple
+            )),
+            cx,
+        );
+        log::info!("building remote server binary from source for {}", &triple);
+        run_cmd(
+            Command::new("cross")
+                .args([
+                    "build",
+                    "--package",
+                    "remote_server",
+                    "--features",
+                    "debug-embed",
+                    "--target-dir",
+                    "target/remote_server",
+                    "--target",
+                    &triple,
+                ])
+                .env(
+                    "CROSS_CONTAINER_OPTS",
+                    "--mount type=bind,src=./target,dst=/app/target",
+                ),
+        )
+        .await?;
+
+        delegate.set_status(Some("Compressing binary"), cx);
+
+        run_cmd(Command::new("gzip").args([
+            "-9",
+            "-f",
+            &format!("target/remote_server/{}/debug/remote_server", triple),
+        ]))
+        .await?;
+
+        let path = std::env::current_dir()?.join(format!(
+            "target/remote_server/{}/debug/remote_server.gz",
+            triple
+        ));
+
+        return Ok(path);
     }
 }
 
@@ -1964,77 +2074,97 @@ impl ChannelClient {
         mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         cx: &AsyncAppContext,
     ) -> Task<Result<()>> {
-        cx.spawn(|cx| {
-            async move {
-                let peer_id = PeerId { owner_id: 0, id: 0 };
-                while let Some(incoming) = incoming_rx.next().await {
-                    let Some(this) = this.upgrade() else {
-                        return anyhow::Ok(());
-                    };
-                    if let Some(ack_id) = incoming.ack_id {
-                        let mut buffer = this.buffer.lock();
-                        while buffer.front().is_some_and(|msg| msg.id <= ack_id) {
-                            buffer.pop_front();
+        cx.spawn(|cx| async move {
+            let peer_id = PeerId { owner_id: 0, id: 0 };
+            while let Some(incoming) = incoming_rx.next().await {
+                let Some(this) = this.upgrade() else {
+                    return anyhow::Ok(());
+                };
+                if let Some(ack_id) = incoming.ack_id {
+                    let mut buffer = this.buffer.lock();
+                    while buffer.front().is_some_and(|msg| msg.id <= ack_id) {
+                        buffer.pop_front();
+                    }
+                }
+                if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) = &incoming.payload
+                {
+                    log::debug!(
+                        "{}:ssh message received. name:FlushBufferedMessages",
+                        this.name
+                    );
+                    {
+                        let buffer = this.buffer.lock();
+                        for envelope in buffer.iter() {
+                            this.outgoing_tx
+                                .lock()
+                                .unbounded_send(envelope.clone())
+                                .ok();
                         }
                     }
-                    if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) =
-                        &incoming.payload
-                    {
-                        log::debug!("{}:ssh message received. name:FlushBufferedMessages", this.name);
-                        {
-                            let buffer = this.buffer.lock();
-                            for envelope in buffer.iter() {
-                                this.outgoing_tx.lock().unbounded_send(envelope.clone()).ok();
-                            }
+                    let mut envelope = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
+                    envelope.id = this.next_message_id.fetch_add(1, SeqCst);
+                    this.outgoing_tx.lock().unbounded_send(envelope).ok();
+                    continue;
+                }
+
+                this.max_received.store(incoming.id, SeqCst);
+
+                if let Some(request_id) = incoming.responding_to {
+                    let request_id = MessageId(request_id);
+                    let sender = this.response_channels.lock().remove(&request_id);
+                    if let Some(sender) = sender {
+                        let (tx, rx) = oneshot::channel();
+                        if incoming.payload.is_some() {
+                            sender.send((incoming, tx)).ok();
                         }
-                        let mut envelope = proto::Ack{}.into_envelope(0, Some(incoming.id), None);
-                        envelope.id = this.next_message_id.fetch_add(1, SeqCst);
-                        this.outgoing_tx.lock().unbounded_send(envelope).ok();
-                        continue;
+                        rx.await.ok();
                     }
-
-                    this.max_received.store(incoming.id, SeqCst);
-
-                    if let Some(request_id) = incoming.responding_to {
-                        let request_id = MessageId(request_id);
-                        let sender = this.response_channels.lock().remove(&request_id);
-                        if let Some(sender) = sender {
-                            let (tx, rx) = oneshot::channel();
-                            if incoming.payload.is_some() {
-                                sender.send((incoming, tx)).ok();
-                            }
-                            rx.await.ok();
-                        }
-                    } else if let Some(envelope) =
-                        build_typed_envelope(peer_id, Instant::now(), incoming)
-                    {
-                        let type_name = envelope.payload_type_name();
-                        if let Some(future) = ProtoMessageHandlerSet::handle_message(
-                            &this.message_handlers,
-                            envelope,
-                            this.clone().into(),
-                            cx.clone(),
-                        ) {
-                            log::debug!("{}:ssh message received. name:{type_name}", this.name);
-                            cx.foreground_executor().spawn(async move {
+                } else if let Some(envelope) =
+                    build_typed_envelope(peer_id, Instant::now(), incoming)
+                {
+                    let type_name = envelope.payload_type_name();
+                    if let Some(future) = ProtoMessageHandlerSet::handle_message(
+                        &this.message_handlers,
+                        envelope,
+                        this.clone().into(),
+                        cx.clone(),
+                    ) {
+                        log::debug!("{}:ssh message received. name:{type_name}", this.name);
+                        cx.foreground_executor()
+                            .spawn(async move {
                                 match future.await {
                                     Ok(_) => {
-                                        log::debug!("{}:ssh message handled. name:{type_name}", this.name);
+                                        log::debug!(
+                                            "{}:ssh message handled. name:{type_name}",
+                                            this.name
+                                        );
                                     }
                                     Err(error) => {
                                         log::error!(
-                                            "{}:error handling message. type:{type_name}, error:{error}", this.name,
+                                            "{}:error handling message. type:{}, error:{}",
+                                            this.name,
+                                            type_name,
+                                            format!("{error:#}").lines().fold(
+                                                String::new(),
+                                                |mut message, line| {
+                                                    if !message.is_empty() {
+                                                        message.push(' ');
+                                                    }
+                                                    message.push_str(line);
+                                                    message
+                                                }
+                                            )
                                         );
                                     }
                                 }
-                            }).detach()
-                        } else {
-                            log::error!("{}:unhandled ssh message name:{type_name}", this.name);
-                        }
+                            })
+                            .detach()
+                    } else {
+                        log::error!("{}:unhandled ssh message name:{type_name}", this.name);
                     }
                 }
-                anyhow::Ok(())
             }
+            anyhow::Ok(())
         })
     }
 
@@ -2222,12 +2352,12 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{AsyncAppContext, SemanticVersion, Task};
+    use gpui::{AppContext, AsyncAppContext, SemanticVersion, Task, TestAppContext};
+    use release_channel::ReleaseChannel;
     use rpc::proto::Envelope;
 
     use super::{
-        ChannelClient, RemoteConnection, ServerBinary, SshClientDelegate, SshConnectionOptions,
-        SshPlatform,
+        ChannelClient, RemoteConnection, SshClientDelegate, SshConnectionOptions, SshPlatform,
     };
 
     pub(super) struct FakeRemoteConnection {
@@ -2237,15 +2367,19 @@ mod fake {
     }
 
     pub(super) struct SendableCx(AsyncAppContext);
-    // safety: you can only get the other cx on the main thread.
     impl SendableCx {
-        pub(super) fn new(cx: AsyncAppContext) -> Self {
-            Self(cx)
+        // SAFETY: When run in test mode, GPUI is always single threaded.
+        pub(super) fn new(cx: &TestAppContext) -> Self {
+            Self(cx.to_async())
         }
+
+        // SAFETY: Enforce that we're on the main thread by requiring a valid AsyncAppContext
         fn get(&self, _: &AsyncAppContext) -> AsyncAppContext {
             self.0.clone()
         }
     }
+
+    // SAFETY: There is no way to access a SendableCx from a different thread, see [`SendableCx::new`] and [`SendableCx::get`]
     unsafe impl Send for SendableCx {}
     unsafe impl Sync for SendableCx {}
 
@@ -2262,6 +2396,14 @@ mod fake {
         fn ssh_args(&self) -> Vec<String> {
             Vec::new()
         }
+        fn upload_directory(
+            &self,
+            _src_path: PathBuf,
+            _dest_path: PathBuf,
+            _cx: &AppContext,
+        ) -> Task<Result<()>> {
+            unreachable!()
+        }
 
         fn connection_options(&self) -> SshConnectionOptions {
             self.connection_options.clone()
@@ -2274,18 +2416,9 @@ mod fake {
                 .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(&cx));
         }
 
-        async fn get_remote_binary_path(
-            &self,
-            _delegate: &Arc<dyn SshClientDelegate>,
-            _reconnect: bool,
-            _cx: &mut AsyncAppContext,
-        ) -> Result<PathBuf> {
-            Ok(PathBuf::new())
-        }
-
         fn start_proxy(
             &self,
-            _remote_binary_path: PathBuf,
+
             _unique_identifier: String,
             _reconnect: bool,
             mut client_incoming_tx: mpsc::UnboundedSender<Envelope>,
@@ -2335,98 +2468,27 @@ mod fake {
         ) -> oneshot::Receiver<Result<String>> {
             unreachable!()
         }
-        fn remote_server_binary_path(
+
+        fn download_server_binary_locally(
             &self,
             _: SshPlatform,
+            _: ReleaseChannel,
+            _: Option<SemanticVersion>,
             _: &mut AsyncAppContext,
-        ) -> Result<PathBuf> {
+        ) -> Task<Result<PathBuf>> {
             unreachable!()
         }
-        fn get_server_binary(
+
+        fn get_download_params(
             &self,
-            _: SshPlatform,
-            _: bool,
-            _: &mut AsyncAppContext,
-        ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>> {
+            _platform: SshPlatform,
+            _release_channel: ReleaseChannel,
+            _version: Option<SemanticVersion>,
+            _cx: &mut AsyncAppContext,
+        ) -> Task<Result<Option<(String, String)>>> {
             unreachable!()
         }
 
         fn set_status(&self, _: Option<&str>, _: &mut AsyncAppContext) {}
-    }
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::TempDir;
-
-    fn run_stale_check_script(
-        lock_file: &Path,
-        max_age: Duration,
-        simulate_port_open: Option<&str>,
-    ) -> Result<String> {
-        let wrapper = format!(
-            r#"
-            # Mock ss/netstat commands
-            ss() {{
-                # Only handle the -n argument
-                if [ "$1" = "-n" ]; then
-                    # If we're simulating an open port, output a line containing that port
-                    if [ "{simulated_port}" != "" ]; then
-                        echo "ESTAB 0 0 1.2.3.4:{simulated_port} 5.6.7.8:12345"
-                    fi
-                fi
-            }}
-            netstat() {{
-                ss "$@"
-            }}
-            export -f ss netstat
-
-            # Real script starts here
-            {script}"#,
-            simulated_port = simulate_port_open.unwrap_or(""),
-            script = SshRemoteConnection::generate_stale_check_script(lock_file, max_age.as_secs())
-        );
-
-        let output = std::process::Command::new("bash")
-            .arg("-c")
-            .arg(&wrapper)
-            .output()?;
-
-        if !output.stderr.is_empty() {
-            eprintln!("Script stderr: {}", String::from_utf8_lossy(&output.stderr));
-        }
-
-        Ok(String::from_utf8(output.stdout)?.trim().to_string())
-    }
-
-    #[test]
-    fn test_lock_staleness() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let lock_file = temp_dir.path().join("test.lock");
-
-        // Test 1: No lock file
-        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), None)?;
-        assert_eq!(output, "lock file does not exist");
-
-        // Test 2: Lock file with port that's not open
-        fs::write(&lock_file, "54321 1234567890")?;
-        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), Some("98765"))?;
-        assert_eq!(output, "ss reports port 54321 is not open");
-
-        // Test 3: Lock file with port that is open but old timestamp
-        let old_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() - 700; // 700 seconds ago
-        fs::write(&lock_file, format!("54321 {}", old_timestamp))?;
-        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), Some("54321"))?;
-        assert_eq!(output, "timestamp in lockfile is too old");
-
-        // Test 4: Lock file with port that is open and recent timestamp
-        let recent_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() - 60; // 1 minute ago
-        fs::write(&lock_file, format!("54321 {}", recent_timestamp))?;
-        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), Some("54321"))?;
-        assert_eq!(output, "recent");
-
-        Ok(())
     }
 }

@@ -337,3 +337,9 @@ impl IndexedDocsDatabase {
         })
     }
 }
+
+impl extension::KeyValueStoreDelegate for IndexedDocsDatabase {
+    fn insert(&self, key: String, docs: String) -> Task<Result<()>> {
+        IndexedDocsDatabase::insert(&self, key, docs)
+    }
+}

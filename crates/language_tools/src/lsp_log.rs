@@ -7,10 +7,10 @@ use gpui::{
     IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, View,
     ViewContext, VisualContext, WeakModel, WindowContext,
 };
-use language::{LanguageServerId, LanguageServerName};
+use language::LanguageServerId;
 use lsp::{
-    notification::SetTrace, IoKind, LanguageServer, MessageType, ServerCapabilities,
-    SetTraceParams, TraceValue,
+    notification::SetTrace, IoKind, LanguageServer, LanguageServerName, MessageType,
+    ServerCapabilities, SetTraceParams, TraceValue,
 };
 use project::{search::SearchQuery, Project, WorktreeId};
 use std::{borrow::Cow, sync::Arc};
@@ -751,7 +751,7 @@ impl LspLogView {
         let mut rows = log_store
             .language_servers
             .iter()
-            .filter_map(|(server_id, state)| match &state.kind {
+            .map(|(server_id, state)| match &state.kind {
                 LanguageServerKind::Local { .. } | LanguageServerKind::Remote { .. } => {
                     let worktree_root_name = state
                         .worktree_id
@@ -759,8 +759,7 @@ impl LspLogView {
                         .map(|worktree| worktree.read(cx).root_name().to_string())
                         .unwrap_or_else(|| "Unknown worktree".to_string());
 
-                    let state = log_store.language_servers.get(&server_id)?;
-                    Some(LogMenuItem {
+                    LogMenuItem {
                         server_id: *server_id,
                         server_name: state.name.clone().unwrap_or(unknown_server.clone()),
                         server_kind: state.kind.clone(),
@@ -768,10 +767,10 @@ impl LspLogView {
                         rpc_trace_enabled: state.rpc_state.is_some(),
                         selected_entry: self.active_entry_kind,
                         trace_level: lsp::TraceValue::Off,
-                    })
+                    }
                 }
 
-                LanguageServerKind::Global => Some(LogMenuItem {
+                LanguageServerKind::Global => LogMenuItem {
                     server_id: *server_id,
                     server_name: state.name.clone().unwrap_or(unknown_server.clone()),
                     server_kind: state.kind.clone(),
@@ -779,7 +778,7 @@ impl LspLogView {
                     rpc_trace_enabled: state.rpc_state.is_some(),
                     selected_entry: self.active_entry_kind,
                     trace_level: lsp::TraceValue::Off,
-                }),
+                },
             })
             .chain(
                 self.project
@@ -1186,7 +1185,7 @@ impl Render for LspLogToolbarItemView {
                                 );
                             // We do not support tracing for remote language servers right now
                             if row.server_kind.is_remote() {
-                                return menu;
+                                continue;
                             }
                             menu = menu.entry(
                                 SERVER_TRACE,
@@ -1237,6 +1236,22 @@ impl Render for LspLogToolbarItemView {
                                     view.show_rpc_trace_for_server(row.server_id, cx);
                                 }),
                             );
+                            if server_selected && row.selected_entry == LogKind::Rpc {
+                                let selected_ix = menu.select_last();
+                                // Each language server has:
+                                // 1. A title.
+                                // 2. Server logs.
+                                // 3. Server trace.
+                                // 4. RPC messages.
+                                // 5. Server capabilities
+                                // Thus, if nth server's RPC is selected, the index of selected entry should match this formula
+                                let _expected_index = ix * 5 + 3;
+                                debug_assert_eq!(
+                                    Some(_expected_index),
+                                    selected_ix,
+                                    "Could not scroll to a just added LSP menu item"
+                                );
+                            }
                             menu = menu.entry(
                                 SERVER_CAPABILITIES,
                                 None,
@@ -1244,14 +1259,6 @@ impl Render for LspLogToolbarItemView {
                                     view.show_capabilities_for_server(row.server_id, cx);
                                 }),
                             );
-                            if server_selected && row.selected_entry == LogKind::Rpc {
-                                let selected_ix = menu.select_last();
-                                debug_assert_eq!(
-                                    Some(ix * 4 + 3),
-                                    selected_ix,
-                                    "Could not scroll to a just added LSP menu item"
-                                );
-                            }
                         }
                         menu
                     })

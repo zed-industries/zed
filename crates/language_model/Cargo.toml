@@ -38,7 +38,7 @@ menu.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 parking_lot.workspace = true
-proto = { workspace = true, features = ["test-support"] }
+proto.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -46,6 +46,7 @@ serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 strum.workspace = true
+telemetry_events.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 tiktoken-rs.workspace = true
@@ -62,6 +63,7 @@ env_logger.workspace = true
 language = { workspace = true, features = ["test-support"] }
 log.workspace = true
 project = { workspace = true, features = ["test-support"] }
+proto = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true

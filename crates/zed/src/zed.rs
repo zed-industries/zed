@@ -1,6 +1,6 @@
 mod app_menus;
 pub mod inline_completion_registry;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) mod linux_prompts;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
@@ -68,7 +68,6 @@ actions!(
         Hide,
         HideOthers,
         Minimize,
-        OpenDefaultKeymap,
         OpenDefaultSettings,
         OpenProjectSettings,
         OpenProjectTasks,
@@ -154,8 +153,8 @@ pub fn initialize_workspace(
         })
         .detach();
 
-        #[cfg(target_os = "linux")]
-        if let Err(e) = fs::watcher::global(|_| {}) {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        if let Err(e) = fs::linux_watcher::global(|_| {}) {
             let message = format!(db::indoc!{r#"
                 inotify_init returned {}
 
@@ -362,7 +361,7 @@ pub fn initialize_workspace(
             })
             .register_action(|_, _: &install_cli::Install, cx| {
                 cx.spawn(|workspace, mut cx| async move {
-                    if cfg!(target_os = "linux") {
+                    if cfg!(any(target_os = "linux", target_os = "freebsd")) {
                         let prompt = cx.prompt(
                             PromptLevel::Warning,
                             "CLI should already be installed",
@@ -474,7 +473,7 @@ pub fn initialize_workspace(
             .register_action(open_project_tasks_file)
             .register_action(
                 move |workspace: &mut Workspace,
-                      _: &OpenDefaultKeymap,
+                      _: &zed_actions::OpenDefaultKeymap,
                       cx: &mut ViewContext<Workspace>| {
                     open_bundled_file(
                         workspace,
@@ -809,6 +808,7 @@ pub fn handle_keymap_file_changes(
     VimModeSetting::register(cx);
 
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
+    let (keyboard_layout_tx, mut keyboard_layout_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
     let mut old_vim_enabled = VimModeSetting::get_global(cx).0;
     cx.observe_global::<SettingsStore>(move |cx| {
@@ -823,6 +823,11 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
+    cx.on_keyboard_layout_change(move |_| {
+        keyboard_layout_tx.unbounded_send(()).ok();
+    })
+    .detach();
+
     load_default_keymap(cx);
 
     cx.spawn(move |cx| async move {
@@ -830,6 +835,7 @@ pub fn handle_keymap_file_changes(
         loop {
             select_biased! {
                 _ = base_keymap_rx.next() => {}
+                _ = keyboard_layout_rx.next() => {}
                 user_keymap_content = user_keymap_file_rx.next() => {
                     if let Some(user_keymap_content) = user_keymap_content {
                         match KeymapFile::parse(&user_keymap_content) {
@@ -855,7 +861,7 @@ fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
     load_default_keymap(cx);
     keymap_content.clone().add_to_cx(cx).log_err();
     cx.set_menus(app_menus());
-    cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)])
+    cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)]);
 }
 
 pub fn load_default_keymap(cx: &mut AppContext) {
@@ -1000,7 +1006,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
         let app_state = workspace.app_state().clone();
         cx.spawn(|workspace, mut cx| async move {
             async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
-                let path = app_state.client.telemetry().log_file_path()?;
+                let path = client::telemetry::Telemetry::log_file_path();
                 app_state.fs.load(&path).await.log_err()
             }
 
@@ -3425,7 +3431,7 @@ mod tests {
         theme::init(theme::LoadThemes::JustBase, cx);
 
         let mut has_default_theme = false;
-        for theme_name in themes.list(false).into_iter().map(|meta| meta.name) {
+        for theme_name in themes.list().into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
             if theme.name == ThemeSettings::get(None, cx).active_theme.name {
@@ -3505,6 +3511,7 @@ mod tests {
                 app_state.client.telemetry().clone(),
                 cx,
             );
+            repl::notebook::init(cx);
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);

@@ -14,12 +14,12 @@ impl Render for ToolbarControls {
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
 
-        if let Some(editor) = self.editor() {
-            let editor = editor.read(cx);
-            include_warnings = editor.include_warnings;
-            has_stale_excerpts = !editor.paths_to_update.is_empty();
-            is_updating = !editor.update_paths_tx.is_empty()
-                || editor
+        if let Some(editor) = self.diagnostics() {
+            let diagnostics = editor.read(cx);
+            include_warnings = diagnostics.include_warnings;
+            has_stale_excerpts = !diagnostics.paths_to_update.is_empty();
+            is_updating = diagnostics.update_excerpts_task.is_some()
+                || diagnostics
                     .project
                     .read(cx)
                     .language_servers_running_disk_based_diagnostics(cx)
@@ -49,9 +49,9 @@ impl Render for ToolbarControls {
                         .disabled(is_updating)
                         .tooltip(move |cx| Tooltip::text("Update excerpts", cx))
                         .on_click(cx.listener(|this, _, cx| {
-                            if let Some(editor) = this.editor() {
-                                editor.update(cx, |editor, _| {
-                                    editor.enqueue_update_stale_excerpts(None);
+                            if let Some(diagnostics) = this.diagnostics() {
+                                diagnostics.update(cx, |diagnostics, cx| {
+                                    diagnostics.update_all_excerpts(cx);
                                 });
                             }
                         })),
@@ -63,7 +63,7 @@ impl Render for ToolbarControls {
                     .shape(IconButtonShape::Square)
                     .tooltip(move |cx| Tooltip::text(tooltip, cx))
                     .on_click(cx.listener(|this, _, cx| {
-                        if let Some(editor) = this.editor() {
+                        if let Some(editor) = this.diagnostics() {
                             editor.update(cx, |editor, cx| {
                                 editor.toggle_warnings(&Default::default(), cx);
                             });
@@ -105,7 +105,7 @@ impl ToolbarControls {
         ToolbarControls { editor: None }
     }
 
-    fn editor(&self) -> Option<View<ProjectDiagnosticsEditor>> {
+    fn diagnostics(&self) -> Option<View<ProjectDiagnosticsEditor>> {
         self.editor.as_ref()?.upgrade()
     }
 }
