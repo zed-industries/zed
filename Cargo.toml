@@ -363,6 +363,7 @@ heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 hyper = "0.14"
+http = "1.1"
 ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
@@ -371,8 +372,7 @@ itertools = "0.13.0"
 jsonwebtoken = "9.3"
 libc = "0.2"
 linkify = "0.10.0"
-# TODO livekit use the official fork
-livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="19ac094aec4e476dd73600030e5501a794cedaf9", features = ["dispatcher", "native-tls"], default-features = false }
+livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="1c33b486a86df21758c4a8786338f0c3553d37ad", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"

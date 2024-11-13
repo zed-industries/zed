@@ -29,10 +29,12 @@ test-support = [
 [dependencies]
 anyhow.workspace = true
 async-trait = { workspace = true, optional = true }
+bytes.workspace = true
 cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
 collections = { workspace = true }
 futures.workspace = true
 gpui.workspace = true
+http_2 = { package = "http", version = "0.2.1" }
 livekit.workspace = true
 live_kit_server = { workspace = true, optional = true }
 log.workspace = true
@@ -41,6 +43,7 @@ nanoid = { workspace = true, optional = true}
 parking_lot.workspace = true
 postage.workspace = true
 util.workspace = true
+http_client.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

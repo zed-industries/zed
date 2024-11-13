@@ -9,10 +9,10 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait as _},
     StreamConfig,
 };
-use futures::{Stream, StreamExt as _};
+use futures::{io, Stream, StreamExt as _};
 use gpui::{AppContext, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task};
 use parking_lot::Mutex;
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc};
 use util::{ResultExt as _, TryFutureExt};
 use webrtc::{
     audio_frame::AudioFrame,
@@ -51,8 +51,74 @@ impl livekit::dispatcher::Dispatcher for Dispatcher {
     }
 }
 
-pub fn init(dispatcher: Arc<dyn gpui::PlatformDispatcher>) {
+struct HttpClientAdapter(Arc<dyn http_client::HttpClient>);
+
+fn http_2_status(status: http_client::http::StatusCode) -> http_2::StatusCode {
+    http_2::StatusCode::from_u16(status.as_u16())
+        .expect("valid status code to status code conversion")
+}
+
+impl livekit::dispatcher::HttpClient for HttpClientAdapter {
+    fn get(
+        &self,
+        url: &str,
+    ) -> Pin<Box<dyn Future<Output = io::Result<livekit::dispatcher::Response>> + Send>> {
+        let http_client = self.0.clone();
+        let url = url.to_string();
+        Box::pin(async move {
+            let response = http_client
+                .get(&url, http_client::AsyncBody::empty(), false)
+                .await
+                .map_err(io::Error::other)?;
+            Ok(livekit::dispatcher::Response {
+                status: http_2_status(response.status()),
+                body: Box::pin(response.into_body()),
+            })
+        })
+    }
+
+    fn send_async(
+        &self,
+        request: http_2::Request<Vec<u8>>,
+    ) -> Pin<Box<dyn Future<Output = io::Result<livekit::dispatcher::Response>> + Send>> {
+        let http_client = self.0.clone();
+        let mut builder = http_client::http::Request::builder()
+            .method(request.method().as_str())
+            .uri(request.uri().to_string());
+
+        for (key, value) in request.headers().iter() {
+            builder = builder.header(key.as_str(), value.as_bytes());
+        }
+
+        if !request.extensions().is_empty() {
+            log::error!(
+                "Livekit sent an HTTP request with a protocol extension that Zed doesn't support!"
+            );
+            debug_assert!(false);
+        }
+
+        let request = builder
+            .body(http_client::AsyncBody::from_bytes(
+                request.into_body().into(),
+            ))
+            .unwrap();
+
+        Box::pin(async move {
+            let response = http_client.send(request).await.map_err(io::Error::other)?;
+            Ok(livekit::dispatcher::Response {
+                status: http_2_status(response.status()),
+                body: Box::pin(response.into_body()),
+            })
+        })
+    }
+}
+
+pub fn init(
+    dispatcher: Arc<dyn gpui::PlatformDispatcher>,
+    http_client: Arc<dyn http_client::HttpClient>,
+) {
     livekit::dispatcher::set_dispatcher(Dispatcher(dispatcher));
+    livekit::dispatcher::set_http_client(HttpClientAdapter(http_client));
 }
 
 pub async fn capture_local_video_track(
