@@ -9,7 +9,7 @@ use crate::{IndexedDocsDatabase, IndexedDocsProvider, PackageName, ProviderId};
 
 pub struct ExtensionIndexedDocsProvider {
     extension: Arc<dyn Extension>,
-    pub(crate) id: ProviderId,
+    id: ProviderId,
 }
 
 impl ExtensionIndexedDocsProvider {
