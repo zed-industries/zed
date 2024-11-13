@@ -8,7 +8,6 @@ use command_palette_hooks::CommandPaletteFilter;
 use gpui::{actions, AppContext};
 use settings::Settings;
 
-pub use crate::manager::ContextServer;
 use crate::manager::ContextServerSettings;
 pub use crate::registry::ContextServerFactoryRegistry;
 
