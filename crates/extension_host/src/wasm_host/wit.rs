@@ -57,10 +57,33 @@ pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive
 
     let max_version = match release_channel {
         ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
-        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_1_0::MAX_VERSION,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => latest::MAX_VERSION,
     };
 
     since_v0_0_1::MIN_VERSION..=max_version
+}
+
+/// Authorizes access to use unreleased versions of the Wasm API, based on the provided [`ReleaseChannel`].
+///
+/// Note: If there isn't currently an unreleased Wasm API version this function may be unused. Don't delete it!
+pub fn authorize_access_to_unreleased_wasm_api_version(
+    release_channel: ReleaseChannel,
+) -> Result<()> {
+    let allow_unreleased_version = match release_channel {
+        ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => {
+            // We always allow the latest in tests so that the extension tests pass on release branches.
+            cfg!(any(test, feature = "test-support"))
+        }
+    };
+
+    if !allow_unreleased_version {
+        Err(anyhow!(
+            "unreleased versions of the extension API can only be used on development builds of Zed"
+        ))?;
+    }
+
+    Ok(())
 }
 
 pub enum Extension {
@@ -78,20 +101,10 @@ impl Extension {
         version: SemanticVersion,
         component: &Component,
     ) -> Result<Self> {
+        // Note: The release channel can be used to stage a new version of the extension API.
+        let _ = release_channel;
+
         if version >= latest::MIN_VERSION {
-            // Note: The release channel can be used to stage a new version of the extension API.
-            // We always allow the latest in tests so that the extension tests pass on release branches.
-            let allow_latest_version = match release_channel {
-                ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
-                ReleaseChannel::Stable | ReleaseChannel::Preview => {
-                    cfg!(any(test, feature = "test-support"))
-                }
-            };
-            if !allow_latest_version {
-                Err(anyhow!(
-                    "unreleased versions of the extension API can only be used on development builds of Zed"
-                ))?;
-            }
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker())
                     .await
