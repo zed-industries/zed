@@ -1,14 +1,14 @@
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::ProposedChangesEditor;
-use futures::{future, TryFutureExt as _};
-use gpui::{AppContext, AsyncAppContext, Model, SharedString};
-use language::{AutoindentMode, Buffer, BufferSnapshot};
+use futures::future::{self, Shared};
+use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
+use language::{AutoindentMode, Buffer};
 use project::{Project, ProjectPath};
 use std::{cmp, ops::Range, path::Path, sync::Arc};
-use text::{AnchorRangeExt as _, Bias, OffsetRangeExt as _, Point};
+use text::{AnchorRangeExt as _, OffsetRangeExt as _, Point};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct AssistantPatch {
     pub range: Range<language::Anchor>,
     pub title: SharedString,
@@ -16,10 +16,27 @@ pub(crate) struct AssistantPatch {
     pub status: AssistantPatchStatus,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) enum AssistantPatchStatus {
-    Pending,
-    Ready,
+    Generating,
+    Normalizing(Shared<Task<()>>),
+    Ready(Arc<NormalizedPatch>),
+}
+
+pub struct NormalizedPatch {
+    pub buffers: Vec<NormalizedPatchBuffer>,
+}
+
+pub struct NormalizedPatchBuffer {
+    pub path: Arc<Path>,
+    pub content: Arc<str>,
+    pub edits: Vec<(Range<usize>, String)>,
+}
+
+pub struct NormalizedPatchEdit {
+    pub range: Range<usize>,
+    pub new_text: String,
+    pub description: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -229,57 +246,18 @@ impl AssistantEdit {
 
         Ok(Self { path, kind })
     }
-
-    pub async fn resolve(
-        &self,
-        project: Model<Project>,
-        mut cx: AsyncAppContext,
-    ) -> Result<(Model<Buffer>, ResolvedEdit)> {
-        let path = self.path.clone();
-        let kind = self.kind.clone();
-        let buffer = project
-            .update(&mut cx, |project, cx| {
-                let project_path = project
-                    .find_project_path(Path::new(&path), cx)
-                    .or_else(|| {
-                        // If we couldn't find a project path for it, put it in the active worktree
-                        // so that when we create the buffer, it can be saved.
-                        let worktree = project
-                            .active_entry()
-                            .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
-                            .or_else(|| project.worktrees(cx).next())?;
-                        let worktree = worktree.read(cx);
-
-                        Some(ProjectPath {
-                            worktree_id: worktree.id(),
-                            path: Arc::from(Path::new(&path)),
-                        })
-                    })
-                    .with_context(|| format!("worktree not found for {:?}", path))?;
-                anyhow::Ok(project.open_buffer(project_path, cx))
-            })??
-            .await?;
-
-        let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-        let suggestion = cx
-            .background_executor()
-            .spawn(async move { kind.resolve(&snapshot) })
-            .await;
-
-        Ok((buffer, suggestion))
-    }
 }
 
 impl AssistantEditKind {
-    fn resolve(self, snapshot: &BufferSnapshot) -> ResolvedEdit {
+    fn normalize(self, buffer_text: &str) -> NormalizedPatchEdit {
         match self {
             Self::Update {
                 old_text,
                 new_text,
                 description,
             } => {
-                let range = Self::resolve_location(&snapshot, &old_text);
-                ResolvedEdit {
+                let range = Self::resolve_location(buffer_text, &old_text);
+                NormalizedPatchEdit {
                     range,
                     new_text,
                     description,
@@ -288,8 +266,8 @@ impl AssistantEditKind {
             Self::Create {
                 new_text,
                 description,
-            } => ResolvedEdit {
-                range: text::Anchor::MIN..text::Anchor::MAX,
+            } => NormalizedPatchEdit {
+                range: 0..buffer_text.len(),
                 description,
                 new_text,
             },
@@ -298,9 +276,9 @@ impl AssistantEditKind {
                 mut new_text,
                 description,
             } => {
-                let range = Self::resolve_location(&snapshot, &old_text);
+                let range = Self::resolve_location(buffer_text, &old_text);
                 new_text.push('\n');
-                ResolvedEdit {
+                NormalizedPatchEdit {
                     range: range.start..range.start,
                     new_text,
                     description,
@@ -311,17 +289,17 @@ impl AssistantEditKind {
                 mut new_text,
                 description,
             } => {
-                let range = Self::resolve_location(&snapshot, &old_text);
+                let range = Self::resolve_location(buffer_text, &old_text);
                 new_text.insert(0, '\n');
-                ResolvedEdit {
+                NormalizedPatchEdit {
                     range: range.end..range.end,
                     new_text,
                     description,
                 }
             }
             Self::Delete { old_text } => {
-                let range = Self::resolve_location(&snapshot, &old_text);
-                ResolvedEdit {
+                let range = Self::resolve_location(buffer_text, &old_text);
+                NormalizedPatchEdit {
                     range,
                     new_text: String::new(),
                     description: None,
@@ -330,13 +308,13 @@ impl AssistantEditKind {
         }
     }
 
-    fn resolve_location(buffer: &text::BufferSnapshot, search_query: &str) -> Range<text::Anchor> {
+    fn resolve_location(buffer_text: &str, search_query: &str) -> Range<usize> {
         const INSERTION_COST: u32 = 3;
         const DELETION_COST: u32 = 10;
         const WHITESPACE_INSERTION_COST: u32 = 1;
         const WHITESPACE_DELETION_COST: u32 = 1;
 
-        let buffer_len = buffer.len();
+        let buffer_len = buffer_text.len();
         let query_len = search_query.len();
         let mut matrix = SearchMatrix::new(query_len + 1, buffer_len + 1);
         let mut leading_deletion_cost = 0_u32;
@@ -354,7 +332,7 @@ impl AssistantEditKind {
                 SearchState::new(leading_deletion_cost, SearchDirection::Diagonal),
             );
 
-            for (col, buffer_byte) in buffer.bytes_in_range(0..buffer.len()).flatten().enumerate() {
+            for (col, buffer_byte) in buffer_text.bytes().enumerate() {
                 let insertion_cost = if buffer_byte.is_ascii_whitespace() {
                     WHITESPACE_INSERTION_COST
                 } else {
@@ -370,7 +348,7 @@ impl AssistantEditKind {
                     SearchDirection::Left,
                 );
                 let diagonal = SearchState::new(
-                    if query_byte == *buffer_byte {
+                    if query_byte == buffer_byte {
                         matrix.get(row, col).cost
                     } else {
                         matrix
@@ -413,18 +391,84 @@ impl AssistantEditKind {
             }
         }
 
-        let mut start = buffer.offset_to_point(buffer.clip_offset(buffer_ix, Bias::Left));
-        start.column = 0;
-        let mut end = buffer.offset_to_point(buffer.clip_offset(best_buffer_end, Bias::Right));
-        if end.column > 0 {
-            end.column = buffer.line_len(end.row);
+        if let Some(prev_line_end_ix) = buffer_text[0..buffer_ix].rfind('\n') {
+            buffer_ix = prev_line_end_ix + 1;
         }
-
-        buffer.anchor_after(start)..buffer.anchor_before(end)
+        if let Some(line_end_ix) = buffer_text[best_buffer_end..].find('\n') {
+            best_buffer_end = line_end_ix;
+        }
+        buffer_ix..best_buffer_end
     }
 }
 
 impl AssistantPatch {
+    pub(crate) async fn normalize(
+        edits: Arc<[Result<AssistantEdit>]>,
+        project: Model<Project>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<NormalizedPatch> {
+        let mut patch = NormalizedPatch {
+            buffers: Vec::new(),
+        };
+        for edit in edits.iter() {
+            let Ok(edit) = edit else {
+                continue;
+            };
+
+            let path = Path::new(&edit.path);
+            let ix = patch
+                .buffers
+                .binary_search_by_key(&path, |buffer| buffer.path.as_ref());
+            let buffer = match ix {
+                Ok(ix) => &mut patch.buffers[ix],
+                Err(ix) => {
+                    let buffer = project
+                        .update(cx, |project, cx| {
+                            let project_path = project
+                                .find_project_path(Path::new(&path), cx)
+                                .or_else(|| {
+                                    // If we couldn't find a project path for it, put it in the active worktree
+                                    // so that when we create the buffer, it can be saved.
+                                    let worktree = project
+                                        .active_entry()
+                                        .and_then(|entry_id| {
+                                            project.worktree_for_entry(entry_id, cx)
+                                        })
+                                        .or_else(|| project.worktrees(cx).next())?;
+                                    let worktree = worktree.read(cx);
+                                    Some(ProjectPath {
+                                        worktree_id: worktree.id(),
+                                        path: Arc::from(Path::new(&path)),
+                                    })
+                                })
+                                .with_context(|| format!("worktree not found for {:?}", path))?;
+                            anyhow::Ok(project.open_buffer(project_path, cx))
+                        })??
+                        .await?;
+                    patch.buffers.insert(
+                        ix,
+                        NormalizedPatchBuffer {
+                            path: path.into(),
+                            content: buffer.read_with(cx, |buffer, _| buffer.text().into())?,
+                            edits: Vec::new(),
+                        },
+                    );
+                    &mut patch.buffers[ix]
+                }
+            };
+
+            let content = buffer.content.clone();
+            let kind = edit.kind.clone();
+            let suggestion = cx
+                .background_executor()
+                .spawn(async move { kind.normalize(&content) })
+                .await;
+
+            //
+        }
+        Ok(patch)
+    }
+
     pub(crate) async fn resolve(
         &self,
         project: Model<Project>,
@@ -918,9 +962,7 @@ mod tests {
         cx: &mut AppContext,
     ) {
         let (text, _) = marked_text_ranges(text_with_expected_range, false);
-        let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
-        let snapshot = buffer.read(cx).snapshot();
-        let range = AssistantEditKind::resolve_location(&snapshot, query).to_offset(&snapshot);
+        let range = AssistantEditKind::resolve_location(&text, query);
         let text_with_actual_range = generate_marked_text(&text, &[range], false);
         pretty_assertions::assert_eq!(text_with_actual_range, text_with_expected_range);
     }
@@ -937,7 +979,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
         let resolved_edits = edits
             .into_iter()
-            .map(|kind| kind.resolve(&snapshot))
+            .map(|kind| kind.normalize(&old_text))
             .collect();
         let edit_groups = AssistantPatch::group_edits(resolved_edits, &snapshot);
         ResolvedPatch::apply_edit_groups(&edit_groups, &buffer, cx);

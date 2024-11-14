@@ -16,7 +16,7 @@ use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt};
-use fs::{normalize_path, Fs, RemoveOptions};
+use fs::{Fs, RemoveOptions};
 use futures::{future::Shared, FutureExt, StreamExt};
 use gpui::{
     AppContext, Context as _, EventEmitter, Model, ModelContext, RenderImage, SharedString,
@@ -1691,8 +1691,8 @@ impl Context {
                                     let range = patch.range.clone();
                                     let edits = patch.edits.clone();
                                     let project = self.project.clone();
-                                    move |this, cx| {
-                                        Self::normalize_patch(this, range, edits, project, cx)
+                                    move |this, mut cx| async move {
+                                        fun_name(this, range, edits, project, cx).await;
                                     }
                                 })
                                 .shared(),
@@ -1798,30 +1798,6 @@ impl Context {
         }
 
         new_patches
-    }
-
-    async fn normalize_patch(
-        this: gpui::WeakModel<Context>,
-        range: Range<text::Anchor>,
-        edits: Arc<[std::result::Result<AssistantEdit, anyhow::Error>]>,
-        project: Option<Model<Project>>,
-        mut cx: gpui::AsyncAppContext,
-    ) {
-        if let Some(project) = project {
-            if let Ok(patch) = AssistantPatch::normalize(edits, project, &mut cx).await {
-                this.update(&mut cx, |this, cx| {
-                    let buffer = this.buffer.read(cx).text_snapshot();
-                    if let Ok(ix) = this.patch_index_for_range(&range, &buffer) {
-                        this.patches[ix].status = AssistantPatchStatus::Ready(Arc::new(patch));
-                        cx.emit(ContextEvent::PatchesUpdated {
-                            removed: Vec::new(),
-                            updated: vec![range],
-                        })
-                    }
-                })
-                .ok();
-            }
-        }
     }
 
     pub fn pending_command_for_position(
@@ -3150,6 +3126,25 @@ impl Context {
         summary.done = true;
         summary.text = custom_summary;
         cx.emit(ContextEvent::SummaryChanged);
+    }
+}
+
+async fn fun_name(
+    this: gpui::WeakModel<Context>,
+    range: Range<text::Anchor>,
+    edits: Arc<[std::result::Result<AssistantEdit, anyhow::Error>]>,
+    project: Option<Model<Project>>,
+    mut cx: gpui::AsyncAppContext,
+) {
+    if let Some(project) = project {
+        if let Ok(patch) = AssistantPatch::normalize(edits, project, &mut cx).await {
+            this.update(&mut cx, |this, cx| {
+                let buffer = this.buffer.read(cx).text_snapshot();
+                if let Ok(ix) = this.patch_index_for_range(&range, &buffer) {
+                    this.patches[ix].status = AssistantPatchStatus::Ready(Arc::new(patch));
+                }
+            });
+        }
     }
 }
 

@@ -3506,40 +3506,43 @@ impl ContextEditor {
                         .child(Icon::new(IconName::File).size(IconSize::Small))
                         .child(Label::new(path).size(LabelSize::Small))
                 }))
-                .when(patch.status == AssistantPatchStatus::Pending, |div| {
-                    div.child(
-                        h_flex()
-                            .pt_1()
-                            .px_2()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::ArrowCircle)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Info)
-                                    .with_animation(
-                                        "arrow-circle",
-                                        Animation::new(Duration::from_secs(2)).repeat(),
-                                        |icon, delta| {
-                                            icon.transform(Transformation::rotate(percentage(
-                                                delta,
-                                            )))
-                                        },
-                                    ),
-                            )
-                            .child(
-                                Label::new("Generating")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small)
-                                    .with_animation(
-                                        "pulsating-label",
-                                        Animation::new(Duration::from_secs(2))
-                                            .repeat()
-                                            .with_easing(pulsating_between(0.4, 1.)),
-                                        |label, delta| label.alpha(delta),
-                                    ),
-                            ),
-                    )
-                })
+                .when(
+                    matches!(patch.status, AssistantPatchStatus::Generating),
+                    |div| {
+                        div.child(
+                            h_flex()
+                                .pt_1()
+                                .px_2()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Info)
+                                        .with_animation(
+                                            "arrow-circle",
+                                            Animation::new(Duration::from_secs(2)).repeat(),
+                                            |icon, delta| {
+                                                icon.transform(Transformation::rotate(percentage(
+                                                    delta,
+                                                )))
+                                            },
+                                        ),
+                                )
+                                .child(
+                                    Label::new("Generating")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small)
+                                        .with_animation(
+                                            "pulsating-label",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.4, 1.)),
+                                            |label, delta| label.alpha(delta),
+                                        ),
+                                ),
+                        )
+                    },
+                )
                 .into_any(),
         )
     }
