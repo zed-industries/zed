@@ -267,14 +267,16 @@ pub(crate) struct PythonContextProvider;
 const PYTHON_UNITTEST_TARGET_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_UNITTEST_TARGET"));
 
+const PYTHON_ACTIVE_TOOLCHAIN_PATH: VariableName =
+    VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN"));
 impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
         variables: &task::TaskVariables,
-        _location: &project::Location,
+        location: &project::Location,
         _: Option<HashMap<String, String>>,
-        _store: Arc<dyn LanguageToolchainStore>,
-        _cx: &mut gpui::AppContext,
+        toolchains: Arc<dyn LanguageToolchainStore>,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<task::TaskVariables>> {
         let python_module_name = python_module_name_from_relative_path(
             variables.get(&VariableName::RelativeFile).unwrap_or(""),
@@ -298,8 +300,19 @@ impl ContextProvider for PythonContextProvider {
             PYTHON_UNITTEST_TARGET_TASK_VARIABLE.clone(),
             unittest_target_str,
         );
-
-        Task::ready(Ok(task::TaskVariables::from_iter([unittest_target])))
+        let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
+        cx.spawn(move |mut cx| async move {
+            let active_toolchain = if let Some(worktree_id) = worktree_id {
+                toolchains
+                    .active_toolchain(worktree_id, "Python".into(), &mut cx)
+                    .await
+                    .map_or_else(|| "python3".to_owned(), |toolchain| toolchain.path.into())
+            } else {
+                String::from("python3")
+            };
+            let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
+            Ok(task::TaskVariables::from_iter([unittest_target, toolchain]))
+        })
     }
 
     fn associated_tasks(
@@ -310,19 +323,19 @@ impl ContextProvider for PythonContextProvider {
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: "execute selection".to_owned(),
-                command: "python3".to_owned(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec!["-c".to_owned(), VariableName::SelectedText.template_value()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: format!("run '{}'", VariableName::File.template_value()),
-                command: "python3".to_owned(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: format!("unittest '{}'", VariableName::File.template_value()),
-                command: "python3".to_owned(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![
                     "-m".to_owned(),
                     "unittest".to_owned(),
@@ -332,7 +345,7 @@ impl ContextProvider for PythonContextProvider {
             },
             TaskTemplate {
                 label: "unittest $ZED_CUSTOM_PYTHON_UNITTEST_TARGET".to_owned(),
-                command: "python3".to_owned(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![
                     "-m".to_owned(),
                     "unittest".to_owned(),
