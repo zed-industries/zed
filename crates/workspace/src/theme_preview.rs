@@ -5,7 +5,7 @@ use theme::all_theme_colors;
 use ui::{
     element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus,
     Availability, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
-    Checkbox, CheckboxWithLabel, ContentBox, DecoratedIcon, ElevationIndex, Facepile,
+    Checkbox, CheckboxWithLabel, ContentGroup, DecoratedIcon, ElevationIndex, Facepile,
     IconDecoration, Indicator, Table, TintColor, Tooltip,
 };
 
@@ -510,7 +510,7 @@ impl ThemePreview {
             .overflow_scroll()
             .size_full()
             .gap_2()
-            .child(ContentBox::render_component_previews(cx))
+            .child(ContentGroup::render_component_previews(cx))
             .child(IconDecoration::render_component_previews(cx))
             .child(DecoratedIcon::render_component_previews(cx))
             .child(Checkbox::render_component_previews(cx))

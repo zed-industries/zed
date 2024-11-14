@@ -4,14 +4,14 @@ use smallvec::SmallVec;
 
 /// A flexible container component that can hold other elements.
 #[derive(IntoElement)]
-pub struct ContentBox {
+pub struct ContentGroup {
     base: Div,
     border: bool,
     fill: bool,
     children: SmallVec<[AnyElement; 2]>,
 }
 
-impl ContentBox {
+impl ContentGroup {
     /// Creates a new [ContentBox].
     pub fn new() -> Self {
         Self {
@@ -35,19 +35,19 @@ impl ContentBox {
     }
 }
 
-impl ParentElement for ContentBox {
+impl ParentElement for ContentGroup {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
 
-impl Styled for ContentBox {
+impl Styled for ContentGroup {
     fn style(&mut self) -> &mut StyleRefinement {
         self.base.style()
     }
 }
 
-impl RenderOnce for ContentBox {
+impl RenderOnce for ContentGroup {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         // TODO:
         // Baked in padding will make scrollable views inside of content boxes awkward.
@@ -67,7 +67,7 @@ impl RenderOnce for ContentBox {
     }
 }
 
-impl ComponentPreview for ContentBox {
+impl ComponentPreview for ContentGroup {
     fn description() -> impl Into<Option<&'static str>> {
         "A flexible container component that can hold other elements. It can be customized with or without a border and background fill."
     }
@@ -80,7 +80,7 @@ impl ComponentPreview for ContentBox {
         vec![example_group(vec![
             single_example(
                 "Default",
-                ContentBox::new()
+                ContentGroup::new()
                     .flex_1()
                     .items_center()
                     .justify_center()
@@ -90,7 +90,7 @@ impl ComponentPreview for ContentBox {
             .grow(),
             single_example(
                 "Without Border",
-                ContentBox::new()
+                ContentGroup::new()
                     .flex_1()
                     .items_center()
                     .justify_center()
@@ -101,7 +101,7 @@ impl ComponentPreview for ContentBox {
             .grow(),
             single_example(
                 "Without Fill",
-                ContentBox::new()
+                ContentGroup::new()
                     .flex_1()
                     .items_center()
                     .justify_center()
