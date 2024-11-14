@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::lsp_log::LogMenuItem;
+use crate::language_tools::lsp_log::LogMenuItem;
 
 use super::*;
 use futures::StreamExt;

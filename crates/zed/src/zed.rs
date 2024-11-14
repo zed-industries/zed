@@ -629,10 +629,11 @@ fn initialize_pane(workspace: &Workspace, pane: &View<Pane>, cx: &mut ViewContex
             toolbar.add_item(diagnostic_editor_controls, cx);
             let project_search_bar = cx.new_view(|_| ProjectSearchBar::new());
             toolbar.add_item(project_search_bar, cx);
-            let lsp_log_item = cx.new_view(|_| language_tools::LspLogToolbarItemView::new());
+            let lsp_log_item =
+                cx.new_view(|_| zed_common::language_tools::LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, cx);
             let syntax_tree_item =
-                cx.new_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
+                cx.new_view(|_| zed_common::language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, cx);
         })
     });

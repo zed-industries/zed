@@ -6253,33 +6253,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "language_tools"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "copilot",
- "editor",
- "env_logger 0.11.5",
- "futures 0.3.30",
- "gpui",
- "itertools 0.13.0",
- "language",
- "lsp",
- "project",
- "release_channel",
- "serde_json",
- "settings",
- "theme",
- "tree-sitter",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "languages"
 version = "0.1.0"
 dependencies = [
@@ -14699,7 +14672,6 @@ dependencies = [
  "install_cli",
  "journal",
  "language",
- "language_tools",
  "languages",
  "libc",
  "log",
