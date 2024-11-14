@@ -271,12 +271,11 @@ impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
         variables: &task::TaskVariables,
-        location: &project::Location,
+        _location: &project::Location,
         _: Option<HashMap<String, String>>,
-        store: Arc<dyn LanguageToolchainStore>,
-        cx: &mut gpui::AppContext,
+        _store: Arc<dyn LanguageToolchainStore>,
+        _cx: &mut gpui::AppContext,
     ) -> Task<Result<task::TaskVariables>> {
-        dbg!("Building python context");
         let python_module_name = python_module_name_from_relative_path(
             variables.get(&VariableName::RelativeFile).unwrap_or(""),
         );
