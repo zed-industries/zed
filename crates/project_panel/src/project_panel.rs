@@ -1260,17 +1260,6 @@ impl ProjectPanel {
                 None
             };
             let next_selection = self.find_next_selection_after_deletion(cx);
-            println!(
-                "next_selection: {:?}",
-                next_selection.and_then(|s| self
-                    .project
-                    .read(cx)
-                    .worktree_for_id(s.worktree_id, cx)
-                    .and_then(|worktree| worktree
-                        .read(cx)
-                        .entry_for_id(s.entry_id)
-                        .map(|e| &e.path)))
-            );
             cx.spawn(|panel, mut cx| async move {
                 if let Some(answer) = answer {
                     if answer.await != Ok(0) {
