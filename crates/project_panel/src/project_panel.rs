@@ -1185,7 +1185,7 @@ impl ProjectPanel {
 
     fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
-            let items_to_delete = self.disjoint_entries_for_removal(cx);
+            let items_to_delete = self.disjoint_entries(cx);
             if items_to_delete.is_empty() {
                 return None;
             }
@@ -1546,7 +1546,7 @@ impl ProjectPanel {
     }
 
     fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
-        let entries = self.marked_entries();
+        let entries = self.disjoint_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Cut(entries));
             cx.notify();
@@ -1554,7 +1554,7 @@ impl ProjectPanel {
     }
 
     fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        let entries = self.marked_entries();
+        let entries = self.disjoint_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Copied(entries));
             cx.notify();
@@ -1721,7 +1721,7 @@ impl ProjectPanel {
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         let abs_file_paths = {
             let project = self.project.read(cx);
-            self.marked_entries()
+            self.selected_and_marked_entries()
                 .into_iter()
                 .filter_map(|entry| {
                     let entry_path = project.path_for_entry(entry.entry_id, cx)?.path;
@@ -1737,6 +1737,7 @@ impl ProjectPanel {
                 })
                 .collect::<Vec<_>>()
         };
+        println!("abs_file_paths: {:?}", abs_file_paths);
         if !abs_file_paths.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(abs_file_paths.join("\n")));
         }
@@ -1745,7 +1746,7 @@ impl ProjectPanel {
     fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
         let file_paths = {
             let project = self.project.read(cx);
-            self.marked_entries()
+            self.selected_and_marked_entries()
                 .into_iter()
                 .filter_map(|entry| {
                     Some(
@@ -1928,8 +1929,8 @@ impl ProjectPanel {
         None
     }
 
-    fn disjoint_entries_for_removal(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
-        let marked_entries = self.marked_entries();
+    fn disjoint_entries(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
+        let marked_entries = self.selected_and_marked_entries();
         let mut sanitized_entries = BTreeSet::new();
         if marked_entries.is_empty() {
             return sanitized_entries;
@@ -1976,25 +1977,28 @@ impl ProjectPanel {
         sanitized_entries
     }
 
-    // Returns list of entries that should be affected by an operation.
-    // When currently selected entry is not marked, it's treated as the only marked entry.
-    fn marked_entries(&self) -> BTreeSet<SelectedEntry> {
+    // Returns the union of the currently selected entry and all marked entries.
+    fn selected_and_marked_entries(&self) -> BTreeSet<SelectedEntry> {
         let Some(mut selection) = self.selection else {
             return Default::default();
         };
-        if self.marked_entries.contains(&selection) {
-            self.marked_entries
-                .iter()
-                .copied()
-                .map(|mut entry| {
-                    entry.entry_id = self.resolve_entry(entry.entry_id);
-                    entry
-                })
-                .collect()
-        } else {
+
+        let mut marked_entries: BTreeSet<SelectedEntry> = self
+            .marked_entries
+            .iter()
+            .copied()
+            .map(|mut entry| {
+                entry.entry_id = self.resolve_entry(entry.entry_id);
+                entry
+            })
+            .collect();
+
+        if !marked_entries.contains(&selection) {
             selection.entry_id = self.resolve_entry(selection.entry_id);
-            BTreeSet::from_iter([selection])
+            marked_entries.insert(selection);
         }
+
+        marked_entries
     }
 
     /// Finds the currently selected subentry for a given leaf entry id. If a given entry
