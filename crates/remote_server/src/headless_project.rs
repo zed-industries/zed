@@ -85,6 +85,7 @@ impl HeadlessProject {
                 cx,
             )
         });
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let toolchain_store = cx.new_model(|cx| {
             ToolchainStore::local(
                 languages.clone(),
@@ -93,7 +94,7 @@ impl HeadlessProject {
                 cx,
             )
         });
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+
         let task_store = cx.new_model(|cx| {
             let mut task_store = TaskStore::local(
                 fs.clone(),
