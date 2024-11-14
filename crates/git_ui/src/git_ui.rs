@@ -205,47 +205,121 @@ impl RenderOnce for GitProjectOverview {
     }
 }
 
-/*
 #[derive(IntoElement)]
 pub struct GitStagingControls {
     id: ElementId,
     project_status: Model<GitProjectStatus>,
     is_staged: bool,
-    children: SmallVec<[AnyElement; 2]>,
+    is_selected: bool,
 }
 
 impl GitStagingControls {
-    pub fn staged(id: impl Into<ElementId>, project_status: Model<GitProjectStatus>) -> Self {
+    pub fn new(
+        id: impl Into<ElementId>,
+        project_status: Model<GitProjectStatus>,
+        is_staged: bool,
+        is_selected: bool,
+    ) -> Self {
         Self {
             id: id.into(),
             project_status,
-            is_staged: true,
-            children: SmallVec::new(),
+            is_staged,
+            is_selected,
         }
-    }
-
-    pub fn unstaged(id: impl Into<ElementId>, project_status: Model<GitProjectStatus>) -> Self {
-        Self {
-            id: id.into(),
-            project_status,
-            is_staged: false,
-            children: SmallVec::new(),
-        }
-    }
-}
-
-impl ParentElement for GitStagingControls {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements)
     }
 }
 
 impl RenderOnce for GitStagingControls {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        // Implementation details...
+        let status = self.project_status.read(cx);
+
+        let (staging_type, count) = if self.is_staged {
+            ("Staged", status.staged_count)
+        } else {
+            ("Unstaged", status.unstaged_count)
+        };
+
+        let is_expanded = if self.is_staged {
+            status.staged_expanded
+        } else {
+            status.unstaged_expanded
+        };
+
+        let label: SharedString = format!("{} Changes: {}", staging_type, count).into();
+
+        h_flex()
+            .id(self.id.clone())
+            .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
+            .on_click(move |_, cx| {
+                self.project_status.update(cx, |status, cx| {
+                    if self.is_staged {
+                        status.staged_expanded = !status.staged_expanded;
+                    } else {
+                        status.unstaged_expanded = !status.unstaged_expanded;
+                    }
+                    cx.notify();
+                })
+            })
+            .justify_between()
+            .w_full()
+            .map(|this| {
+                if self.is_selected {
+                    this.bg(cx.theme().colors().ghost_element_active)
+                } else {
+                    this.bg(cx.theme().colors().elevated_surface_background)
+                }
+            })
+            .px_3()
+            .py_2()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(Disclosure::new(self.id.clone(), is_expanded))
+                    .child(Label::new(label).size(LabelSize::Small)),
+            )
+            .child(h_flex().gap_2().map(|this| {
+                if !self.is_staged {
+                    this.child(
+                        Button::new(
+                            ElementId::Name(format!("{}-discard", self.id.clone()).into()),
+                            "Discard All",
+                        )
+                        .style(ButtonStyle::Filled)
+                        .layer(ui::ElevationIndex::ModalSurface)
+                        .size(ButtonSize::Compact)
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::X)
+                        .icon_position(IconPosition::Start)
+                        .icon_color(Color::Muted),
+                    )
+                    .child(
+                        Button::new(
+                            ElementId::Name(format!("{}-stage", self.id.clone()).into()),
+                            "Stage All",
+                        )
+                        .style(ButtonStyle::Filled)
+                        .size(ButtonSize::Compact)
+                        .label_size(LabelSize::Small)
+                        .layer(ui::ElevationIndex::ModalSurface)
+                        .icon(IconName::Check)
+                        .icon_position(IconPosition::Start)
+                        .icon_color(Color::Muted),
+                    )
+                } else {
+                    this.child(
+                        Button::new(
+                            ElementId::Name(format!("{}-unstage", self.id.clone()).into()),
+                            "Unstage All",
+                        )
+                        .layer(ui::ElevationIndex::ModalSurface)
+                        .icon(IconName::Check)
+                        .icon_position(IconPosition::Start)
+                        .icon_color(Color::Muted),
+                    )
+                }
+            }))
     }
 }
-*/
 
 pub struct GitProjectStatus {
     file_count: usize,
@@ -257,6 +331,7 @@ pub struct GitProjectStatus {
     unstaged_expanded: bool,
     show_list: bool,
     selected_index: usize,
+    total_item_count: usize,
 }
 
 impl GitProjectStatus {
@@ -264,6 +339,7 @@ impl GitProjectStatus {
         let file_count = changed_files.len();
         let unstaged_count = changed_files.iter().filter(|f| !f.staged).count();
         let staged_count = file_count - unstaged_count;
+        let total_item_count = changed_files.len() + 2; // +2 for the two controls
 
         let lines_changed = GitLines {
             added: changed_files.iter().map(|f| f.lines_added).sum(),
@@ -280,7 +356,16 @@ impl GitProjectStatus {
             staged_expanded: false,
             show_list: false,
             selected_index: 0,
+            total_item_count,
         }
+    }
+
+    fn unstaged_files(&self) -> impl Iterator<Item = &ChangedFile> {
+        self.changed_files.iter().filter(|f| !f.staged)
+    }
+
+    fn staged_files(&self) -> impl Iterator<Item = &ChangedFile> {
+        self.changed_files.iter().filter(|f| f.staged)
     }
 }
 
@@ -299,22 +384,41 @@ impl ProjectStatusTab {
 
         let status_clone = status.clone();
         let list_state = ListState::new(
-            changed_files.len(),
+            changed_files.len() + 2,
             gpui::ListAlignment::Top,
             px(10.),
             move |ix, cx| {
                 let is_selected = status_clone.read(cx).selected_index == ix;
-                changed_files
-                    .get(ix)
-                    .map(|file| {
-                        ChangedFileHeader::new(
-                            ElementId::Name(format!("file-{}", ix).into()),
-                            file.clone(),
-                            is_selected,
-                        )
-                        .into_any_element()
-                    })
-                    .unwrap_or_else(|| div().into_any_element())
+                if ix == 0 {
+                    GitStagingControls::new(
+                        "unstaged-controls",
+                        status_clone.clone(),
+                        false,
+                        is_selected,
+                    )
+                    .into_any_element()
+                } else if ix == changed_files.len() + 1 {
+                    GitStagingControls::new(
+                        "staged-controls",
+                        status_clone.clone(),
+                        true,
+                        is_selected,
+                    )
+                    .into_any_element()
+                } else {
+                    let file_ix = ix - 1;
+                    changed_files
+                        .get(file_ix)
+                        .map(|file| {
+                            ChangedFileHeader::new(
+                                ElementId::Name(format!("file-{}", file_ix).into()),
+                                file.clone(),
+                                is_selected,
+                            )
+                            .into_any_element()
+                        })
+                        .unwrap_or_else(|| div().into_any_element())
+                }
             },
         );
 
@@ -346,7 +450,7 @@ impl ProjectStatusTab {
         cx: &mut ViewContext<Self>,
     ) {
         self.status.update(cx, |status, _| {
-            status.selected_index = index;
+            status.selected_index = index.min(status.total_item_count - 1);
         });
 
         if jump_to_index {
@@ -355,43 +459,29 @@ impl ProjectStatusTab {
     }
 
     pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
-        let count = self.list_state.item_count();
-        if count > 0 {
-            let index = self.selected_index(cx);
-            let ix = if index == count - 1 {
-                count - 1
-            } else {
-                index + 1
-            };
-            self.set_selected_index(ix, true, cx);
-            cx.notify();
-        }
+        let current_index = self.status.read(cx).selected_index;
+        let total_count = self.status.read(cx).total_item_count;
+        let new_index = (current_index + 1).min(total_count - 1);
+        self.set_selected_index(new_index, true, cx);
+        cx.notify();
     }
 
     pub fn select_previous(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
-        let count = self.list_state.item_count();
-        if count > 0 {
-            let index = self.selected_index(cx);
-            let ix = if index == 0 { 0 } else { index - 1 };
-            self.set_selected_index(ix, true, cx);
-            cx.notify();
-        }
+        let current_index = self.status.read(cx).selected_index;
+        let new_index = current_index.saturating_sub(1);
+        self.set_selected_index(new_index, true, cx);
+        cx.notify();
     }
 
     pub fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
-        let count = self.list_state.item_count();
-        if count > 0 {
-            self.set_selected_index(0, true, cx);
-            cx.notify();
-        }
+        self.set_selected_index(0, true, cx);
+        cx.notify();
     }
 
     pub fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
-        let count = self.list_state.item_count();
-        if count > 0 {
-            self.set_selected_index(count - 1, true, cx);
-            cx.notify();
-        }
+        let total_count = self.status.read(cx).total_item_count;
+        self.set_selected_index(total_count - 1, true, cx);
+        cx.notify();
     }
 
     fn jump_to_cell(&mut self, index: usize, _cx: &mut ViewContext<Self>) {
