@@ -3572,10 +3572,7 @@ impl Render for DraggedProjectEntryView {
                             .p_1()
                             .rounded_xl()
                             .bg(cx.theme().colors().background)
-                            .child(Label::new(format!(
-                                "{} entries",
-                                self.selections.len().to_string()
-                            ))),
+                            .child(Label::new(format!("{} entries", self.selections.len()))),
                     )
             } else {
                 this.w(self.width).bg(cx.theme().colors().background).child(
