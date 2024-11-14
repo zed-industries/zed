@@ -17,9 +17,10 @@ use util::ResultExt;
 
 use crate::{
     buffer_store::BufferStore, worktree_store::WorktreeStore, BasicContextProvider, Inventory,
-    ProjectEnvironment, ToolchainStore,
+    ProjectEnvironment,
 };
 
+#[expect(clippy::large_enum_variant)]
 pub enum TaskStore {
     Functional(StoreState),
     Noop,
