@@ -312,15 +312,14 @@ impl AssistantSettingsContent {
                         });
                     }
                     "openai" => {
-                        let (api_url, available_models) =
-                            match &settings.provider {
-                                Some(AssistantProviderContentV1::OpenAi {
-                                    api_url,
-                                    available_models,
-                                    ..
-                                }) => (api_url.clone(), available_models.clone()),
-                                _ => (None, None),
-                            };
+                        let (api_url, available_models) = match &settings.provider {
+                            Some(AssistantProviderContentV1::OpenAi {
+                                api_url,
+                                available_models,
+                                ..
+                            }) => (api_url.clone(), available_models.clone()),
+                            _ => (None, None),
+                        };
                         settings.provider = Some(AssistantProviderContentV1::OpenAi {
                             default_model: OpenAiModel::from_id(&model).ok(),
                             api_url,
