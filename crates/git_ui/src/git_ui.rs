@@ -1,13 +1,23 @@
 use editor::Editor;
 use git::repository::GitFileStatus;
 use gpui::*;
-use smallvec::{smallvec, SmallVec};
 use ui::{prelude::*, ElevationIndex, IconButtonShape};
 use ui::{Disclosure, Divider};
 use workspace::item::TabContentParams;
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
-actions!(vcs_status, [Deploy]);
+actions!(
+    vcs_status,
+    [
+        Deploy,
+        DiscardAll,
+        StageAll,
+        DiscardSelected,
+        StageSelected,
+        UnstageSelected,
+        UnstageAll
+    ]
+);
 
 #[derive(Debug, Clone)]
 pub struct ChangedFile {
@@ -112,7 +122,8 @@ impl RenderOnce for ChangedFileHeader {
                             .icon_size(IconSize::XSmall)
                             .icon_color(Color::Error)
                             .style(ButtonStyle::Filled)
-                            .layer(ElevationIndex::Background),
+                            .layer(ElevationIndex::Background)
+                            .on_click(move |_, cx| cx.dispatch_action(Box::new(DiscardSelected))),
                     )
                     .child(
                         IconButton::new("check-file", IconName::Check)
@@ -121,7 +132,14 @@ impl RenderOnce for ChangedFileHeader {
                             .icon_size(IconSize::XSmall)
                             .icon_color(Color::Accent)
                             .style(ButtonStyle::Filled)
-                            .layer(ElevationIndex::Background),
+                            .layer(ElevationIndex::Background)
+                            .on_click(move |_, cx| {
+                                if self.file.staged {
+                                    cx.dispatch_action(Box::new(UnstageSelected))
+                                } else {
+                                    cx.dispatch_action(Box::new(StageSelected))
+                                }
+                            }),
                     ),
             )
     }
@@ -153,7 +171,8 @@ impl RenderOnce for GitProjectOverview {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let status = self.project_status.read(cx);
 
-        let changed_files: SharedString = format!("{} Changed files", status.file_count).into();
+        let changed_files: SharedString =
+            format!("{} Changed files", status.changed_file_count()).into();
 
         let added_label: Option<SharedString> = (status.lines_changed.added > 0)
             .then(|| format!("+{}", status.lines_changed.added).into());
@@ -234,9 +253,9 @@ impl RenderOnce for GitStagingControls {
         let status = self.project_status.read(cx);
 
         let (staging_type, count) = if self.is_staged {
-            ("Staged", status.staged_count)
+            ("Staged", status.staged_count())
         } else {
-            ("Unstaged", status.unstaged_count)
+            ("Unstaged", status.unstaged_count())
         };
 
         let is_expanded = if self.is_staged {
@@ -290,7 +309,9 @@ impl RenderOnce for GitStagingControls {
                         .label_size(LabelSize::Small)
                         .icon(IconName::X)
                         .icon_position(IconPosition::Start)
-                        .icon_color(Color::Muted),
+                        .icon_color(Color::Muted)
+                        .disabled(status.changed_file_count() == 0)
+                        .on_click(move |_, cx| cx.dispatch_action(Box::new(DiscardAll))),
                     )
                     .child(
                         Button::new(
@@ -303,7 +324,9 @@ impl RenderOnce for GitStagingControls {
                         .layer(ui::ElevationIndex::ModalSurface)
                         .icon(IconName::Check)
                         .icon_position(IconPosition::Start)
-                        .icon_color(Color::Muted),
+                        .icon_color(Color::Muted)
+                        .disabled(status.no_unstaged())
+                        .on_click(move |_, cx| cx.dispatch_action(Box::new(StageAll))),
                     )
                 } else {
                     this.child(
@@ -314,7 +337,9 @@ impl RenderOnce for GitStagingControls {
                         .layer(ui::ElevationIndex::ModalSurface)
                         .icon(IconName::Check)
                         .icon_position(IconPosition::Start)
-                        .icon_color(Color::Muted),
+                        .icon_color(Color::Muted)
+                        .disabled(status.no_staged())
+                        .on_click(move |_, cx| cx.dispatch_action(Box::new(UnstageAll))),
                     )
                 }
             }))
@@ -322,50 +347,140 @@ impl RenderOnce for GitStagingControls {
 }
 
 pub struct GitProjectStatus {
-    file_count: usize,
-    unstaged_count: usize,
-    staged_count: usize,
+    unstaged_files: Vec<ChangedFile>,
+    staged_files: Vec<ChangedFile>,
     lines_changed: GitLines,
-    changed_files: Vec<ChangedFile>,
     staged_expanded: bool,
     unstaged_expanded: bool,
     show_list: bool,
     selected_index: usize,
-    total_item_count: usize,
 }
 
 impl GitProjectStatus {
     fn new(changed_files: Vec<ChangedFile>) -> Self {
-        let file_count = changed_files.len();
-        let unstaged_count = changed_files.iter().filter(|f| !f.staged).count();
-        let staged_count = file_count - unstaged_count;
-        let total_item_count = changed_files.len() + 2; // +2 for the two controls
+        let (unstaged_files, staged_files): (Vec<_>, Vec<_>) =
+            changed_files.into_iter().partition(|f| !f.staged);
 
         let lines_changed = GitLines {
-            added: changed_files.iter().map(|f| f.lines_added).sum(),
-            removed: changed_files.iter().map(|f| f.lines_removed).sum(),
+            added: unstaged_files
+                .iter()
+                .chain(staged_files.iter())
+                .map(|f| f.lines_added)
+                .sum(),
+            removed: unstaged_files
+                .iter()
+                .chain(staged_files.iter())
+                .map(|f| f.lines_removed)
+                .sum(),
         };
 
         Self {
-            file_count,
-            unstaged_count,
-            staged_count,
+            unstaged_files,
+            staged_files,
             lines_changed,
-            changed_files,
+            staged_expanded: true,
             unstaged_expanded: true,
-            staged_expanded: false,
             show_list: false,
             selected_index: 0,
-            total_item_count,
         }
     }
 
-    fn unstaged_files(&self) -> impl Iterator<Item = &ChangedFile> {
-        self.changed_files.iter().filter(|f| !f.staged)
+    fn changed_file_count(&self) -> usize {
+        self.unstaged_files.len() + self.staged_files.len()
     }
 
-    fn staged_files(&self) -> impl Iterator<Item = &ChangedFile> {
-        self.changed_files.iter().filter(|f| f.staged)
+    fn unstaged_count(&self) -> usize {
+        self.unstaged_files.len()
+    }
+
+    fn staged_count(&self) -> usize {
+        self.staged_files.len()
+    }
+
+    fn total_item_count(&self) -> usize {
+        self.changed_file_count() + 2 // +2 for the two controls
+    }
+
+    fn no_unstaged(&self) -> bool {
+        self.unstaged_files.is_empty()
+    }
+
+    fn all_unstaged(&self) -> bool {
+        self.staged_files.is_empty()
+    }
+
+    fn no_staged(&self) -> bool {
+        self.staged_files.is_empty()
+    }
+
+    fn all_staged(&self) -> bool {
+        self.unstaged_files.is_empty()
+    }
+
+    fn update_lines_changed(&mut self) {
+        self.lines_changed = GitLines {
+            added: self
+                .unstaged_files
+                .iter()
+                .chain(self.staged_files.iter())
+                .map(|f| f.lines_added)
+                .sum(),
+            removed: self
+                .unstaged_files
+                .iter()
+                .chain(self.staged_files.iter())
+                .map(|f| f.lines_removed)
+                .sum(),
+        };
+    }
+
+    fn discard_all(&mut self) {
+        self.unstaged_files.clear();
+        self.staged_files.clear();
+        self.update_lines_changed();
+    }
+
+    fn stage_all(&mut self) {
+        self.staged_files.extend(self.unstaged_files.drain(..));
+        self.update_lines_changed();
+    }
+
+    fn unstage_all(&mut self) {
+        self.unstaged_files.extend(self.staged_files.drain(..));
+        self.update_lines_changed();
+    }
+
+    fn discard_selected(&mut self) {
+        let total_len = self.unstaged_files.len() + self.staged_files.len();
+        if self.selected_index > 0 && self.selected_index <= total_len {
+            if self.selected_index <= self.unstaged_files.len() {
+                self.unstaged_files.remove(self.selected_index - 1);
+            } else {
+                self.staged_files
+                    .remove(self.selected_index - 1 - self.unstaged_files.len());
+            }
+            self.update_lines_changed();
+        }
+    }
+
+    fn stage_selected(&mut self) {
+        if self.selected_index > 0 && self.selected_index <= self.unstaged_files.len() {
+            let file = self.unstaged_files.remove(self.selected_index - 1);
+            self.staged_files.push(file);
+            self.update_lines_changed();
+        }
+    }
+
+    fn unstage_selected(&mut self) {
+        let unstaged_len = self.unstaged_files.len();
+        if self.selected_index > unstaged_len && self.selected_index <= self.total_item_count() - 2
+        {
+            let file = self
+                .staged_files
+                .remove(self.selected_index - 1 - unstaged_len);
+            self.unstaged_files.push(file);
+            self.update_lines_changed();
+        }
     }
 }
 
@@ -380,15 +495,16 @@ pub struct ProjectStatusTab {
 impl ProjectStatusTab {
     pub fn new(id: impl Into<ElementId>, cx: &mut ViewContext<Self>) -> Self {
         let changed_files = static_changed_files();
-        let status = cx.new_model(|_| GitProjectStatus::new(changed_files.clone()));
+        let status = cx.new_model(|_| GitProjectStatus::new(changed_files));
 
         let status_clone = status.clone();
         let list_state = ListState::new(
-            changed_files.len() + 2,
+            status.read(cx).total_item_count(),
             gpui::ListAlignment::Top,
             px(10.),
             move |ix, cx| {
-                let is_selected = status_clone.read(cx).selected_index == ix;
+                let status = status_clone.read(cx);
+                let is_selected = status.selected_index == ix;
                 if ix == 0 {
                     GitStagingControls::new(
                         "unstaged-controls",
@@ -397,7 +513,7 @@ impl ProjectStatusTab {
                         is_selected,
                     )
                     .into_any_element()
-                } else if ix == changed_files.len() + 1 {
+                } else if ix == status.total_item_count() - 1 {
                     GitStagingControls::new(
                         "staged-controls",
                         status_clone.clone(),
@@ -407,17 +523,21 @@ impl ProjectStatusTab {
                     .into_any_element()
                 } else {
                     let file_ix = ix - 1;
-                    changed_files
-                        .get(file_ix)
-                        .map(|file| {
-                            ChangedFileHeader::new(
-                                ElementId::Name(format!("file-{}", file_ix).into()),
-                                file.clone(),
-                                is_selected,
-                            )
-                            .into_any_element()
-                        })
-                        .unwrap_or_else(|| div().into_any_element())
+                    let file = if file_ix < status.unstaged_count() {
+                        status.unstaged_files.get(file_ix)
+                    } else {
+                        status.staged_files.get(file_ix - status.unstaged_count())
+                    };
+
+                    file.map(|file| {
+                        ChangedFileHeader::new(
+                            ElementId::Name(format!("file-{}", file_ix).into()),
+                            file.clone(),
+                            is_selected,
+                        )
+                        .into_any_element()
+                    })
+                    .unwrap_or_else(|| div().into_any_element())
                 }
             },
         );
@@ -430,6 +550,55 @@ impl ProjectStatusTab {
         }
     }
 
+    fn recreate_list_state(&mut self, cx: &mut ViewContext<Self>) {
+        let status = self.status.read(cx);
+        let status_clone = self.status.clone();
+
+        self.list_state = ListState::new(
+            status.total_item_count(),
+            gpui::ListAlignment::Top,
+            px(10.),
+            move |ix, cx| {
+                let is_selected = status_clone.read(cx).selected_index == ix;
+                if ix == 0 {
+                    GitStagingControls::new(
+                        "unstaged-controls",
+                        status_clone.clone(),
+                        false,
+                        is_selected,
+                    )
+                    .into_any_element()
+                } else if ix == status_clone.read(cx).total_item_count() - 1 {
+                    GitStagingControls::new(
+                        "staged-controls",
+                        status_clone.clone(),
+                        true,
+                        is_selected,
+                    )
+                    .into_any_element()
+                } else {
+                    let file_ix = ix - 1;
+                    let status = status_clone.read(cx);
+                    let file = if file_ix < status.unstaged_count() {
+                        status.unstaged_files.get(file_ix)
+                    } else {
+                        status.staged_files.get(file_ix - status.unstaged_count())
+                    };
+
+                    file.map(|file| {
+                        ChangedFileHeader::new(
+                            ElementId::Name(format!("file-{}", file_ix).into()),
+                            file.clone(),
+                            is_selected,
+                        )
+                        .into_any_element()
+                    })
+                    .unwrap_or_else(|| div().into_any_element())
+                }
+            },
+        );
+    }
+
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace.item_of_type::<ProjectStatusTab>(cx) {
             workspace.activate_item(&existing, true, true, cx);
@@ -437,6 +606,54 @@ impl ProjectStatusTab {
             let status_tab = cx.new_view(|cx| Self::new("project-status-tab", cx));
             workspace.add_item_to_active_pane(Box::new(status_tab), None, true, cx);
         }
+    }
+
+    fn discard_all(&mut self, _: &DiscardAll, cx: &mut ViewContext<Self>) {
+        self.status.update(cx, |status, _| {
+            status.discard_all();
+        });
+        self.recreate_list_state(cx);
+        cx.notify();
+    }
+
+    fn stage_all(&mut self, _: &StageAll, cx: &mut ViewContext<Self>) {
+        self.status.update(cx, |status, _| {
+            status.stage_all();
+        });
+        self.recreate_list_state(cx);
+        cx.notify();
+    }
+
+    fn unstage_all(&mut self, _: &UnstageAll, cx: &mut ViewContext<Self>) {
+        self.status.update(cx, |status, _| {
+            status.unstage_all();
+        });
+        self.recreate_list_state(cx);
+        cx.notify();
+    }
+
+    fn discard_selected(&mut self, _: &DiscardSelected, cx: &mut ViewContext<Self>) {
+        self.status.update(cx, |status, _| {
+            status.discard_selected();
+        });
+        self.recreate_list_state(cx);
+        cx.notify();
+    }
+
+    fn stage_selected(&mut self, _: &StageSelected, cx: &mut ViewContext<Self>) {
+        self.status.update(cx, |status, _| {
+            status.stage_selected();
+        });
+        self.recreate_list_state(cx);
+        cx.notify();
+    }
+
+    fn unstage_selected(&mut self, _: &UnstageSelected, cx: &mut ViewContext<Self>) {
+        self.status.update(cx, |status, _| {
+            status.unstage_selected();
+        });
+        self.recreate_list_state(cx);
+        cx.notify();
     }
 
     fn selected_index(&self, cx: &WindowContext) -> usize {
@@ -450,7 +667,7 @@ impl ProjectStatusTab {
         cx: &mut ViewContext<Self>,
     ) {
         self.status.update(cx, |status, _| {
-            status.selected_index = index.min(status.total_item_count - 1);
+            status.selected_index = index.min(status.total_item_count() - 1);
         });
 
         if jump_to_index {
@@ -460,7 +677,7 @@ impl ProjectStatusTab {
 
     pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         let current_index = self.status.read(cx).selected_index;
-        let total_count = self.status.read(cx).total_item_count;
+        let total_count = self.status.read(cx).total_item_count();
         let new_index = (current_index + 1).min(total_count - 1);
         self.set_selected_index(new_index, true, cx);
         cx.notify();
@@ -479,7 +696,7 @@ impl ProjectStatusTab {
     }
 
     pub fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
-        let total_count = self.status.read(cx).total_item_count;
+        let total_count = self.status.read(cx).total_item_count();
         self.set_selected_index(total_count - 1, true, cx);
         cx.notify();
     }
@@ -494,13 +711,21 @@ impl Render for ProjectStatusTab {
         let project_status = self.status.read(cx);
 
         h_flex()
+            .id(self.id.clone())
             .key_context("vcs_status")
             .track_focus(&self.focus_handle)
-            .id(self.id.clone())
-            .flex_1()
-            .size_full()
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::discard_all))
+            .on_action(cx.listener(Self::stage_all))
+            .on_action(cx.listener(Self::unstage_all))
+            .on_action(cx.listener(Self::discard_selected))
+            .on_action(cx.listener(Self::stage_selected))
+            .on_action(cx.listener(Self::unstage_selected))
+            .flex_1()
+            .size_full()
             .overflow_hidden()
             .when(project_status.show_list, |this| {
                 this.child(
