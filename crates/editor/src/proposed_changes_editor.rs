@@ -232,6 +232,11 @@ impl ProposedChangesEditor {
             _ => (),
         }
     }
+
+    fn all_changes_accepted(&self) -> bool {
+        // TODO actually compute this!
+        true
+    }
 }
 
 impl Render for ProposedChangesEditor {
@@ -255,7 +260,13 @@ impl Item for ProposedChangesEditor {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
-        Some(Icon::new(IconName::ZedAssistant))
+        let icon_name = if self.all_changes_accepted() {
+            IconName::Check
+        } else {
+            IconName::ZedAssistant
+        };
+
+        Some(Icon::new(icon_name).color(Color::Success))
     }
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
@@ -389,11 +400,27 @@ impl ProposedChangesToolbar {
 impl Render for ProposedChangesToolbar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if let Some(editor) = &self.current_editor {
+            let editor = editor.read(cx);
+            let all_changes_accepted = editor.all_changes_accepted();
+            let icon_name = if all_changes_accepted {
+                IconName::Check
+            } else {
+                IconName::ZedAssistant
+            };
+
             h_flex()
                 .gap_2()
                 .relative()
-                .child(Icon::new(IconName::ZedAssistant).size(IconSize::Medium))
-                .child(Label::new(editor.read(cx).title.clone()).single_line())
+                .child(
+                    Icon::new(icon_name)
+                        .color(Color::Success)
+                        .size(IconSize::Medium),
+                )
+                .child(
+                    Label::new(editor.title.clone())
+                        .single_line()
+                        .strikethrough(all_changes_accepted),
+                )
                 .into_any_element()
         } else {
             gpui::Empty.into_any_element()
