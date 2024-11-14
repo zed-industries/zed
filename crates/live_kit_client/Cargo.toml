@@ -19,23 +19,21 @@ name = "test_app"
 [features]
 no-webrtc = []
 test-support = [
-    "async-trait",
     "collections/test-support",
     "gpui/test-support",
-    "live_kit_server",
     "nanoid",
 ]
 
 [dependencies]
 anyhow.workspace = true
-async-trait = { workspace = true, optional = true }
+async-trait.workspace = true
 bytes.workspace = true
 cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
 collections = { workspace = true }
 futures.workspace = true
 gpui.workspace = true
 http_2 = { package = "http", version = "0.2.1" }
-live_kit_server = { workspace = true, optional = true }
+live_kit_server.workspace = true
 log.workspace = true
 media.workspace = true
 nanoid = { workspace = true, optional = true}
@@ -51,10 +49,8 @@ livekit.workspace = true
 core-foundation.workspace = true
 
 [dev-dependencies]
-async-trait.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-live_kit_server.workspace = true
 nanoid.workspace = true
 sha2.workspace = true
 simplelog.workspace = true
