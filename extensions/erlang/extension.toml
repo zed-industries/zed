@@ -1,7 +1,7 @@
 id = "erlang"
 name = "Erlang"
 description = "Erlang support."
-version = "0.1.0"
+version = "0.1.1"
 schema_version = 1
 authors = ["Dairon M <dairon.medina@gmail.com>", "Fabian Bergström <fabian@fmbb.se>"]
 repository = "https://github.com/zed-industries/zed"
@@ -16,4 +16,4 @@ language = "Erlang"
 
 [grammars.erlang]
 repository = "https://github.com/WhatsApp/tree-sitter-erlang"
-commit = "19ca500fa5a17ab58dc18aa03b50e2db305e7a8a"
+commit = "b4ddbbd277532b2df50d4c87242d650789a5e124"
