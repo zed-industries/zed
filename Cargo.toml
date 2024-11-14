@@ -28,7 +28,6 @@ members = [
     "crates/extension_host",
     "crates/feature_flags",
     "crates/feedback",
-    "crates/file_finder",
     "crates/file_icons",
     "crates/fs",
     "crates/fsevent",
@@ -177,7 +176,6 @@ extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
 feature_flags = { path = "crates/feature_flags" }
 feedback = { path = "crates/feedback" }
-file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
 fsevent = { path = "crates/fsevent" }

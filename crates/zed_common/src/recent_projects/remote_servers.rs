@@ -77,7 +77,7 @@ impl CreateRemoteServer {
 struct ProjectPicker {
     connection_string: SharedString,
     nickname: Option<SharedString>,
-    picker: View<Picker<file_finder::OpenPathDelegate>>,
+    picker: View<Picker<crate::file_finder::OpenPathDelegate>>,
     _path_task: Shared<Task<Option<()>>>,
 }
 
@@ -125,7 +125,7 @@ impl ProjectPicker {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
         let query = lister.default_query(cx);
-        let delegate = file_finder::OpenPathDelegate::new(tx, lister);
+        let delegate = crate::file_finder::OpenPathDelegate::new(tx, lister);
 
         let picker = cx.new_view(|cx| {
             let picker = Picker::uniform_list(delegate, cx)

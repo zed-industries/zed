@@ -439,7 +439,7 @@ fn main() {
         workspace::init(app_state.clone(), cx);
 
         go_to_line::init(cx);
-        file_finder::init(cx);
+        zed_common::file_finder::init(cx);
         zed_common::tab_switcher::init(cx);
         outline::init(cx);
         zed_common::project_symbols::init(cx);

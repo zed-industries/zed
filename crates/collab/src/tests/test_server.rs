@@ -294,7 +294,7 @@ impl TestServer {
             channel::init(&client, user_store.clone(), cx);
             notifications::init(client.clone(), user_store, cx);
             zed_common::collab_ui::init(&app_state, cx);
-            file_finder::init(cx);
+            zed_common::file_finder::init(cx);
             menu::init();
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
             zed_common::language_model::LanguageModelRegistry::test(cx);

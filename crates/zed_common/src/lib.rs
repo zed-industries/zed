@@ -4,6 +4,7 @@ pub mod assistant_slash_command;
 pub mod breadcrumbs;
 pub mod collab_ui;
 pub mod extensions_ui;
+pub mod file_finder;
 pub mod inline_completion_button;
 pub mod language_model;
 pub mod language_selector;

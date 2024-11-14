@@ -2443,7 +2443,6 @@ dependencies = [
  "editor",
  "env_logger 0.11.5",
  "envy",
- "file_finder",
  "fs",
  "futures 0.3.30",
  "git",
@@ -4137,35 +4136,6 @@ checksum = "d013fc25338cc558c5c2cfbad646908fb23591e2404481826742b651c9af7160"
 dependencies = [
  "rand_core 0.6.4",
  "subtle",
-]
-
-[[package]]
-name = "file_finder"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "ctor",
- "editor",
- "env_logger 0.11.5",
- "file_icons",
- "futures 0.3.30",
- "fuzzy",
- "gpui",
- "language",
- "menu",
- "picker",
- "project",
- "schemars",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
- "text",
- "theme",
- "ui",
- "util",
- "workspace",
 ]
 
 [[package]]
@@ -14601,7 +14571,6 @@ dependencies = [
  "extension_host",
  "feature_flags",
  "feedback",
- "file_finder",
  "file_icons",
  "fs",
  "futures 0.3.30",
@@ -14728,7 +14697,6 @@ dependencies = [
  "extension_host",
  "feature_flags",
  "feedback",
- "file_finder",
  "file_icons",
  "fs",
  "futures 0.3.30",

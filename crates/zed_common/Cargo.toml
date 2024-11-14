@@ -60,7 +60,6 @@ emojis.workspace = true
 extension_host.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
-file_finder.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures-batch.workspace = true
@@ -170,6 +169,7 @@ lsp = { workspace = true, features = ["test-support"] }
 node_runtime.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
+picker = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 proto = { workspace = true, features = ["test-support"] }
