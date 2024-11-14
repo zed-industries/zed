@@ -2,6 +2,9 @@ pub mod extension_lsp_adapter;
 pub mod extension_settings;
 pub mod wasm_host;
 
+#[cfg(test)]
+mod extension_store_test;
+
 use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
