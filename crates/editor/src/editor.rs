@@ -10431,7 +10431,7 @@ impl Editor {
                                         text_style = text_style.highlight(highlight_style);
                                     }
                                     div()
-                                        .occlude()
+                                        .block_mouse_down()
                                         .pl(cx.anchor_x)
                                         .child(EditorElement::new(
                                             &rename_editor,
@@ -14681,7 +14681,7 @@ pub fn diagnostic_block_renderer(
             .group(group_id.clone())
             .relative()
             .size_full()
-            .occlude()
+            .block_mouse_down()
             .pl(cx.gutter_dimensions.width)
             .w(cx.max_width - cx.gutter_dimensions.full_width())
             .child(
