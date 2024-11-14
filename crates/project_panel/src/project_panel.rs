@@ -6588,6 +6588,188 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_complex_deletion_scenarios(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "dir1": {
+                    "subdir1": {
+                        "a.rs": "",
+                        "b.rs": "",
+                        "nested": {
+                            "x.rs": "",
+                            "y.rs": "",
+                        }
+                    },
+                    "subdir2": {
+                        "c.rs": "",
+                        "d.rs": "",
+                    }
+                },
+                "dir2": {
+                    "file1.rs": "",
+                    "file2.rs": "",
+                    "empty_dir": {}
+                },
+                "root1.rs": "",
+                "root2.rs": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        // Expand all directories for testing
+        toggle_expand_dir(&panel, "src/dir1", cx);
+        toggle_expand_dir(&panel, "src/dir1/subdir1", cx);
+        toggle_expand_dir(&panel, "src/dir1/subdir1/nested", cx);
+        toggle_expand_dir(&panel, "src/dir1/subdir2", cx);
+        toggle_expand_dir(&panel, "src/dir2", cx);
+
+        // Test case 1: Delete nested files and verify selection moves to next sibling
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        });
+        select_path_with_mark(&panel, "src/dir1/subdir1/nested/x.rs", cx);
+        select_path_with_mark(&panel, "src/dir1/subdir1/nested/y.rs", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v src",
+                "    v dir1",
+                "        v subdir1",
+                "            v nested",
+                "                  x.rs  <== marked",
+                "                  y.rs  <== selected  <== marked",
+                "              a.rs",
+                "              b.rs",
+                "        v subdir2",
+                "              c.rs",
+                "              d.rs",
+                "    v dir2",
+                "        > empty_dir",
+                "          file1.rs",
+                "          file2.rs",
+                "      root1.rs",
+                "      root2.rs",
+            ],
+            "Initial state before deleting nested files"
+        );
+
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v src",
+                "    v dir1",
+                "        v subdir1",
+                "            v nested",
+                "              a.rs  <== selected",
+                "              b.rs",
+                "        v subdir2",
+                "              c.rs",
+                "              d.rs",
+                "    v dir2",
+                "        > empty_dir",
+                "          file1.rs",
+                "          file2.rs",
+                "      root1.rs",
+                "      root2.rs",
+            ],
+            "Should select next file after nested files deletion"
+        );
+
+        // Test case 2: Delete directory and its parent simultaneously
+        select_path_with_mark(&panel, "src/dir1/subdir1/nested", cx);
+        select_path_with_mark(&panel, "src/dir1/subdir1", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v src",
+                "    v dir1",
+                "        v subdir1  <== selected  <== marked",
+                "            v nested  <== marked",
+                "              a.rs",
+                "              b.rs",
+                "        v subdir2",
+                "              c.rs",
+                "              d.rs",
+                "    v dir2",
+                "        > empty_dir",
+                "          file1.rs",
+                "          file2.rs",
+                "      root1.rs",
+                "      root2.rs",
+            ],
+            "Initial state before deleting nested directory with parent"
+        );
+
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v src",
+                "    v dir1",
+                "        v subdir2  <== selected",
+                "              c.rs",
+                "              d.rs",
+                "    v dir2",
+                "        > empty_dir",
+                "          file1.rs",
+                "          file2.rs",
+                "      root1.rs",
+                "      root2.rs",
+            ],
+            "Should select first entry in next directory after deleting directory with parent"
+        );
+
+        // Test case 3: Delete mixed files and directories across different levels
+        select_path_with_mark(&panel, "src/dir1/subdir2/c.rs", cx);
+        select_path_with_mark(&panel, "src/dir2", cx);
+        select_path_with_mark(&panel, "src/root1.rs", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v src",
+                "    v dir1",
+                "        v subdir2",
+                "              c.rs  <== marked",
+                "              d.rs",
+                "    v dir2  <== marked",
+                "        > empty_dir",
+                "          file1.rs",
+                "          file2.rs",
+                "      root1.rs  <== selected  <== marked",
+                "      root2.rs",
+            ],
+            "Initial state before deleting mixed files and directories"
+        );
+
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v src",
+                "    v dir1",
+                "        v subdir2",
+                "              d.rs",
+                "      root2.rs  <== selected",
+            ],
+            "Should select last remaining file after mixed deletion"
+        );
+    }
+
     fn toggle_expand_dir(
         panel: &View<ProjectPanel>,
         path: impl AsRef<Path>,
