@@ -62,7 +62,6 @@ members = [
     "crates/ollama",
     "crates/open_ai",
     "crates/outline",
-    "crates/outline_panel",
     "crates/paths",
     "crates/picker",
     "crates/prettier",
@@ -215,7 +214,6 @@ notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
-outline_panel = { path = "crates/outline_panel" }
 paths = { path = "crates/paths" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }

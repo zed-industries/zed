@@ -61,6 +61,7 @@ extension_host.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
+file_icons.workspace = true
 fs.workspace = true
 futures-batch.workspace = true
 futures.workspace = true
@@ -173,6 +174,7 @@ proto = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 reqwest_client.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
+search = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings = { workspace = true, features = ["test-support"] }

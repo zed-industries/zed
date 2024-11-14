@@ -444,7 +444,7 @@ fn main() {
         outline::init(cx);
         zed_common::project_symbols::init(cx);
         project_panel::init(Assets, cx);
-        outline_panel::init(Assets, cx);
+        zed_common::outline_panel::init(Assets, cx);
         tasks_ui::init(cx);
         zed_common::snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);

@@ -27,7 +27,6 @@ use zed_common::breadcrumbs::Breadcrumbs;
 use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
-use outline_panel::OutlinePanel;
 use project::{DirectoryLister, Item};
 use project_panel::ProjectPanel;
 use release_channel::{AppCommitSha, ReleaseChannel};
@@ -43,6 +42,7 @@ use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
 use workspace::CloseIntent;
+use zed_common::outline_panel::OutlinePanel;
 use zed_common::quick_action_bar::QuickActionBar;
 use zed_common::recent_projects::open_ssh_project;
 
@@ -506,7 +506,7 @@ pub fn initialize_workspace(
             )
             .register_action(
                 |workspace: &mut Workspace,
-                 _: &outline_panel::ToggleFocus,
+                 _: &zed_common::outline_panel::ToggleFocus,
                  cx: &mut ViewContext<Workspace>| {
                     workspace.toggle_panel_focus::<OutlinePanel>(cx);
                 },
@@ -3491,7 +3491,7 @@ mod tests {
             editor::init(cx);
             zed_common::collab_ui::init(&app_state, cx);
             project_panel::init((), cx);
-            outline_panel::init((), cx);
+            zed_common::outline_panel::init((), cx);
             zed_common::terminal_view::init(cx);
             copilot::copilot_chat::init(
                 app_state.fs.clone(),

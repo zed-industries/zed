@@ -6,6 +6,7 @@ pub mod collab_ui;
 pub mod extensions_ui;
 pub mod language_model;
 pub mod language_selector;
+pub mod outline_panel;
 pub mod project_symbols;
 pub mod quick_action_bar;
 pub mod recent_projects;
