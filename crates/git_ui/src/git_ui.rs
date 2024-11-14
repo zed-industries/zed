@@ -15,7 +15,8 @@ actions!(
         DiscardSelected,
         StageSelected,
         UnstageSelected,
-        UnstageAll
+        UnstageAll,
+        FilesChanged
     ]
 );
 
@@ -724,6 +725,7 @@ impl Render for ProjectStatusTab {
             .on_action(cx.listener(Self::discard_selected))
             .on_action(cx.listener(Self::stage_selected))
             .on_action(cx.listener(Self::unstage_selected))
+            .on_action(cx.listener(|this, &FilesChanged, cx| this.recreate_list_state(cx)))
             .flex_1()
             .size_full()
             .overflow_hidden()
