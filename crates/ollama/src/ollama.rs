@@ -269,7 +269,6 @@ pub async fn stream_chat_completion(
         .uri(uri)
         .header("Content-Type", "application/json");
 
-    let start = std::time::Instant::now();
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
@@ -277,27 +276,12 @@ pub async fn stream_chat_completion(
 
         Ok(reader
             .lines()
-            .filter_map(move |line| {
-                let start = start.clone();
-                async move {
-                    match line {
-                        Ok(line) => {
-                            println!("got line: {} (since start: {:?})", line, start.elapsed());
-                            Some(
-                                serde_json::from_str(&line)
-                                    .context("Unable to parse chat response"),
-                            )
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "Error reading response line from stream: {} {:?} (since start: {:?})",
-                                e,
-                                e,
-                                start.elapsed()
-                            );
-                            Some(Err(e.into()))
-                        }
+            .filter_map(move |line| async move {
+                match line {
+                    Ok(line) => {
+                        Some(serde_json::from_str(&line).context("Unable to parse chat response"))
                     }
+                    Err(e) => Some(Err(e.into())),
                 }
             })
             .boxed())
