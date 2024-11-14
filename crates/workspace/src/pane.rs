@@ -1950,7 +1950,7 @@ impl Pane {
                     is_active,
                     ix,
                 },
-                |tab, cx| cx.new_view(|_| tab.clone()),
+                |tab, _, cx| cx.new_view(|_| tab.clone()),
             )
             .drag_over::<DraggedTab>(|tab, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
