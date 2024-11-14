@@ -35,7 +35,6 @@ collections = { workspace = true }
 futures.workspace = true
 gpui.workspace = true
 http_2 = { package = "http", version = "0.2.1" }
-livekit.workspace = true
 live_kit_server = { workspace = true, optional = true }
 log.workspace = true
 media.workspace = true
@@ -44,6 +43,9 @@ parking_lot.workspace = true
 postage.workspace = true
 util.workspace = true
 http_client.workspace = true
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+livekit.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

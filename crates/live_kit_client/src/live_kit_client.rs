@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", allow(unused))]
+
 // TODO livekit suppress all livekit-related warnings during compilation
 
 mod remote_video_track_view;
@@ -14,6 +16,7 @@ use gpui::{AppContext, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStr
 use parking_lot::Mutex;
 use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc};
 use util::{ResultExt as _, TryFutureExt};
+#[cfg(not(target_os = "windows"))]
 use webrtc::{
     audio_frame::AudioFrame,
     audio_source::{native::NativeAudioSource, AudioSourceOptions, RtcAudioSource},
@@ -23,11 +26,10 @@ use webrtc::{
     video_stream::native::NativeVideoStream,
 };
 
-// TODO livekit restore this
-// #[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
+#[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
 pub use livekit::*;
-// #[cfg(any(test, feature = "test-support", target_os = "windows"))]
-// pub use test::*;
+#[cfg(any(test, feature = "test-support", target_os = "windows"))]
+pub use test::*;
 
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 
@@ -37,6 +39,7 @@ pub struct AudioStream {
 
 struct Dispatcher(Arc<dyn gpui::PlatformDispatcher>);
 
+#[cfg(not(target_os = "windows"))]
 impl livekit::dispatcher::Dispatcher for Dispatcher {
     fn dispatch(&self, runnable: livekit::dispatcher::Runnable) {
         self.0.dispatch(runnable, None);
@@ -58,6 +61,7 @@ fn http_2_status(status: http_client::http::StatusCode) -> http_2::StatusCode {
         .expect("valid status code to status code conversion")
 }
 
+#[cfg(not(target_os = "windows"))]
 impl livekit::dispatcher::HttpClient for HttpClientAdapter {
     fn get(
         &self,
@@ -113,6 +117,14 @@ impl livekit::dispatcher::HttpClient for HttpClientAdapter {
     }
 }
 
+#[cfg(target_os = "windows")]
+pub fn init(
+    dispatcher: Arc<dyn gpui::PlatformDispatcher>,
+    http_client: Arc<dyn http_client::HttpClient>,
+) {
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn init(
     dispatcher: Arc<dyn gpui::PlatformDispatcher>,
     http_client: Arc<dyn http_client::HttpClient>,
@@ -121,6 +133,7 @@ pub fn init(
     livekit::dispatcher::set_http_client(HttpClientAdapter(http_client));
 }
 
+#[cfg(not(target_os = "windows"))]
 pub async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
@@ -154,6 +167,7 @@ pub async fn capture_local_video_track(
     ))
 }
 
+#[cfg(not(target_os = "windows"))]
 pub fn capture_local_audio_track(
     cx: &mut AppContext,
 ) -> Result<(track::LocalAudioTrack, AudioStream)> {
@@ -237,6 +251,7 @@ pub fn capture_local_audio_track(
     ))
 }
 
+#[cfg(not(target_os = "windows"))]
 pub fn play_remote_audio_track(
     track: &track::RemoteAudioTrack,
     cx: &mut AppContext,
@@ -320,6 +335,14 @@ pub fn play_remote_audio_track(
     }
 }
 
+#[cfg(target_os = "windows")]
+pub fn play_remote_video_track(
+    track: &track::RemoteVideoTrack,
+) -> impl Stream<Item = ScreenCaptureFrame> {
+    futures::stream::empty()
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn play_remote_video_track(
     track: &track::RemoteVideoTrack,
 ) -> impl Stream<Item = ScreenCaptureFrame> {
@@ -345,7 +368,7 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Screen
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn video_frame_buffer_from_webrtc(_buffer: Box<dyn VideoBuffer>) -> Option<ScreenCaptureFrame> {
     None
 }
@@ -361,7 +384,7 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn video_frame_buffer_to_webrtc(_frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
     None as Option<Box<dyn VideoBuffer>>
 }

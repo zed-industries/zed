@@ -1,3 +1,5 @@
+#![cfg_attr(windows, allow(unused))]
+
 use gpui::{
     actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
@@ -6,6 +8,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled, Task, View, ViewContext, VisualContext, WindowBounds,
     WindowHandle, WindowOptions,
 };
+#[cfg(not(target_os = "windows"))]
 use live_kit_client::{
     capture_local_audio_track, capture_local_video_track,
     id::ParticipantIdentity,
@@ -16,12 +19,25 @@ use live_kit_client::{
     track::{LocalTrack, RemoteTrack, RemoteVideoTrack, TrackSource},
     AudioStream, RemoteVideoTrackView, Room, RoomEvent, RoomOptions,
 };
+
+#[cfg(target_os = "windows")]
+use live_kit_client::{
+    participant::{Participant, RemoteParticipant},
+    publication::{LocalTrackPublication, RemoteTrackPublication},
+    track::{LocalTrack, RemoteTrack, RemoteVideoTrack},
+    AudioStream, RemoteVideoTrackView, Room, RoomEvent,
+};
+
 use live_kit_server::token::{self, VideoGrant};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
 actions!(live_kit_client, [Quit]);
 
+#[cfg(windows)]
+fn main() {}
+
+#[cfg(not(windows))]
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
@@ -87,6 +103,7 @@ struct LivekitWindow {
     screen_share_track: Option<LocalTrackPublication>,
     microphone_stream: Option<AudioStream>,
     screen_share_stream: Option<Box<dyn ScreenCaptureStream>>,
+    #[cfg(not(target_os = "windows"))]
     remote_participants: Vec<(ParticipantIdentity, ParticipantState)>,
     _events_task: Task<()>,
 }
@@ -99,6 +116,7 @@ struct ParticipantState {
     speaking: bool,
 }
 
+#[cfg(not(windows))]
 impl LivekitWindow {
     async fn new(
         url: &str,
@@ -328,6 +346,7 @@ impl LivekitWindow {
     }
 }
 
+#[cfg(not(windows))]
 impl Render for LivekitWindow {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         fn button() -> gpui::Div {
