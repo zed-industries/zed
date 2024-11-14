@@ -1259,32 +1259,24 @@ impl ProjectPanel {
             } else {
                 None
             };
-
             let next_selection = self.find_next_selection_after_deletion(cx);
-
-            // Print final selection
-            if let Some(next) = &next_selection {
-                if let Some(worktree) = self.project.read(cx).worktree_for_id(next.worktree_id, cx)
-                {
-                    if let Some(entry) = worktree.read(cx).entry_for_id(next.entry_id) {
-                        eprintln!(
-                            "Final next_selection: {}",
-                            entry.path.file_name().unwrap_or_default().to_string_lossy()
-                        );
-                    }
-                }
-            } else {
-                eprintln!("Final next_selection: None");
-            }
-            eprintln!("==========================================");
-
+            println!(
+                "next_selection: {:?}",
+                next_selection.and_then(|s| self
+                    .project
+                    .read(cx)
+                    .worktree_for_id(s.worktree_id, cx)
+                    .and_then(|worktree| worktree
+                        .read(cx)
+                        .entry_for_id(s.entry_id)
+                        .map(|e| &e.path)))
+            );
             cx.spawn(|panel, mut cx| async move {
                 if let Some(answer) = answer {
                     if answer.await != Ok(0) {
                         return Result::<(), anyhow::Error>::Ok(());
                     }
                 }
-
                 for (entry_id, _) in file_paths {
                     panel
                         .update(&mut cx, |panel, cx| {
@@ -1301,7 +1293,6 @@ impl ProjectPanel {
                         panel.autoscroll(cx);
                     })?;
                 }
-
                 Result::<(), anyhow::Error>::Ok(())
             })
             .detach_and_log_err(cx);
@@ -1309,105 +1300,72 @@ impl ProjectPanel {
         });
     }
 
-    fn find_next_selection_after_deletion(&self, cx: &AppContext) -> Option<SelectedEntry> {
-        // Get all marked entries and normalize them (remove entries with selected ancestors)
-        let mut normalized_entries = Vec::new();
+    fn find_next_selection_after_deletion(
+        &self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<SelectedEntry> {
+        let selection = self.selection?;
+        let (worktree_ix, _, _) = self.index_for_selection(selection)?;
+        let (worktree_id, entries, _) = &self.visible_entries[worktree_ix];
 
-        // Iterate through visible entries first to maintain order
-        for (worktree_id, entries, _) in &self.visible_entries {
-            for entry in entries {
-                let selected_entry = SelectedEntry {
-                    worktree_id: *worktree_id,
-                    entry_id: entry.id,
-                };
+        let mut last_marked_entry_without_marked_ancestors: Option<SelectedEntry> = None;
+        for entry in entries {
+            let current_selection = SelectedEntry {
+                worktree_id: *worktree_id,
+                entry_id: entry.id,
+            };
 
-                if !self.marked_entries.contains(&selected_entry)
-                    && !matches!(self.selected_entry(cx), Some((_, e)) if e.id == entry.id)
+            if !self.marked_entries.contains(&current_selection)
+                && self.selection != Some(current_selection)
+            {
+                continue;
+            }
+
+            if let Some(last_entry) = &last_marked_entry_without_marked_ancestors {
+                if let Some(last_path) = self
+                    .project
+                    .read(cx)
+                    .worktree_for_id(*worktree_id, cx)
+                    .and_then(|wt| wt.read(cx).entry_for_id(last_entry.entry_id))
+                    .map(|e| &e.path)
                 {
-                    continue;
-                }
-
-                // Skip if any ancestor is already in our normalized list
-                let has_selected_ancestor = entry.path.ancestors().any(|ancestor_path| {
-                    if ancestor_path == entry.path.as_ref() {
-                        return false;
+                    if entry.path.starts_with(last_path) {
+                        continue;
                     }
-                    if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx)
-                    {
-                        if let Some(ancestor) = worktree.read(cx).entry_for_path(ancestor_path) {
-                            normalized_entries
-                                .iter()
-                                .any(|e: &SelectedEntry| e.entry_id == ancestor.id)
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                });
-
-                if !has_selected_ancestor {
-                    normalized_entries.push(selected_entry);
                 }
             }
+
+            last_marked_entry_without_marked_ancestors = Some(current_selection);
         }
 
-        // Get the last normalized entry
-        let Some(last_entry) = normalized_entries.last() else {
-            return None;
-        };
-        let Some(worktree) = self
-            .project
-            .read(cx)
-            .worktree_for_id(last_entry.worktree_id, cx)
-        else {
-            return None;
-        };
-        let worktree = worktree.read(cx);
-        let Some(entry) = worktree.entry_for_id(last_entry.entry_id) else {
-            return None;
-        };
+        if let Some(last_entry) = last_marked_entry_without_marked_ancestors {
+            let worktree = self
+                .project
+                .read(cx)
+                .worktree_for_id(*worktree_id, cx)?
+                .read(cx);
 
-        // Try to find next sibling
-        if let Some(parent_path) = entry.path.parent() {
-            let mut siblings: Vec<_> = worktree
-                .entries(true, 0)
-                .filter(|e| e.path.parent() == Some(parent_path))
-                .cloned()
-                .collect();
-            project::sort_worktree_entries(&mut siblings);
-            if let Some(pos) = siblings.iter().position(|e| e.id == entry.id) {
-                // Try next sibling
-                if pos + 1 < siblings.len() {
-                    let candidate = SelectedEntry {
-                        worktree_id: last_entry.worktree_id,
-                        entry_id: siblings[pos + 1].id,
-                    };
-                    if !self.marked_entries.contains(&candidate) {
-                        return Some(candidate);
+            let entry = worktree.entry_for_id(last_entry.entry_id)?;
+            let entry_ix = entries.iter().position(|e| e.id == entry.id)?;
+
+            // Use next visible entry after last_entry
+            let next_entry = entries[entry_ix + 1..]
+                .iter()
+                .find(|e| {
+                    if entry.is_dir() {
+                        // If last_entry is a directory, skip all entries inside it
+                        !e.path.starts_with(&entry.path)
+                    } else {
+                        // If last_entry is a file, take the first entry
+                        true
                     }
-                }
-                // Try previous sibling
-                if pos > 0 {
-                    let candidate = SelectedEntry {
-                        worktree_id: last_entry.worktree_id,
-                        entry_id: siblings[pos - 1].id,
-                    };
-                    if !self.marked_entries.contains(&candidate) {
-                        return Some(candidate);
-                    }
-                }
-                // Fall back to parent
-                if let Some(parent) = worktree.entry_for_path(parent_path) {
-                    let candidate = SelectedEntry {
-                        worktree_id: last_entry.worktree_id,
-                        entry_id: parent.id,
-                    };
-                    if !self.marked_entries.contains(&candidate) {
-                        return Some(candidate);
-                    }
-                }
-            }
+                })
+                .map(|entry| SelectedEntry {
+                    worktree_id: *worktree_id,
+                    entry_id: entry.id,
+                });
+
+            return next_entry;
         }
 
         None
