@@ -12,7 +12,7 @@ use text::{AnchorRangeExt as _, Bias, OffsetRangeExt as _, Point};
 pub(crate) struct AssistantPatch {
     pub range: Range<language::Anchor>,
     pub title: SharedString,
-    pub edits: Arc<[Result<AssistantEdit>]>,
+    pub edits: Arc<[AssistantEdit]>,
     pub status: AssistantPatchStatus,
 }
 
@@ -432,12 +432,10 @@ impl AssistantPatch {
     ) -> ResolvedPatch {
         let mut resolve_tasks = Vec::new();
         for (ix, edit) in self.edits.iter().enumerate() {
-            if let Ok(edit) = edit.as_ref() {
-                resolve_tasks.push(
-                    edit.resolve(project.clone(), cx.clone())
-                        .map_err(move |error| (ix, error)),
-                );
-            }
+            resolve_tasks.push(
+                edit.resolve(project.clone(), cx.clone())
+                    .map_err(move |error| (ix, error)),
+            );
         }
 
         let edits = future::join_all(resolve_tasks).await;
@@ -530,12 +528,10 @@ impl AssistantPatch {
     pub fn paths(&self) -> impl '_ + Iterator<Item = &str> {
         let mut prev_path = None;
         self.edits.iter().filter_map(move |edit| {
-            if let Ok(edit) = edit {
-                let path = Some(edit.path.as_str());
-                if path != prev_path {
-                    prev_path = path;
-                    return path;
-                }
+            let path = Some(edit.path.as_str());
+            if path != prev_path {
+                prev_path = path;
+                return path;
             }
             None
         })

@@ -1649,7 +1649,7 @@ impl Context {
             if tag.kind == XmlTagKind::Patch && tag.is_open_tag {
                 patch_tag_depth += 1;
                 let patch_start = tag.range.start;
-                let mut edits = Vec::<Result<AssistantEdit>>::new();
+                let mut edits = Vec::<AssistantEdit>::new();
                 let mut patch = AssistantPatch {
                     range: patch_start..patch_start,
                     title: String::new().into(),
@@ -1678,13 +1678,7 @@ impl Context {
                                 }
                             }
 
-                            edits.sort_unstable_by(|a, b| {
-                                if let (Ok(a), Ok(b)) = (a, b) {
-                                    a.path.cmp(&b.path)
-                                } else {
-                                    Ordering::Equal
-                                }
-                            });
+                            edits.sort_unstable_by(|a, b| a.path.cmp(&b.path));
                             patch.edits = edits.into();
                             patch.status = AssistantPatchStatus::Ready;
                             new_patches.push(patch);
@@ -1714,13 +1708,17 @@ impl Context {
 
                         while let Some(tag) = tags.next() {
                             if tag.kind == XmlTagKind::Edit && !tag.is_open_tag {
-                                edits.push(AssistantEdit::new(
+                                if let Some(edit) = AssistantEdit::new(
                                     path,
                                     operation,
                                     old_text,
                                     new_text,
                                     description,
-                                ));
+                                )
+                                .log_err()
+                                {
+                                    edits.push(edit);
+                                }
                                 break;
                             }
 

@@ -1061,12 +1061,9 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
                 .map(|patch| {
                     patch
                         .iter()
-                        .map(|edit| {
-                            let edit = edit.as_ref().unwrap();
-                            AssistantEdit {
-                                path: edit.path.clone(),
-                                kind: edit.kind.clone(),
-                            }
+                        .map(|edit| AssistantEdit {
+                            path: edit.path.clone(),
+                            kind: edit.kind.clone(),
                         })
                         .collect::<Vec<_>>()
                 })
