@@ -413,6 +413,10 @@ impl ToolchainLister for PythonToolchainProvider {
         );
         let mut config = Configuration::default();
         config.workspace_directories = Some(vec![worktree_root]);
+        for locator in locators.iter() {
+            locator.configure(&config);
+        }
+
         let reporter = pet_reporter::collect::create_reporter();
         pet::find::find_and_report_envs(&reporter, config, &locators, &environment, None);
 
