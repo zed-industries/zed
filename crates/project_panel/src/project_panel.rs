@@ -1260,24 +1260,23 @@ impl ProjectPanel {
                 None
             };
 
-            let next_selection = self.selection.and_then(|current| {
-                let (worktree_ix, entry_ix, _) = self.index_for_selection(current)?;
-                let (worktree_id, worktree_entries, _) = self.visible_entries.get(worktree_ix)?;
+            let next_selection = self.find_next_selection_after_deletion(cx);
 
-                if entry_ix + 1 < worktree_entries.len() {
-                    Some(SelectedEntry {
-                        worktree_id: *worktree_id,
-                        entry_id: worktree_entries[entry_ix + 1].id,
-                    })
-                } else if entry_ix > 0 {
-                    Some(SelectedEntry {
-                        worktree_id: *worktree_id,
-                        entry_id: worktree_entries[entry_ix - 1].id,
-                    })
-                } else {
-                    None
+            // Print final selection
+            if let Some(next) = &next_selection {
+                if let Some(worktree) = self.project.read(cx).worktree_for_id(next.worktree_id, cx)
+                {
+                    if let Some(entry) = worktree.read(cx).entry_for_id(next.entry_id) {
+                        eprintln!(
+                            "Final next_selection: {}",
+                            entry.path.file_name().unwrap_or_default().to_string_lossy()
+                        );
+                    }
                 }
-            });
+            } else {
+                eprintln!("Final next_selection: None");
+            }
+            eprintln!("==========================================");
 
             cx.spawn(|panel, mut cx| async move {
                 if let Some(answer) = answer {
@@ -1285,6 +1284,7 @@ impl ProjectPanel {
                         return Result::<(), anyhow::Error>::Ok(());
                     }
                 }
+
                 for (entry_id, _) in file_paths {
                     panel
                         .update(&mut cx, |panel, cx| {
@@ -1301,11 +1301,116 @@ impl ProjectPanel {
                         panel.autoscroll(cx);
                     })?;
                 }
+
                 Result::<(), anyhow::Error>::Ok(())
             })
             .detach_and_log_err(cx);
             Some(())
         });
+    }
+
+    fn find_next_selection_after_deletion(&self, cx: &AppContext) -> Option<SelectedEntry> {
+        // Get all marked entries and normalize them (remove entries with selected ancestors)
+        let mut normalized_entries = Vec::new();
+
+        // Iterate through visible entries first to maintain order
+        for (worktree_id, entries, _) in &self.visible_entries {
+            for entry in entries {
+                let selected_entry = SelectedEntry {
+                    worktree_id: *worktree_id,
+                    entry_id: entry.id,
+                };
+
+                if !self.marked_entries.contains(&selected_entry)
+                    && !matches!(self.selected_entry(cx), Some((_, e)) if e.id == entry.id)
+                {
+                    continue;
+                }
+
+                // Skip if any ancestor is already in our normalized list
+                let has_selected_ancestor = entry.path.ancestors().any(|ancestor_path| {
+                    if ancestor_path == entry.path.as_ref() {
+                        return false;
+                    }
+                    if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx)
+                    {
+                        if let Some(ancestor) = worktree.read(cx).entry_for_path(ancestor_path) {
+                            normalized_entries
+                                .iter()
+                                .any(|e: &SelectedEntry| e.entry_id == ancestor.id)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                });
+
+                if !has_selected_ancestor {
+                    normalized_entries.push(selected_entry);
+                }
+            }
+        }
+
+        // Get the last normalized entry
+        let Some(last_entry) = normalized_entries.last() else {
+            return None;
+        };
+        let Some(worktree) = self
+            .project
+            .read(cx)
+            .worktree_for_id(last_entry.worktree_id, cx)
+        else {
+            return None;
+        };
+        let worktree = worktree.read(cx);
+        let Some(entry) = worktree.entry_for_id(last_entry.entry_id) else {
+            return None;
+        };
+
+        // Try to find next sibling
+        if let Some(parent_path) = entry.path.parent() {
+            let mut siblings: Vec<_> = worktree
+                .entries(true, 0)
+                .filter(|e| e.path.parent() == Some(parent_path))
+                .cloned()
+                .collect();
+            project::sort_worktree_entries(&mut siblings);
+            if let Some(pos) = siblings.iter().position(|e| e.id == entry.id) {
+                // Try next sibling
+                if pos + 1 < siblings.len() {
+                    let candidate = SelectedEntry {
+                        worktree_id: last_entry.worktree_id,
+                        entry_id: siblings[pos + 1].id,
+                    };
+                    if !self.marked_entries.contains(&candidate) {
+                        return Some(candidate);
+                    }
+                }
+                // Try previous sibling
+                if pos > 0 {
+                    let candidate = SelectedEntry {
+                        worktree_id: last_entry.worktree_id,
+                        entry_id: siblings[pos - 1].id,
+                    };
+                    if !self.marked_entries.contains(&candidate) {
+                        return Some(candidate);
+                    }
+                }
+                // Fall back to parent
+                if let Some(parent) = worktree.entry_for_path(parent_path) {
+                    let candidate = SelectedEntry {
+                        worktree_id: last_entry.worktree_id,
+                        entry_id: parent.id,
+                    };
+                    if !self.marked_entries.contains(&candidate) {
+                        return Some(candidate);
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     fn unfold_directory(&mut self, _: &UnfoldDirectory, cx: &mut ViewContext<Self>) {
@@ -6372,9 +6477,8 @@ mod tests {
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        // Delete middle file (second.rs) - should select next file (third.rs)
         toggle_expand_dir(&panel, "src/test", cx);
+
         select_path(&panel, "src/test/second.rs", cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -6385,7 +6489,6 @@ mod tests {
                 "          second.rs  <== selected",
                 "          third.rs",
             ],
-            "Before deleting middle file"
         );
         submit_deletion(&panel, cx);
         assert_eq!(
@@ -6396,45 +6499,28 @@ mod tests {
                 "          first.rs",
                 "          third.rs  <== selected",
             ],
-            "After deleting middle file"
+            "Should select next file after deleting middle file"
         );
 
-        // Delete last file (third.rs) - should select previous file (first.rs)
         select_path(&panel, "src/test/third.rs", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          first.rs",
-                "          third.rs  <== selected",
-            ],
-            "Before deleting last file"
-        );
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &["v src", "    v test", "          first.rs  <== selected",],
-            "After deleting last file"
+            "Should select previous file after deleting last file"
         );
 
-        // Delete only remaining file (first.rs) - should select parent directory (test)
         select_path(&panel, "src/test/first.rs", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    v test", "          first.rs  <== selected",],
-            "Before deleting only remaining file"
-        );
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &["v src", "    v test  <== selected",],
-            "After deleting only remaining file"
+            "Should select parent directory after deleting only remaining file"
         );
     }
 
     #[gpui::test]
-    async fn test_next_selection_after_multiple_delete(cx: &mut gpui::TestAppContext) {
+    async fn test_delete_all_entries_in_directory(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
@@ -6442,10 +6528,12 @@ mod tests {
             "/src",
             json!({
                 "test": {
-                    "a.rs": "// a",
-                    "b.rs": "// b",
-                    "c.rs": "// c",
-                    "d.rs": "// d",
+                    "a.rs": "",
+                    "b.rs": "",
+                    "c.rs": "",
+                },
+                "other": {
+                    "x.rs": ""
                 }
             }),
         )
@@ -6456,45 +6544,37 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
         toggle_expand_dir(&panel, "src/test", cx);
-        select_path(&panel, "src/test/a.rs", cx);
-        // Select multiple files (b.rs and c.rs) in middle - should select next file (d.rs)
         cx.simulate_modifiers_change(gpui::Modifiers {
-            shift: true,
+            control: true,
             ..Default::default()
         });
-        cx.update(|cx| {
-            panel.update(cx, |this, cx| {
-                this.select_next(&Default::default(), cx);
-                this.select_next(&Default::default(), cx);
-            })
-        });
+        select_path_with_mark(&panel, "src/test", cx);
+        select_path_with_mark(&panel, "src/test/a.rs", cx);
+        select_path_with_mark(&panel, "src/test/c.rs", cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v src",
-                "    v test",
-                "          a.rs",
-                "          b.rs  <== marked",
+                "    > other",
+                "    v test  <== marked",
+                "          a.rs  <== marked",
+                "          b.rs",
                 "          c.rs  <== selected  <== marked",
-                "          d.rs",
             ],
-            "Before deleting multiple files"
+            "Some files in test directory should be marked for deletion and test directory too"
         );
+
         submit_deletion(&panel, cx);
+        cx.run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          a.rs",
-                "          d.rs  <== selected",
-            ],
-            "After deleting multiple files"
+            &["v src", "    > other  <== selected"],
+            "Should select previous directory when deleting directory with some of its contents"
         );
     }
 
     #[gpui::test]
-    async fn test_next_selection_after_directory_delete(cx: &mut gpui::TestAppContext) {
+    async fn test_delete_directory_with_selected_contents(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
@@ -6502,13 +6582,15 @@ mod tests {
             "/src",
             json!({
                 "dir1": {
-                    "file1.rs": "",
+                    "subdir": {
+                        "a.rs": "",
+                        "b.rs": "",
+                },
+                    "x.rs": "",
+                    "y.rs": "",
                 },
                 "dir2": {
-                    "file2.rs": "",
-                },
-                "dir3": {
-                    "file3.rs": "",
+                    "z.rs": ""
                 }
             }),
         )
@@ -6519,42 +6601,39 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
-        // Delete middle directory (dir2) - should select next directory (dir3)
-        select_path(&panel, "src/dir2", cx);
+        toggle_expand_dir(&panel, "src/dir1", cx);
+        toggle_expand_dir(&panel, "src/dir1/subdir", cx);
+
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        });
+        select_path(&panel, "src/dir1", cx);
+        select_path_with_mark(&panel, "src/dir1/subdir/a.rs", cx);
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
+            visible_entries_as_strings(&panel, 0..15, cx),
             &[
                 "v src",
-                "    > dir1",
-                "    > dir2  <== selected",
-                "    > dir3",
+                "    v dir1  <== marked",
+                "        v subdir",
+                "              a.rs  <== selected  <== marked",
+                "              b.rs",
+                "          x.rs",
+                "          y.rs",
+                "    > dir2",
             ],
-            "Before deleting middle directory"
-        );
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    > dir1", "    > dir3  <== selected",],
-            "After deleting middle directory"
         );
 
-        // Delete last directory (dir3) - should select previous directory (dir1)
-        select_path(&panel, "src/dir3", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    > dir1", "    > dir3  <== selected",],
-            "Before deleting last directory"
-        );
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    > dir1  <== selected",],
-            "After deleting last directory"
+            &["v src", "    > dir2  <== selected",],
+            "Should select next directory when deleting directory and some of its contents"
         );
     }
 
     #[gpui::test]
-    async fn test_next_selection_after_mixed_delete(cx: &mut gpui::TestAppContext) {
+    async fn test_delete_files_across_directories(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
@@ -6567,8 +6646,11 @@ mod tests {
                 },
                 "dir2": {
                     "c.rs": "",
+                    "d.rs": "",
                 },
-                "file1.rs": "",
+                "dir3": {
+                    "e.rs": "",
+                }
             }),
         )
         .await;
@@ -6579,46 +6661,43 @@ mod tests {
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
         toggle_expand_dir(&panel, "src/dir1", cx);
-        select_path(&panel, "src/dir1", cx);
-        // Move to next file (a.rs)
-        cx.update(|cx| {
-            panel.update(cx, |this, cx| {
-                this.select_next(&Default::default(), cx);
-            })
-        });
-        // Select file (b.rs) and directory (dir2) - should select file next to directory (file1.rs)
+        toggle_expand_dir(&panel, "src/dir2", cx);
+        toggle_expand_dir(&panel, "src/dir3", cx);
+
         cx.simulate_modifiers_change(gpui::Modifiers {
-            shift: true,
+            control: true,
             ..Default::default()
         });
-        cx.update(|cx| {
-            panel.update(cx, |this, cx| {
-                this.select_next(&Default::default(), cx);
-                this.select_next(&Default::default(), cx);
-            })
-        });
+        select_path(&panel, "src/dir1/b.rs", cx);
+        select_path_with_mark(&panel, "src/dir2/c.rs", cx);
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
+            visible_entries_as_strings(&panel, 0..15, cx),
             &[
                 "v src",
                 "    v dir1",
                 "          a.rs",
                 "          b.rs  <== marked",
-                "    > dir2  <== selected  <== marked",
-                "      file1.rs",
+                "    v dir2",
+                "          c.rs  <== selected  <== marked",
+                "          d.rs",
+                "    v dir3",
+                "          e.rs",
             ],
-            "Before deleting mixed files and directories"
         );
+
         submit_deletion(&panel, cx);
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
+            visible_entries_as_strings(&panel, 0..15, cx),
             &[
                 "v src",
                 "    v dir1",
                 "          a.rs",
-                "      file1.rs  <== selected",
+                "    v dir2",
+                "          d.rs  <== selected",
+                "    v dir3",
+                "          e.rs",
             ],
-            "After deleting mixed files"
+            "Should select next available file after deleting files across directories"
         );
     }
 
@@ -6652,6 +6731,32 @@ mod tests {
                         worktree_id: worktree.id(),
                         entry_id,
                     });
+                    return;
+                }
+            }
+            panic!("no worktree for path {:?}", path);
+        });
+    }
+
+    fn select_path_with_mark(
+        panel: &View<ProjectPanel>,
+        path: impl AsRef<Path>,
+        cx: &mut VisualTestContext,
+    ) {
+        let path = path.as_ref();
+        panel.update(cx, |panel, cx| {
+            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
+                let worktree = worktree.read(cx);
+                if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
+                    let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
+                    let entry = crate::SelectedEntry {
+                        worktree_id: worktree.id(),
+                        entry_id,
+                    };
+                    if !panel.marked_entries.contains(&entry) {
+                        panel.marked_entries.insert(entry.clone());
+                    }
+                    panel.selection = Some(entry);
                     return;
                 }
             }
