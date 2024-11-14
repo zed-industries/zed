@@ -24,8 +24,8 @@
       "ctrl-g": ["editor::SelectNext", { "replace_newest": false }],
       "ctrl-cmd-g": ["editor::SelectPrevious", { "replace_newest": false }],
       "cmd-/": ["editor::ToggleComments", { "advance_downwards": true }],
-      "alt-up": "editor::SelectLargerSyntaxNode",
-      "alt-down": "editor::SelectSmallerSyntaxNode",
+      "cmd-up": "editor::SelectLargerSyntaxNode",
+      "cmd-down": "editor::SelectSmallerSyntaxNode",
       "shift-alt-up": "editor::MoveLineUp",
       "shift-alt-down": "editor::MoveLineDown",
       "cmd-alt-l": "editor::Format",
@@ -34,7 +34,7 @@
       "cmd-]": "pane::GoForward",
       "alt-f7": "editor::FindAllReferences",
       "cmd-alt-f7": "editor::FindAllReferences",
-      "cmd-b": "editor::GoToDefinition",
+      "cmd-b": "editor::GoToDefinition", // Conflicts with workspace::ToggleLeftDock
       "cmd-alt-b": "editor::GoToDefinitionSplit",
       "cmd-shift-b": "editor::GoToTypeDefinition",
       "cmd-alt-shift-b": "editor::GoToTypeDefinitionSplit",
@@ -59,12 +59,19 @@
     }
   },
   {
+    "context": "BufferSearchBar > Editor",
+    "bindings": {
+      "shift-enter": "search::SelectPrevMatch"
+    }
+  },
+  {
     "context": "Workspace",
     "bindings": {
       "cmd-shift-o": "file_finder::Toggle",
       "cmd-shift-a": "command_palette::Toggle",
       "shift shift": "command_palette::Toggle",
-      "cmd-alt-o": "project_symbols::Toggle",
+      "cmd-alt-o": "project_symbols::Toggle", // JetBrains: Go to Symbol
+      "cmd-o": "project_symbols::Toggle", // JetBrains: Go to Class
       "cmd-1": "workspace::ToggleLeftDock",
       "cmd-6": "diagnostics::Deploy"
     }

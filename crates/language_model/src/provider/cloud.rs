@@ -8,7 +8,7 @@ use crate::{
 use anthropic::AnthropicError;
 use anyhow::{anyhow, Result};
 use client::{
-    Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    zed_urls, Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME,
     MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
 };
 use collections::BTreeMap;
@@ -905,7 +905,6 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const ZED_AI_URL: &str = "https://zed.dev/ai";
-        const ACCOUNT_SETTINGS_URL: &str = "https://zed.dev/account";
 
         let is_connected = !self.state.read(cx).is_signed_out();
         let plan = self.state.read(cx).user_store.read(cx).current_plan();
@@ -913,7 +912,7 @@ impl Render for ConfigurationView {
 
         let is_pro = plan == Some(proto::Plan::ZedPro);
         let subscription_text = Label::new(if is_pro {
-            "You have full access to Zed's hosted models from Anthropic, OpenAI, Google with faster speeds and higher limits through Zed Pro."
+            "You have full access to Zed's hosted LLMs, which include models from Anthropic, OpenAI, and Google. They come with faster speeds and higher limits through Zed Pro."
         } else {
             "You have basic access to models from Anthropic through the Zed AI Free plan."
         });
@@ -922,7 +921,7 @@ impl Render for ConfigurationView {
                 h_flex().child(
                     Button::new("manage_settings", "Manage Subscription")
                         .style(ButtonStyle::Tinted(TintColor::Accent))
-                        .on_click(cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL))),
+                        .on_click(cx.listener(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))),
                 ),
             )
         } else if cx.has_flag::<ZedPro>() {
@@ -938,7 +937,9 @@ impl Render for ConfigurationView {
                         Button::new("upgrade", "Upgrade")
                             .style(ButtonStyle::Subtle)
                             .color(Color::Accent)
-                            .on_click(cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL))),
+                            .on_click(
+                                cx.listener(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                            ),
                     ),
             )
         } else {
@@ -956,27 +957,14 @@ impl Render for ConfigurationView {
                 })
         } else {
             v_flex()
-                .gap_6()
-                .child(Label::new("Use the zed.dev to access language models."))
+                .gap_2()
+                .child(Label::new("Use Zed AI to access hosted language models."))
                 .child(
-                    v_flex()
-                        .gap_2()
-                        .child(
-                            Button::new("sign_in", "Sign in")
-                                .icon_color(Color::Muted)
-                                .icon(IconName::Github)
-                                .icon_position(IconPosition::Start)
-                                .style(ButtonStyle::Filled)
-                                .full_width()
-                                .on_click(cx.listener(move |this, _, cx| this.authenticate(cx))),
-                        )
-                        .child(
-                            div().flex().w_full().items_center().child(
-                                Label::new("Sign in to enable collaboration.")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
-                        ),
+                    Button::new("sign_in", "Sign In")
+                        .icon_color(Color::Muted)
+                        .icon(IconName::Github)
+                        .icon_position(IconPosition::Start)
+                        .on_click(cx.listener(move |this, _, cx| this.authenticate(cx))),
                 )
         }
     }

@@ -5,9 +5,8 @@ use crate::lsp_log::LogMenuItem;
 use super::*;
 use futures::StreamExt;
 use gpui::{Context, SemanticVersion, TestAppContext, VisualTestContext};
-use language::{
-    tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageServerName,
-};
+use language::{tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
+use lsp::LanguageServerName;
 use lsp_log::LogKind;
 use project::{FakeFs, Project};
 use serde_json::json;
@@ -95,6 +94,9 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
                 rpc_trace_enabled: false,
                 selected_entry: LogKind::Logs,
                 trace_level: lsp::TraceValue::Off,
+                server_kind: lsp_log::LanguageServerKind::Local {
+                    project: project.downgrade()
+                }
             }]
         );
         assert_eq!(view.editor.read(cx).text(cx), "hello from the server\n");

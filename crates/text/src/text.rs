@@ -43,9 +43,8 @@ use undo_map::UndoMap;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 
-static LINE_SEPARATORS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\r\n|\r|\u{2028}|\u{2029}").expect("Failed to create LINE_SEPARATORS_REGEX")
-});
+static LINE_SEPARATORS_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\r\n|\r").expect("Failed to create LINE_SEPARATORS_REGEX"));
 
 pub type TransactionId = clock::Lamport;
 
@@ -228,7 +227,7 @@ impl History {
         if let Some(mut entry) = entries.next_back() {
             while let Some(prev_entry) = entries.next_back() {
                 if !prev_entry.suppress_grouping
-                    && entry.first_edit_at - prev_entry.last_edit_at <= self.group_interval
+                    && entry.first_edit_at - prev_entry.last_edit_at < self.group_interval
                 {
                     entry = prev_entry;
                     count += 1;
@@ -1427,7 +1426,7 @@ impl Buffer {
     fn undo_or_redo(&mut self, transaction: Transaction) -> Operation {
         let mut counts = HashMap::default();
         for edit_id in transaction.edit_ids {
-            counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
+            counts.insert(edit_id, self.undo_map.undo_count(edit_id).saturating_add(1));
         }
 
         let operation = self.undo_operations(counts);

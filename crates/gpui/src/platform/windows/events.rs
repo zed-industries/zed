@@ -190,7 +190,7 @@ fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Optio
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
         drop(lock);
-        request_frame();
+        request_frame(Default::default());
         state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
     }
     unsafe { ValidateRect(handle, None).ok().log_err() };

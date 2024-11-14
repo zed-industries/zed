@@ -2303,7 +2303,9 @@ impl LspCommand for OnTypeFormatting {
             .await?;
 
         let options = buffer.update(&mut cx, |buffer, cx| {
-            lsp_formatting_options(language_settings(buffer.language(), buffer.file(), cx))
+            lsp_formatting_options(
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx).as_ref(),
+            )
         })?;
 
         Ok(Self {
@@ -2439,15 +2441,13 @@ impl InlayHints {
             ResolveState::Resolved => (0, None),
             ResolveState::CanResolve(server_id, resolve_data) => (
                 1,
-                resolve_data
-                    .map(|json_data| {
+                Some(proto::resolve_state::LspResolveState {
+                    server_id: server_id.0 as u64,
+                    value: resolve_data.map(|json_data| {
                         serde_json::to_string(&json_data)
                             .expect("failed to serialize resolve json data")
-                    })
-                    .map(|value| proto::resolve_state::LspResolveState {
-                        server_id: server_id.0 as u64,
-                        value,
                     }),
+                }),
             ),
             ResolveState::Resolving => (2, None),
         };
@@ -2515,9 +2515,11 @@ impl InlayHints {
         let resolve_state_data = resolve_state
             .lsp_resolve_state.as_ref()
             .map(|lsp_resolve_state| {
-                serde_json::from_str::<Option<lsp::LSPAny>>(&lsp_resolve_state.value)
-                    .with_context(|| format!("incorrect proto inlay hint message: non-json resolve state {lsp_resolve_state:?}"))
-                    .map(|state| (LanguageServerId(lsp_resolve_state.server_id as usize), state))
+                let value = lsp_resolve_state.value.as_deref().map(|value| {
+                    serde_json::from_str::<Option<lsp::LSPAny>>(value)
+                        .with_context(|| format!("incorrect proto inlay hint message: non-json resolve state {lsp_resolve_state:?}"))
+                }).transpose()?.flatten();
+                anyhow::Ok((LanguageServerId(lsp_resolve_state.server_id as usize), value))
             })
             .transpose()?;
         let resolve_state = match resolve_state.state {

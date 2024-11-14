@@ -4,6 +4,7 @@ pub mod test;
 mod socks;
 pub mod telemetry;
 pub mod user;
+pub mod zed_urls;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_recursion::async_recursion;
@@ -29,7 +30,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use socks::connect_socks_proxy_stream;
-use std::fmt;
 use std::pin::Pin;
 use std::{
     any::TypeId,
@@ -52,15 +52,6 @@ use util::{ResultExt, TryFutureExt};
 pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct DevServerToken(pub String);
-
-impl fmt::Display for DevServerToken {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 static ZED_SERVER_URL: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
@@ -141,6 +132,7 @@ impl Settings for ProxySettings {
         Ok(Self {
             proxy: sources
                 .user
+                .or(sources.server)
                 .and_then(|value| value.proxy.clone())
                 .or(sources.default.proxy.clone()),
         })
@@ -302,20 +294,14 @@ struct ClientState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Credentials {
-    DevServer { token: DevServerToken },
-    User { user_id: u64, access_token: String },
+pub struct Credentials {
+    pub user_id: u64,
+    pub access_token: String,
 }
 
 impl Credentials {
     pub fn authorization_header(&self) -> String {
-        match self {
-            Credentials::DevServer { token } => format!("dev-server-token {}", token),
-            Credentials::User {
-                user_id,
-                access_token,
-            } => format!("{} {}", user_id, access_token),
-        }
+        format!("{} {}", self.user_id, self.access_token)
     }
 }
 
@@ -472,15 +458,21 @@ impl settings::Settings for TelemetrySettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         Ok(Self {
-            diagnostics: sources.user.as_ref().and_then(|v| v.diagnostics).unwrap_or(
-                sources
-                    .default
-                    .diagnostics
-                    .ok_or_else(Self::missing_default)?,
-            ),
+            diagnostics: sources
+                .user
+                .as_ref()
+                .or(sources.server.as_ref())
+                .and_then(|v| v.diagnostics)
+                .unwrap_or(
+                    sources
+                        .default
+                        .diagnostics
+                        .ok_or_else(Self::missing_default)?,
+                ),
             metrics: sources
                 .user
                 .as_ref()
+                .or(sources.server.as_ref())
                 .and_then(|v| v.metrics)
                 .unwrap_or(sources.default.metrics.ok_or_else(Self::missing_default)?),
         })
@@ -592,11 +584,11 @@ impl Client {
     }
 
     pub fn user_id(&self) -> Option<u64> {
-        if let Some(Credentials::User { user_id, .. }) = self.state.read().credentials.as_ref() {
-            Some(*user_id)
-        } else {
-            None
-        }
+        self.state
+            .read()
+            .credentials
+            .as_ref()
+            .map(|credentials| credentials.user_id)
     }
 
     pub fn peer_id(&self) -> Option<PeerId> {
@@ -785,11 +777,6 @@ impl Client {
             .is_some()
     }
 
-    pub fn set_dev_server_token(&self, token: DevServerToken) -> &Self {
-        self.state.write().credentials = Some(Credentials::DevServer { token });
-        self
-    }
-
     #[async_recursion(?Send)]
     pub async fn authenticate_and_connect(
         self: &Arc<Self>,
@@ -840,9 +827,7 @@ impl Client {
             }
         }
         let credentials = credentials.unwrap();
-        if let Credentials::User { user_id, .. } = &credentials {
-            self.set_id(*user_id);
-        }
+        self.set_id(credentials.user_id);
 
         if was_disconnected {
             self.set_status(Status::Connecting, cx);
@@ -858,9 +843,8 @@ impl Client {
                     Ok(conn) => {
                         self.state.write().credentials = Some(credentials.clone());
                         if !read_from_provider && IMPERSONATE_LOGIN.is_none() {
-                            if let Credentials::User{user_id, access_token} = credentials {
-                                self.credentials_provider.write_credentials(user_id, access_token, cx).await.log_err();
-                            }
+                                self.credentials_provider.write_credentials(credentials.user_id, credentials.access_token, cx).await.log_err();
+
                         }
 
                         futures::select_biased! {
@@ -905,7 +889,7 @@ impl Client {
         cx: &AsyncAppContext,
     ) -> Result<()> {
         let executor = cx.background_executor();
-        log::info!("add connection to peer");
+        log::debug!("add connection to peer");
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn, {
             let executor = executor.clone();
             move |duration| executor.timer(duration)
@@ -913,12 +897,12 @@ impl Client {
         let handle_io = executor.spawn(handle_io);
 
         let peer_id = async {
-            log::info!("waiting for server hello");
+            log::debug!("waiting for server hello");
             let message = incoming
                 .next()
                 .await
                 .ok_or_else(|| anyhow!("no hello message received"))?;
-            log::info!("got server hello");
+            log::debug!("got server hello");
             let hello_message_type_name = message.payload_type_name().to_string();
             let hello = message
                 .into_any()
@@ -944,7 +928,7 @@ impl Client {
             }
         };
 
-        log::info!(
+        log::debug!(
             "set status to connected (connection id: {:?}, peer id: {:?})",
             connection_id,
             peer_id
@@ -1293,7 +1277,7 @@ impl Client {
                         .decrypt_string(&access_token)
                         .context("failed to decrypt access token")?;
 
-                    Ok(Credentials::User {
+                    Ok(Credentials {
                         user_id: user_id.parse()?,
                         access_token,
                     })
@@ -1414,7 +1398,7 @@ impl Client {
 
         // Use the admin API token to authenticate as the impersonated user.
         api_token.insert_str(0, "ADMIN_TOKEN:");
-        Ok(Credentials::User {
+        Ok(Credentials {
             user_id: response.user.id,
             access_token: api_token,
         })
@@ -1659,7 +1643,7 @@ impl CredentialsProvider for DevelopmentCredentialsProvider {
 
             let credentials: DevelopmentCredentials = serde_json::from_slice(&json).log_err()?;
 
-            Some(Credentials::User {
+            Some(Credentials {
                 user_id: credentials.user_id,
                 access_token: credentials.access_token,
             })
@@ -1713,7 +1697,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
                 .await
                 .log_err()??;
 
-            Some(Credentials::User {
+            Some(Credentials {
                 user_id: user_id.parse().ok()?,
                 access_token: String::from_utf8(access_token).ok()?,
             })
@@ -1847,7 +1831,7 @@ mod tests {
         // Time out when client tries to connect.
         client.override_authenticate(move |cx| {
             cx.background_executor().spawn(async move {
-                Ok(Credentials::User {
+                Ok(Credentials {
                     user_id,
                     access_token: "token".into(),
                 })

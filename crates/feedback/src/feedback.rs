@@ -29,7 +29,7 @@ const fn request_feature_url() -> &'static str {
 
 fn file_bug_report_url(specs: &SystemSpecs) -> String {
     format!(
-        "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cdefect&projects=&template=1_bug_report.yml&environment={}",
+        "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cbug&projects=&template=1_bug_report.yml&environment={}",
         urlencoding::encode(&specs.to_string())
     )
 }

@@ -84,7 +84,7 @@ impl RenderOnce for KeyBinding {
                         .join(" ")
                 )
             })
-            .gap(Spacing::Small.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
             .flex_none()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
                 let key_icon = self.icon_for_key(keystroke);
@@ -184,7 +184,7 @@ pub struct KeyIcon {
 impl RenderOnce for KeyIcon {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         Icon::new(self.icon)
-            .size(IconSize::Small)
+            .size(IconSize::XSmall)
             .color(Color::Muted)
     }
 }
@@ -196,7 +196,7 @@ impl KeyIcon {
 }
 
 /// Returns a textual representation of the key binding for the given [`Action`].
-pub fn text_for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<String> {
+pub fn text_for_action(action: &dyn Action, cx: &WindowContext) -> Option<String> {
     let key_binding = cx.bindings_for_action(action).last().cloned()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }

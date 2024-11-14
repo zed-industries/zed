@@ -171,6 +171,25 @@ fn rope_benchmarks(c: &mut Criterion) {
         });
     }
     group.finish();
+
+    let mut group = c.benchmark_group("point_to_offset");
+    for size in sizes.iter() {
+        group.throughput(Throughput::Bytes(*size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            let rope = generate_random_rope(rng.clone(), *size);
+
+            b.iter_batched(
+                || generate_random_rope_points(rng.clone(), &rope),
+                |offsets| {
+                    for offset in offsets.iter() {
+                        black_box(rope.point_to_offset(*offset));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
 }
 
 criterion_group!(benches, rope_benchmarks);

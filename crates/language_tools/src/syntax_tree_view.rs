@@ -2,8 +2,8 @@ use editor::{scroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
     actions, div, rems, uniform_list, AppContext, Div, EventEmitter, FocusHandle, FocusableView,
     Hsla, InteractiveElement, IntoElement, Model, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ParentElement, Render, SharedString, Styled, UniformListScrollHandle, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    ParentElement, Render, ScrollStrategy, SharedString, Styled, UniformListScrollHandle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
@@ -128,12 +128,14 @@ impl SyntaxTreeView {
     fn editor_updated(&mut self, did_reparse: bool, cx: &mut ViewContext<Self>) -> Option<()> {
         // Find which excerpt the cursor is in, and the position within that excerpted buffer.
         let editor_state = self.editor.as_mut()?;
-        let editor = &editor_state.editor.read(cx);
-        let selection_range = editor.selections.last::<usize>(cx).range();
-        let multibuffer = editor.buffer().read(cx);
-        let (buffer, range, excerpt_id) = multibuffer
-            .range_to_buffer_ranges(selection_range, cx)
-            .pop()?;
+        let (buffer, range, excerpt_id) = editor_state.editor.update(cx, |editor, cx| {
+            let selection_range = editor.selections.last::<usize>(cx).range();
+            editor
+                .buffer()
+                .read(cx)
+                .range_to_buffer_ranges(selection_range, cx)
+                .pop()
+        })?;
 
         // If the cursor has moved into a different excerpt, retrieve a new syntax layer
         // from that buffer.
@@ -197,7 +199,8 @@ impl SyntaxTreeView {
 
         let descendant_ix = cursor.descendant_index();
         self.selected_descendant_ix = Some(descendant_ix);
-        self.list_scroll_handle.scroll_to_item(descendant_ix);
+        self.list_scroll_handle
+            .scroll_to_item(descendant_ix, ScrollStrategy::Center);
 
         cx.notify();
         Some(())

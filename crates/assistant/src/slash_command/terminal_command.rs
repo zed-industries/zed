@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use gpui::{AppContext, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
@@ -30,6 +31,10 @@ impl SlashCommand for TerminalSlashCommand {
 
     fn description(&self) -> String {
         "Insert terminal output".into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Terminal
     }
 
     fn menu_text(&self) -> String {
@@ -62,7 +67,7 @@ impl SlashCommand for TerminalSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
@@ -96,7 +101,8 @@ impl SlashCommand for TerminalSlashCommand {
                 metadata: None,
             }],
             run_commands_in_text: false,
-        }))
+        }
+        .to_event_stream()))
     }
 }
 

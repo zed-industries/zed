@@ -1,4 +1,4 @@
-use crate::{ChunkSummary, TextDimension, TextSummary};
+use crate::{chunk::ChunkSlice, ChunkSummary, TextDimension, TextSummary};
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -25,6 +25,10 @@ impl<'a, T: sum_tree::Dimension<'a, ChunkSummary>> sum_tree::Dimension<'a, Chunk
 impl<T: TextDimension> TextDimension for Unclipped<T> {
     fn from_text_summary(summary: &TextSummary) -> Self {
         Unclipped(T::from_text_summary(summary))
+    }
+
+    fn from_chunk(chunk: ChunkSlice) -> Self {
+        Unclipped(T::from_chunk(chunk))
     }
 
     fn add_assign(&mut self, other: &Self) {

@@ -1,27 +1,47 @@
+use crate::headless_project::HeadlessAppState;
 use crate::HeadlessProject;
 use anyhow::{anyhow, Context, Result};
-use fs::RealFs;
+use chrono::Utc;
+use client::{telemetry, ProxySettings};
+use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
-use gpui::{AppContext, Context as _};
+use git::GitHostingProviderRegistry;
+use gpui::{AppContext, Context as _, Model, ModelContext, SemanticVersion, UpdateGlobal as _};
+use http_client::{read_proxy_from_env, Uri};
+use language::LanguageRegistry;
+use node_runtime::{NodeBinaryOptions, NodeRuntime};
+use paths::logs_dir;
+use project::project_settings::ProjectSettings;
+
+use release_channel::AppVersion;
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
     json_log::LogRecord,
     protocol::{read_message, write_message},
 };
-use rpc::proto::Envelope;
+use reqwest_client::ReqwestClient;
+use rpc::proto::{self, Envelope, SSH_PROJECT_ID};
+use rpc::{AnyProtoClient, TypedEnvelope};
+use settings::{watch_config_file, Settings, SettingsStore};
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
+
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use std::ffi::OsStr;
+use std::ops::ControlFlow;
+use std::str::FromStr;
+use std::{env, thread};
 use std::{
-    env,
     io::Write,
     mem,
     path::{Path, PathBuf},
     sync::Arc,
 };
+use telemetry_events::LocationData;
+use util::ResultExt;
 
 fn init_logging_proxy() {
     env_logger::builder()
@@ -118,14 +138,95 @@ fn init_panic_hook() {
             backtrace.drain(0..=ix);
         }
 
+        let thread = thread::current();
+        let thread_name = thread.name().unwrap_or("<unnamed>");
+
         log::error!(
             "panic occurred: {}\nBacktrace:\n{}",
-            payload,
-            backtrace.join("\n")
+            &payload,
+            (&backtrace).join("\n")
         );
+
+        let panic_data = telemetry_events::Panic {
+            thread: thread_name.into(),
+            payload: payload.clone(),
+            location_data: info.location().map(|location| LocationData {
+                file: location.file().into(),
+                line: location.line(),
+            }),
+            app_version: format!(
+                "remote-server-{}",
+                option_env!("ZED_COMMIT_SHA").unwrap_or(&env!("ZED_PKG_VERSION"))
+            ),
+            release_channel: release_channel::RELEASE_CHANNEL.display_name().into(),
+            os_name: telemetry::os_name(),
+            os_version: Some(telemetry::os_version()),
+            architecture: env::consts::ARCH.into(),
+            panicked_on: Utc::now().timestamp_millis(),
+            backtrace,
+            system_id: None,            // Set on SSH client
+            installation_id: None,      // Set on SSH client
+            session_id: "".to_string(), // Set on SSH client
+        };
+
+        if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
+            let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+            let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
+            let panic_file = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&panic_file_path)
+                .log_err();
+            if let Some(mut panic_file) = panic_file {
+                writeln!(&mut panic_file, "{panic_data_json}").log_err();
+                panic_file.flush().log_err();
+            }
+        }
 
         std::process::abort();
     }));
+}
+
+fn handle_panic_requests(project: &Model<HeadlessProject>, client: &Arc<ChannelClient>) {
+    let client: AnyProtoClient = client.clone().into();
+    client.add_request_handler(
+        project.downgrade(),
+        |_, _: TypedEnvelope<proto::GetPanicFiles>, _cx| async move {
+            let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
+            let mut panic_files = Vec::new();
+            while let Some(child) = children.next().await {
+                let child = child?;
+                let child_path = child.path();
+
+                if child_path.extension() != Some(OsStr::new("panic")) {
+                    continue;
+                }
+                let filename = if let Some(filename) = child_path.file_name() {
+                    filename.to_string_lossy()
+                } else {
+                    continue;
+                };
+
+                if !filename.starts_with("zed") {
+                    continue;
+                }
+
+                let file_contents = smol::fs::read_to_string(&child_path)
+                    .await
+                    .context("error reading panic file")?;
+
+                panic_files.push(file_contents);
+
+                // We've done what we can, delete the file
+                std::fs::remove_file(child_path)
+                    .context("error removing panic")
+                    .log_err();
+            }
+            anyhow::Ok(proto::GetPanicFilesResponse {
+                file_contents: panic_files,
+            })
+        },
+    );
 }
 
 struct ServerListeners {
@@ -176,7 +277,6 @@ fn start_server(
             log::info!("accepting new connections");
             let result = select! {
                 streams = streams.fuse() => {
-                    log::warn!("stdin {:?}, stdout: {:?}, stderr: {:?}", streams.0, streams.1, streams.2);
                     let (Some(Ok(stdin_stream)), Some(Ok(stdout_stream)), Some(Ok(stderr_stream))) = streams else {
                         break;
                     };
@@ -201,23 +301,29 @@ fn start_server(
                 break;
             };
 
-            log::info!("yep! we got connections");
-
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
+
+            let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
+            cx.background_executor().spawn(async move {
+                while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
+                    if let Err(_) = stdin_msg_tx.send(msg).await {
+                        break;
+                    }
+                }
+            }).detach();
+
             loop {
+
                 select_biased! {
                     _ = app_quit_rx.next().fuse() => {
                         return anyhow::Ok(());
                     }
 
-                    stdin_message = read_message(&mut stdin_stream, &mut input_buffer).fuse() => {
-                        let message = match stdin_message {
-                            Ok(message) => message,
-                            Err(error) => {
-                                log::warn!("error reading message on stdin: {}. exiting.", error);
-                                break;
-                            }
+                    stdin_message = stdin_msg_rx.next().fuse() => {
+                        let Some(message) = stdin_message else {
+                            log::warn!("error reading message on stdin. exiting.");
+                            break;
                         };
                         if let Err(error) = incoming_tx.unbounded_send(message) {
                             log::error!("failed to send message to application: {:?}. exiting.", error);
@@ -243,7 +349,6 @@ fn start_server(
                         }
                     }
 
-                    // // TODO: How do we handle backpressure?
                     log_message = log_rx.next().fuse() => {
                         if let Some(log_message) = log_message {
                             if let Err(error) = stderr_stream.write_all(&log_message).await {
@@ -263,7 +368,25 @@ fn start_server(
     })
     .detach();
 
-    ChannelClient::new(incoming_rx, outgoing_tx, cx)
+    ChannelClient::new(incoming_rx, outgoing_tx, cx, "server")
+}
+
+fn init_paths() -> anyhow::Result<()> {
+    for path in [
+        paths::config_dir(),
+        paths::extensions_dir(),
+        paths::languages_dir(),
+        paths::logs_dir(),
+        paths::temp_dir(),
+        paths::remote_extensions_dir(),
+        paths::remote_extensions_uploads_dir(),
+    ]
+    .iter()
+    {
+        std::fs::create_dir_all(path)
+            .map_err(|e| anyhow!("Could not create directory {:?}: {}", path, e))?;
+    }
+    Ok(())
 }
 
 pub fn execute_run(
@@ -273,9 +396,15 @@ pub fn execute_run(
     stdout_socket: PathBuf,
     stderr_socket: PathBuf,
 ) -> Result<()> {
-    let log_rx = init_logging_server(log_file)?;
-    init_panic_hook();
+    init_paths()?;
 
+    match daemonize()? {
+        ControlFlow::Break(_) => return Ok(()),
+        ControlFlow::Continue(_) => {}
+    }
+
+    init_panic_hook();
+    let log_rx = init_logging_server(log_file)?;
     log::info!(
         "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
         pid_file,
@@ -289,17 +418,64 @@ pub fn execute_run(
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
-    log::debug!("starting gpui app");
+    let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::App::headless().run(move |cx| {
         settings::init(cx);
+        let app_version = AppVersion::init(env!("ZED_PKG_VERSION"));
+        release_channel::init(app_version, cx);
+
         HeadlessProject::init(cx);
 
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx);
 
+        client::init_settings(cx);
+
+        GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
+        git_hosting_providers::init(cx);
+
         let project = cx.new_model(|cx| {
-            HeadlessProject::new(session, Arc::new(RealFs::new(Default::default(), None)), cx)
+            let fs = Arc::new(RealFs::new(Default::default(), None));
+            let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
+
+            let proxy_url = read_proxy_settings(cx);
+
+            let http_client = Arc::new(
+                ReqwestClient::proxy_and_user_agent(
+                    proxy_url,
+                    &format!(
+                        "Zed-Server/{} ({}; {})",
+                        env!("CARGO_PKG_VERSION"),
+                        std::env::consts::OS,
+                        std::env::consts::ARCH
+                    ),
+                )
+                .expect("Could not start HTTP client"),
+            );
+
+            let node_runtime = NodeRuntime::new(http_client.clone(), node_settings_rx);
+
+            let mut languages = LanguageRegistry::new(cx.background_executor().clone());
+            languages.set_language_server_download_dir(paths::languages_dir().clone());
+            let languages = Arc::new(languages);
+
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: session.clone(),
+                    fs,
+                    http_client,
+                    node_runtime,
+                    languages,
+                },
+                cx,
+            )
         });
+
+        handle_panic_requests(&project, &session);
+
+        cx.background_executor()
+            .spawn(async move { cleanup_old_binaries() })
+            .detach();
 
         mem::forget(project);
     });
@@ -318,13 +494,15 @@ struct ServerPaths {
 
 impl ServerPaths {
     fn new(identifier: &str) -> Result<Self> {
-        let project_dir = create_state_directory(identifier)?;
+        let server_dir = paths::remote_server_state_dir().join(identifier);
+        std::fs::create_dir_all(&server_dir)?;
+        std::fs::create_dir_all(&logs_dir())?;
 
-        let pid_file = project_dir.join("server.pid");
-        let stdin_socket = project_dir.join("stdin.sock");
-        let stdout_socket = project_dir.join("stdout.sock");
-        let stderr_socket = project_dir.join("stderr.sock");
-        let log_file = project_dir.join("server.log");
+        let pid_file = server_dir.join("server.pid");
+        let stdin_socket = server_dir.join("stdin.sock");
+        let stdout_socket = server_dir.join("stdout.sock");
+        let stderr_socket = server_dir.join("stderr.sock");
+        let log_file = logs_dir().join(format!("server-{}.log", identifier));
 
         Ok(Self {
             pid_file,
@@ -340,7 +518,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     init_logging_proxy();
     init_panic_hook();
 
-    log::debug!("starting up. PID: {}", std::process::id());
+    log::info!("starting proxy process. PID: {}", std::process::id());
 
     let server_paths = ServerPaths::new(&identifier)?;
 
@@ -353,12 +531,12 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         }
     } else {
         if let Some(pid) = server_pid {
-            log::debug!("found server already running with PID {}. Killing process and cleaning up files...", pid);
+            log::info!("proxy found server already running with PID {}. Killing process and cleaning up files...", pid);
             kill_running_server(pid, &server_paths)?;
         }
 
         spawn_server(&server_paths)?;
-    }
+    };
 
     let stdin_task = smol::spawn(async move {
         let stdin = Async::new(std::io::stdin())?;
@@ -379,7 +557,9 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         loop {
             match stream.read(&mut stderr_buffer).await {
                 Ok(0) => {
-                    return anyhow::Ok(());
+                    let error =
+                        std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "stderr closed");
+                    Err(anyhow!(error))?;
                 }
                 Ok(n) => {
                     stderr.write_all(&mut stderr_buffer[..n]).await?;
@@ -394,32 +574,19 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 
     if let Err(forwarding_result) = smol::block_on(async move {
         futures::select! {
-            result = stdin_task.fuse() => result,
-            result = stdout_task.fuse() => result,
-            result = stderr_task.fuse() => result,
+            result = stdin_task.fuse() => result.context("stdin_task failed"),
+            result = stdout_task.fuse() => result.context("stdout_task failed"),
+            result = stderr_task.fuse() => result.context("stderr_task failed"),
         }
     }) {
         log::error!(
-            "failed to forward messages: {:?}, terminating...",
+            "encountered error while forwarding messages: {:?}, terminating...",
             forwarding_result
         );
         return Err(forwarding_result);
     }
 
     Ok(())
-}
-
-fn create_state_directory(identifier: &str) -> Result<PathBuf> {
-    let home_dir = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let server_dir = PathBuf::from(home_dir)
-        .join(".local")
-        .join("state")
-        .join("zed-remote-server")
-        .join(identifier);
-
-    std::fs::create_dir_all(&server_dir)?;
-
-    Ok(server_dir)
 }
 
 fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
@@ -453,7 +620,8 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
     }
 
     let binary_name = std::env::current_exe()?;
-    let server_process = std::process::Command::new(binary_name)
+    let mut server_process = std::process::Command::new(binary_name);
+    server_process
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)
@@ -464,10 +632,15 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         .arg("--stdout-socket")
         .arg(&paths.stdout_socket)
         .arg("--stderr-socket")
-        .arg(&paths.stderr_socket)
-        .spawn()?;
+        .arg(&paths.stderr_socket);
 
-    log::debug!("server started. PID: {:?}", server_process.id());
+    let status = server_process
+        .status()
+        .context("failed to launch server process")?;
+    anyhow::ensure!(
+        status.success(),
+        "failed to launch and detach server process"
+    );
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
     let wait_duration = std::time::Duration::from_millis(20);
@@ -484,6 +657,7 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         "server ready to accept connections. total time waited: {:?}",
         total_time_waited
     );
+
     Ok(())
 }
 
@@ -555,4 +729,205 @@ async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
     stream.write_all(len.to_le_bytes().as_slice()).await?;
     stream.write_all(buffer).await?;
     Ok(())
+}
+
+fn initialize_settings(
+    session: Arc<ChannelClient>,
+    fs: Arc<dyn Fs>,
+    cx: &mut AppContext,
+) -> async_watch::Receiver<Option<NodeBinaryOptions>> {
+    let user_settings_file_rx = watch_config_file(
+        &cx.background_executor(),
+        fs,
+        paths::settings_file().clone(),
+    );
+
+    handle_settings_file_changes(user_settings_file_rx, cx, {
+        let session = session.clone();
+        move |err, _cx| {
+            if let Some(e) = err {
+                log::info!("Server settings failed to change: {}", e);
+
+                session
+                    .send(proto::Toast {
+                        project_id: SSH_PROJECT_ID,
+                        notification_id: "server-settings-failed".to_string(),
+                        message: format!(
+                            "Error in settings on remote host {:?}: {}",
+                            paths::settings_file(),
+                            e
+                        ),
+                    })
+                    .log_err();
+            } else {
+                session
+                    .send(proto::HideToast {
+                        project_id: SSH_PROJECT_ID,
+                        notification_id: "server-settings-failed".to_string(),
+                    })
+                    .log_err();
+            }
+        }
+    });
+
+    let (tx, rx) = async_watch::channel(None);
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let settings = &ProjectSettings::get_global(cx).node;
+        log::info!("Got new node settings: {:?}", settings);
+        let options = NodeBinaryOptions {
+            allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
+            // TODO: Implement this setting
+            allow_binary_download: true,
+            use_paths: settings.path.as_ref().map(|node_path| {
+                let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
+                let npm_path = settings
+                    .npm_path
+                    .as_ref()
+                    .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
+                (
+                    node_path.clone(),
+                    npm_path.unwrap_or_else(|| {
+                        let base_path = PathBuf::new();
+                        node_path.parent().unwrap_or(&base_path).join("npm")
+                    }),
+                )
+            }),
+        };
+        tx.send(Some(options)).log_err();
+    })
+    .detach();
+
+    rx
+}
+
+pub fn handle_settings_file_changes(
+    mut server_settings_file: mpsc::UnboundedReceiver<String>,
+    cx: &mut AppContext,
+    settings_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
+) {
+    let server_settings_content = cx
+        .background_executor()
+        .block(server_settings_file.next())
+        .unwrap();
+    SettingsStore::update_global(cx, |store, cx| {
+        store
+            .set_server_settings(&server_settings_content, cx)
+            .log_err();
+    });
+    cx.spawn(move |cx| async move {
+        while let Some(server_settings_content) = server_settings_file.next().await {
+            let result = cx.update_global(|store: &mut SettingsStore, cx| {
+                let result = store.set_server_settings(&server_settings_content, cx);
+                if let Err(err) = &result {
+                    log::error!("Failed to load server settings: {err}");
+                }
+                settings_changed(result.err(), cx);
+                cx.refresh();
+            });
+            if result.is_err() {
+                break; // App dropped
+            }
+        }
+    })
+    .detach();
+}
+
+fn read_proxy_settings(cx: &mut ModelContext<'_, HeadlessProject>) -> Option<Uri> {
+    let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
+    let proxy_url = proxy_str
+        .as_ref()
+        .and_then(|input: &String| {
+            input
+                .parse::<Uri>()
+                .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+                .ok()
+        })
+        .or_else(read_proxy_from_env);
+    proxy_url
+}
+
+fn daemonize() -> Result<ControlFlow<()>> {
+    match fork::fork().map_err(|e| anyhow::anyhow!("failed to call fork with error code {}", e))? {
+        fork::Fork::Parent(_) => {
+            return Ok(ControlFlow::Break(()));
+        }
+        fork::Fork::Child => {}
+    }
+
+    // Once we've detached from the parent, we want to close stdout/stderr/stdin
+    // so that the outer SSH process is not attached to us in any way anymore.
+    unsafe { redirect_standard_streams() }?;
+
+    Ok(ControlFlow::Continue(()))
+}
+
+unsafe fn redirect_standard_streams() -> Result<()> {
+    let devnull_fd = libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR);
+    anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
+
+    let process_stdio = |name, fd| {
+        let reopened_fd = libc::dup2(devnull_fd, fd);
+        anyhow::ensure!(
+            reopened_fd != -1,
+            format!("failed to redirect {} to /dev/null", name)
+        );
+        Ok(())
+    };
+
+    process_stdio("stdin", libc::STDIN_FILENO)?;
+    process_stdio("stdout", libc::STDOUT_FILENO)?;
+    process_stdio("stderr", libc::STDERR_FILENO)?;
+
+    anyhow::ensure!(
+        libc::close(devnull_fd) != -1,
+        "failed to close /dev/null fd after redirecting"
+    );
+
+    Ok(())
+}
+
+fn cleanup_old_binaries() -> Result<()> {
+    let server_dir = paths::remote_server_dir_relative();
+    let release_channel = release_channel::RELEASE_CHANNEL.dev_name();
+    let prefix = format!("zed-remote-server-{}-", release_channel);
+
+    for entry in std::fs::read_dir(server_dir)? {
+        let path = entry?.path();
+
+        if let Some(file_name) = path.file_name() {
+            if let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix) {
+                if !is_new_version(version) && !is_file_in_use(file_name) {
+                    log::info!("removing old remote server binary: {:?}", path);
+                    std::fs::remove_file(&path)?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn is_new_version(version: &str) -> bool {
+    SemanticVersion::from_str(version)
+        .ok()
+        .zip(SemanticVersion::from_str(env!("ZED_PKG_VERSION")).ok())
+        .is_some_and(|(version, current_version)| version >= current_version)
+}
+
+fn is_file_in_use(file_name: &OsStr) -> bool {
+    let info =
+        sysinfo::System::new_with_specifics(sysinfo::RefreshKind::new().with_processes(
+            sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::Always),
+        ));
+
+    for process in info.processes().values() {
+        if process
+            .exe()
+            .is_some_and(|exe| exe.file_name().is_some_and(|name| name == file_name))
+        {
+            return true;
+        }
+    }
+
+    false
 }

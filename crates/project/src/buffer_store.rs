@@ -1,8 +1,9 @@
 use crate::{
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    Item, NoRepositoryError, ProjectPath,
+    Item, ProjectPath,
 };
+use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
@@ -23,7 +24,7 @@ use language::{
 };
 use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
 use smol::channel::Receiver;
-use std::{io, path::Path, str::FromStr as _, sync::Arc, time::Instant};
+use std::{io, ops::Range, path::Path, str::FromStr as _, sync::Arc, time::Instant};
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
 use worktree::{File, PathChange, ProjectEntryId, UpdatedGitRepositoriesSet, Worktree, WorktreeId};
@@ -53,7 +54,7 @@ trait BufferStoreImpl {
 
     fn reload_buffers(
         &self,
-        buffers: Vec<Model<Buffer>>,
+        buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<ProjectTransaction>>;
@@ -391,7 +392,7 @@ impl BufferStoreImpl for Model<RemoteBufferStore> {
 
     fn reload_buffers(
         &self,
-        buffers: Vec<Model<Buffer>>,
+        buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<ProjectTransaction>> {
@@ -937,7 +938,7 @@ impl BufferStoreImpl for Model<LocalBufferStore> {
 
     fn reload_buffers(
         &self,
-        buffers: Vec<Model<Buffer>>,
+        buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<ProjectTransaction>> {
@@ -971,6 +972,7 @@ impl BufferStore {
         client.add_model_request_handler(Self::handle_save_buffer);
         client.add_model_request_handler(Self::handle_blame_buffer);
         client.add_model_request_handler(Self::handle_reload_buffers);
+        client.add_model_request_handler(Self::handle_get_permalink_to_line);
     }
 
     /// Creates a buffer store, optionally retaining its buffers.
@@ -1116,7 +1118,7 @@ impl BufferStore {
         buffer: &Model<Buffer>,
         version: Option<clock::Global>,
         cx: &AppContext,
-    ) -> Task<Result<Blame>> {
+    ) -> Task<Result<Option<Blame>>> {
         let buffer = buffer.read(cx);
         let Some(file) = File::from_dyn(buffer.file()) else {
             return Task::ready(Err(anyhow!("buffer has no file")));
@@ -1128,7 +1130,7 @@ impl BufferStore {
                 let blame_params = maybe!({
                     let (repo_entry, local_repo_entry) = match worktree.repo_for_path(&file.path) {
                         Some(repo_for_path) => repo_for_path,
-                        None => anyhow::bail!(NoRepositoryError {}),
+                        None => return Ok(None),
                     };
 
                     let relative_path = repo_entry
@@ -1142,13 +1144,16 @@ impl BufferStore {
                         None => buffer.as_rope().clone(),
                     };
 
-                    anyhow::Ok((repo, relative_path, content))
+                    anyhow::Ok(Some((repo, relative_path, content)))
                 });
 
                 cx.background_executor().spawn(async move {
-                    let (repo, relative_path, content) = blame_params?;
+                    let Some((repo, relative_path, content)) = blame_params? else {
+                        return Ok(None);
+                    };
                     repo.blame(&relative_path, content)
                         .with_context(|| format!("Failed to blame {:?}", relative_path.0))
+                        .map(Some)
                 })
             }
             Worktree::Remote(worktree) => {
@@ -1165,6 +1170,78 @@ impl BufferStore {
                         })
                         .await?;
                     Ok(deserialize_blame_buffer_response(response))
+                })
+            }
+        }
+    }
+
+    pub fn get_permalink_to_line(
+        &self,
+        buffer: &Model<Buffer>,
+        selection: Range<u32>,
+        cx: &AppContext,
+    ) -> Task<Result<url::Url>> {
+        let buffer = buffer.read(cx);
+        let Some(file) = File::from_dyn(buffer.file()) else {
+            return Task::ready(Err(anyhow!("buffer has no file")));
+        };
+
+        match file.worktree.clone().read(cx) {
+            Worktree::Local(worktree) => {
+                let Some(repo) = worktree.local_git_repo(file.path()) else {
+                    return Task::ready(Err(anyhow!("no repository for buffer found")));
+                };
+
+                let path = file.path().clone();
+
+                cx.spawn(|cx| async move {
+                    const REMOTE_NAME: &str = "origin";
+                    let origin_url = repo
+                        .remote_url(REMOTE_NAME)
+                        .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
+
+                    let sha = repo
+                        .head_sha()
+                        .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
+
+                    let provider_registry =
+                        cx.update(GitHostingProviderRegistry::default_global)?;
+
+                    let (provider, remote) =
+                        parse_git_remote_url(provider_registry, &origin_url)
+                            .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
+
+                    let path = path
+                        .to_str()
+                        .context("failed to convert buffer path to string")?;
+
+                    Ok(provider.build_permalink(
+                        remote,
+                        BuildPermalinkParams {
+                            sha: &sha,
+                            path,
+                            selection: Some(selection),
+                        },
+                    ))
+                })
+            }
+            Worktree::Remote(worktree) => {
+                let buffer_id = buffer.remote_id();
+                let project_id = worktree.project_id();
+                let client = worktree.client();
+                cx.spawn(|_| async move {
+                    let response = client
+                        .request(proto::GetPermalinkToLine {
+                            project_id,
+                            buffer_id: buffer_id.into(),
+                            selection: Some(proto::Range {
+                                start: selection.start as u64,
+                                end: selection.end as u64,
+                            }),
+                        })
+                        .await?;
+
+                    url::Url::parse(&response.permalink).context("failed to parse permalink")
                 })
             }
         }
@@ -1775,6 +1852,31 @@ impl BufferStore {
         Ok(serialize_blame_buffer_response(blame))
     }
 
+    pub async fn handle_get_permalink_to_line(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::GetPermalinkToLine>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::GetPermalinkToLineResponse> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        // let version = deserialize_version(&envelope.payload.version);
+        let selection = {
+            let proto_selection = envelope
+                .payload
+                .selection
+                .context("no selection to get permalink for defined")?;
+            proto_selection.start as u32..proto_selection.end as u32
+        };
+        let buffer = this.read_with(&cx, |this, _| this.get_existing(buffer_id))??;
+        let permalink = this
+            .update(&mut cx, |this, cx| {
+                this.get_permalink_to_line(&buffer, selection, cx)
+            })?
+            .await?;
+        Ok(proto::GetPermalinkToLineResponse {
+            permalink: permalink.to_string(),
+        })
+    }
+
     pub async fn wait_for_loading_buffer(
         mut receiver: postage::watch::Receiver<Option<Result<Model<Buffer>, Arc<anyhow::Error>>>>,
     ) -> Result<Model<Buffer>, Arc<anyhow::Error>> {
@@ -1795,13 +1897,10 @@ impl BufferStore {
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
-        let buffers: Vec<Model<Buffer>> = buffers
-            .into_iter()
-            .filter(|buffer| buffer.read(cx).is_dirty())
-            .collect();
         if buffers.is_empty() {
             return Task::ready(Ok(ProjectTransaction::default()));
         }
+
         self.state.reload_buffers(buffers, push_to_history, cx)
     }
 
@@ -2016,7 +2115,13 @@ fn is_not_found_error(error: &anyhow::Error) -> bool {
         .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
 }
 
-fn serialize_blame_buffer_response(blame: git::blame::Blame) -> proto::BlameBufferResponse {
+fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::BlameBufferResponse {
+    let Some(blame) = blame else {
+        return proto::BlameBufferResponse {
+            blame_response: None,
+        };
+    };
+
     let entries = blame
         .entries
         .into_iter()
@@ -2058,14 +2163,19 @@ fn serialize_blame_buffer_response(blame: git::blame::Blame) -> proto::BlameBuff
         .collect::<Vec<_>>();
 
     proto::BlameBufferResponse {
-        entries,
-        messages,
-        permalinks,
-        remote_url: blame.remote_url,
+        blame_response: Some(proto::blame_buffer_response::BlameResponse {
+            entries,
+            messages,
+            permalinks,
+            remote_url: blame.remote_url,
+        }),
     }
 }
 
-fn deserialize_blame_buffer_response(response: proto::BlameBufferResponse) -> git::blame::Blame {
+fn deserialize_blame_buffer_response(
+    response: proto::BlameBufferResponse,
+) -> Option<git::blame::Blame> {
+    let response = response.blame_response?;
     let entries = response
         .entries
         .into_iter()
@@ -2106,10 +2216,10 @@ fn deserialize_blame_buffer_response(response: proto::BlameBufferResponse) -> gi
         })
         .collect::<HashMap<_, _>>();
 
-    Blame {
+    Some(Blame {
         entries,
         permalinks,
         messages,
         remote_url: response.remote_url,
-    }
+    })
 }
