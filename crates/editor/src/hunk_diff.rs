@@ -10,8 +10,8 @@ use std::{ops::Range, sync::Arc};
 use text::OffsetRangeExt;
 use ui::{
     prelude::*, ActiveTheme, ButtonLike, ContextMenu, ElevationIndex, IconButtonShape,
-    InteractiveElement, IntoElement, KeyBinding, ParentElement, PopoverMenu, Styled, Tooltip,
-    ViewContext, VisualContext,
+    InteractiveElement, IntoElement, KeyBinding, ParentElement, PopoverMenu, Styled, TintColor,
+    Tooltip, ViewContext, VisualContext,
 };
 use util::RangeExt;
 use workspace::Item;
@@ -431,6 +431,8 @@ impl Editor {
                     let hunk_controls_menu_handle =
                         editor.read(cx).hunk_controls_menu_handle.clone();
 
+                    let focus_handle = editor.focus_handle(cx);
+
                     h_flex()
                         .id(cx.block_id)
                         .block_mouse_down()
@@ -440,7 +442,7 @@ impl Editor {
                         .child(
                             h_flex()
                                 .gap_1()
-                                .pr_4()
+                                .pr_5()
                                 .when(!is_branch_buffer, |row| {
                                     row.child(
                                         IconButton::new("next-hunk", IconName::ArrowDown)
@@ -500,31 +502,13 @@ impl Editor {
                                     )
                                 })
                                 .child(
-                                    ButtonLike::new("discard")
-                                        .tooltip({
-                                            let focus_handle = editor.focus_handle(cx);
-                                            move |cx| {
-                                                Tooltip::for_action_in(
-                                                    "Discard Hunk",
-                                                    &RevertSelectedHunks,
-                                                    &focus_handle,
-                                                    cx,
-                                                )
-                                            }
-                                        })
-                                        // .when_some(tooltip, |button, tooltip| {
-                                        //     button.tooltip(move |_| tooltip.clone())
-                                        // })
-                                        .child(Label::new("Discard"))
-                                        .children({
-                                            let focus_handle = editor.focus_handle(cx);
-                                            KeyBinding::for_action_in(
-                                                &RevertSelectedHunks,
-                                                &focus_handle,
-                                                cx,
-                                            )
-                                            .map(|binding| binding.into_any_element())
-                                        })
+                                    Button::new("discard", "Discard")
+                                        .style(ButtonStyle::Tinted(TintColor::Negative))
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &RevertSelectedHunks,
+                                            &focus_handle,
+                                            cx,
+                                        ))
                                         .on_click({
                                             let editor = editor.clone();
                                             let hunk = hunk.clone();
@@ -554,20 +538,14 @@ impl Editor {
                                 )
                                 .when(is_branch_buffer, |this| {
                                     this.child(
-                                        IconButton::new("apply", IconName::Check)
-                                            .shape(IconButtonShape::Square)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip({
-                                                let focus_handle = editor.focus_handle(cx);
-                                                move |cx| {
-                                                    Tooltip::for_action_in(
-                                                        "Apply Hunk",
-                                                        &ApplyDiffHunk,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                }
-                                            })
+                                        Button::new("apply", "Apply")
+                                            .style(ButtonStyle::Tinted(TintColor::Positive))
+                                            .layer(ElevationIndex::Wash)
+                                            .key_binding(KeyBinding::for_action_in(
+                                                &ApplyDiffHunk,
+                                                &focus_handle,
+                                                cx,
+                                            ))
                                             .on_click({
                                                 let editor = editor.clone();
                                                 let hunk = hunk.clone();

@@ -9,7 +9,7 @@ use settings::Settings;
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
-use ui::{prelude::*, ButtonLike, KeyBinding};
+use ui::{prelude::*, KeyBinding};
 use workspace::{
     searchable::SearchableItemHandle, Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
