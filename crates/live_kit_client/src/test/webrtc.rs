@@ -45,7 +45,7 @@ pub mod audio_stream {
         }
 
         impl NativeAudioStream {
-            pub fn new(track: RtcAudioTrack) -> Self {
+            pub fn new(track: RtcAudioTrack, _sample_rate: i32, _num_channels: i32) -> Self {
                 Self { track }
             }
         }
@@ -83,7 +83,7 @@ pub mod audio_source {
                 options: AudioSourceOptions,
                 sample_rate: u32,
                 num_channels: u32,
-                _enable_queue: Option<bool>,
+                _queue_size_ms: u32,
             ) -> Self {
                 Self {
                     options: Arc::new(options),
