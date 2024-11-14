@@ -1,17 +1,15 @@
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
-use crate::DocsDatabase;
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use extension::{KeyValueStoreDelegate, WorktreeDelegate};
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use language::LanguageName;
-use language::{
-    language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
-};
+use language::{language_settings::AllLanguageSettings, LanguageServerBinaryStatus};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
@@ -24,7 +22,6 @@ use wasmtime::component::{Linker, Resource};
 use super::latest;
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
 
 wasmtime::component::bindgen!({
     async: true,
@@ -47,8 +44,8 @@ mod settings {
     include!(concat!(env!("OUT_DIR"), "/since_v0.1.0/settings.rs"));
 }
 
-pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
-pub type ExtensionKeyValueStore = Arc<dyn DocsDatabase>;
+pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
+pub type ExtensionKeyValueStore = Arc<dyn KeyValueStoreDelegate>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
 
 pub fn linker() -> &'static Linker<WasmState> {
@@ -251,52 +248,38 @@ impl HostKeyValueStore for WasmState {
 
 #[async_trait]
 impl HostWorktree for WasmState {
-    async fn id(
-        &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
-    ) -> wasmtime::Result<u64> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate.worktree_id().to_proto())
+    async fn id(&mut self, delegate: Resource<Arc<dyn WorktreeDelegate>>) -> wasmtime::Result<u64> {
+        latest::HostWorktree::id(self, delegate).await
     }
 
     async fn root_path(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> wasmtime::Result<String> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate.worktree_root_path().to_string_lossy().to_string())
+        latest::HostWorktree::root_path(self, delegate).await
     }
 
     async fn read_text_file(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
         path: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate
-            .read_text_file(path.into())
-            .await
-            .map_err(|error| error.to_string()))
+        latest::HostWorktree::read_text_file(self, delegate, path).await
     }
 
     async fn shell_env(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> wasmtime::Result<EnvVars> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate.shell_env().await.into_iter().collect())
+        latest::HostWorktree::shell_env(self, delegate).await
     }
 
     async fn which(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
         binary_name: String,
     ) -> wasmtime::Result<Option<String>> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate
-            .which(binary_name.as_ref())
-            .await
-            .map(|path| path.to_string_lossy().to_string()))
+        latest::HostWorktree::which(self, delegate, binary_name).await
     }
 
     fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {

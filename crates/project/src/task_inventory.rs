@@ -10,9 +10,9 @@ use std::{
 
 use anyhow::{Context, Result};
 use collections::{HashMap, HashSet, VecDeque};
-use gpui::{AppContext, Context as _, Model};
+use gpui::{AppContext, Context as _, Model, Task};
 use itertools::Itertools;
-use language::{ContextProvider, File, Language, Location};
+use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
 use settings::{parse_json_with_comments, SettingsLocation};
 use task::{
     ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
@@ -431,15 +431,15 @@ impl BasicContextProvider {
         Self { worktree_store }
     }
 }
-
 impl ContextProvider for BasicContextProvider {
     fn build_context(
         &self,
         _: &TaskVariables,
         location: &Location,
-        _: Option<&HashMap<String, String>>,
+        _: Option<HashMap<String, String>>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AppContext,
-    ) -> Result<TaskVariables> {
+    ) -> Task<Result<TaskVariables>> {
         let buffer = location.buffer.read(cx);
         let buffer_snapshot = buffer.snapshot();
         let symbols = buffer_snapshot.symbols_containing(location.range.start, None);
@@ -517,7 +517,7 @@ impl ContextProvider for BasicContextProvider {
             task_variables.insert(VariableName::File, path_as_string);
         }
 
-        Ok(task_variables)
+        Task::ready(Ok(task_variables))
     }
 }
 

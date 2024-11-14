@@ -16,7 +16,7 @@ pub use crate::traits::selectable::*;
 pub use crate::traits::styled_ext::*;
 pub use crate::traits::visible_on_hover::*;
 pub use crate::DynamicSpacing;
-pub use crate::{h_flex, v_flex};
+pub use crate::{h_flex, h_group, v_flex, v_group};
 pub use crate::{Button, ButtonSize, ButtonStyle, IconButton, SelectableButton};
 pub use crate::{ButtonCommon, Color};
 pub use crate::{Headline, HeadlineSize};

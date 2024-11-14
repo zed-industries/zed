@@ -1,19 +1,21 @@
 use std::{path::PathBuf, sync::Arc};
 
-use anyhow::Result;
-use assistant_slash_command::SlashCommandRegistry;
+use anyhow::{anyhow, Result};
+use assistant_slash_command::{ExtensionSlashCommand, SlashCommandRegistry};
+use context_servers::manager::ServerCommand;
 use context_servers::ContextServerFactoryRegistry;
+use db::smol::future::FutureExt as _;
+use extension::Extension;
+use extension_host::wasm_host::ExtensionProject;
 use extension_host::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
 use fs::Fs;
-use gpui::{AppContext, BackgroundExecutor, Task};
-use indexed_docs::{IndexedDocsRegistry, ProviderId};
+use gpui::{AppContext, BackgroundExecutor, Model, Task};
+use indexed_docs::{ExtensionIndexedDocsProvider, IndexedDocsRegistry, ProviderId};
 use language::{LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
 use snippet_provider::SnippetRegistry;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::SharedString;
-
-use crate::extension_context_server::ExtensionContextServer;
-use crate::{extension_indexed_docs_provider, extension_slash_command::ExtensionSlashCommand};
+use wasmtime_wasi::WasiView as _;
 
 pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,
@@ -21,7 +23,7 @@ pub struct ConcreteExtensionRegistrationHooks {
     indexed_docs_registry: Arc<IndexedDocsRegistry>,
     snippet_registry: Arc<SnippetRegistry>,
     language_registry: Arc<LanguageRegistry>,
-    context_server_factory_registry: Arc<ContextServerFactoryRegistry>,
+    context_server_factory_registry: Model<ContextServerFactoryRegistry>,
     executor: BackgroundExecutor,
 }
 
@@ -32,7 +34,7 @@ impl ConcreteExtensionRegistrationHooks {
         indexed_docs_registry: Arc<IndexedDocsRegistry>,
         snippet_registry: Arc<SnippetRegistry>,
         language_registry: Arc<LanguageRegistry>,
-        context_server_factory_registry: Arc<ContextServerFactoryRegistry>,
+        context_server_factory_registry: Model<ContextServerFactoryRegistry>,
         cx: &AppContext,
     ) -> Arc<dyn extension_host::ExtensionRegistrationHooks> {
         Arc::new(Self {
@@ -60,58 +62,85 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
 
     fn register_slash_command(
         &self,
-        command: wasm_host::SlashCommand,
-        extension: wasm_host::WasmExtension,
-        host: Arc<wasm_host::WasmHost>,
+        extension: Arc<dyn Extension>,
+        command: extension::SlashCommand,
     ) {
-        self.slash_command_registry.register_command(
-            ExtensionSlashCommand {
-                command,
-                extension,
-                host,
-            },
-            false,
-        )
+        self.slash_command_registry
+            .register_command(ExtensionSlashCommand::new(extension, command), false)
     }
 
     fn register_context_server(
         &self,
         id: Arc<str>,
         extension: wasm_host::WasmExtension,
-        host: Arc<wasm_host::WasmHost>,
+        cx: &mut AppContext,
     ) {
         self.context_server_factory_registry
-            .register_server_factory(
-                id.clone(),
-                Arc::new({
-                    move |project, cx| {
-                        let id = id.clone();
-                        let extension = extension.clone();
-                        let host = host.clone();
-                        cx.spawn(|cx| async move {
-                            let context_server =
-                                ExtensionContextServer::new(extension, host, id, project, cx)
+            .update(cx, |registry, _| {
+                registry.register_server_factory(
+                    id.clone(),
+                    Arc::new({
+                        move |project, cx| {
+                            log::info!(
+                                "loading command for context server {id} from extension {}",
+                                extension.manifest.id
+                            );
+
+                            let id = id.clone();
+                            let extension = extension.clone();
+                            cx.spawn(|mut cx| async move {
+                                let extension_project =
+                                    project.update(&mut cx, |project, cx| ExtensionProject {
+                                        worktree_ids: project
+                                            .visible_worktrees(cx)
+                                            .map(|worktree| worktree.read(cx).id().to_proto())
+                                            .collect(),
+                                    })?;
+
+                                let command = extension
+                                    .call({
+                                        let id = id.clone();
+                                        |extension, store| {
+                                            async move {
+                                                let project = store
+                                                    .data_mut()
+                                                    .table()
+                                                    .push(extension_project)?;
+                                                let command = extension
+                                                    .call_context_server_command(
+                                                        store,
+                                                        id.clone(),
+                                                        project,
+                                                    )
+                                                    .await?
+                                                    .map_err(|e| anyhow!("{}", e))?;
+                                                anyhow::Ok(command)
+                                            }
+                                            .boxed()
+                                        }
+                                    })
                                     .await?;
-                            anyhow::Ok(Arc::new(context_server) as _)
-                        })
-                    }
-                }),
-            );
+
+                                log::info!("loaded command for context server {id}: {command:?}");
+
+                                Ok(ServerCommand {
+                                    path: command.command,
+                                    args: command.args,
+                                    env: Some(command.env.into_iter().collect()),
+                                })
+                            })
+                        }
+                    }),
+                )
+            });
     }
 
-    fn register_docs_provider(
-        &self,
-        extension: wasm_host::WasmExtension,
-        host: Arc<wasm_host::WasmHost>,
-        provider_id: Arc<str>,
-    ) {
-        self.indexed_docs_registry.register_provider(Box::new(
-            extension_indexed_docs_provider::ExtensionIndexedDocsProvider {
+    fn register_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
+        self.indexed_docs_registry
+            .register_provider(Box::new(ExtensionIndexedDocsProvider::new(
                 extension,
-                host,
-                id: ProviderId(provider_id),
-            },
-        ));
+                ProviderId(provider_id),
+            )));
     }
 
     fn register_snippets(&self, path: &PathBuf, snippet_contents: &str) -> Result<()> {

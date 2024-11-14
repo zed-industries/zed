@@ -1,5 +1,9 @@
 use anyhow::Result;
-use base64::prelude::*;
+use base64::{
+    alphabet,
+    engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
+    Engine as _,
+};
 use gpui::{img, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, WindowContext};
 use std::sync::Arc;
 use ui::{div, prelude::*, IntoElement, Styled};
@@ -14,11 +18,18 @@ pub struct ImageView {
     image: Arc<RenderImage>,
 }
 
+pub const STANDARD_INDIFFERENT: GeneralPurpose = GeneralPurpose::new(
+    &alphabet::STANDARD,
+    GeneralPurposeConfig::new()
+        .with_encode_padding(false)
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+);
+
 impl ImageView {
     pub fn from(base64_encoded_data: &str) -> Result<Self> {
         let filtered =
             base64_encoded_data.replace(&[' ', '\n', '\t', '\r', '\x0b', '\x0c'][..], "");
-        let bytes = BASE64_STANDARD_NO_PAD.decode(filtered)?;
+        let bytes = STANDARD_INDIFFERENT.decode(filtered)?;
 
         let format = image::guess_format(&bytes)?;
 

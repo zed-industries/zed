@@ -418,9 +418,10 @@ impl ContextProvider for GoContextProvider {
         &self,
         variables: &TaskVariables,
         location: &Location,
-        _: Option<&HashMap<String, String>>,
+        _: Option<HashMap<String, String>>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::AppContext,
-    ) -> Result<TaskVariables> {
+    ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
             .buffer
             .read(cx)
@@ -468,7 +469,7 @@ impl ContextProvider for GoContextProvider {
         let go_subtest_variable = extract_subtest_name(_subtest_name.unwrap_or(""))
             .map(|subtest_name| (GO_SUBTEST_NAME_TASK_VARIABLE.clone(), subtest_name));
 
-        Ok(TaskVariables::from_iter(
+        Task::ready(Ok(TaskVariables::from_iter(
             [
                 go_package_variable,
                 go_subtest_variable,
@@ -476,7 +477,7 @@ impl ContextProvider for GoContextProvider {
             ]
             .into_iter()
             .flatten(),
-        ))
+        )))
     }
 
     fn associated_tasks(

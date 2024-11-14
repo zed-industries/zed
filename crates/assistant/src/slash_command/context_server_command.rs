@@ -27,7 +27,7 @@ pub struct ContextServerSlashCommand {
 impl ContextServerSlashCommand {
     pub fn new(
         server_manager: Model<ContextServerManager>,
-        server: &Arc<dyn ContextServer>,
+        server: &Arc<ContextServer>,
         prompt: Prompt,
     ) -> Self {
         Self {
