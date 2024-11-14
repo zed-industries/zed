@@ -2,7 +2,7 @@ use crate::assistant_panel::ContextEditor;
 use crate::SlashCommandWorkingSet;
 use anyhow::Result;
 use assistant_slash_command::AfterCompletion;
-pub use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandRegistry};
+pub use assistant_slash_command::{SlashCommand, SlashCommandOutput};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{AppContext, Model, Task, ViewContext, WeakView, WindowContext};
@@ -171,8 +171,7 @@ impl SlashCommandCompletionProvider {
         let mut flag = self.cancel_flag.lock();
         flag.store(true, SeqCst);
         *flag = new_cancel_flag.clone();
-        let commands = SlashCommandRegistry::global(cx);
-        if let Some(command) = commands.command(command_name) {
+        if let Some(command) = self.slash_commands.command(command_name, cx) {
             let completions = command.complete_argument(
                 arguments,
                 new_cancel_flag.clone(),

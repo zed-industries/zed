@@ -34,6 +34,7 @@ impl Keystroke {
         {
             let ime_modifiers = Modifiers {
                 control: self.modifiers.control,
+                platform: self.modifiers.platform,
                 ..Default::default()
             };
 

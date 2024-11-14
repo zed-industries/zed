@@ -383,6 +383,16 @@
       ///    "never"
       "show": null
     },
+    /// Which files containing diagnostic errors/warnings to mark in the project panel.
+    /// This setting can take the following three values:
+    ///
+    /// 1. Do not mark any files:
+    ///    "off"
+    /// 2. Only mark files with errors:
+    ///    "errors"
+    /// 3. Mark files with errors and warnings:
+    ///    "all"
+    "show_diagnostics": "all",
     // Settings related to indent guides in the project panel.
     "indent_guides": {
       // When to show indent guides in the project panel.
@@ -1172,15 +1182,6 @@
   //   }
   // ]
   "ssh_connections": [],
-  // Configures the Context Server Protocol binaries
-  //
-  // Examples:
-  // {
-  //   "id": "server-1",
-  //   "executable": "/path",
-  //   "args": ['arg1", "args2"]
-  // }
-  "experimental.context_servers": {
-    "servers": []
-  }
+  // Configures context servers for use in the Assistant.
+  "context_servers": {}
 }

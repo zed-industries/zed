@@ -76,7 +76,7 @@ zed::register_extension!(MyExtension);
 
 ## Developing an Extension Locally
 
-Before starting to develop an extension for Zed, be sure to [install Rust](https://www.rust-lang.org/tools/install).
+Before starting to develop an extension for Zed, be sure to [install Rust via rustup](https://www.rust-lang.org/tools/install).
 
 When developing an extension, you can use it in Zed without needing to publish it by installing it as a _dev extension_.
 

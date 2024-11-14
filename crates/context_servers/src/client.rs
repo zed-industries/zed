@@ -53,7 +53,7 @@ pub struct Client {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct ContextServerId(pub String);
+pub struct ContextServerId(pub Arc<str>);
 
 fn is_null_value<T: Serialize>(value: &T) -> bool {
     if let Ok(Value::Null) = serde_json::to_value(value) {

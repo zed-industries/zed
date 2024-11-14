@@ -268,7 +268,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let slash_command_registry = SlashCommandRegistry::new();
     let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
     let snippet_registry = Arc::new(SnippetRegistry::new());
-    let context_server_factory_registry = ContextServerFactoryRegistry::new();
+    let context_server_factory_registry = cx.new_model(|_| ContextServerFactoryRegistry::new());
     let node_runtime = NodeRuntime::unavailable();
 
     let store = cx.new_model(|cx| {
@@ -508,7 +508,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let slash_command_registry = SlashCommandRegistry::new();
     let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
     let snippet_registry = Arc::new(SnippetRegistry::new());
-    let context_server_factory_registry = ContextServerFactoryRegistry::new();
+    let context_server_factory_registry = cx.new_model(|_| ContextServerFactoryRegistry::new());
     let node_runtime = NodeRuntime::unavailable();
 
     let mut status_updates = language_registry.language_server_binary_statuses();

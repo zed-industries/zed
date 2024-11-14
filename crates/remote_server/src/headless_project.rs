@@ -85,13 +85,22 @@ impl HeadlessProject {
                 cx,
             )
         });
-
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+        let toolchain_store = cx.new_model(|cx| {
+            ToolchainStore::local(
+                languages.clone(),
+                worktree_store.clone(),
+                environment.clone(),
+                cx,
+            )
+        });
+
         let task_store = cx.new_model(|cx| {
             let mut task_store = TaskStore::local(
                 fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
+                toolchain_store.read(cx).as_language_toolchain_store(),
                 environment.clone(),
                 cx,
             );
@@ -108,14 +117,7 @@ impl HeadlessProject {
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             observer
         });
-        let toolchain_store = cx.new_model(|cx| {
-            ToolchainStore::local(
-                languages.clone(),
-                worktree_store.clone(),
-                environment.clone(),
-                cx,
-            )
-        });
+
         let lsp_store = cx.new_model(|cx| {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),

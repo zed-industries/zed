@@ -2631,13 +2631,14 @@ impl Workspace {
         path: impl Into<ProjectPath>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-        self.split_path_preview(path, false, cx)
+        self.split_path_preview(path, false, None, cx)
     }
 
     pub fn split_path_preview(
         &mut self,
         path: impl Into<ProjectPath>,
         allow_preview: bool,
+        split_direction: Option<SplitDirection>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
@@ -2658,7 +2659,8 @@ impl Workspace {
             let (project_entry_id, build_item) = task.await?;
             this.update(&mut cx, move |this, cx| -> Option<_> {
                 let pane = pane.upgrade()?;
-                let new_pane = this.split_pane(pane, SplitDirection::Right, cx);
+                let new_pane =
+                    this.split_pane(pane, split_direction.unwrap_or(SplitDirection::Right), cx);
                 new_pane.update(cx, |new_pane, cx| {
                     Some(new_pane.open_item(project_entry_id, true, allow_preview, cx, build_item))
                 })
