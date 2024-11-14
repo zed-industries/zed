@@ -3470,15 +3470,16 @@ impl ContextEditor {
                 .id(id)
                 .bg(theme.colors().editor_background)
                 .ml(gutter_width)
+                .pb_1()
                 .w(max_width - gutter_width)
                 .rounded_md()
                 .border_1()
-                .border_color(theme.colors().border)
+                .border_color(theme.colors().border_variant)
+                .overflow_hidden()
                 .hover(|style| style.border_color(theme.colors().text_accent))
                 .when(selected, |this| {
                     this.border_color(theme.colors().text_accent)
                 })
-                .pb_1()
                 .cursor(CursorStyle::PointingHand)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.editor.update(cx, |editor, cx| {
@@ -3489,20 +3490,25 @@ impl ContextEditor {
                     this.focus_active_patch(cx);
                 }))
                 .child(
-                    h_flex()
-                        .rounded_t_md()
-                        .bg(theme.colors().element_background)
+                    div()
                         .px_2()
                         .py_1()
-                        .child(Label::new(patch.title.clone()).size(LabelSize::Small))
+                        .overflow_hidden()
+                        .text_ellipsis()
                         .border_b_1()
-                        .border_color(theme.colors().border),
+                        .border_color(theme.colors().border_variant)
+                        .bg(theme.colors().element_background)
+                        .child(
+                            Label::new(patch.title.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                 )
                 .children(paths.into_iter().map(|path| {
                     h_flex()
                         .px_2()
                         .pt_1()
-                        .gap_1()
+                        .gap_1p5()
                         .child(Icon::new(IconName::File).size(IconSize::Small))
                         .child(Label::new(path).size(LabelSize::Small))
                 }))
@@ -3515,7 +3521,7 @@ impl ContextEditor {
                             .child(
                                 Icon::new(IconName::ArrowCircle)
                                     .size(IconSize::XSmall)
-                                    .color(Color::Info)
+                                    .color(Color::Muted)
                                     .with_animation(
                                         "arrow-circle",
                                         Animation::new(Duration::from_secs(2)).repeat(),
@@ -3527,14 +3533,14 @@ impl ContextEditor {
                                     ),
                             )
                             .child(
-                                Label::new("Generating")
+                                Label::new("Generating…")
                                     .color(Color::Muted)
                                     .size(LabelSize::Small)
                                     .with_animation(
                                         "pulsating-label",
                                         Animation::new(Duration::from_secs(2))
                                             .repeat()
-                                            .with_easing(pulsating_between(0.4, 1.)),
+                                            .with_easing(pulsating_between(0.4, 0.8)),
                                         |label, delta| label.alpha(delta),
                                     ),
                             ),
