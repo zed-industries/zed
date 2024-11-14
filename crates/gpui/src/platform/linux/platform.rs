@@ -684,6 +684,8 @@ impl Keystroke {
             Keysym::ISO_Left_Tab => "tab".to_owned(),
             Keysym::KP_Prior => "pageup".to_owned(),
             Keysym::KP_Next => "pagedown".to_owned(),
+            Keysym::XF86Back => "back".to_owned(),
+            Keysym::XF86Forward => "forward".to_owned(),
 
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),
