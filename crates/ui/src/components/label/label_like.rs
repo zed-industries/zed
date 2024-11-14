@@ -1,6 +1,8 @@
 #![allow(missing_docs)]
 
-use gpui::{relative, AnyElement, FontWeight, StyleRefinement, Styled, UnderlineStyle};
+use gpui::{
+    relative, AnyElement, FontWeight, StrikethroughStyle, StyleRefinement, Styled, UnderlineStyle,
+};
 use settings::Settings;
 use smallvec::SmallVec;
 use theme::ThemeSettings;
@@ -157,16 +159,6 @@ impl RenderOnce for LabelLike {
         }
 
         self.base
-            .when(self.strikethrough, |this| {
-                this.relative().child(
-                    div()
-                        .absolute()
-                        .top_1_2()
-                        .w_full()
-                        .h_px()
-                        .bg(Color::Hidden.color(cx)),
-                )
-            })
             .map(|this| match self.size {
                 LabelSize::Large => this.text_ui_lg(cx),
                 LabelSize::Default => this.text_ui(cx),
@@ -184,6 +176,15 @@ impl RenderOnce for LabelLike {
                     thickness: px(1.),
                     color: None,
                     wavy: false,
+                });
+                this
+            })
+            .when(self.strikethrough, |mut this| {
+                this.text_style()
+                    .get_or_insert_with(Default::default)
+                    .strikethrough = Some(StrikethroughStyle {
+                    thickness: px(1.),
+                    color: None,
                 });
                 this
             })
