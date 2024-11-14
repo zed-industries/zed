@@ -142,6 +142,7 @@ pub struct GitProjectStatus {
     staged_expanded: bool,
     unstaged_expanded: bool,
     show_list: bool,
+    selected_index: usize,
 }
 
 impl GitProjectStatus {
@@ -164,6 +165,7 @@ impl GitProjectStatus {
             unstaged_expanded: true,
             staged_expanded: false,
             show_list: false,
+            selected_index: 0,
         }
     }
 }
@@ -172,13 +174,15 @@ impl GitProjectStatus {
 pub struct ChangedFileHeader {
     id: ElementId,
     changed_file: ChangedFile,
+    is_selected: bool,
 }
 
 impl ChangedFileHeader {
-    fn new(id: impl Into<ElementId>, changed_file: ChangedFile) -> Self {
+    fn new(id: impl Into<ElementId>, changed_file: ChangedFile, is_selected: bool) -> Self {
         Self {
             id: id.into(),
             changed_file,
+            is_selected,
         }
     }
 
@@ -203,8 +207,11 @@ impl RenderOnce for ChangedFileHeader {
             .id(self.id.clone())
             .justify_between()
             .w_full()
-            .hover(|this| this.bg(cx.theme().status().info_background))
+            .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
             .cursor(CursorStyle::PointingHand)
+            .when(self.is_selected, |this| {
+                this.bg(cx.theme().colors().ghost_element_active)
+            })
             .group("")
             .rounded_sm()
             .px_2()
@@ -350,206 +357,206 @@ impl RenderOnce for GitProjectOverview {
     }
 }
 
-#[derive(IntoElement)]
-pub struct GitStagingControls {
-    id: ElementId,
-    project_status: Model<GitProjectStatus>,
-    is_staged: bool,
-    children: SmallVec<[AnyElement; 2]>,
-}
+// #[derive(IntoElement)]
+// pub struct GitStagingControls {
+//     id: ElementId,
+//     project_status: Model<GitProjectStatus>,
+//     is_staged: bool,
+//     children: SmallVec<[AnyElement; 2]>,
+// }
 
-impl GitStagingControls {
-    pub fn staged(id: impl Into<ElementId>, project_status: Model<GitProjectStatus>) -> Self {
-        let id = id.into();
+// impl GitStagingControls {
+//     pub fn staged(id: impl Into<ElementId>, project_status: Model<GitProjectStatus>) -> Self {
+//         let id = id.into();
 
-        Self {
-            id,
-            project_status,
-            is_staged: true,
-            children: SmallVec::new(),
-        }
-    }
+//         Self {
+//             id,
+//             project_status,
+//             is_staged: true,
+//             children: SmallVec::new(),
+//         }
+//     }
 
-    pub fn unstaged(id: impl Into<ElementId>, project_status: Model<GitProjectStatus>) -> Self {
-        let id = id.into();
+//     pub fn unstaged(id: impl Into<ElementId>, project_status: Model<GitProjectStatus>) -> Self {
+//         let id = id.into();
 
-        Self {
-            id,
-            project_status,
-            is_staged: false,
-            children: SmallVec::new(),
-        }
-    }
-}
+//         Self {
+//             id,
+//             project_status,
+//             is_staged: false,
+//             children: SmallVec::new(),
+//         }
+//     }
+// }
 
-impl ParentElement for GitStagingControls {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements)
-    }
-}
+// impl ParentElement for GitStagingControls {
+//     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+//         self.children.extend(elements)
+//     }
+// }
 
-impl RenderOnce for GitStagingControls {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let status = self.project_status.read(cx);
+// impl RenderOnce for GitStagingControls {
+//     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+//         let status = self.project_status.read(cx);
 
-        // TODO
-        let (staging_type, count) = if self.is_staged {
-            ("Staged", status.staged_count)
-        } else {
-            ("Unstaged", status.unstaged_count)
-        };
+//         // TODO
+//         let (staging_type, count) = if self.is_staged {
+//             ("Staged", status.staged_count)
+//         } else {
+//             ("Unstaged", status.unstaged_count)
+//         };
 
-        // TODO: Convert staging_type to an enum so we don't have to do this
-        let is_expanded = match staging_type {
-            "Staged" => status.staged_expanded,
-            "Unstaged" => status.unstaged_expanded,
-            _ => false,
-        };
+//         // TODO: Convert staging_type to an enum so we don't have to do this
+//         let is_expanded = match staging_type {
+//             "Staged" => status.staged_expanded,
+//             "Unstaged" => status.unstaged_expanded,
+//             _ => false,
+//         };
 
-        let changed_files: Vec<ChangedFile> = status
-            .changed_files
-            .iter()
-            .filter(|file| file.staged == (staging_type == "Staged"))
-            .cloned()
-            .collect();
+//         let changed_files: Vec<ChangedFile> = status
+//             .changed_files
+//             .iter()
+//             .filter(|file| file.staged == (staging_type == "Staged"))
+//             .cloned()
+//             .collect();
 
-        let label: SharedString = format!("{} Changes: {}", staging_type, count).into();
+//         let label: SharedString = format!("{} Changes: {}", staging_type, count).into();
 
-        let id = self.id.clone();
-        let container_id = ElementId::Name(format!("{}-container", id.clone()).into());
-        let project_status = self.project_status.clone();
+//         let id = self.id.clone();
+//         let container_id = ElementId::Name(format!("{}-container", id.clone()).into());
+//         let project_status = self.project_status.clone();
 
-        v_flex()
-            .when(is_expanded, |this| this.flex_1().h_full())
-            .child(
-                h_flex()
-                    .id(id.clone())
-                    .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
-                    .on_click(move |_, cx| {
-                        project_status.update(cx, |status, cx| {
-                            if self.is_staged {
-                                status.staged_expanded = !status.staged_expanded;
-                            } else {
-                                status.unstaged_expanded = !status.unstaged_expanded;
-                            }
-                            cx.notify();
-                        })
-                    })
-                    .flex_none()
-                    .justify_between()
-                    .w_full()
-                    .bg(cx.theme().colors().elevated_surface_background)
-                    .px_3()
-                    .py_2()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(Disclosure::new("staging-control", is_expanded).on_click(
-                                move |_, cx| {
-                                    self.project_status.clone().update(cx, |status, cx| {
-                                        if self.is_staged {
-                                            status.staged_expanded = !status.staged_expanded;
-                                        } else {
-                                            status.unstaged_expanded = !status.unstaged_expanded;
-                                        }
-                                        cx.notify();
-                                    })
-                                },
-                            ))
-                            .child(Label::new(label).size(LabelSize::Small)),
-                    )
-                    .child(h_flex().gap_2().map(|this| {
-                        if !self.is_staged {
-                            this.child(
-                                Button::new(
-                                    ElementId::Name(format!("{}-discard", id.clone()).into()),
-                                    "Discard All",
-                                )
-                                .style(ButtonStyle::Filled)
-                                .layer(ui::ElevationIndex::ModalSurface)
-                                .size(ButtonSize::Compact)
-                                .label_size(LabelSize::Small)
-                                .icon(IconName::X)
-                                .icon_position(IconPosition::Start)
-                                .icon_color(Color::Muted),
-                            )
-                            .child(
-                                Button::new(
-                                    ElementId::Name(format!("{}-unstage", id.clone()).into()),
-                                    "Stage All",
-                                )
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Compact)
-                                .label_size(LabelSize::Small)
-                                .layer(ui::ElevationIndex::ModalSurface)
-                                .icon(IconName::Check)
-                                .icon_position(IconPosition::Start)
-                                .icon_color(Color::Muted),
-                            )
-                        } else {
-                            this.child(
-                                Button::new(
-                                    ElementId::Name(format!("{}-stage", id.clone()).into()),
-                                    "Stage All",
-                                )
-                                .layer(ui::ElevationIndex::ModalSurface)
-                                .icon(IconName::Check)
-                                .icon_position(IconPosition::Start)
-                                .icon_color(Color::Muted),
-                            )
-                        }
-                    })),
-            )
-            .when(is_expanded, |this| {
-                this.child(
-                    v_flex()
-                        .id(container_id)
-                        .flex_1()
-                        .overflow_x_scroll()
-                        .bg(cx.theme().colors().editor_background)
-                        .px_1()
-                        .py_1p5()
-                        .gap_1()
-                        .when(changed_files.is_empty(), |this| {
-                            this.child(
-                                v_flex()
-                                    .w_full()
-                                    .flex_1()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(
-                                        div()
-                                            .flex_none()
-                                            .mx_auto()
-                                            .text_ui_sm(cx)
-                                            .text_color(Color::Muted.color(cx))
-                                            .child(format!("No {} changes", staging_type)),
-                                    ),
-                            )
-                        })
-                        .when(!changed_files.is_empty(), |this| {
-                            let mut children: SmallVec<[AnyElement; 8]> = smallvec![];
-                            let mut iter = changed_files.iter().peekable();
+//         v_flex()
+//             .when(is_expanded, |this| this.flex_1().h_full())
+//             .child(
+//                 h_flex()
+//                     .id(id.clone())
+//                     .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
+//                     .on_click(move |_, cx| {
+//                         project_status.update(cx, |status, cx| {
+//                             if self.is_staged {
+//                                 status.staged_expanded = !status.staged_expanded;
+//                             } else {
+//                                 status.unstaged_expanded = !status.unstaged_expanded;
+//                             }
+//                             cx.notify();
+//                         })
+//                     })
+//                     .flex_none()
+//                     .justify_between()
+//                     .w_full()
+//                     .bg(cx.theme().colors().elevated_surface_background)
+//                     .px_3()
+//                     .py_2()
+//                     .child(
+//                         h_flex()
+//                             .gap_2()
+//                             .child(Disclosure::new("staging-control", is_expanded).on_click(
+//                                 move |_, cx| {
+//                                     self.project_status.clone().update(cx, |status, cx| {
+//                                         if self.is_staged {
+//                                             status.staged_expanded = !status.staged_expanded;
+//                                         } else {
+//                                             status.unstaged_expanded = !status.unstaged_expanded;
+//                                         }
+//                                         cx.notify();
+//                                     })
+//                                 },
+//                             ))
+//                             .child(Label::new(label).size(LabelSize::Small)),
+//                     )
+//                     .child(h_flex().gap_2().map(|this| {
+//                         if !self.is_staged {
+//                             this.child(
+//                                 Button::new(
+//                                     ElementId::Name(format!("{}-discard", id.clone()).into()),
+//                                     "Discard All",
+//                                 )
+//                                 .style(ButtonStyle::Filled)
+//                                 .layer(ui::ElevationIndex::ModalSurface)
+//                                 .size(ButtonSize::Compact)
+//                                 .label_size(LabelSize::Small)
+//                                 .icon(IconName::X)
+//                                 .icon_position(IconPosition::Start)
+//                                 .icon_color(Color::Muted),
+//                             )
+//                             .child(
+//                                 Button::new(
+//                                     ElementId::Name(format!("{}-unstage", id.clone()).into()),
+//                                     "Stage All",
+//                                 )
+//                                 .style(ButtonStyle::Filled)
+//                                 .size(ButtonSize::Compact)
+//                                 .label_size(LabelSize::Small)
+//                                 .layer(ui::ElevationIndex::ModalSurface)
+//                                 .icon(IconName::Check)
+//                                 .icon_position(IconPosition::Start)
+//                                 .icon_color(Color::Muted),
+//                             )
+//                         } else {
+//                             this.child(
+//                                 Button::new(
+//                                     ElementId::Name(format!("{}-stage", id.clone()).into()),
+//                                     "Stage All",
+//                                 )
+//                                 .layer(ui::ElevationIndex::ModalSurface)
+//                                 .icon(IconName::Check)
+//                                 .icon_position(IconPosition::Start)
+//                                 .icon_color(Color::Muted),
+//                             )
+//                         }
+//                     })),
+//             )
+//             .when(is_expanded, |this| {
+//                 this.child(
+//                     v_flex()
+//                         .id(container_id)
+//                         .flex_1()
+//                         .overflow_x_scroll()
+//                         .bg(cx.theme().colors().editor_background)
+//                         .px_1()
+//                         .py_1p5()
+//                         .gap_1()
+//                         .when(changed_files.is_empty(), |this| {
+//                             this.child(
+//                                 v_flex()
+//                                     .w_full()
+//                                     .flex_1()
+//                                     .items_center()
+//                                     .justify_center()
+//                                     .child(
+//                                         div()
+//                                             .flex_none()
+//                                             .mx_auto()
+//                                             .text_ui_sm(cx)
+//                                             .text_color(Color::Muted.color(cx))
+//                                             .child(format!("No {} changes", staging_type)),
+//                                     ),
+//                             )
+//                         })
+//                         .when(!changed_files.is_empty(), |this| {
+//                             let mut children: SmallVec<[AnyElement; 8]> = smallvec![];
+//                             let mut iter = changed_files.iter().peekable();
 
-                            while let Some(file) = iter.next() {
-                                let file_id =
-                                    ElementId::Name(format!("{}-file", file.file_path).into());
-                                children.push(
-                                    ChangedFileHeader::new(file_id, file.clone())
-                                        .into_any_element(),
-                                );
+//                             while let Some(file) = iter.next() {
+//                                 let file_id =
+//                                     ElementId::Name(format!("{}-file", file.file_path).into());
+//                                 children.push(
+//                                     ChangedFileHeader::new(file_id, file.clone())
+//                                         .into_any_element(),
+//                                 );
 
-                                if iter.peek().is_some() {
-                                    children.push(Divider::horizontal().into_any_element());
-                                }
-                            }
+//                                 if iter.peek().is_some() {
+//                                     children.push(Divider::horizontal().into_any_element());
+//                                 }
+//                             }
 
-                            this.children(children)
-                        }),
-                )
-            })
-    }
-}
+//                             this.children(children)
+//                         }),
+//                 )
+//             })
+//     }
+// }
 
 #[derive(Clone)]
 pub struct ProjectStatusTab {
@@ -564,15 +571,18 @@ impl ProjectStatusTab {
         let changed_files = static_changed_files();
         let status = cx.new_model(|_| GitProjectStatus::new(changed_files.clone()));
 
+        let status_clone = status.clone();
         let list_state = ListState::new(
             changed_files.len(),
             gpui::ListAlignment::Top,
-            px(10.0),
+            px(10.),
             move |ix, cx| {
+                let is_selected = status_clone.read(cx).selected_index == ix;
                 if let Some(changed_file) = changed_files.get(ix) {
                     ChangedFileHeader::new(
                         ElementId::Name(format!("file-{}", ix).into()),
                         changed_file.clone(),
+                        is_selected,
                     )
                     .into_any_element()
                 } else {
@@ -599,6 +609,69 @@ impl ProjectStatusTab {
             workspace.add_item_to_active_pane(Box::new(status_tab), None, true, cx);
         }
     }
+
+    fn selected_index(&self, cx: &WindowContext) -> usize {
+        self.status.read(cx).selected_index
+    }
+
+    pub fn set_selected_index(
+        &mut self,
+        index: usize,
+        jump_to_index: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.status.update(cx, |status, _| {
+            status.selected_index = index;
+        });
+
+        if jump_to_index {
+            self.jump_to_cell(index, cx);
+        }
+    }
+
+    pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+        let count = self.list_state.item_count();
+        if count > 0 {
+            let index = self.selected_index(cx);
+            let ix = if index == count - 1 {
+                count - 1
+            } else {
+                index + 1
+            };
+            self.set_selected_index(ix, true, cx);
+            cx.notify();
+        }
+    }
+
+    pub fn select_previous(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        let count = self.list_state.item_count();
+        if count > 0 {
+            let index = self.selected_index(cx);
+            let ix = if index == 0 { 0 } else { index - 1 };
+            self.set_selected_index(ix, true, cx);
+            cx.notify();
+        }
+    }
+
+    pub fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
+        let count = self.list_state.item_count();
+        if count > 0 {
+            self.set_selected_index(0, true, cx);
+            cx.notify();
+        }
+    }
+
+    pub fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
+        let count = self.list_state.item_count();
+        if count > 0 {
+            self.set_selected_index(count - 1, true, cx);
+            cx.notify();
+        }
+    }
+
+    fn jump_to_cell(&mut self, index: usize, _cx: &mut ViewContext<Self>) {
+        self.list_state.scroll_to_reveal_item(index);
+    }
 }
 
 impl Render for ProjectStatusTab {
@@ -608,9 +681,13 @@ impl Render for ProjectStatusTab {
         let project_status = self.status.read(cx);
 
         h_flex()
+            .key_context("vcs_status")
+            .track_focus(&self.focus_handle)
             .id(id)
             .flex_1()
             .size_full()
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
             .overflow_hidden()
             .when(project_status.show_list, |this| {
                 this.child(
