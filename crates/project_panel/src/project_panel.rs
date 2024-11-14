@@ -1276,12 +1276,15 @@ impl ProjectPanel {
                         })??
                         .await?;
                 }
-                if let Some(next_selection) = next_selection {
+
                     panel.update(&mut cx, |panel, cx| {
+                    if let Some(next_selection) = next_selection {
                         panel.selection = Some(next_selection);
                         panel.autoscroll(cx);
-                    })?;
+                    } else {
+                        panel.select_last(&SelectLast {}, cx);
                 }
+                })?;
                 Result::<(), anyhow::Error>::Ok(())
             })
             .detach_and_log_err(cx);
@@ -6404,7 +6407,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_next_selection_after_delete(cx: &mut gpui::TestAppContext) {
+    async fn test_next_selection_after_delete_file(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
@@ -6436,6 +6439,7 @@ mod tests {
                 "          second.rs  <== selected",
                 "          third.rs",
             ],
+            "Initial state before deleting middle file"
         );
         submit_deletion(&panel, cx);
         assert_eq!(
@@ -6450,78 +6454,26 @@ mod tests {
         );
 
         select_path(&panel, "src/test/third.rs", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs",
+                "          third.rs  <== selected",
+            ],
+            "Initial state before deleting last file"
+        );
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &["v src", "    v test", "          first.rs  <== selected",],
             "Should select previous file after deleting last file"
         );
-
-        select_path(&panel, "src/test/first.rs", cx);
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    v test  <== selected",],
-            "Should select parent directory after deleting only remaining file"
-        );
     }
 
     #[gpui::test]
-    async fn test_delete_all_entries_in_directory(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/src",
-            json!({
-                "test": {
-                    "a.rs": "",
-                    "b.rs": "",
-                    "c.rs": "",
-                },
-                "other": {
-                    "x.rs": ""
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-        toggle_expand_dir(&panel, "src/test", cx);
-        cx.simulate_modifiers_change(gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        });
-        select_path_with_mark(&panel, "src/test", cx);
-        select_path_with_mark(&panel, "src/test/a.rs", cx);
-        select_path_with_mark(&panel, "src/test/c.rs", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    > other",
-                "    v test  <== marked",
-                "          a.rs  <== marked",
-                "          b.rs",
-                "          c.rs  <== selected  <== marked",
-            ],
-            "Some files in test directory should be marked for deletion and test directory too"
-        );
-
-        submit_deletion(&panel, cx);
-        cx.run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    > other  <== selected"],
-            "Should select previous directory when deleting directory with some of its contents"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_delete_directory_with_selected_contents(cx: &mut gpui::TestAppContext) {
+    async fn test_next_selection_after_multi_delete(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
@@ -6534,11 +6486,13 @@ mod tests {
                         "b.rs": "",
                 },
                     "x.rs": "",
-                    "y.rs": "",
                 },
                 "dir2": {
-                    "z.rs": ""
-                }
+                    "c.rs": "",
+                    "d.rs": "",
+                },
+                "e.rs": "",
+                "f.rs": "",
             }),
         )
         .await;
@@ -6550,86 +6504,30 @@ mod tests {
 
         toggle_expand_dir(&panel, "src/dir1", cx);
         toggle_expand_dir(&panel, "src/dir1/subdir", cx);
-
-        cx.simulate_modifiers_change(gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        });
-        select_path(&panel, "src/dir1", cx);
-        select_path_with_mark(&panel, "src/dir1/subdir/a.rs", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v src",
-                "    v dir1  <== marked",
-                "        v subdir",
-                "              a.rs  <== selected  <== marked",
-                "              b.rs",
-                "          x.rs",
-                "          y.rs",
-                "    > dir2",
-            ],
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    > dir2  <== selected",],
-            "Should select next directory when deleting directory and some of its contents"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_delete_files_across_directories(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/src",
-            json!({
-                "dir1": {
-                    "a.rs": "",
-                    "b.rs": "",
-                },
-                "dir2": {
-                    "c.rs": "",
-                    "d.rs": "",
-                },
-                "dir3": {
-                    "e.rs": "",
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "src/dir1", cx);
         toggle_expand_dir(&panel, "src/dir2", cx);
-        toggle_expand_dir(&panel, "src/dir3", cx);
 
         cx.simulate_modifiers_change(gpui::Modifiers {
             control: true,
             ..Default::default()
         });
-        select_path(&panel, "src/dir1/b.rs", cx);
+        select_path_with_mark(&panel, "src/dir1/subdir/a.rs", cx);
         select_path_with_mark(&panel, "src/dir2/c.rs", cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..15, cx),
             &[
                 "v src",
                 "    v dir1",
-                "          a.rs",
-                "          b.rs  <== marked",
+                "        v subdir",
+                "              a.rs  <== marked",
+                "              b.rs",
+                "          x.rs",
                 "    v dir2",
                 "          c.rs  <== selected  <== marked",
                 "          d.rs",
-                "    v dir3",
-                "          e.rs",
+                "      e.rs",
+                "      f.rs",
             ],
+            "Initial state before multi-file deletion"
         );
 
         submit_deletion(&panel, cx);
@@ -6638,13 +6536,48 @@ mod tests {
             &[
                 "v src",
                 "    v dir1",
-                "          a.rs",
+                "        v subdir",
+                "              b.rs",
+                "          x.rs",
                 "    v dir2",
                 "          d.rs  <== selected",
-                "    v dir3",
-                "          e.rs",
+                "      e.rs",
+                "      f.rs",
             ],
-            "Should select next available file after deleting files across directories"
+            "Should select next available file after multi-file deletion"
+        );
+
+        select_path_with_mark(&panel, "src/dir1/subdir", cx);
+        select_path_with_mark(&panel, "src/dir1/subdir/b.rs", cx);
+        select_path_with_mark(&panel, "src/dir2/d.rs", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v src",
+                "    v dir1",
+                "        v subdir  <== marked",
+                "              b.rs  <== marked",
+                "          x.rs",
+                "    v dir2",
+                "          d.rs  <== selected  <== marked",
+                "      e.rs",
+                "      f.rs",
+            ],
+            "Initial state before deleting directory with contents"
+        );
+
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v src",
+                "    v dir1",
+                "          x.rs",
+                "    v dir2",
+                "      e.rs <== selected",
+                "      f.rs",
+            ],
+            "Should select next available entry after deleting directory with contents"
         );
     }
 
