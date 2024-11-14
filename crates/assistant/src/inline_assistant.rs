@@ -24,9 +24,9 @@ use futures::{
     join, SinkExt, Stream, StreamExt,
 };
 use gpui::{
-    anchored, deferred, point, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle,
-    FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
+    anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
+    FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -1199,7 +1199,7 @@ impl InlineAssistant {
                     style: BlockStyle::Flex,
                     render: Arc::new(move |cx| {
                         div()
-                            .occlude()
+                            .block_mouse_down()
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
                             .h(height as f32 * cx.line_height())
@@ -1481,7 +1481,8 @@ impl Render for PromptEditor {
         h_flex()
             .key_context("PromptEditor")
             .bg(cx.theme().colors().editor_background)
-            .occlude()
+            .block_mouse_down()
+            .cursor(CursorStyle::Arrow)
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()

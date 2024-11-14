@@ -511,7 +511,7 @@ impl Interactivity {
     }
 
     /// Block the mouse from interacting with this element or any of its children
-    /// The imperative API equivalent to [`InteractiveElement::block_mouse`]
+    /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
         self.occlude_mouse = true;
     }
@@ -874,10 +874,16 @@ pub trait InteractiveElement: Sized {
     }
 
     /// Block the mouse from interacting with this element or any of its children
-    /// The fluent API equivalent to [`Interactivity::block_mouse`]
+    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
     fn occlude(mut self) -> Self {
         self.interactivity().occlude_mouse();
         self
+    }
+
+    /// Block the mouse from interacting with this element or any of its children
+    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
+    fn block_mouse_down(mut self) -> Self {
+        self.on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
     }
 }
 
