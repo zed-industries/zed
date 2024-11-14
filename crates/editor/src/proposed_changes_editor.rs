@@ -5,6 +5,7 @@ use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription,
 use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
 use project::Project;
+use settings::Settings;
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
@@ -356,17 +357,17 @@ impl Render for ProposedChangesToolbarControls {
         if let Some(editor) = &self.current_editor {
             let focus_handle = editor.focus_handle(cx);
             let action = &ApplyAllDiffHunks;
-            let keybinding = KeyBinding::for_action_in(action, &focus_handle, cx)
-                .map(|binding| binding.into_any_element());
+            let keybinding = KeyBinding::for_action_in(action, &focus_handle, cx);
+
             let editor = editor.read(cx);
 
             let apply_all_button = if editor.all_changes_accepted() {
                 None
             } else {
                 Some(
-                    ButtonLike::new("apply-changes")
-                        .child(Label::new("Apply All"))
-                        .children(keybinding)
+                    Button::new("apply-changes", "Apply All")
+                        .style(ButtonStyle::Filled)
+                        .key_binding(keybinding)
                         .on_click(move |_event, cx| focus_handle.dispatch_action(action, cx)),
                 )
             };
@@ -379,18 +380,18 @@ impl Render for ProposedChangesToolbarControls {
                     let todo = (); // TODO Change this to Undo All, once we actually have that action.
                     &ApplyAllDiffHunks
                 };
-                let keybinding = KeyBinding::for_action_in(action, &focus_handle, cx)
-                    .map(|binding| binding.into_any_element());
+                let keybinding = KeyBinding::for_action_in(action, &focus_handle, cx);
 
                 Some(
-                    ButtonLike::new("undo-applied")
-                        .child(Label::new("Undo Applied"))
-                        .children(keybinding)
+                    Button::new("undo-applied", "Undo Applied")
+                        .style(ButtonStyle::Filled)
+                        .key_binding(keybinding)
                         .on_click(move |_event, cx| focus_handle.dispatch_action(action, cx)),
                 )
             };
 
             h_flex()
+                .gap_1()
                 .children([undo_all_button, apply_all_button].into_iter().flatten())
                 .into_any_element()
         } else {
@@ -441,11 +442,12 @@ impl Render for ProposedChangesToolbar {
             };
 
             h_flex()
-                .gap_2()
-                .relative()
-                .child(icon.size(IconSize::Medium))
+                .gap_2p5()
+                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                .child(icon.size(IconSize::Small))
                 .child(
                     Label::new(editor.title.clone())
+                        .color(Color::Muted)
                         .single_line()
                         .strikethrough(all_changes_accepted),
                 )
