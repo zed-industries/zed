@@ -6626,14 +6626,12 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
-        // Expand all directories for testing
         toggle_expand_dir(&panel, "src/dir1", cx);
         toggle_expand_dir(&panel, "src/dir1/subdir1", cx);
         toggle_expand_dir(&panel, "src/dir1/subdir1/nested", cx);
         toggle_expand_dir(&panel, "src/dir1/subdir2", cx);
         toggle_expand_dir(&panel, "src/dir2", cx);
 
-        // Test case 1: Delete nested files and verify selection moves to next sibling
         cx.simulate_modifiers_change(gpui::Modifiers {
             control: true,
             ..Default::default()
@@ -6688,7 +6686,6 @@ mod tests {
             "Should select next file after nested files deletion"
         );
 
-        // Test case 2: Delete directory and its parent simultaneously
         select_path_with_mark(&panel, "src/dir1/subdir1/nested", cx);
         select_path_with_mark(&panel, "src/dir1/subdir1", cx);
 
@@ -6733,7 +6730,6 @@ mod tests {
             "Should select first entry in next directory after deleting directory with parent"
         );
 
-        // Test case 3: Delete mixed files and directories across different levels
         select_path_with_mark(&panel, "src/dir1/subdir2/c.rs", cx);
         select_path_with_mark(&panel, "src/dir2", cx);
         select_path_with_mark(&panel, "src/root1.rs", cx);
@@ -6823,7 +6819,7 @@ mod tests {
                         entry_id,
                     };
                     if !panel.marked_entries.contains(&entry) {
-                        panel.marked_entries.insert(entry.clone());
+                        panel.marked_entries.insert(entry);
                     }
                     panel.selection = Some(entry);
                     return;
