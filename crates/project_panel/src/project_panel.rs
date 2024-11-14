@@ -1267,23 +1267,26 @@ impl ProjectPanel {
                     }
                 }
                 for (entry_id, _) in file_paths {
-                    panel
+                    if let Some(task) = panel
                         .update(&mut cx, |panel, cx| {
                             panel
                                 .project
                                 .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
-                                .ok_or_else(|| anyhow!("no such entry"))
-                        })??
-                        .await?;
+                        })
+                        .ok()
+                        .flatten()
+                    {
+                        task.await.ok();
+                    }
                 }
 
-                    panel.update(&mut cx, |panel, cx| {
+                panel.update(&mut cx, |panel, cx| {
                     if let Some(next_selection) = next_selection {
                         panel.selection = Some(next_selection);
                         panel.autoscroll(cx);
                     } else {
                         panel.select_last(&SelectLast {}, cx);
-                }
+                    }
                 })?;
                 Result::<(), anyhow::Error>::Ok(())
             })
@@ -5709,7 +5712,11 @@ mod tests {
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v project_root", "    v dir_1", "        v nested_dir",]
+            &[
+                "v project_root",
+                "    v dir_1",
+                "        v nested_dir  <== selected",
+            ]
         );
     }
     #[gpui::test]
@@ -6574,7 +6581,7 @@ mod tests {
                 "    v dir1",
                 "          x.rs",
                 "    v dir2",
-                "      e.rs <== selected",
+                "      e.rs  <== selected",
                 "      f.rs",
             ],
             "Should select next available entry after deleting directory with contents"
