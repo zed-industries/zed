@@ -241,7 +241,10 @@ impl PlatformInput {
 unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     use cocoa::appkit::*;
 
-    let mut characters = native_event.characters().to_str().to_string();
+    let mut characters = native_event
+        .charactersIgnoringModifiers()
+        .to_str()
+        .to_string();
     let mut ime_key = None;
     let first_char = characters.chars().next().map(|ch| ch as u16);
     let modifiers = native_event.modifierFlags();
@@ -296,7 +299,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         _ => {
             // Cases to test when modifying this:
             //
-            //          qwerty key | none | cmd   | cmd-shift
+            //           qwerty key | none | cmd   | cmd-shift
             // * Armenian         s | ս    | cmd-s | cmd-shift-s  (layout is non-ASCII, so we use cmd layout)
             // * Dvorak+QWERTY    s | o    | cmd-s | cmd-shift-s  (layout switches on cmd)
             // * Ukrainian+QWERTY s | с    | cmd-s | cmd-shift-s  (macOS reports cmd-s instead of cmd-S)
@@ -306,13 +309,15 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             // * German QWERTZ    ; | ö    | cmd-ö | cmd-Ö        (Zed's shift special case only applies to a-z)
             //
             let mut chars_ignoring_modifiers =
-                chars_for_modified_key(native_event.keyCode(), false, false);
-            let mut chars_with_shift = chars_for_modified_key(native_event.keyCode(), false, true);
+                chars_for_modified_key(native_event.keyCode(), NO_MOD);
+            let mut chars_with_shift = chars_for_modified_key(native_event.keyCode(), SHIFT_MOD);
+            let always_use_cmd_layout = always_use_command_layout();
 
             // Handle Dvorak+QWERTY / Russian / Armeniam
-            if command || always_use_command_layout() {
-                let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), true, false);
-                let chars_with_both = chars_for_modified_key(native_event.keyCode(), true, true);
+            if command || always_use_cmd_layout {
+                let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), CMD_MOD);
+                let chars_with_both =
+                    chars_for_modified_key(native_event.keyCode(), CMD_MOD | SHIFT_MOD);
 
                 // We don't do this in the case that the shifted command key generates
                 // the same character as the unshifted command key (Norwegian, e.g.)
@@ -340,8 +345,18 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 chars_ignoring_modifiers
             };
 
-            if characters.len() > 0 && characters != key {
-                ime_key = Some(characters.clone());
+            if always_use_cmd_layout || alt {
+                let mut mods = NO_MOD;
+                if shift {
+                    mods |= SHIFT_MOD;
+                }
+                if alt {
+                    mods |= OPTION_MOD;
+                }
+                let alt_key = chars_for_modified_key(native_event.keyCode(), mods);
+                if alt_key != key {
+                    ime_key = Some(alt_key);
+                }
             };
 
             key
@@ -362,18 +377,21 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
 }
 
 fn always_use_command_layout() -> bool {
-    if chars_for_modified_key(0, false, false).is_ascii() {
+    if chars_for_modified_key(0, NO_MOD).is_ascii() {
         return false;
     }
 
-    chars_for_modified_key(0, true, false).is_ascii()
+    chars_for_modified_key(0, CMD_MOD).is_ascii()
 }
 
-fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
+const NO_MOD: u32 = 0;
+const CMD_MOD: u32 = 1;
+const SHIFT_MOD: u32 = 2;
+const OPTION_MOD: u32 = 8;
+
+fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
     // Values from: https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h#L126
     // shifted >> 8 for UCKeyTranslate
-    const CMD_MOD: u32 = 1;
-    const SHIFT_MOD: u32 = 2;
     const CG_SPACE_KEY: u16 = 49;
     // https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/CarbonCore.framework/Versions/A/Headers/UnicodeUtilities.h#L278
     #[allow(non_upper_case_globals)]
@@ -402,7 +420,6 @@ fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
         return "".to_string();
     }
     let keyboard_layout = unsafe { CFDataGetBytePtr(layout_data) };
-    let modifiers = if cmd { CMD_MOD } else { 0 } | if shift { SHIFT_MOD } else { 0 };
 
     unsafe {
         UCKeyTranslate(

@@ -19,7 +19,7 @@ use cocoa::{
         NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
         NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
     },
-    base::{id, nil, selector, BOOL, YES},
+    base::{id, nil, selector, BOOL, NO, YES},
     foundation::{
         NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSString,
         NSUInteger, NSURL,
@@ -343,6 +343,8 @@ impl MacPlatform {
                                 ns_string(key_to_native(&keystroke.key).as_ref()),
                             )
                             .autorelease();
+                        let _: () =
+                            msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
                         item.setKeyEquivalentModifierMask_(mask);
                     }
                     // For multi-keystroke bindings, render the keystroke as part of the title.

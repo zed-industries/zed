@@ -121,7 +121,7 @@ impl EditorBlock {
         execution_view: View<ExecutionView>,
         on_close: CloseBlockFn,
     ) -> RenderBlock {
-        let render = move |cx: &mut BlockContext| {
+        Arc::new(move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
             let text_style = crate::outputs::plain::text_style(cx);
 
@@ -163,6 +163,7 @@ impl EditorBlock {
 
             div()
                 .id(cx.block_id)
+                .block_mouse_down()
                 .flex()
                 .items_start()
                 .min_h(text_line_height)
@@ -186,9 +187,7 @@ impl EditorBlock {
                         .child(execution_view),
                 )
                 .into_any_element()
-        };
-
-        Box::new(render)
+        })
     }
 }
 

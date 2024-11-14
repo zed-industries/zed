@@ -648,8 +648,24 @@
     }
   },
   {
-    "context": "FileFinder",
-    "bindings": { "ctrl-shift-p": "file_finder::SelectPrev" }
+    "context": "FileFinder && !menu_open",
+    "bindings": {
+      "ctrl-shift-p": "file_finder::SelectPrev",
+      "ctrl": "file_finder::OpenMenu",
+      "ctrl-j": "pane::SplitDown",
+      "ctrl-k": "pane::SplitUp",
+      "ctrl-h": "pane::SplitLeft",
+      "ctrl-l": "pane::SplitRight"
+    }
+  },
+  {
+    "context": "FileFinder && menu_open",
+    "bindings": {
+      "j": "pane::SplitDown",
+      "k": "pane::SplitUp",
+      "h": "pane::SplitLeft",
+      "l": "pane::SplitRight"
+    }
   },
   {
     "context": "TabSwitcher",

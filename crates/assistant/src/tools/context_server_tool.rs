@@ -74,11 +74,21 @@ impl Tool for ContextServerTool {
                     );
                     let response = protocol.run_tool(tool_name, arguments).await?;
 
-                    let tool_result = match response.tool_result {
-                        serde_json::Value::String(s) => s,
-                        _ => serde_json::to_string(&response.tool_result)?,
-                    };
-                    Ok(tool_result)
+                    let mut result = String::new();
+                    for content in response.content {
+                        match content {
+                            types::ToolResponseContent::Text { text } => {
+                                result.push_str(&text);
+                            }
+                            types::ToolResponseContent::Image { .. } => {
+                                log::warn!("Ignoring image content from tool response");
+                            }
+                            types::ToolResponseContent::Resource { .. } => {
+                                log::warn!("Ignoring resource content from tool response");
+                            }
+                        }
+                    }
+                    Ok(result)
                 }
             })
         } else {

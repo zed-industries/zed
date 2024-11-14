@@ -42,6 +42,7 @@ impl Vim {
                 });
             });
         });
+        self.exit_temporary_normal(cx);
     }
 
     pub fn yank_object(&mut self, object: Object, around: bool, cx: &mut ViewContext<Self>) {
@@ -65,6 +66,7 @@ impl Vim {
                 });
             });
         });
+        self.exit_temporary_normal(cx);
     }
 
     pub fn yank_selections_content(
