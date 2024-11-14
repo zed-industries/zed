@@ -6414,355 +6414,395 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_next_selection_after_delete_file(cx: &mut gpui::TestAppContext) {
+    async fn test_basic_file_deletion_scenarios(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/src",
+            "/root",
             json!({
-                "test": {
-                    "first.rs": "// First",
-                    "second.rs": "// Second",
-                    "third.rs": "// Third",
-                }
+                "dir1": {
+                    "subdir1": {},
+                    "file1.txt": "",
+                    "file2.txt": "",
+                },
+                "dir2": {
+                    "subdir2": {},
+                    "file3.txt": "",
+                    "file4.txt": "",
+                },
+                "file5.txt": "",
+                "file6.txt": "",
             }),
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-        toggle_expand_dir(&panel, "src/test", cx);
 
-        select_path(&panel, "src/test/second.rs", cx);
+        toggle_expand_dir(&panel, "root/dir1", cx);
+        toggle_expand_dir(&panel, "root/dir2", cx);
+
+        // Test Case 1: Delete middle file in directory
+        select_path(&panel, "root/dir1/file1.txt", cx);
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
+            visible_entries_as_strings(&panel, 0..15, cx),
             &[
-                "v src",
-                "    v test",
-                "          first.rs",
-                "          second.rs  <== selected",
-                "          third.rs",
+                "v root",
+                "    v dir1",
+                "        > subdir1",
+                "          file1.txt  <== selected",
+                "          file2.txt",
+                "    v dir2",
+                "        > subdir2",
+                "          file3.txt",
+                "          file4.txt",
+                "      file5.txt",
+                "      file6.txt",
             ],
             "Initial state before deleting middle file"
         );
+
         submit_deletion(&panel, cx);
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
+            visible_entries_as_strings(&panel, 0..15, cx),
             &[
-                "v src",
-                "    v test",
-                "          first.rs",
-                "          third.rs  <== selected",
+                "v root",
+                "    v dir1",
+                "        > subdir1",
+                "          file2.txt  <== selected",
+                "    v dir2",
+                "        > subdir2",
+                "          file3.txt",
+                "          file4.txt",
+                "      file5.txt",
+                "      file6.txt",
             ],
             "Should select next file after deleting middle file"
         );
 
-        select_path(&panel, "src/test/third.rs", cx);
+        // Test Case 2: Delete last file in directory
+        select_path(&panel, "root/dir1/file2.txt", cx);
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
+            visible_entries_as_strings(&panel, 0..15, cx),
             &[
-                "v src",
-                "    v test",
-                "          first.rs",
-                "          third.rs  <== selected",
+                "v root",
+                "    v dir1",
+                "        > subdir1",
+                "          file2.txt  <== selected",
+                "    v dir2",
+                "        > subdir2",
+                "          file3.txt",
+                "          file4.txt",
+                "      file5.txt",
+                "      file6.txt",
             ],
-            "Initial state before deleting last file"
+            "Initial state before deleting last file in directory"
         );
+
         submit_deletion(&panel, cx);
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    v test", "          first.rs  <== selected",],
-            "Should select previous file after deleting last file"
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v root",
+                "    v dir1",
+                "        > subdir1",
+                "    v dir2  <== selected",
+                "        > subdir2",
+                "          file3.txt",
+                "          file4.txt",
+                "      file5.txt",
+                "      file6.txt",
+            ],
+            "Should select next directory when last file is deleted"
+        );
+
+        // Test Case 3: Delete root level file
+        select_path(&panel, "root/file5.txt", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v root",
+                "    v dir1",
+                "        > subdir1",
+                "    v dir2",
+                "        > subdir2",
+                "          file3.txt",
+                "          file4.txt",
+                "      file5.txt  <== selected",
+                "      file6.txt",
+            ],
+            "Initial state before deleting root level file"
+        );
+
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v root",
+                "    v dir1",
+                "        > subdir1",
+                "    v dir2",
+                "        > subdir2",
+                "          file3.txt",
+                "          file4.txt",
+                "      file6.txt  <== selected",
+            ],
+            "Should select next file at root level"
         );
     }
 
     #[gpui::test]
-    async fn test_next_selection_after_multi_delete(cx: &mut gpui::TestAppContext) {
+    async fn test_complex_selection_scenarios(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/src",
-            json!({
-                "dir1": {
-                    "subdir": {
-                        "a.rs": "",
-                        "b.rs": "",
-                },
-                    "x.rs": "",
-                },
-                "dir2": {
-                    "c.rs": "",
-                    "d.rs": "",
-                },
-                "e.rs": "",
-                "f.rs": "",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "src/dir1", cx);
-        toggle_expand_dir(&panel, "src/dir1/subdir", cx);
-        toggle_expand_dir(&panel, "src/dir2", cx);
-
-        cx.simulate_modifiers_change(gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        });
-        select_path_with_mark(&panel, "src/dir1/subdir/a.rs", cx);
-        select_path_with_mark(&panel, "src/dir2/c.rs", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v src",
-                "    v dir1",
-                "        v subdir",
-                "              a.rs  <== marked",
-                "              b.rs",
-                "          x.rs",
-                "    v dir2",
-                "          c.rs  <== selected  <== marked",
-                "          d.rs",
-                "      e.rs",
-                "      f.rs",
-            ],
-            "Initial state before multi-file deletion"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v src",
-                "    v dir1",
-                "        v subdir",
-                "              b.rs",
-                "          x.rs",
-                "    v dir2",
-                "          d.rs  <== selected",
-                "      e.rs",
-                "      f.rs",
-            ],
-            "Should select next available file after multi-file deletion"
-        );
-
-        select_path_with_mark(&panel, "src/dir1/subdir", cx);
-        select_path_with_mark(&panel, "src/dir1/subdir/b.rs", cx);
-        select_path_with_mark(&panel, "src/dir2/d.rs", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v src",
-                "    v dir1",
-                "        v subdir  <== marked",
-                "              b.rs  <== marked",
-                "          x.rs",
-                "    v dir2",
-                "          d.rs  <== selected  <== marked",
-                "      e.rs",
-                "      f.rs",
-            ],
-            "Initial state before deleting directory with contents"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v src",
-                "    v dir1",
-                "          x.rs",
-                "    v dir2",
-                "      e.rs  <== selected",
-                "      f.rs",
-            ],
-            "Should select next available entry after deleting directory with contents"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_complex_deletion_scenarios(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/src",
+            "/root",
             json!({
                 "dir1": {
                     "subdir1": {
-                        "a.rs": "",
-                        "b.rs": "",
-                        "nested": {
-                            "x.rs": "",
-                            "y.rs": "",
-                        }
+                        "a.txt": "",
+                        "b.txt": ""
                     },
-                    "subdir2": {
-                        "c.rs": "",
-                        "d.rs": "",
-                    }
+                    "file1.txt": "",
                 },
                 "dir2": {
-                    "file1.rs": "",
-                    "file2.rs": "",
-                    "empty_dir": {}
+                    "subdir2": {
+                        "c.txt": "",
+                        "d.txt": ""
+                    },
+                    "file2.txt": "",
                 },
-                "root1.rs": "",
-                "root2.rs": "",
+                "file3.txt": "",
             }),
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
-        toggle_expand_dir(&panel, "src/dir1", cx);
-        toggle_expand_dir(&panel, "src/dir1/subdir1", cx);
-        toggle_expand_dir(&panel, "src/dir1/subdir1/nested", cx);
-        toggle_expand_dir(&panel, "src/dir1/subdir2", cx);
-        toggle_expand_dir(&panel, "src/dir2", cx);
+        toggle_expand_dir(&panel, "root/dir1", cx);
+        toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
+        toggle_expand_dir(&panel, "root/dir2", cx);
+        toggle_expand_dir(&panel, "root/dir2/subdir2", cx);
 
+        // Test Case 1: Select and delete nested directory with parent
         cx.simulate_modifiers_change(gpui::Modifiers {
             control: true,
             ..Default::default()
         });
-        select_path_with_mark(&panel, "src/dir1/subdir1/nested/x.rs", cx);
-        select_path_with_mark(&panel, "src/dir1/subdir1/nested/y.rs", cx);
+        select_path_with_mark(&panel, "root/dir1/subdir1", cx);
+        select_path_with_mark(&panel, "root/dir1", cx);
 
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
+            visible_entries_as_strings(&panel, 0..15, cx),
             &[
-                "v src",
-                "    v dir1",
-                "        v subdir1",
-                "            v nested",
-                "                  x.rs  <== marked",
-                "                  y.rs  <== selected  <== marked",
-                "              a.rs",
-                "              b.rs",
-                "        v subdir2",
-                "              c.rs",
-                "              d.rs",
+                "v root",
+                "    v dir1  <== selected  <== marked",
+                "        v subdir1  <== marked",
+                "              a.txt",
+                "              b.txt",
+                "          file1.txt",
                 "    v dir2",
-                "        > empty_dir",
-                "          file1.rs",
-                "          file2.rs",
-                "      root1.rs",
-                "      root2.rs",
-            ],
-            "Initial state before deleting nested files"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v src",
-                "    v dir1",
-                "        v subdir1",
-                "            v nested",
-                "              a.rs  <== selected",
-                "              b.rs",
                 "        v subdir2",
-                "              c.rs",
-                "              d.rs",
-                "    v dir2",
-                "        > empty_dir",
-                "          file1.rs",
-                "          file2.rs",
-                "      root1.rs",
-                "      root2.rs",
-            ],
-            "Should select next file after nested files deletion"
-        );
-
-        select_path_with_mark(&panel, "src/dir1/subdir1/nested", cx);
-        select_path_with_mark(&panel, "src/dir1/subdir1", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v src",
-                "    v dir1",
-                "        v subdir1  <== selected  <== marked",
-                "            v nested  <== marked",
-                "              a.rs",
-                "              b.rs",
-                "        v subdir2",
-                "              c.rs",
-                "              d.rs",
-                "    v dir2",
-                "        > empty_dir",
-                "          file1.rs",
-                "          file2.rs",
-                "      root1.rs",
-                "      root2.rs",
+                "              c.txt",
+                "              d.txt",
+                "          file2.txt",
+                "      file3.txt",
             ],
             "Initial state before deleting nested directory with parent"
         );
 
         submit_deletion(&panel, cx);
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
+            visible_entries_as_strings(&panel, 0..15, cx),
             &[
-                "v src",
-                "    v dir1",
-                "        v subdir2  <== selected",
-                "              c.rs",
-                "              d.rs",
-                "    v dir2",
-                "        > empty_dir",
-                "          file1.rs",
-                "          file2.rs",
-                "      root1.rs",
-                "      root2.rs",
+                "v root",
+                "    v dir2  <== selected",
+                "        v subdir2",
+                "              c.txt",
+                "              d.txt",
+                "          file2.txt",
+                "      file3.txt",
             ],
-            "Should select first entry in next directory after deleting directory with parent"
+            "Should select next directory after deleting directory with parent"
         );
 
-        select_path_with_mark(&panel, "src/dir1/subdir2/c.rs", cx);
-        select_path_with_mark(&panel, "src/dir2", cx);
-        select_path_with_mark(&panel, "src/root1.rs", cx);
+        // Test Case 2: Select mixed files and directories across levels
+        select_path_with_mark(&panel, "root/dir2/subdir2/c.txt", cx);
+        select_path_with_mark(&panel, "root/dir2/file2.txt", cx);
+        select_path_with_mark(&panel, "root/file3.txt", cx);
 
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v root",
+                "    v dir2",
+                "        v subdir2",
+                "              c.txt  <== marked",
+                "              d.txt",
+                "          file2.txt  <== marked",
+                "      file3.txt  <== selected  <== marked",
+            ],
+            "Initial state before deleting mixed files across levels"
+        );
+
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v root",
+                "    v dir2",
+                "        v subdir2",
+                "              d.txt  <== selected",
+            ],
+            "Should select next available file after mixed deletion"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_delete_all_files_and_directories(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir1": {
+                    "subdir1": {
+                        "a.txt": "",
+                        "b.txt": ""
+                    },
+                    "file1.txt": "",
+                },
+                "dir2": {
+                    "subdir2": {
+                        "c.txt": "",
+                        "d.txt": ""
+                    },
+                    "file2.txt": "",
+                },
+                "file3.txt": "",
+                "file4.txt": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "root/dir1", cx);
+        toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
+        toggle_expand_dir(&panel, "root/dir2", cx);
+        toggle_expand_dir(&panel, "root/dir2/subdir2", cx);
+
+        // Test Case 1: Select all root files and directories
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        });
+        select_path_with_mark(&panel, "root/dir1", cx);
+        select_path_with_mark(&panel, "root/dir2", cx);
+        select_path_with_mark(&panel, "root/file3.txt", cx);
+        select_path_with_mark(&panel, "root/file4.txt", cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                "v src",
-                "    v dir1",
-                "        v subdir2",
-                "              c.rs  <== marked",
-                "              d.rs",
+                "v root",
+                "    v dir1  <== marked",
+                "        v subdir1",
+                "              a.txt",
+                "              b.txt",
+                "          file1.txt",
                 "    v dir2  <== marked",
-                "        > empty_dir",
-                "          file1.rs",
-                "          file2.rs",
-                "      root1.rs  <== selected  <== marked",
-                "      root2.rs",
+                "        v subdir2",
+                "              c.txt",
+                "              d.txt",
+                "          file2.txt",
+                "      file3.txt  <== marked",
+                "      file4.txt  <== selected  <== marked",
             ],
-            "Initial state before deleting mixed files and directories"
+            "State before deleting all contents"
         );
 
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
+            &["v root  <== selected"],
+            "Only empty root directory should remain after deleting all contents"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_nested_selection_deletion(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir1": {
+                    "subdir1": {
+                        "file_a.txt": "content a",
+                        "file_b.txt": "content b",
+                    },
+                    "subdir2": {
+                        "file_c.txt": "content c",
+                    },
+                    "file1.txt": "content 1",
+                },
+                "dir2": {
+                    "file2.txt": "content 2",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "root/dir1", cx);
+        toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
+        toggle_expand_dir(&panel, "root/dir2", cx);
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        });
+
+        // Test Case 1: Select parent directory, subdirectory, and a file inside the subdirectory
+        select_path_with_mark(&panel, "root/dir1", cx);
+        select_path_with_mark(&panel, "root/dir1/subdir1", cx);
+        select_path_with_mark(&panel, "root/dir1/subdir1/file_a.txt", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                "v src",
-                "    v dir1",
-                "        v subdir2",
-                "              d.rs",
-                "      root2.rs  <== selected",
+                "v root",
+                "    v dir1  <== marked",
+                "        v subdir1  <== marked",
+                "              file_a.txt  <== selected  <== marked",
+                "              file_b.txt",
+                "        > subdir2",
+                "          file1.txt",
+                "    v dir2",
+                "          file2.txt",
             ],
-            "Should select last remaining file after mixed deletion"
+            "State with parent dir, subdir, and file selected"
+        );
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &["v root", "    v dir2  <== selected", "          file2.txt",],
+            "Only dir2 should remain after deletion"
         );
     }
 
