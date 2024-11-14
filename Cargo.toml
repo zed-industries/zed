@@ -93,7 +93,6 @@ members = [
     "crates/text",
     "crates/theme",
     "crates/theme_importer",
-    "crates/theme_selector",
     "crates/time_format",
     "crates/ui",
     "crates/ui_input",
@@ -242,7 +241,6 @@ terminal = { path = "crates/terminal" }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_importer = { path = "crates/theme_importer" }
-theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }

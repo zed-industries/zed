@@ -85,7 +85,6 @@ task.workspace = true
 tasks_ui.workspace = true
 telemetry_events.workspace = true
 theme.workspace = true
-theme_selector.workspace = true
 time.workspace = true
 ui.workspace = true
 reqwest_client.workspace = true

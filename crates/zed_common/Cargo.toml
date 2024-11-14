@@ -129,7 +129,6 @@ tempfile.workspace = true
 terminal.workspace = true
 text.workspace = true
 theme.workspace = true
-theme_selector.workspace = true
 thiserror.workspace = true
 tiktoken-rs.workspace = true
 time.workspace = true

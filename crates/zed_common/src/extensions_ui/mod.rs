@@ -261,9 +261,9 @@ impl ExtensionsPage {
         if !themes.is_empty() {
             workspace
                 .update(cx, |workspace, cx| {
-                    theme_selector::toggle(
+                    crate::theme_selector::toggle(
                         workspace,
-                        &theme_selector::Toggle {
+                        &crate::theme_selector::Toggle {
                             themes_filter: Some(themes),
                         },
                         cx,

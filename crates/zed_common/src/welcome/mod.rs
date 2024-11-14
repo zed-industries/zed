@@ -98,7 +98,7 @@ impl Render for WelcomePage {
                                         );
                                         this.workspace
                                             .update(cx, |workspace, cx| {
-                                                theme_selector::toggle(
+                                                crate::theme_selector::toggle(
                                                     workspace,
                                                     &Default::default(),
                                                     cx,

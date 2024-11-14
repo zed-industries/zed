@@ -11683,24 +11683,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "theme_selector"
-version = "0.1.0"
-dependencies = [
- "client",
- "fs",
- "fuzzy",
- "gpui",
- "log",
- "picker",
- "serde",
- "settings",
- "theme",
- "ui",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "thiserror"
 version = "1.0.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14618,7 +14600,6 @@ dependencies = [
  "tasks_ui",
  "telemetry_events",
  "theme",
- "theme_selector",
  "time",
  "tree-sitter-md",
  "tree-sitter-rust",
@@ -14772,7 +14753,6 @@ dependencies = [
  "terminal",
  "text",
  "theme",
- "theme_selector",
  "thiserror",
  "tiktoken-rs",
  "time",
