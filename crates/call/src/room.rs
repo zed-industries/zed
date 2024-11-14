@@ -1657,7 +1657,7 @@ fn spawn_room_connection(
                     }
                 });
 
-                let muted_by_user = Self::mute_on_join(cx);
+                let muted_by_user = Room::mute_on_join(cx);
                 this.live_kit = Some(LiveKitRoom {
                     room: Arc::new(room),
                     screen_track: LocalTrack::None,

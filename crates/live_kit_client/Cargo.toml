@@ -27,7 +27,6 @@ test-support = [
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-bytes.workspace = true
 cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
 collections = { workspace = true }
 futures.workspace = true

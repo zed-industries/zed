@@ -6822,7 +6822,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bytes 1.7.2",
  "collections",
  "core-foundation 0.9.4",
  "cpal 0.15.3 (git+https://github.com/zed-industries/cpal?rev=fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50)",
