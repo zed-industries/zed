@@ -234,8 +234,13 @@ impl ProposedChangesEditor {
     }
 
     fn all_changes_accepted(&self) -> bool {
-        // TODO actually compute this!
-        true
+        let todo = (); // TODO actually compute this!
+        false
+    }
+
+    fn any_changes_applied(&self) -> bool {
+        let todo = (); // TODO actually compute this!
+        false
     }
 }
 
@@ -260,13 +265,11 @@ impl Item for ProposedChangesEditor {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
-        let icon_name = if self.all_changes_accepted() {
-            IconName::Check
+        if self.all_changes_accepted() {
+            Some(Icon::new(IconName::Check).color(Color::Success))
         } else {
-            IconName::ZedAssistant
-        };
-
-        Some(Icon::new(icon_name).color(Color::Success))
+            Some(Icon::new(IconName::ZedAssistant))
+        }
     }
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
@@ -350,19 +353,48 @@ impl ProposedChangesToolbarControls {
 
 impl Render for ProposedChangesToolbarControls {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let button_like = ButtonLike::new("apply-changes").child(Label::new("Apply All"));
+        if let Some(editor) = &self.current_editor {
+            let focus_handle = editor.focus_handle(cx);
+            let action = &ApplyAllDiffHunks;
+            let keybinding = KeyBinding::for_action_in(action, &focus_handle, cx)
+                .map(|binding| binding.into_any_element());
+            let editor = editor.read(cx);
 
-        match &self.current_editor {
-            Some(editor) => {
+            let apply_all_button = if editor.all_changes_accepted() {
+                None
+            } else {
+                Some(
+                    ButtonLike::new("apply-changes")
+                        .child(Label::new("Apply All"))
+                        .children(keybinding)
+                        .on_click(move |_event, cx| focus_handle.dispatch_action(action, cx)),
+                )
+            };
+
+            let undo_all_button = if editor.any_changes_applied() {
+                None
+            } else {
                 let focus_handle = editor.focus_handle(cx);
-                let keybinding = KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, cx)
+                let action = {
+                    let todo = (); // TODO Change this to Undo All, once we actually have that action.
+                    &ApplyAllDiffHunks
+                };
+                let keybinding = KeyBinding::for_action_in(action, &focus_handle, cx)
                     .map(|binding| binding.into_any_element());
 
-                button_like.children(keybinding).on_click({
-                    move |_event, cx| focus_handle.dispatch_action(&ApplyAllDiffHunks, cx)
-                })
-            }
-            None => button_like.disabled(true),
+                Some(
+                    ButtonLike::new("undo-applied")
+                        .child(Label::new("Undo Applied"))
+                        .children(keybinding)
+                        .on_click(move |_event, cx| focus_handle.dispatch_action(action, cx)),
+                )
+            };
+
+            h_flex()
+                .children([undo_all_button, apply_all_button].into_iter().flatten())
+                .into_any_element()
+        } else {
+            gpui::Empty.into_any_element()
         }
     }
 }
@@ -402,20 +434,16 @@ impl Render for ProposedChangesToolbar {
         if let Some(editor) = &self.current_editor {
             let editor = editor.read(cx);
             let all_changes_accepted = editor.all_changes_accepted();
-            let icon_name = if all_changes_accepted {
-                IconName::Check
+            let icon = if all_changes_accepted {
+                Icon::new(IconName::Check).color(Color::Success)
             } else {
-                IconName::ZedAssistant
+                Icon::new(IconName::ZedAssistant)
             };
 
             h_flex()
                 .gap_2()
                 .relative()
-                .child(
-                    Icon::new(icon_name)
-                        .color(Color::Success)
-                        .size(IconSize::Medium),
-                )
+                .child(icon.size(IconSize::Medium))
                 .child(
                     Label::new(editor.title.clone())
                         .single_line()
