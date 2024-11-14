@@ -43,7 +43,6 @@ members = [
     "crates/http_client",
     "crates/image_viewer",
     "crates/indexed_docs",
-    "crates/inline_completion_button",
     "crates/install_cli",
     "crates/journal",
     "crates/language",
@@ -194,7 +193,6 @@ html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
-inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }

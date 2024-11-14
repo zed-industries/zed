@@ -198,7 +198,7 @@ pub fn initialize_workspace(
         }
 
         let inline_completion_button = cx.new_view(|cx| {
-            inline_completion_button::InlineCompletionButton::new(app_state.fs.clone(), cx)
+            zed_common::inline_completion_button::InlineCompletionButton::new(app_state.fs.clone(), cx)
         });
 
         let diagnostic_summary =

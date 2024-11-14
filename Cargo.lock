@@ -5842,31 +5842,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "inline_completion_button"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "copilot",
- "editor",
- "fs",
- "futures 0.3.30",
- "gpui",
- "indoc",
- "language",
- "lsp",
- "paths",
- "project",
- "serde_json",
- "settings",
- "supermaven",
- "theme",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "inotify"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14668,7 +14643,6 @@ dependencies = [
  "http_client",
  "image_viewer",
  "indexed_docs",
- "inline_completion_button",
  "install_cli",
  "journal",
  "language",
@@ -14802,7 +14776,6 @@ dependencies = [
  "image",
  "indexed_docs",
  "indoc",
- "inline_completion_button",
  "install_cli",
  "itertools 0.13.0",
  "language",
@@ -14853,6 +14826,7 @@ dependencies = [
  "snippet_provider",
  "story",
  "strum 0.25.0",
+ "supermaven",
  "task",
  "tasks_ui",
  "telemetry_events",

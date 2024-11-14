@@ -76,7 +76,6 @@ http_client.workspace = true
 image.workspace = true
 indexed_docs.workspace = true
 indoc.workspace = true
-inline_completion_button.workspace = true
 install_cli.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -121,6 +120,7 @@ smol.workspace = true
 snippet_provider.workspace = true
 story = { workspace = true, optional = true }
 strum.workspace = true
+supermaven.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
 telemetry_events.workspace = true

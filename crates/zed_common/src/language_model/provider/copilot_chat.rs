@@ -394,7 +394,7 @@ impl Render for ConfigurationView {
                                         .style(ui::ButtonStyle::Filled)
                                         .full_width()
                                         .on_click(|_, cx| {
-                                            inline_completion_button::initiate_sign_in(cx)
+                                            crate::inline_completion_button::initiate_sign_in(cx)
                                         }),
                                 )
                                 .child(
