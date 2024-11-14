@@ -194,7 +194,7 @@ impl ToolchainStore {
             groups,
         })
     }
-    pub(crate) fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
+    pub fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
         match &self.0 {
             ToolchainStoreInner::Local(local, _) => Arc::new(LocalStore(local.downgrade())),
             ToolchainStoreInner::Remote(remote) => Arc::new(RemoteStore(remote.downgrade())),
