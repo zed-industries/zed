@@ -75,11 +75,11 @@ impl Tab {
     }
 
     pub fn content_height(cx: &mut WindowContext) -> Pixels {
-        cx.rem_size() + Spacing::XXLarge.px(cx) - px(1.)
+        DynamicSpacing::Base32.px(cx) - px(1.)
     }
 
     pub fn container_height(cx: &mut WindowContext) -> Pixels {
-        cx.rem_size() + Spacing::XXLarge.px(cx)
+        DynamicSpacing::Base32.px(cx)
     }
 }
 
