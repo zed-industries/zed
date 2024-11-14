@@ -207,7 +207,9 @@ impl RenderOnce for ChangedFileHeader {
             .id(self.id.clone())
             .justify_between()
             .w_full()
-            .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
+            .when(!self.is_selected, |this| {
+                this.hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
+            })
             .cursor(CursorStyle::PointingHand)
             .when(self.is_selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_active)
