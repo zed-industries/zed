@@ -341,7 +341,7 @@ impl Telemetry {
         let state = self.state.lock();
         let enabled = state.settings.metrics;
         drop(state);
-        return enabled;
+        enabled
     }
 
     pub fn set_authenticated_user_info(
