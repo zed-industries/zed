@@ -43,6 +43,13 @@ pub trait Extension: Send + Sync + 'static {
         worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<Command>;
 
+    async fn language_server_initialization_options(
+        &self,
+        language_server_id: LanguageServerName,
+        language_name: LanguageName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>>;
+
     async fn complete_slash_command_argument(
         &self,
         command: SlashCommand,
@@ -53,7 +60,7 @@ pub trait Extension: Send + Sync + 'static {
         &self,
         command: SlashCommand,
         arguments: Vec<String>,
-        resource: Option<Arc<dyn WorktreeDelegate>>,
+        worktree: Option<Arc<dyn WorktreeDelegate>>,
     ) -> Result<SlashCommandOutput>;
 
     async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>>;

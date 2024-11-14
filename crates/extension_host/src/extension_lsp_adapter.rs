@@ -175,29 +175,14 @@ impl LspAdapter for ExtensionLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let delegate = delegate.clone();
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options = self
-            .wasm_extension
-            .call({
-                let this = self.clone();
-                |extension, store| {
-                    async move {
-                        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
-                        let resource = store.data_mut().table().push(delegate)?;
-                        let options = extension
-                            .call_language_server_initialization_options(
-                                store,
-                                &this.language_server_id,
-                                &this.language_name,
-                                resource,
-                            )
-                            .await?
-                            .map_err(|e| anyhow!("{}", e))?;
-                        anyhow::Ok(options)
-                    }
-                    .boxed()
-                }
-            })
+            .extension
+            .language_server_initialization_options(
+                self.language_server_id.clone(),
+                self.language_name.clone(),
+                delegate,
+            )
             .await?;
         Ok(if let Some(json_options) = json_options {
             serde_json::from_str(&json_options).with_context(|| {
