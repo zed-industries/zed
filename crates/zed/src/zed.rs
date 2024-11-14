@@ -47,7 +47,6 @@ use zed_common::quick_action_bar::QuickActionBar;
 use zed_common::recent_projects::open_ssh_project;
 
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
-use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
 use workspace::{
@@ -58,6 +57,7 @@ use workspace::{notifications::DetachAndPromptErr, Pane};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
 };
+use zed_common::terminal_view::terminal_panel::{self, TerminalPanel};
 use zed_common::vim::VimModeSetting;
 use zed_common::welcome::{BaseKeymap, MultibufferHint};
 
@@ -3492,7 +3492,7 @@ mod tests {
             zed_common::collab_ui::init(&app_state, cx);
             project_panel::init((), cx);
             outline_panel::init((), cx);
-            terminal_view::init(cx);
+            zed_common::terminal_view::init(cx);
             copilot::copilot_chat::init(
                 app_state.fs.clone(),
                 app_state.client.http_client().clone(),

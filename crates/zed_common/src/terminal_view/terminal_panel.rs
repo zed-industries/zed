@@ -1,6 +1,6 @@
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 
-use crate::{default_working_directory, TerminalView};
+use crate::terminal_view::{default_working_directory, TerminalView};
 use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
@@ -427,7 +427,7 @@ impl TerminalPanel {
         }
         #[cfg(target_os = "windows")]
         {
-            use crate::terminal_panel::WindowsShellType;
+            use crate::terminal_view::terminal_panel::WindowsShellType;
 
             match windows_shell_type {
                 WindowsShellType::Powershell => {
@@ -460,7 +460,7 @@ impl TerminalPanel {
         user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
         #[cfg(target_os = "windows")]
         {
-            use crate::terminal_panel::WindowsShellType;
+            use crate::terminal_view::terminal_panel::WindowsShellType;
 
             match windows_shell_type {
                 WindowsShellType::Powershell => {

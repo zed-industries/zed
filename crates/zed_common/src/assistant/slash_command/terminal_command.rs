@@ -5,10 +5,10 @@ use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use crate::terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use anyhow::Result;
 use gpui::{AppContext, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
-use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::prelude::*;
 use workspace::{dock::Panel, Workspace};
 

@@ -6,6 +6,7 @@ use crate::language_model::{
     logging::report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, Role,
 };
+use crate::terminal_view::TerminalView;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
@@ -28,7 +29,6 @@ use std::{
 };
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
-use terminal_view::TerminalView;
 use theme::ThemeSettings;
 use ui::{prelude::*, IconButtonShape, Tooltip};
 use util::ResultExt;
@@ -111,7 +111,7 @@ impl TerminalInlineAssistant {
             )
         });
         let prompt_editor_render = prompt_editor.clone();
-        let block = terminal_view::BlockProperties {
+        let block = crate::terminal_view::BlockProperties {
             height: 2,
             render: Box::new(move |_| prompt_editor_render.clone().into_any_element()),
         };
@@ -377,7 +377,7 @@ impl TerminalInlineAssistant {
                     .terminal
                     .update(cx, |terminal, cx| {
                         terminal.clear_block_below_cursor(cx);
-                        let block = terminal_view::BlockProperties {
+                        let block = crate::terminal_view::BlockProperties {
                             height,
                             render: Box::new(move |_| prompt_editor.clone().into_any_element()),
                         };

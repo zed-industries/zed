@@ -95,7 +95,6 @@ members = [
     "crates/tasks_ui",
     "crates/telemetry_events",
     "crates/terminal",
-    "crates/terminal_view",
     "crates/text",
     "crates/theme",
     "crates/theme_importer",
@@ -250,7 +249,6 @@ task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 telemetry_events = { path = "crates/telemetry_events" }
 terminal = { path = "crates/terminal" }
-terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_importer = { path = "crates/theme_importer" }

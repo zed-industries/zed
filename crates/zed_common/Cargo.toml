@@ -54,6 +54,7 @@ context_servers.workspace = true
 copilot = { workspace = true, features = ["schemars"] }
 db.workspace = true
 derive_more.workspace = true
+dirs.workspace = true
 editor.workspace = true
 emojis.workspace = true
 extension_host.workspace = true
@@ -112,16 +113,18 @@ serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 sha2.workspace = true
+shellexpand.workspace = true
 similar.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 story = { workspace = true, optional = true }
 strum.workspace = true
+task.workspace = true
+tasks_ui.workspace = true
 telemetry_events.workspace = true
 tempfile.workspace = true
 terminal.workspace = true
-terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
 theme_selector.workspace = true

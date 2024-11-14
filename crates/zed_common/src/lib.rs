@@ -14,6 +14,7 @@ pub mod semantic_index;
 pub mod settings_ui;
 pub mod snippets_ui;
 pub mod tab_switcher;
+pub mod terminal_view;
 pub mod title_bar;
 pub mod toolchain_selector;
 pub mod vim;

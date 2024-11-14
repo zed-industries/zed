@@ -11758,38 +11758,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "terminal_view"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "db",
- "dirs 4.0.0",
- "editor",
- "futures 0.3.30",
- "gpui",
- "itertools 0.13.0",
- "language",
- "project",
- "rand 0.8.5",
- "search",
- "serde",
- "serde_json",
- "settings",
- "shellexpand 2.1.2",
- "smol",
- "task",
- "tasks_ui",
- "terminal",
- "theme",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "text"
 version = "0.1.0"
 dependencies = [
@@ -14799,7 +14767,6 @@ dependencies = [
  "task",
  "tasks_ui",
  "telemetry_events",
- "terminal_view",
  "theme",
  "theme_selector",
  "time",
@@ -14873,6 +14840,7 @@ dependencies = [
  "ctor",
  "db",
  "derive_more",
+ "dirs 4.0.0",
  "editor",
  "emojis",
  "env_logger 0.11.5",
@@ -14938,16 +14906,18 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "sha2",
+ "shellexpand 2.1.2",
  "similar",
  "smallvec",
  "smol",
  "snippet_provider",
  "story",
  "strum 0.25.0",
+ "task",
+ "tasks_ui",
  "telemetry_events",
  "tempfile",
  "terminal",
- "terminal_view",
  "text",
  "theme",
  "theme_selector",

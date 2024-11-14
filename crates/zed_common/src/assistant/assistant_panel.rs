@@ -27,6 +27,7 @@ use crate::language_model::{
     LanguageModelRegistry, Role,
 };
 use crate::language_model::{LanguageModelImage, LanguageModelToolUse};
+use crate::terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use anyhow::Result;
 use client::{proto, zed_urls, Client, Status};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
@@ -73,7 +74,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use text::SelectionGoal;
 use ui::{
     prelude::*,

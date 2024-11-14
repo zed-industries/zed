@@ -7,6 +7,7 @@ use crate::language_model::{
     logging::report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelTextStream, Role,
 };
+use crate::terminal_view::terminal_panel::TerminalPanel;
 use anyhow::{anyhow, Context as _, Result};
 use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
@@ -50,7 +51,6 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
-use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
 use ui::{

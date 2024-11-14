@@ -1,6 +1,6 @@
 use gpui::{Menu, MenuItem, OsAction};
-use terminal_view::terminal_panel;
 use zed_common::collab_ui::collab_panel;
+use zed_common::terminal_view::terminal_panel;
 
 pub fn app_menus() -> Vec<Menu> {
     use zed_actions::Quit;

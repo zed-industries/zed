@@ -30,7 +30,7 @@ use workspace::Workspace;
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive, rc::Rc};
 
-use crate::{BlockContext, BlockProperties, TerminalView};
+use crate::terminal_view::{BlockContext, BlockProperties, TerminalView};
 
 /// The information generated during layout that is necessary for painting.
 pub struct LayoutState {

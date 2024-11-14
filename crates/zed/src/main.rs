@@ -450,7 +450,7 @@ fn main() {
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
         search::init(cx);
         zed_common::vim::init(cx);
-        terminal_view::init(cx);
+        zed_common::terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
         zed_common::language_selector::init(cx);
         zed_common::toolchain_selector::init(cx);

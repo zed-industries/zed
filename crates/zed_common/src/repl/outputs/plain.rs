@@ -15,6 +15,7 @@
 //! - Error tracebacks
 //!
 
+use crate::terminal_view::terminal_element::TerminalElement;
 use alacritty_terminal::{
     grid::Dimensions as _,
     index::{Column, Line, Point},
@@ -26,7 +27,6 @@ use language::Buffer;
 use settings::Settings as _;
 use std::mem;
 use terminal::ZedListener;
-use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
 use ui::{prelude::*, IntoElement};
 
