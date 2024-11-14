@@ -67,7 +67,6 @@ parking_lot.workspace = true
 paths.workspace = true
 profiling.workspace = true
 project.workspace = true
-project_panel.workspace = true
 proto.workspace = true
 release_channel.workspace = true
 remote.workspace = true

@@ -8753,37 +8753,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "project_panel"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "db",
- "editor",
- "file_icons",
- "git",
- "gpui",
- "indexmap 1.9.3",
- "language",
- "menu",
- "pretty_assertions",
- "project",
- "schemars",
- "search",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
- "smallvec",
- "theme",
- "ui",
- "util",
- "workspace",
- "worktree",
-]
-
-[[package]]
 name = "prometheus"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14660,7 +14629,6 @@ dependencies = [
  "paths",
  "profiling",
  "project",
- "project_panel",
  "proto",
  "release_channel",
  "remote",
@@ -14766,6 +14734,7 @@ dependencies = [
  "futures 0.3.30",
  "futures-batch",
  "fuzzy",
+ "git",
  "globset",
  "google_ai",
  "gpui",
@@ -14775,6 +14744,7 @@ dependencies = [
  "http_client",
  "image",
  "indexed_docs",
+ "indexmap 1.9.3",
  "indoc",
  "install_cli",
  "itertools 0.13.0",

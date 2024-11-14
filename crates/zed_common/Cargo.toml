@@ -66,6 +66,7 @@ fs.workspace = true
 futures-batch.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
+git.workspace = true
 globset.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true
@@ -75,6 +76,7 @@ html_to_markdown.workspace = true
 http_client.workspace = true
 image.workspace = true
 indexed_docs.workspace = true
+indexmap.workspace = true
 indoc.workspace = true
 install_cli.workspace = true
 itertools.workspace = true

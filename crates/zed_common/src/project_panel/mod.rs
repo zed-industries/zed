@@ -6183,7 +6183,7 @@ mod tests {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                     let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                    panel.selection = Some(crate::SelectedEntry {
+                    panel.selection = Some(crate::project_panel::SelectedEntry {
                         worktree_id: worktree.id(),
                         entry_id,
                     });
@@ -6277,7 +6277,7 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             editor::init_settings(cx);
-            crate::init((), cx);
+            crate::project_panel::init((), cx);
             workspace::init_settings(cx);
             client::init_settings(cx);
             Project::init_settings(cx);
@@ -6300,7 +6300,7 @@ mod tests {
             init_settings(cx);
             language::init(cx);
             editor::init(cx);
-            crate::init((), cx);
+            crate::project_panel::init((), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
 

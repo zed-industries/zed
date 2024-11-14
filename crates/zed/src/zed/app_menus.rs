@@ -131,7 +131,7 @@ pub fn app_menus() -> Vec<Menu> {
                     ],
                 }),
                 MenuItem::separator(),
-                MenuItem::action("Project Panel", project_panel::ToggleFocus),
+                MenuItem::action("Project Panel", zed_common::project_panel::ToggleFocus),
                 MenuItem::action("Outline Panel", zed_common::outline_panel::ToggleFocus),
                 MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
                 MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),

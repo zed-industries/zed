@@ -443,7 +443,7 @@ fn main() {
         zed_common::tab_switcher::init(cx);
         outline::init(cx);
         zed_common::project_symbols::init(cx);
-        project_panel::init(Assets, cx);
+        zed_common::project_panel::init(Assets, cx);
         zed_common::outline_panel::init(Assets, cx);
         tasks_ui::init(cx);
         zed_common::snippets_ui::init(cx);

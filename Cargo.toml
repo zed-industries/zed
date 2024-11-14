@@ -64,7 +64,6 @@ members = [
     "crates/picker",
     "crates/prettier",
     "crates/project",
-    "crates/project_panel",
     "crates/proto",
     "crates/refineable",
     "crates/refineable/derive_refineable",
@@ -216,7 +215,6 @@ plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
-project_panel = { path = "crates/project_panel" }
 proto = { path = "crates/proto" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
