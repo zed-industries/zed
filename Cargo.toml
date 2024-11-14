@@ -563,45 +563,45 @@ ttf-parser = { opt-level = 3 }
 wasmtime-cranelift = { opt-level = 3 }
 wasmtime = { opt-level = 3 }
 # Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
-activity_indicator = {codegen-units = 1}
-assets = {codegen-units = 1}
-breadcrumbs = {codegen-units = 1}
-collections = {codegen-units = 1}
-command_palette = {codegen-units = 1}
-command_palette_hooks = {codegen-units = 1}
-evals = {codegen-units = 1}
-extension_cli = {codegen-units = 1}
-feature_flags = {codegen-units = 1}
-file_icons = {codegen-units = 1}
-fsevent = {codegen-units = 1}
-image_viewer = {codegen-units = 1}
-inline_completion_button = {codegen-units = 1}
-install_cli = {codegen-units = 1}
-journal = {codegen-units = 1}
-menu = {codegen-units = 1}
-notifications = {codegen-units = 1}
-ollama = {codegen-units = 1}
-outline = {codegen-units = 1}
-paths = {codegen-units = 1}
-prettier = {codegen-units = 1}
-project_symbols = {codegen-units = 1}
-refineable = {codegen-units = 1}
-release_channel = {codegen-units = 1}
-reqwest_client = {codegen-units = 1}
-rich_text = {codegen-units = 1}
-semantic_version = {codegen-units = 1}
-session = {codegen-units = 1}
-snippet = {codegen-units = 1}
-snippets_ui = {codegen-units = 1}
-sqlez_macros = {codegen-units = 1}
-story = {codegen-units = 1}
-supermaven_api = {codegen-units = 1}
-telemetry_events = {codegen-units = 1}
-theme_selector = {codegen-units = 1}
-time_format = {codegen-units = 1}
-ui_input = {codegen-units = 1}
-vcs_menu = {codegen-units = 1}
-zed_actions = {codegen-units = 1}
+activity_indicator = { codegen-units = 1 }
+assets = { codegen-units = 1 }
+breadcrumbs = { codegen-units = 1 }
+collections = { codegen-units = 1 }
+command_palette = { codegen-units = 1 }
+command_palette_hooks = { codegen-units = 1 }
+evals = { codegen-units = 1 }
+extension_cli = { codegen-units = 1 }
+feature_flags = { codegen-units = 1 }
+file_icons = { codegen-units = 1 }
+fsevent = { codegen-units = 1 }
+image_viewer = { codegen-units = 1 }
+inline_completion_button = { codegen-units = 1 }
+install_cli = { codegen-units = 1 }
+journal = { codegen-units = 1 }
+menu = { codegen-units = 1 }
+notifications = { codegen-units = 1 }
+ollama = { codegen-units = 1 }
+outline = { codegen-units = 1 }
+paths = { codegen-units = 1 }
+prettier = { codegen-units = 1 }
+project_symbols = { codegen-units = 1 }
+refineable = { codegen-units = 1 }
+release_channel = { codegen-units = 1 }
+reqwest_client = { codegen-units = 1 }
+rich_text = { codegen-units = 1 }
+semantic_version = { codegen-units = 1 }
+session = { codegen-units = 1 }
+snippet = { codegen-units = 1 }
+snippets_ui = { codegen-units = 1 }
+sqlez_macros = { codegen-units = 1 }
+story = { codegen-units = 1 }
+supermaven_api = { codegen-units = 1 }
+telemetry_events = { codegen-units = 1 }
+theme_selector = { codegen-units = 1 }
+time_format = { codegen-units = 1 }
+ui_input = { codegen-units = 1 }
+vcs_menu = { codegen-units = 1 }
+zed_actions = { codegen-units = 1 }
 
 [profile.release]
 debug = "limited"
