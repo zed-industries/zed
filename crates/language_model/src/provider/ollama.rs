@@ -9,7 +9,7 @@ use ollama::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc};
 use ui::{prelude::*, ButtonLike, Indicator};
 use util::ResultExt;
 
@@ -30,7 +30,6 @@ const PROVIDER_NAME: &str = "Ollama";
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
     pub api_url: String,
-    pub low_speed_timeout: Option<Duration>,
     pub available_models: Vec<AvailableModel>,
 }
 
@@ -327,17 +326,15 @@ impl LanguageModel for OllamaLanguageModel {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
-        let Ok((api_url, low_speed_timeout)) = cx.update(|cx| {
+        let Ok(api_url) = cx.update(|cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-            (settings.api_url.clone(), settings.low_speed_timeout)
+            settings.api_url.clone()
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
-            let response =
-                stream_chat_completion(http_client.as_ref(), &api_url, request, low_speed_timeout)
-                    .await?;
+            let response = stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
             let stream = response
                 .filter_map(|response| async move {
                     match response {
