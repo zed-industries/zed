@@ -1,17 +1,19 @@
 pub mod extension_builder;
 mod extension_manifest;
-mod slash_command;
+mod types;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ::lsp::LanguageServerName;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use gpui::Task;
+use language::LanguageName;
 use semantic_version::SemanticVersion;
 
 pub use crate::extension_manifest::*;
-pub use crate::slash_command::*;
+pub use crate::types::*;
 
 #[async_trait]
 pub trait WorktreeDelegate: Send + Sync + 'static {
@@ -33,6 +35,13 @@ pub trait Extension: Send + Sync + 'static {
 
     /// Returns the path to this extension's working directory.
     fn work_dir(&self) -> Arc<Path>;
+
+    async fn language_server_command(
+        &self,
+        language_server_id: LanguageServerName,
+        language_name: LanguageName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Command>;
 
     async fn complete_slash_command_argument(
         &self,

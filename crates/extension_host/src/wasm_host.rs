@@ -4,8 +4,8 @@ use crate::{ExtensionManifest, ExtensionRegistrationHooks};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use extension::{
-    KeyValueStoreDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput,
-    WorktreeDelegate,
+    Command, KeyValueStoreDelegate, SlashCommand, SlashCommandArgumentCompletion,
+    SlashCommandOutput, WorktreeDelegate,
 };
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
@@ -19,6 +19,8 @@ use futures::{
 };
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use http_client::HttpClient;
+use language::LanguageName;
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
@@ -63,6 +65,32 @@ impl extension::Extension for WasmExtension {
 
     fn work_dir(&self) -> Arc<Path> {
         self.work_dir.clone()
+    }
+
+    async fn language_server_command(
+        &self,
+        language_server_id: LanguageServerName,
+        language_name: LanguageName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Command> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let command = extension
+                    .call_language_server_command(
+                        store,
+                        &language_server_id,
+                        &language_name,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(command.into())
+            }
+            .boxed()
+        })
+        .await
     }
 
     async fn complete_slash_command_argument(
