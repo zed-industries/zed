@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use editor::Editor;
-use file_finder::OpenPathDelegate;
 use futures::channel::oneshot;
 use futures::future::Shared;
 use futures::FutureExt;
@@ -34,16 +33,16 @@ use workspace::OpenOptions;
 use workspace::Toast;
 use workspace::{notifications::DetachAndPromptErr, ModalView, Workspace};
 
-use crate::ssh_connections::connect_over_ssh;
-use crate::ssh_connections::open_ssh_project;
-use crate::ssh_connections::RemoteSettingsContent;
-use crate::ssh_connections::SshConnection;
-use crate::ssh_connections::SshConnectionHeader;
-use crate::ssh_connections::SshConnectionModal;
-use crate::ssh_connections::SshProject;
-use crate::ssh_connections::SshPrompt;
-use crate::ssh_connections::SshSettings;
-use crate::OpenRemote;
+use crate::recent_projects::ssh_connections::connect_over_ssh;
+use crate::recent_projects::ssh_connections::open_ssh_project;
+use crate::recent_projects::ssh_connections::RemoteSettingsContent;
+use crate::recent_projects::ssh_connections::SshConnection;
+use crate::recent_projects::ssh_connections::SshConnectionHeader;
+use crate::recent_projects::ssh_connections::SshConnectionModal;
+use crate::recent_projects::ssh_connections::SshProject;
+use crate::recent_projects::ssh_connections::SshPrompt;
+use crate::recent_projects::ssh_connections::SshSettings;
+use crate::recent_projects::OpenRemote;
 
 mod navigation_base {}
 pub struct RemoteServerProjects {
@@ -78,7 +77,7 @@ impl CreateRemoteServer {
 struct ProjectPicker {
     connection_string: SharedString,
     nickname: Option<SharedString>,
-    picker: View<Picker<OpenPathDelegate>>,
+    picker: View<Picker<file_finder::OpenPathDelegate>>,
     _path_task: Shared<Task<Option<()>>>,
 }
 

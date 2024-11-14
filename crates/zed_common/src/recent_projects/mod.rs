@@ -745,7 +745,7 @@ mod tests {
         cx.update(|cx| {
             let state = AppState::test(cx);
             language::init(cx);
-            crate::init(cx);
+            crate::recent_projects::init(cx);
             editor::init(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);

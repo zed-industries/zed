@@ -2472,7 +2472,6 @@ dependencies = [
  "prometheus",
  "prost",
  "rand 0.8.5",
- "recent_projects",
  "release_channel",
  "remote",
  "remote_server",
@@ -9282,40 +9281,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "recent_projects"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "auto_update",
- "editor",
- "file_finder",
- "futures 0.3.30",
- "fuzzy",
- "gpui",
- "itertools 0.13.0",
- "language",
- "log",
- "markdown",
- "menu",
- "ordered-float 2.10.1",
- "paths",
- "picker",
- "project",
- "release_channel",
- "remote",
- "schemars",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "task",
- "theme",
- "ui",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14852,7 +14817,6 @@ dependencies = [
  "project",
  "project_panel",
  "proto",
- "recent_projects",
  "release_channel",
  "remote",
  "reqwest_client",
@@ -14951,6 +14915,7 @@ dependencies = [
  "extension_host",
  "feature_flags",
  "feedback",
+ "file_finder",
  "fs",
  "futures 0.3.30",
  "futures-batch",
@@ -14991,7 +14956,6 @@ dependencies = [
  "project",
  "proto",
  "rand 0.8.5",
- "recent_projects",
  "regex",
  "release_channel",
  "remote",

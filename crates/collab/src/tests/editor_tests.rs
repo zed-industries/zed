@@ -25,7 +25,6 @@ use project::{
     project_settings::{InlineBlameSettings, ProjectSettings},
     SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
-use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::SettingsStore;
@@ -39,6 +38,7 @@ use std::{
 };
 use text::Point;
 use workspace::{CloseIntent, Workspace};
+use zed_common::recent_projects::disconnected_overlay::DisconnectedOverlay;
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -55,7 +55,7 @@ async fn test_host_disconnect(
         .await;
 
     cx_b.update(editor::init);
-    cx_b.update(recent_projects::init);
+    cx_b.update(zed_common::recent_projects::init);
 
     client_a
         .fs()

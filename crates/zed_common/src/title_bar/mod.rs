@@ -6,6 +6,7 @@ mod window_controls;
 #[cfg(feature = "stories")]
 mod stories;
 
+use crate::recent_projects::{OpenRemote, RecentProjects};
 use crate::title_bar::application_menu::ApplicationMenu;
 use crate::title_bar::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
@@ -18,7 +19,6 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::{OpenRemote, RecentProjects};
 use rpc::proto;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -402,7 +402,7 @@ impl TitleBar {
             .tooltip(move |cx| {
                 Tooltip::for_action(
                     "Recent Projects",
-                    &recent_projects::OpenRecent {
+                    &crate::recent_projects::OpenRecent {
                         create_new_window: false,
                     },
                     cx,

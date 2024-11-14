@@ -15,7 +15,6 @@ use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
 use language::{Bias, Point};
-use recent_projects::{open_ssh_project, SshSettings};
 use remote::SshConnectionOptions;
 use settings::Settings;
 use std::path::{Path, PathBuf};
@@ -26,6 +25,7 @@ use util::paths::PathWithPosition;
 use util::ResultExt;
 use workspace::item::ItemHandle;
 use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
+use zed_common::recent_projects::{open_ssh_project, SshSettings};
 use zed_common::welcome::{show_welcome_view, FIRST_OPEN};
 
 #[derive(Default, Debug)]

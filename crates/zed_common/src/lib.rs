@@ -8,6 +8,7 @@ pub mod language_model;
 pub mod language_selector;
 pub mod project_symbols;
 pub mod quick_action_bar;
+pub mod recent_projects;
 pub mod repl;
 pub mod semantic_index;
 pub mod settings_ui;

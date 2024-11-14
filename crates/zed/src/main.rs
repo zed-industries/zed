@@ -34,7 +34,6 @@ use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
-use recent_projects::{open_ssh_project, SshSettings};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{
@@ -64,6 +63,7 @@ use zed::{
     handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, OpenListener,
     OpenRequest,
 };
+use zed_common::recent_projects::{open_ssh_project, SshSettings};
 use zed_common::welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 
 use crate::zed::inline_completion_registry;
@@ -422,7 +422,7 @@ fn main() {
             app_state.node_runtime.clone(),
             cx,
         );
-        recent_projects::init(cx);
+        zed_common::recent_projects::init(cx);
 
         load_embedded_fonts(cx);
 
@@ -805,7 +805,7 @@ async fn restore_or_create_workspace(
                     })?;
                     let app_state = app_state.clone();
                     cx.spawn(move |mut cx| async move {
-                        recent_projects::open_ssh_project(
+                        zed_common::recent_projects::open_ssh_project(
                             connection_options,
                             ssh.paths.into_iter().map(PathBuf::from).collect(),
                             app_state,

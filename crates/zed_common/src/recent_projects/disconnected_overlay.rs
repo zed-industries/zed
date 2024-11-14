@@ -11,7 +11,7 @@ use ui::{
 };
 use workspace::{notifications::DetachAndPromptErr, ModalView, OpenOptions, Workspace};
 
-use crate::open_ssh_project;
+use crate::recent_projects::open_ssh_project;
 
 enum Host {
     RemoteProject,

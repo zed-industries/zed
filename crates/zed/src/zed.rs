@@ -30,7 +30,6 @@ use futures::{channel::mpsc, select_biased, StreamExt};
 use outline_panel::OutlinePanel;
 use project::{DirectoryLister, Item};
 use project_panel::ProjectPanel;
-use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
@@ -45,6 +44,7 @@ use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
 use workspace::CloseIntent;
 use zed_common::quick_action_bar::QuickActionBar;
+use zed_common::recent_projects::open_ssh_project;
 
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use terminal_view::terminal_panel::{self, TerminalPanel};
