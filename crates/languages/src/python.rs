@@ -2,8 +2,8 @@ use anyhow::ensure;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::AppContext;
 use gpui::AsyncAppContext;
+use gpui::{AppContext, Task};
 use language::LanguageName;
 use language::LanguageToolchainStore;
 use language::Toolchain;
@@ -271,10 +271,12 @@ impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
         variables: &task::TaskVariables,
-        _location: &project::Location,
-        _: Option<&HashMap<String, String>>,
-        _cx: &mut gpui::AppContext,
-    ) -> Result<task::TaskVariables> {
+        location: &project::Location,
+        _: Option<HashMap<String, String>>,
+        store: Arc<dyn LanguageToolchainStore>,
+        cx: &mut gpui::AppContext,
+    ) -> Task<Result<task::TaskVariables>> {
+        dbg!("Building python context");
         let python_module_name = python_module_name_from_relative_path(
             variables.get(&VariableName::RelativeFile).unwrap_or(""),
         );
@@ -290,7 +292,7 @@ impl ContextProvider for PythonContextProvider {
             }
             (Some(class_name), None) => format!("{}.{}", python_module_name, class_name),
             (None, None) => python_module_name,
-            (None, Some(_)) => return Ok(task::TaskVariables::default()), // should never happen, a TestCase class is the unit of testing
+            (None, Some(_)) => return Task::ready(Ok(task::TaskVariables::default())), // should never happen, a TestCase class is the unit of testing
         };
 
         let unittest_target = (
@@ -298,7 +300,7 @@ impl ContextProvider for PythonContextProvider {
             unittest_target_str,
         );
 
-        Ok(task::TaskVariables::from_iter([unittest_target]))
+        Task::ready(Ok(task::TaskVariables::from_iter([unittest_target])))
     }
 
     fn associated_tasks(
