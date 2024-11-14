@@ -30,6 +30,15 @@
       "tab_size": 2,
       "formatter": "prettier"
     },
+    "Proto": {
+      "tab_size": 4,
+      "formatter": {
+        "external": {
+          "command": "clang-format",
+          "arguments": ["-style={IndentWidth: 4, ColumnLimit: 0}"]
+        }
+      }
+    },
     "Rust": {
       "tasks": {
         "variables": {

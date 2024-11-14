@@ -644,10 +644,10 @@ message UpdateChannelBufferCollaborators {
 }
 
 message GetDefinition {
-     uint64 project_id = 1;
-     uint64 buffer_id = 2;
-     Anchor position = 3;
-     repeated VectorClockEntry version = 4;
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
 }
 
 message GetDefinitionResponse {
@@ -655,10 +655,10 @@ message GetDefinitionResponse {
 }
 
 message GetDeclaration {
-     uint64 project_id = 1;
-     uint64 buffer_id = 2;
-     Anchor position = 3;
-     repeated VectorClockEntry version = 4;
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
 }
 
 message GetDeclarationResponse {
@@ -666,43 +666,43 @@ message GetDeclarationResponse {
 }
 
 message GetTypeDefinition {
-     uint64 project_id = 1;
-     uint64 buffer_id = 2;
-     Anchor position = 3;
-     repeated VectorClockEntry version = 4;
- }
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
 
 message GetTypeDefinitionResponse {
     repeated LocationLink links = 1;
 }
 message GetImplementation {
-     uint64 project_id = 1;
-     uint64 buffer_id = 2;
-     Anchor position = 3;
-     repeated VectorClockEntry version = 4;
- }
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
 
 message GetImplementationResponse {
     repeated LocationLink links = 1;
 }
 
 message GetReferences {
-     uint64 project_id = 1;
-     uint64 buffer_id = 2;
-     Anchor position = 3;
-     repeated VectorClockEntry version = 4;
- }
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
 
 message GetReferencesResponse {
     repeated Location locations = 1;
 }
 
 message GetDocumentHighlights {
-     uint64 project_id = 1;
-     uint64 buffer_id = 2;
-     Anchor position = 3;
-     repeated VectorClockEntry version = 4;
- }
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
 
 message GetDocumentHighlightsResponse {
     repeated DocumentHighlight highlights = 1;
@@ -1040,7 +1040,6 @@ message OnTypeFormatting {
 message OnTypeFormattingResponse {
     Transaction transaction = 1;
 }
-
 
 message LinkedEditingRange {
     uint64 project_id = 1;
