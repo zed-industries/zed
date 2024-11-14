@@ -2,6 +2,11 @@ use crate::prelude::*;
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
 
+/// Creates a new [ContentGroup].
+pub fn content_group() -> ContentGroup {
+    ContentGroup::new()
+}
+
 /// A flexible container component that can hold other elements.
 #[derive(IntoElement)]
 pub struct ContentGroup {
