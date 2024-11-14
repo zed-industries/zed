@@ -15,7 +15,6 @@ use serde_json::Value;
 use std::ops::Range;
 use std::{any::Any, path::PathBuf, pin::Pin, sync::Arc};
 use util::{maybe, ResultExt};
-use wasmtime_wasi::WasiView as _;
 
 /// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
 pub struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
@@ -199,32 +198,14 @@ impl LspAdapter for ExtensionLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        let delegate = delegate.clone();
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options: Option<String> = self
-            .wasm_extension
-            .call({
-                let this = self.clone();
-                |extension, store| {
-                    async move {
-                        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
-                        let resource = store.data_mut().table().push(delegate)?;
-                        let options = extension
-                            .call_language_server_workspace_configuration(
-                                store,
-                                &this.language_server_id,
-                                resource,
-                            )
-                            .await?
-                            .map_err(|e| anyhow!("{}", e))?;
-                        anyhow::Ok(options)
-                    }
-                    .boxed()
-                }
-            })
+            .extension
+            .language_server_workspace_configuration(self.language_server_id.clone(), delegate)
             .await?;
         Ok(if let Some(json_options) = json_options {
             serde_json::from_str(&json_options).with_context(|| {
-                format!("failed to parse initialization_options from extension: {json_options}")
+                format!("failed to parse workspace_configuration from extension: {json_options}")
             })?
         } else {
             serde_json::json!({})

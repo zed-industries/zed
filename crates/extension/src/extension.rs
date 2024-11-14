@@ -50,6 +50,12 @@ pub trait Extension: Send + Sync + 'static {
         worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<Option<String>>;
 
+    async fn language_server_workspace_configuration(
+        &self,
+        language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>>;
+
     async fn complete_slash_command_argument(
         &self,
         command: SlashCommand,
