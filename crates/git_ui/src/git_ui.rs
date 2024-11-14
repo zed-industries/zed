@@ -556,18 +556,36 @@ pub struct ProjectStatusTab {
     id: ElementId,
     focus_handle: FocusHandle,
     status: Model<GitProjectStatus>,
+    list_state: ListState,
 }
 
 impl ProjectStatusTab {
     pub fn new(id: impl Into<ElementId>, cx: &mut ViewContext<Self>) -> Self {
-        // todo!("don't use static changed files")
         let changed_files = static_changed_files();
-        let status = cx.new_model(|_| GitProjectStatus::new(changed_files));
+        let status = cx.new_model(|_| GitProjectStatus::new(changed_files.clone()));
+
+        let list_state = ListState::new(
+            changed_files.len(),
+            gpui::ListAlignment::Top,
+            px(10.0),
+            move |ix, cx| {
+                if let Some(changed_file) = changed_files.get(ix) {
+                    ChangedFileHeader::new(
+                        ElementId::Name(format!("file-{}", ix).into()),
+                        changed_file.clone(),
+                    )
+                    .into_any_element()
+                } else {
+                    div().into_any_element()
+                }
+            },
+        );
 
         Self {
             id: id.into(),
             focus_handle: cx.focus_handle(),
             status,
+            list_state,
         }
     }
 }
@@ -587,15 +605,14 @@ impl Render for ProjectStatusTab {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let id = self.id.clone();
 
-        let project_status = self.status.clone();
-        let project_status_read = project_status.read(cx);
+        let project_status = self.status.read(cx);
 
         h_flex()
             .id(id)
             .flex_1()
             .size_full()
             .overflow_hidden()
-            .when(project_status_read.show_list, |this| {
+            .when(project_status.show_list, |this| {
                 this.child(
                     v_flex()
                         .bg(ElevationIndex::Surface.bg(cx))
@@ -615,18 +632,10 @@ impl Render for ProjectStatusTab {
                     .bg(ElevationIndex::Surface.bg(cx))
                     .child(GitProjectOverview::new(
                         "project-overview",
-                        project_status.clone(),
+                        self.status.clone(),
                     ))
                     .child(Divider::horizontal_dashed())
-                    .child(GitStagingControls::unstaged(
-                        "unstaged-controls",
-                        project_status.clone(),
-                    ))
-                    .child(Divider::horizontal())
-                    .child(GitStagingControls::staged(
-                        "staged-controls",
-                        project_status,
-                    )),
+                    .child(list(self.list_state.clone()).size_full()),
             )
     }
 }
