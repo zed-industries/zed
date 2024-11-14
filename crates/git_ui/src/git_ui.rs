@@ -1,11 +1,11 @@
-#![allow(unused, dead_code)]
-
+use editor::Editor;
 use git::repository::GitFileStatus;
 use gpui::*;
-use smallvec::{smallvec, SmallVec, ToSmallVec};
+use smallvec::{smallvec, SmallVec};
 use ui::{prelude::*, ElevationIndex, IconButtonShape};
-use ui::{ButtonLike, Disclosure, Divider, DividerColor, Tooltip};
+use ui::{Disclosure, Divider};
 use workspace::item::TabContentParams;
+use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
 actions!(vcs_status, [Deploy]);
 
@@ -577,8 +577,6 @@ impl ProjectStatusTab {
         if let Some(existing) = workspace.item_of_type::<ProjectStatusTab>(cx) {
             workspace.activate_item(&existing, true, true, cx);
         } else {
-            let workspace_handle = cx.view().downgrade();
-
             let status_tab = cx.new_view(|cx| Self::new("project-status-tab", cx));
             workspace.add_item_to_active_pane(Box::new(status_tab), None, true, cx);
         }
@@ -659,10 +657,6 @@ impl workspace::Item for ProjectStatusTab {
     }
 }
 
-use editor::Editor;
-use project::Project;
-use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
-
 pub struct GitStatusIndicator {
     active_editor: Option<WeakView<Editor>>,
     workspace: WeakView<Workspace>,
@@ -687,17 +681,7 @@ impl Render for GitStatusIndicator {
 }
 
 impl GitStatusIndicator {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let project = workspace.project();
-        cx.subscribe(project, |this, project, event, cx| match event {
-            // project::Event::GitStatusUpdated => {
-            //     this.summary = GitProjectStatus::default(); // Example update call
-            //     cx.notify();
-            // }
-            _ => {}
-        })
-        .detach();
-
+    pub fn new(workspace: &Workspace, _: &mut ViewContext<Self>) -> Self {
         Self {
             active_editor: None,
             workspace: workspace.weak_handle(),
