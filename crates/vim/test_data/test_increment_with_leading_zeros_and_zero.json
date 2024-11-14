@@ -1,7 +1,0 @@
-{"Put":{"state":"01ˇ1\n"}}
-{"Key":"ctrl-a"}
-{"Get":{"state":"01ˇ2\n","mode":"Normal"}}
-{"Key":"1"}
-{"Key":"2"}
-{"Key":"ctrl-x"}
-{"Get":{"state":"00ˇ0\n","mode":"Normal"}}

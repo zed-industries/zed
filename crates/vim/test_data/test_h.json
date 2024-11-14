@@ -1,9 +1,0 @@
-{"Put":{"state":"ˇThe quick\nbrown"}}
-{"Key":"h"}
-{"Get":{"state":"ˇThe quick\nbrown","mode":"Normal"}}
-{"Put":{"state":"The qˇuick\nbrown"}}
-{"Key":"h"}
-{"Get":{"state":"The ˇquick\nbrown","mode":"Normal"}}
-{"Put":{"state":"The quick\nˇbrown"}}
-{"Key":"h"}
-{"Get":{"state":"The quick\nˇbrown","mode":"Normal"}}

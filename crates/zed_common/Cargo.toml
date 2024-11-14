@@ -11,6 +11,7 @@ workspace = true
 [features]
 default = []
 stories = ["dep:story"]
+neovim = ["nvim-rs", "async-compat", "tokio"]
 test-support = [
     "call/test-support",
     "client/test-support",
@@ -33,6 +34,7 @@ anyhow.workspace = true
 arrayvec.workspace = true
 assets.workspace = true
 assistant_tool.workspace = true
+async-compat = { workspace = true, optional = true }
 async-dispatcher.workspace = true
 async-trait.workspace = true
 async-watch.workspace = true
@@ -85,6 +87,7 @@ multi_buffer.workspace = true
 nbformat.workspace = true
 notifications.workspace = true
 num-format.workspace = true
+nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 ordered-float.workspace = true
@@ -126,6 +129,7 @@ thiserror.workspace = true
 tiktoken-rs.workspace = true
 time.workspace = true
 time_format.workspace = true
+tokio = { version = "1.15", features = ["full"], optional = true }
 toml.workspace = true
 tree-sitter.workspace = true
 ui.workspace = true
@@ -133,7 +137,6 @@ unindent.workspace = true
 util.workspace = true
 uuid.workspace = true
 vcs_menu.workspace = true
-vim.workspace = true
 wasmtime-wasi.workspace = true
 workspace.workspace = true
 worktree.workspace = true
@@ -157,7 +160,7 @@ indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }
 log.workspace = true
-lsp.workspace = true
+lsp = { workspace = true, features = ["test-support"] }
 node_runtime.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true

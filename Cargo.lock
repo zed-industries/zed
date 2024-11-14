@@ -13036,42 +13036,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "vim"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-compat",
- "async-trait",
- "collections",
- "command_palette",
- "command_palette_hooks",
- "editor",
- "futures 0.3.30",
- "gpui",
- "indoc",
- "itertools 0.13.0",
- "language",
- "log",
- "lsp",
- "multi_buffer",
- "nvim-rs",
- "parking_lot",
- "regex",
- "release_channel",
- "schemars",
- "search",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
- "tokio",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "vscode_theme"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14846,7 +14810,6 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
- "vim",
  "windows 0.58.0",
  "winresource",
  "workspace",
@@ -14887,6 +14850,7 @@ dependencies = [
  "arrayvec",
  "assets",
  "assistant_tool",
+ "async-compat",
  "async-compression",
  "async-dispatcher",
  "async-tar",
@@ -14945,6 +14909,7 @@ dependencies = [
  "node_runtime",
  "notifications",
  "num-format",
+ "nvim-rs",
  "ollama",
  "open_ai",
  "ordered-float 2.10.1",
@@ -14990,6 +14955,7 @@ dependencies = [
  "tiktoken-rs",
  "time",
  "time_format",
+ "tokio",
  "toml 0.8.19",
  "tree-sitter",
  "tree-sitter-md",
@@ -15000,7 +14966,6 @@ dependencies = [
  "util",
  "uuid",
  "vcs_menu",
- "vim",
  "wasmtime-wasi",
  "workspace",
  "worktree",

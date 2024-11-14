@@ -1,7 +1,0 @@
-{"Put":{"state":"The quˇick brown\nfox jumps over\nthe lazy dog"}}
-{"Key":"0"}
-{"Get":{"state":"ˇThe quick brown\nfox jumps over\nthe lazy dog","mode":"Normal"}}
-{"Key":"1"}
-{"Key":"0"}
-{"Key":"l"}
-{"Get":{"state":"The quick ˇbrown\nfox jumps over\nthe lazy dog","mode":"Normal"}}

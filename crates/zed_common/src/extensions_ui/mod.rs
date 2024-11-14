@@ -16,6 +16,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
+use crate::vim::VimModeSetting;
 use client::telemetry::Telemetry;
 use client::ExtensionMetadata;
 use collections::{BTreeMap, BTreeSet};
@@ -33,7 +34,6 @@ use release_channel::ReleaseChannel;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
-use vim::VimModeSetting;
 use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,

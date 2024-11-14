@@ -449,7 +449,7 @@ fn main() {
         zed_common::snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
         search::init(cx);
-        vim::init(cx);
+        zed_common::vim::init(cx);
         terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
         zed_common::language_selector::init(cx);

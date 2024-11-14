@@ -50,7 +50,6 @@ use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
-use vim::VimModeSetting;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -59,6 +58,7 @@ use workspace::{notifications::DetachAndPromptErr, Pane};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
 };
+use zed_common::vim::VimModeSetting;
 use zed_common::welcome::{BaseKeymap, MultibufferHint};
 
 actions!(
@@ -209,7 +209,7 @@ pub fn initialize_workspace(
             cx.new_view(|_| zed_common::language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =
             cx.new_view(|cx| zed_common::toolchain_selector::ActiveToolchain::new(workspace, cx));
-        let vim_mode_indicator = cx.new_view(vim::ModeIndicator::new);
+        let vim_mode_indicator = cx.new_view(zed_common::vim::ModeIndicator::new);
         let cursor_position =
             cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {

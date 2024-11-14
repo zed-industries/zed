@@ -2,6 +2,7 @@ mod base_keymap_picker;
 mod base_keymap_setting;
 mod multibuffer_hint;
 
+use crate::vim::VimModeSetting;
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
@@ -12,7 +13,6 @@ use gpui::{
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{prelude::*, CheckboxWithLabel};
-use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
     item::{Item, ItemEvent},

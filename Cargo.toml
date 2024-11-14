@@ -107,7 +107,6 @@ members = [
     "crates/reqwest_client",
     "crates/util",
     "crates/vcs_menu",
-    "crates/vim",
     "crates/workspace",
     "crates/worktree",
     "crates/zed",
@@ -262,7 +261,6 @@ ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
-vim = { path = "crates/vim" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
