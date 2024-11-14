@@ -34,7 +34,11 @@ struct BufferEntry {
     _subscription: Subscription,
 }
 
-pub struct ProposedChangesEditorToolbar {
+pub struct ProposedChangesToolbarControls {
+    current_editor: Option<View<ProposedChangesEditor>>,
+}
+
+pub struct ProposedChangesToolbar {
     current_editor: Option<View<ProposedChangesEditor>>,
 }
 
@@ -317,7 +321,7 @@ impl Item for ProposedChangesEditor {
     }
 }
 
-impl ProposedChangesEditorToolbar {
+impl ProposedChangesToolbarControls {
     pub fn new() -> Self {
         Self {
             current_editor: None,
@@ -333,7 +337,7 @@ impl ProposedChangesEditorToolbar {
     }
 }
 
-impl Render for ProposedChangesEditorToolbar {
+impl Render for ProposedChangesToolbarControls {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let button_like = ButtonLike::new("apply-changes").child(Label::new("Apply All"));
 
@@ -352,9 +356,54 @@ impl Render for ProposedChangesEditorToolbar {
     }
 }
 
-impl EventEmitter<ToolbarItemEvent> for ProposedChangesEditorToolbar {}
+impl EventEmitter<ToolbarItemEvent> for ProposedChangesToolbarControls {}
 
-impl ToolbarItemView for ProposedChangesEditorToolbar {
+impl ToolbarItemView for ProposedChangesToolbarControls {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn workspace::ItemHandle>,
+        _cx: &mut ViewContext<Self>,
+    ) -> workspace::ToolbarItemLocation {
+        self.current_editor =
+            active_pane_item.and_then(|item| item.downcast::<ProposedChangesEditor>());
+        self.get_toolbar_item_location()
+    }
+}
+
+impl ProposedChangesToolbar {
+    pub fn new() -> Self {
+        Self {
+            current_editor: None,
+        }
+    }
+
+    fn get_toolbar_item_location(&self) -> ToolbarItemLocation {
+        if self.current_editor.is_some() {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+}
+
+impl Render for ProposedChangesToolbar {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        if let Some(editor) = &self.current_editor {
+            h_flex()
+                .gap_2()
+                .relative()
+                .child(Icon::new(IconName::ZedAssistant).size(IconSize::Medium))
+                .child(Label::new(editor.read(cx).title.clone()).single_line())
+                .into_any_element()
+        } else {
+            gpui::Empty.into_any_element()
+        }
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for ProposedChangesToolbar {}
+
+impl ToolbarItemView for ProposedChangesToolbar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn workspace::ItemHandle>,

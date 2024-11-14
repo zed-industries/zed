@@ -99,7 +99,8 @@ use language::{
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 pub use proposed_changes_editor::{
-    ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
+    ProposedChangeLocation, ProposedChangesEditor, ProposedChangesToolbar,
+    ProposedChangesToolbarControls,
 };
 use similar::{ChangeTag, TextDiff};
 use std::iter::Peekable;
