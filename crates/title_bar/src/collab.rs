@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use call::{report_call_event_for_room, ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, User};
+use feature_flags::FeatureFlagAppExt as _;
 use gpui::{actions, AppContext, Task, WindowContext};
 use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
 use rpc::proto::{self};
@@ -299,7 +300,8 @@ impl TitleBar {
         let can_use_microphone = room.can_use_microphone();
         let can_share_projects = room.can_share_projects();
         let audio_supported = match self.platform_style {
-            PlatformStyle::Linux | PlatformStyle::Mac => true,
+            PlatformStyle::Linux => cx.is_staff(),
+            PlatformStyle::Mac => true,
             PlatformStyle::Windows => false,
         };
         let screen_sharing_supported = match self.platform_style {
