@@ -298,7 +298,11 @@ impl TitleBar {
         let is_screen_sharing = room.is_screen_sharing();
         let can_use_microphone = room.can_use_microphone();
         let can_share_projects = room.can_share_projects();
-        let platform_supported = match self.platform_style {
+        let audio_supported = match self.platform_style {
+            PlatformStyle::Linux | PlatformStyle::Mac => true,
+            PlatformStyle::Windows => false,
+        };
+        let screen_sharing_supported = match self.platform_style {
             PlatformStyle::Mac => true,
             PlatformStyle::Linux | PlatformStyle::Windows => false,
         };
@@ -365,7 +369,7 @@ impl TitleBar {
                 )
                 .tooltip(move |cx| {
                     Tooltip::text(
-                        if !platform_supported {
+                        if !audio_supported {
                             "Cannot share microphone"
                         } else if is_muted {
                             "Unmute microphone"
@@ -377,8 +381,8 @@ impl TitleBar {
                 })
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
-                .selected(platform_supported && is_muted)
-                .disabled(!platform_supported)
+                .selected(audio_supported && is_muted)
+                .disabled(!audio_supported)
                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                 .on_click(move |_, cx| {
                     toggle_mute(&Default::default(), cx);
@@ -400,9 +404,9 @@ impl TitleBar {
             .selected_style(ButtonStyle::Tinted(TintColor::Negative))
             .icon_size(IconSize::Small)
             .selected(is_deafened)
-            .disabled(!platform_supported)
+            .disabled(!audio_supported)
             .tooltip(move |cx| {
-                if !platform_supported {
+                if !audio_supported {
                     Tooltip::text("Cannot share microphone", cx)
                 } else if can_use_microphone {
                     Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
@@ -420,11 +424,11 @@ impl TitleBar {
                     .style(ButtonStyle::Subtle)
                     .icon_size(IconSize::Small)
                     .selected(is_screen_sharing)
-                    .disabled(!platform_supported)
+                    .disabled(!screen_sharing_supported)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .tooltip(move |cx| {
                         Tooltip::text(
-                            if !platform_supported {
+                            if !screen_sharing_supported {
                                 "Cannot share screen"
                             } else if is_screen_sharing {
                                 "Stop Sharing Screen"
