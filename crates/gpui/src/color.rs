@@ -484,14 +484,6 @@ impl Hsla {
             a: self.a * factor.clamp(0., 1.),
         }
     }
-
-    /// Darkens the color by reducing its lightness.
-    /// The resulting lightness is clamped to ensure it doesn't go below 0.0.
-    pub fn darken(&self, amount: f32) -> Self {
-        let mut hsla = *self;
-        hsla.l = (hsla.l - amount).max(0.0);
-        hsla
-    }
 }
 
 impl From<Rgba> for Hsla {

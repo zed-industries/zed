@@ -2,6 +2,7 @@
 use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
+use theme::Theme;
 
 use crate::{prelude::*, DynamicSpacing, ElevationIndex};
 
@@ -204,7 +205,8 @@ impl ButtonStyle {
             }
             ButtonStyle::Tinted(tint) => {
                 let mut styles = tint.button_like_style(cx);
-                styles.background = styles.background.darken(0.2);
+                let theme = cx.theme();
+                styles.background = theme.darken(styles.background, 0.05, 0.2);
                 styles
             }
             ButtonStyle::Subtle => ButtonLikeStyles {
