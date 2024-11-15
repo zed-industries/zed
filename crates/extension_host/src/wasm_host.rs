@@ -67,6 +67,32 @@ impl extension::Extension for WasmExtension {
         self.work_dir.clone()
     }
 
+    async fn language_server_command(
+        &self,
+        language_server_id: LanguageServerName,
+        language_name: LanguageName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Command> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let command = extension
+                    .call_language_server_command(
+                        store,
+                        &language_server_id,
+                        &language_name,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(command.into())
+            }
+            .boxed()
+        })
+        .await
+    }
+
     async fn language_server_initialization_options(
         &self,
         language_server_id: LanguageServerName,
@@ -135,32 +161,6 @@ impl extension::Extension for WasmExtension {
                     .into_iter()
                     .map(|label| label.map(Into::into))
                     .collect())
-            }
-            .boxed()
-        })
-        .await
-    }
-
-    async fn language_server_command(
-        &self,
-        language_server_id: LanguageServerName,
-        language_name: LanguageName,
-        worktree: Arc<dyn WorktreeDelegate>,
-    ) -> Result<Command> {
-        self.call(|extension, store| {
-            async move {
-                let resource = store.data_mut().table().push(worktree)?;
-                let command = extension
-                    .call_language_server_command(
-                        store,
-                        &language_server_id,
-                        &language_name,
-                        resource,
-                    )
-                    .await?
-                    .map_err(|err| anyhow!("{err}"))?;
-
-                Ok(command.into())
             }
             .boxed()
         })
