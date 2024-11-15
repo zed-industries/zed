@@ -1166,30 +1166,34 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn empty(fs: Arc<dyn Fs>, cx: &mut gpui::AppContext) -> Model<Project> {
+        use clock::FakeSystemClock;
+        use gpui::Context;
+
+        let languages = LanguageRegistry::test(cx.background_executor().clone());
+        let clock = Arc::new(FakeSystemClock::default());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+        let client = client::Client::new(clock, http_client.clone(), cx);
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+        Project::local(
+            client,
+            node_runtime::NodeRuntime::unavailable(),
+            user_store,
+            Arc::new(languages),
+            fs,
+            None,
+            cx,
+        )
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn test(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> Model<Project> {
-        use clock::FakeSystemClock;
-        use gpui::Context;
+        let project = cx.update(|cx| Self::empty(fs, cx));
 
-        let languages = LanguageRegistry::test(cx.executor());
-        let clock = Arc::new(FakeSystemClock::default());
-        let http_client = http_client::FakeHttpClient::with_404_response();
-        let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
-        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
-        let project = cx.update(|cx| {
-            Project::local(
-                client,
-                node_runtime::NodeRuntime::unavailable(),
-                user_store,
-                Arc::new(languages),
-                fs,
-                None,
-                cx,
-            )
-        });
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {

@@ -2,12 +2,12 @@
 mod context_tests;
 
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
     AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
 };
+use crate::{PatchStore, ToolWorkingSet};
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
@@ -566,7 +566,7 @@ pub struct Context {
     language_registry: Arc<LanguageRegistry>,
     patches: Vec<AssistantPatch>,
     xml_tags: Vec<XmlTag>,
-    project: Option<Model<Project>>,
+    project: Model<Project>,
     prompt_builder: Arc<PromptBuilder>,
 }
 
@@ -597,7 +597,7 @@ impl EventEmitter<ContextEvent> for Context {}
 impl Context {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
-        project: Option<Model<Project>>,
+        project: Model<Project>,
         telemetry: Option<Arc<Telemetry>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
@@ -627,7 +627,7 @@ impl Context {
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
         tools: Arc<ToolWorkingSet>,
-        project: Option<Model<Project>>,
+        project: Model<Project>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -750,7 +750,7 @@ impl Context {
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
         tools: Arc<ToolWorkingSet>,
-        project: Option<Model<Project>>,
+        project: Model<Project>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -1032,7 +1032,7 @@ impl Context {
         self.language_registry.clone()
     }
 
-    pub fn project(&self) -> Option<Model<Project>> {
+    pub fn project(&self) -> Model<Project> {
         self.project.clone()
     }
 

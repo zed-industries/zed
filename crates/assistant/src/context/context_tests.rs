@@ -45,23 +45,7 @@ use workspace::Workspace;
 
 #[gpui::test]
 fn test_inserting_and_removing_messages(cx: &mut AppContext) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
-    assistant_panel::init(cx);
-    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry,
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
+    let context = init_test(cx);
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -186,24 +170,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
 
 #[gpui::test]
 fn test_message_splitting(cx: &mut AppContext) {
-    let settings_store = SettingsStore::test(cx);
-    cx.set_global(settings_store);
-    LanguageModelRegistry::test(cx);
-    assistant_panel::init(cx);
-    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry.clone(),
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
+    let context = init_test(cx);
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -291,23 +258,7 @@ fn test_message_splitting(cx: &mut AppContext) {
 
 #[gpui::test]
 fn test_messages_for_offsets(cx: &mut AppContext) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
-    assistant_panel::init(cx);
-    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry,
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
+    let context = init_test(cx);
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -386,13 +337,7 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
 
 #[gpui::test]
 async fn test_slash_commands(cx: &mut TestAppContext) {
-    let settings_store = cx.update(SettingsStore::test);
-    cx.set_global(settings_store);
-    cx.update(LanguageModelRegistry::test);
-    cx.update(Project::init_settings);
-    cx.update(assistant_panel::init);
     let fs = FakeFs::new(cx.background_executor.clone());
-
     fs.insert_tree(
         "/test",
         json!({
@@ -406,23 +351,10 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         }),
     )
     .await;
+    let context = cx.update(|cx| init_test_with_fs(fs, cx));
 
     let slash_command_registry = cx.update(SlashCommandRegistry::default_global);
     slash_command_registry.register_command(file_command::FileSlashCommand, false);
-
-    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry.clone(),
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
 
     #[derive(Default)]
     struct ContextRanges {
@@ -706,7 +638,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     let context = cx.new_model(|cx| {
         Context::local(
             registry.clone(),
-            Some(project),
+            project.clone(),
             None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
@@ -976,7 +908,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
-            None,
+            project,
             None,
             cx,
         )
@@ -1075,23 +1007,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_serialization(cx: &mut TestAppContext) {
-    let settings_store = cx.update(SettingsStore::test);
-    cx.set_global(settings_store);
-    cx.update(LanguageModelRegistry::test);
-    cx.update(assistant_panel::init);
-    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry.clone(),
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
+    let context = cx.update(init_test);
     let buffer = context.read_with(cx, |context, _| context.buffer.clone());
     let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
     let message_1 = context.update(cx, |context, cx| {
@@ -1129,11 +1045,11 @@ async fn test_serialization(cx: &mut TestAppContext) {
         Context::deserialize(
             serialized_context,
             Default::default(),
-            registry.clone(),
-            prompt_builder.clone(),
+            context.read(cx).language_registry.clone(),
+            context.read(cx).prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
-            None,
+            context.read(cx).project.clone(),
             None,
             cx,
         )
@@ -1169,8 +1085,9 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let settings_store = cx.update(SettingsStore::test);
     cx.set_global(settings_store);
     cx.update(LanguageModelRegistry::test);
-
     cx.update(assistant_panel::init);
+    cx.update(Project::init_settings);
+
     let slash_commands = cx.update(SlashCommandRegistry::default_global);
     slash_commands.register_command(FakeSlashCommand("cmd-1".into()), false);
     slash_commands.register_command(FakeSlashCommand("cmd-2".into()), false);
@@ -1184,6 +1101,8 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let context_id = ContextId::new();
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     for i in 0..num_peers {
+        let project =
+            cx.update(|cx| Project::empty(FakeFs::new(cx.background_executor().clone()), cx));
         let context = cx.new_model(|cx| {
             Context::new(
                 context_id.clone(),
@@ -1193,7 +1112,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),
                 Arc::new(ToolWorkingSet::default()),
-                None,
+                project,
                 None,
                 cx,
             )
@@ -1440,23 +1359,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
 
 #[gpui::test]
 fn test_mark_cache_anchors(cx: &mut AppContext) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
-    assistant_panel::init(cx);
-    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry,
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
+    let context = init_test(cx);
     let buffer = context.read(cx).buffer.clone();
 
     // Create a test cache configuration
@@ -1598,6 +1501,32 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
         ],
         "Modifying a message should invalidate all future messages."
     );
+}
+
+fn init_test(cx: &mut AppContext) -> Model<Context> {
+    init_test_with_fs(FakeFs::new(cx.background_executor().clone()), cx)
+}
+
+fn init_test_with_fs(fs: Arc<FakeFs>, cx: &mut AppContext) -> Model<Context> {
+    let settings_store = SettingsStore::test(cx);
+    LanguageModelRegistry::test(cx);
+    cx.set_global(settings_store);
+    Project::init_settings(cx);
+    assistant_panel::init(cx);
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+    let project = Project::empty(fs, cx);
+    cx.new_model(|cx| {
+        Context::local(
+            registry,
+            project,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
+            cx,
+        )
+    })
 }
 
 fn messages(context: &Model<Context>, cx: &AppContext) -> Vec<(MessageId, Role, Range<usize>)> {
