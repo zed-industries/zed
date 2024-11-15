@@ -2982,9 +2982,8 @@ impl ProjectPanel {
                 .right_1()
                 .top_1()
                 .bottom_1()
-                .w(px(8.))
+                .w(px(12.))
                 .cursor_default()
-                .elevation_1_borderless(cx)
                 .children(Scrollbar::vertical(
                     // percentage as f32..end_offset as f32,
                     self.vertical_scrollbar_state.clone(),
