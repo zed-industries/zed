@@ -69,7 +69,7 @@ pub struct NodeBinarySettings {
     pub ignore_system_version: Option<bool>,
     /// Allow using user's npmrc
     ///
-    /// default: false
+    /// Default: false
     pub allow_user_npmrc: Option<bool>,
 }
 
