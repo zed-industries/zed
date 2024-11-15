@@ -708,6 +708,10 @@ impl Item for Editor {
         self.buffer().read(cx).read(cx).is_dirty()
     }
 
+    fn has_deleted_file(&self, cx: &AppContext) -> bool {
+        self.buffer().read(cx).read(cx).has_deleted_file()
+    }
+
     fn has_conflict(&self, cx: &AppContext) -> bool {
         self.buffer().read(cx).read(cx).has_conflict()
     }

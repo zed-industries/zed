@@ -1541,18 +1541,25 @@ impl Pane {
         const CONFLICT_MESSAGE: &str =
                 "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
+        const DELETED_MESSAGE: &str =
+                        "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
+
         if save_intent == SaveIntent::Skip {
             return Ok(true);
         }
 
-        let (mut has_conflict, mut is_dirty, mut can_save, can_save_as) = cx.update(|cx| {
-            (
-                item.has_conflict(cx),
-                item.is_dirty(cx),
-                item.can_save(cx),
-                item.is_singleton(cx),
-            )
-        })?;
+        let (mut has_conflict, mut is_dirty, mut can_save, is_singleton, has_deleted_file) = cx
+            .update(|cx| {
+                (
+                    item.has_conflict(cx),
+                    item.is_dirty(cx),
+                    item.can_save(cx),
+                    item.is_singleton(cx),
+                    item.has_deleted_file(cx),
+                )
+            })?;
+
+        let can_save_as = is_singleton;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
         if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
@@ -1572,22 +1579,45 @@ impl Pane {
         let should_format = save_intent != SaveIntent::SaveWithoutFormat;
 
         if has_conflict && can_save {
-            let answer = pane.update(cx, |pane, cx| {
-                pane.activate_item(item_ix, true, true, cx);
-                cx.prompt(
-                    PromptLevel::Warning,
-                    CONFLICT_MESSAGE,
-                    None,
-                    &["Overwrite", "Discard", "Cancel"],
-                )
-            })?;
-            match answer.await {
-                Ok(0) => {
-                    pane.update(cx, |_, cx| item.save(should_format, project, cx))?
-                        .await?
+            if has_deleted_file && is_singleton {
+                let answer = pane.update(cx, |pane, cx| {
+                    pane.activate_item(item_ix, true, true, cx);
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        DELETED_MESSAGE,
+                        None,
+                        &["Overwrite", "Close", "Cancel"],
+                    )
+                })?;
+                match answer.await {
+                    Ok(0) => {
+                        pane.update(cx, |_, cx| item.save(should_format, project, cx))?
+                            .await?
+                    }
+                    Ok(1) => {
+                        pane.update(cx, |pane, cx| pane.remove_item(item_ix, false, false, cx))?;
+                    }
+                    _ => return Ok(false),
                 }
-                Ok(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
-                _ => return Ok(false),
+                return Ok(true);
+            } else {
+                let answer = pane.update(cx, |pane, cx| {
+                    pane.activate_item(item_ix, true, true, cx);
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        CONFLICT_MESSAGE,
+                        None,
+                        &["Overwrite", "Discard", "Cancel"],
+                    )
+                })?;
+                match answer.await {
+                    Ok(0) => {
+                        pane.update(cx, |_, cx| item.save(should_format, project, cx))?
+                            .await?
+                    }
+                    Ok(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
+                    _ => return Ok(false),
+                }
             }
         } else if is_dirty && (can_save || can_save_as) {
             if save_intent == SaveIntent::Close {
