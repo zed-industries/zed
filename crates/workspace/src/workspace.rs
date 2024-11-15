@@ -1406,6 +1406,7 @@ impl Workspace {
                                 project_entry_id,
                                 true,
                                 entry.is_preview,
+                                None,
                                 cx,
                                 build_item,
                             );
@@ -2621,7 +2622,14 @@ impl Workspace {
         cx.spawn(move |mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
             pane.update(&mut cx, |pane, cx| {
-                pane.open_item(project_entry_id, focus_item, allow_preview, cx, build_item)
+                pane.open_item(
+                    project_entry_id,
+                    focus_item,
+                    allow_preview,
+                    None,
+                    cx,
+                    build_item,
+                )
             })
         })
     }
@@ -2662,7 +2670,14 @@ impl Workspace {
                 let new_pane =
                     this.split_pane(pane, split_direction.unwrap_or(SplitDirection::Right), cx);
                 new_pane.update(cx, |new_pane, cx| {
-                    Some(new_pane.open_item(project_entry_id, true, allow_preview, cx, build_item))
+                    Some(new_pane.open_item(
+                        project_entry_id,
+                        true,
+                        allow_preview,
+                        None,
+                        cx,
+                        build_item,
+                    ))
                 })
             })
             .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
