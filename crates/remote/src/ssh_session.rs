@@ -1428,9 +1428,21 @@ impl SshRemoteConnection {
             }
         });
 
+        anyhow::ensure!(
+            which::which("nc").is_ok(),
+            "Cannot find nc, which is required to connect over ssh."
+        );
+
         // Create an askpass script that communicates back to this process.
         let askpass_script = format!(
-            "{shebang}\n{print_args} | nc -U {askpass_socket} 2> /dev/null \n",
+            "{shebang}\n{print_args} | {nc} -U {askpass_socket} 2> /dev/null \n",
+            // on macOS `brew install netcat` provides the GNU netcat implementation
+            // which does not support -U.
+            nc = if cfg!(target_os = "macos") {
+                "/usr/bin/nc"
+            } else {
+                "nc"
+            },
             askpass_socket = askpass_socket.display(),
             print_args = "printf '%s\\0' \"$@\"",
             shebang = "#!/bin/sh",

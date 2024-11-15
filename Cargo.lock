@@ -9655,6 +9655,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "util",
+ "which 6.0.3",
 ]
 
 [[package]]
