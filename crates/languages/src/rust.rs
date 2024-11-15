@@ -145,19 +145,33 @@ impl LspAdapter for RustLspAdapter {
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .with_context(|| format!("downloading release from {}", version.url))?;
             match Self::GITHUB_ASSET_KIND {
                 AssetKind::TarGz => {
-                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-                    let archive = async_tar::Archive::new(decompressed_bytes);
-                    archive.unpack(&destination_path).await?;
+                    let mut decompressed_bytes =
+                        GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let mut file =
+                        fs::File::create(&destination_path).await.with_context(|| {
+                            format!(
+                                "creating a file {:?} for a download from {}",
+                                destination_path, version.url,
+                            )
+                        })?;
+                    futures::io::copy(&mut decompressed_bytes, &mut file)
+                        .await
+                        .with_context(|| {
+                            format!("extracting {} to {:?}", version.url, destination_path)
+                        })?;
                 }
                 AssetKind::Zip => {
                     node_runtime::extract_zip(
                         &destination_path,
                         BufReader::new(response.body_mut()),
                     )
-                    .await?;
+                    .await
+                    .with_context(|| {
+                        format!("unzipping {} to {:?}", version.url, destination_path)
+                    })?;
                 }
             };
 
