@@ -4,6 +4,7 @@ mod since_v0_0_6;
 mod since_v0_1_0;
 mod since_v0_2_0;
 use extension::{KeyValueStoreDelegate, WorktreeDelegate};
+use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
 use since_v0_2_0 as latest;
@@ -163,7 +164,7 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
-        config: &LanguageServerConfig,
+        language_name: &LanguageName,
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Command, String>> {
         match self {
@@ -180,11 +181,26 @@ impl Extension {
                 .await?
                 .map(|command| command.into())),
             Extension::V004(ext) => Ok(ext
-                .call_language_server_command(store, config, resource)
+                .call_language_server_command(
+                    store,
+                    &LanguageServerConfig {
+                        name: language_server_id.0.to_string(),
+                        language_name: language_name.to_string(),
+                    },
+                    resource,
+                )
                 .await?
                 .map(|command| command.into())),
             Extension::V001(ext) => Ok(ext
-                .call_language_server_command(store, &config.clone().into(), resource)
+                .call_language_server_command(
+                    store,
+                    &LanguageServerConfig {
+                        name: language_server_id.0.to_string(),
+                        language_name: language_name.to_string(),
+                    }
+                    .into(),
+                    resource,
+                )
                 .await?
                 .map(|command| command.into())),
         }
@@ -194,7 +210,7 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
-        config: &LanguageServerConfig,
+        language_name: &LanguageName,
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
@@ -223,13 +239,24 @@ impl Extension {
                 .await
             }
             Extension::V004(ext) => {
-                ext.call_language_server_initialization_options(store, config, resource)
-                    .await
+                ext.call_language_server_initialization_options(
+                    store,
+                    &LanguageServerConfig {
+                        name: language_server_id.0.to_string(),
+                        language_name: language_name.to_string(),
+                    },
+                    resource,
+                )
+                .await
             }
             Extension::V001(ext) => {
                 ext.call_language_server_initialization_options(
                     store,
-                    &config.clone().into(),
+                    &LanguageServerConfig {
+                        name: language_server_id.0.to_string(),
+                        language_name: language_name.to_string(),
+                    }
+                    .into(),
                     resource,
                 )
                 .await
