@@ -202,7 +202,11 @@ impl ButtonStyle {
                     icon_color: Color::Default.color(cx),
                 }
             }
-            ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
+            ButtonStyle::Tinted(tint) => {
+                let mut styles = tint.button_like_style(cx);
+                styles.background = styles.background.darken(0.2);
+                styles
+            }
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
                 border_color: transparent_black(),
