@@ -92,6 +92,12 @@ impl From<Arc<RenderImage>> for ImageSource {
     }
 }
 
+impl From<Arc<Image>> for ImageSource {
+    fn from(value: Arc<Image>) -> Self {
+        Self::Image(value)
+    }
+}
+
 impl<
         F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, Arc<anyhow::Error>>> + 'static,
     > From<F> for ImageSource

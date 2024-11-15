@@ -127,7 +127,6 @@ impl Render for ImageLoadingExample {
                                 timeout: Duration::from_secs(5),
                                 fail: false,
                             })
-                            .map(|result| result.map_err(|e| e.into()))
                         })
                         .id("image-2")
                         .with_fallback(|| Self::fallback_element().into_any_element())
@@ -143,7 +142,6 @@ impl Render for ImageLoadingExample {
                                 timeout: Duration::from_secs(5),
                                 fail: true,
                             })
-                            .map(|result| result.map_err(|e| e.into()))
                         })
                         .id("image-3")
                         .with_fallback(|| Self::fallback_element().into_any_element())
