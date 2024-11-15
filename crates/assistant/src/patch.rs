@@ -1,12 +1,221 @@
 use anyhow::{anyhow, Context as _, Result};
-use collections::HashMap;
+use collections::{hash_map, HashMap};
 use editor::ProposedChangesEditor;
 use futures::{future, TryFutureExt as _};
-use gpui::{AppContext, AsyncAppContext, Model, SharedString};
+use gpui::{AppContext, AsyncAppContext, Model, ModelContext, SharedString, Task};
 use language::{AutoindentMode, Buffer, BufferSnapshot};
 use project::{Project, ProjectPath};
+use rope::Rope;
 use std::{cmp, ops::Range, path::Path, sync::Arc};
 use text::{AnchorRangeExt as _, Bias, OffsetRangeExt as _, Point};
+use util::ResultExt;
+
+struct PatchStore {
+    project: Model<Project>,
+    located_patches: HashMap<Range<text::Anchor>, (LocatedPatch, Option<Task<Result<()>>>)>,
+}
+
+impl PatchStore {
+    fn new(project: Model<Project>) -> Self {
+        Self {
+            project,
+            located_patches: HashMap::default(),
+        }
+    }
+
+    fn insert(&mut self, patch: AssistantPatch, cx: &mut ModelContext<Self>) {
+        let project = self.project.clone();
+        let range = patch.range.clone();
+        match self.located_patches.entry(range.clone()) {
+            hash_map::Entry::Occupied(mut e) => {
+                let current_patch = e.get().0.clone();
+                let task = cx.spawn(|this, mut cx| async move {
+                    let located_patch =
+                        Self::locate_patch(patch, project, Some(current_patch), &mut cx).await?;
+                    this.update(&mut cx, |this, _cx| {
+                        this.located_patches.insert(range, (located_patch, None));
+                    })
+                });
+                e.get_mut().1 = Some(task);
+            }
+            hash_map::Entry::Vacant(e) => {
+                let task = cx.spawn({
+                    let patch = patch.clone();
+                    |this, mut cx| async move {
+                        let located_patch =
+                            Self::locate_patch(patch, project, None, &mut cx).await?;
+                        this.update(&mut cx, |this, _cx| {
+                            this.located_patches.insert(range, (located_patch, None));
+                        })
+                    }
+                });
+                e.insert((
+                    LocatedPatch {
+                        buffers: Vec::new(),
+                        input: patch,
+                    },
+                    Some(task),
+                ));
+            }
+        }
+    }
+
+    fn resolve_patch(
+        &mut self,
+        range: Range<text::Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ResolvedPatch>> {
+        let project = self.project.clone();
+        let Some(patch) = self.located_patches.get(&range) else {
+            return Task::ready(Err(anyhow!("no patch for the given range")));
+        };
+        let patch = patch.0.clone();
+
+        cx.spawn(|_, mut cx| async move {
+            let mut result = ResolvedPatch {
+                edit_groups: HashMap::default(),
+                errors: Vec::new(),
+            };
+
+            for patch_buffer in patch.buffers {
+                let buffer =
+                    open_buffer_for_edit_path(&project, patch_buffer.path.clone(), &mut cx);
+                if let Some(buffer) = buffer {
+                    let buffer = buffer.await?;
+                    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.text_snapshot())?;
+
+                    // compute a diff between `snapshot` and `patch_buffer.content`
+                    // update the edit ranges based on this diff.
+                    // clip the offsets to make sure they are valid.
+
+                    let edits = patch_buffer
+                        .edits
+                        .into_iter()
+                        .map(|edit| ResolvedEdit {
+                            range: snapshot.anchor_before(edit.range.start)
+                                ..snapshot.anchor_after(edit.range.end),
+                            new_text: edit.new_text,
+                            description: edit.description,
+                        })
+                        .collect::<Vec<_>>();
+                    result
+                        .edit_groups
+                        .insert(buffer, AssistantPatch::group_edits(edits, &snapshot));
+                }
+            }
+
+            Ok(result)
+        })
+    }
+
+    async fn locate_patch(
+        patch: AssistantPatch,
+        project: Model<Project>,
+        prev_located_patch: Option<LocatedPatch>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<LocatedPatch> {
+        let prev_edits = prev_located_patch
+            .as_ref()
+            .map(|patch| patch.input.edits.clone())
+            .unwrap_or(Arc::new([]));
+
+        let mut result = match prev_located_patch {
+            Some(mut prev_patch) => {
+                prev_patch.input = patch;
+                prev_patch
+            }
+            None => LocatedPatch {
+                input: patch,
+                buffers: Vec::new(),
+            },
+        };
+
+        for edit in result.input.edits.iter() {
+            if prev_edits.contains(&edit) {
+                continue;
+            }
+
+            let buffer_ix = match result
+                .buffers
+                .binary_search_by_key(&Path::new(&edit.path), |buffer| &buffer.path)
+            {
+                Ok(ix) => ix,
+                Err(ix) => {
+                    let buffer =
+                        open_buffer_for_edit_path(&project, Path::new(&edit.path).into(), cx);
+                    if let Some(buffer) = buffer {
+                        if let Some(buffer) = buffer.await.log_err() {
+                            let content =
+                                buffer.read_with(cx, |buffer, _| buffer.as_rope().clone())?;
+                            result.buffers.insert(
+                                ix,
+                                LocatedPatchBuffer {
+                                    content,
+                                    path: Path::new(&edit.path).into(),
+                                    edits: Vec::new(),
+                                },
+                            )
+                        }
+                    }
+
+                    ix
+                }
+            };
+
+            let buffer = &mut result.buffers[buffer_ix];
+            let located_edit = edit.kind.clone().locate(&buffer.content);
+
+            match buffer
+                .edits
+                .binary_search_by_key(&&located_edit.range.start, |edit| &edit.range.start)
+            {
+                Ok(ix) => buffer.edits[ix] = located_edit,
+                Err(ix) => buffer.edits.insert(ix, located_edit),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn serialize(&self) -> Box<serde_json::value::RawValue> {
+        todo!()
+    }
+
+    fn deserialize(&self, json: &serde_json::value::RawValue) -> Result<()> {
+        todo!()
+    }
+}
+
+fn open_buffer_for_edit_path(
+    project: &Model<Project>,
+    path: Arc<Path>,
+    cx: &mut AsyncAppContext,
+) -> Option<Task<Result<Model<Buffer>>>> {
+    project
+        .update(cx, |project, cx| {
+            let project_path = project
+                .find_project_path(&path, cx)
+                .or_else(|| {
+                    // If we couldn't find a project path for it, put it in the active worktree
+                    // so that when we create the buffer, it can be saved.
+                    let worktree = project
+                        .active_entry()
+                        .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
+                        .or_else(|| project.worktrees(cx).next())?;
+                    let worktree = worktree.read(cx);
+
+                    Some(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: path.clone(),
+                    })
+                })
+                .with_context(|| format!("worktree not found for {:?}", path))
+                .log_err();
+            Some(project.open_buffer(project_path?, cx))
+        })
+        .ok()
+        .flatten()
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct AssistantPatch {
@@ -52,6 +261,26 @@ pub enum AssistantEditKind {
     Delete {
         old_text: String,
     },
+}
+
+#[derive(Clone, Debug)]
+struct LocatedPatch {
+    pub buffers: Vec<LocatedPatchBuffer>,
+    pub input: AssistantPatch,
+}
+
+#[derive(Clone, Debug)]
+struct LocatedPatchBuffer {
+    pub path: Arc<Path>,
+    pub content: Rope,
+    pub edits: Vec<LocatedEdit>,
+}
+
+#[derive(Clone, Debug)]
+struct LocatedEdit {
+    range: Range<usize>,
+    new_text: String,
+    description: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -278,9 +507,9 @@ impl AssistantEditKind {
                 new_text,
                 description,
             } => {
-                let range = Self::resolve_location(&snapshot, &old_text);
+                let range = Self::resolve_location(snapshot.as_rope(), &old_text);
                 ResolvedEdit {
-                    range,
+                    range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
                     new_text,
                     description,
                 }
@@ -298,9 +527,68 @@ impl AssistantEditKind {
                 mut new_text,
                 description,
             } => {
-                let range = Self::resolve_location(&snapshot, &old_text);
+                let range = Self::resolve_location(snapshot.as_rope(), &old_text);
                 new_text.push('\n');
                 ResolvedEdit {
+                    range: snapshot.anchor_before(range.start)..snapshot.anchor_before(range.start),
+                    new_text,
+                    description,
+                }
+            }
+            Self::InsertAfter {
+                old_text,
+                mut new_text,
+                description,
+            } => {
+                let range = Self::resolve_location(snapshot.as_rope(), &old_text);
+                new_text.insert(0, '\n');
+                ResolvedEdit {
+                    range: snapshot.anchor_after(range.end)..snapshot.anchor_after(range.end),
+                    new_text,
+                    description,
+                }
+            }
+            Self::Delete { old_text } => {
+                let range = Self::resolve_location(snapshot.as_rope(), &old_text);
+                ResolvedEdit {
+                    range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
+                    new_text: String::new(),
+                    description: None,
+                }
+            }
+        }
+    }
+
+    fn locate(self, buffer: &Rope) -> LocatedEdit {
+        match self {
+            Self::Update {
+                old_text,
+                new_text,
+                description,
+            } => {
+                let range = Self::resolve_location(&buffer, &old_text);
+                LocatedEdit {
+                    range,
+                    new_text,
+                    description,
+                }
+            }
+            Self::Create {
+                new_text,
+                description,
+            } => LocatedEdit {
+                range: 0..buffer.len(),
+                description,
+                new_text,
+            },
+            Self::InsertBefore {
+                old_text,
+                mut new_text,
+                description,
+            } => {
+                let range = Self::resolve_location(&buffer, &old_text);
+                new_text.push('\n');
+                LocatedEdit {
                     range: range.start..range.start,
                     new_text,
                     description,
@@ -311,17 +599,17 @@ impl AssistantEditKind {
                 mut new_text,
                 description,
             } => {
-                let range = Self::resolve_location(&snapshot, &old_text);
+                let range = Self::resolve_location(&buffer, &old_text);
                 new_text.insert(0, '\n');
-                ResolvedEdit {
+                LocatedEdit {
                     range: range.end..range.end,
                     new_text,
                     description,
                 }
             }
             Self::Delete { old_text } => {
-                let range = Self::resolve_location(&snapshot, &old_text);
-                ResolvedEdit {
+                let range = Self::resolve_location(&buffer, &old_text);
+                LocatedEdit {
                     range,
                     new_text: String::new(),
                     description: None,
@@ -330,7 +618,7 @@ impl AssistantEditKind {
         }
     }
 
-    fn resolve_location(buffer: &text::BufferSnapshot, search_query: &str) -> Range<text::Anchor> {
+    fn resolve_location(buffer: &Rope, search_query: &str) -> Range<usize> {
         const INSERTION_COST: u32 = 3;
         const DELETION_COST: u32 = 10;
         const WHITESPACE_INSERTION_COST: u32 = 1;
@@ -413,14 +701,14 @@ impl AssistantEditKind {
             }
         }
 
-        let mut start = buffer.offset_to_point(buffer.clip_offset(buffer_ix, Bias::Left));
-        start.column = 0;
-        let mut end = buffer.offset_to_point(buffer.clip_offset(best_buffer_end, Bias::Right));
-        if end.column > 0 {
-            end.column = buffer.line_len(end.row);
-        }
+        let start_offset = buffer.clip_offset(buffer_ix, Bias::Left);
+        let end_offset = buffer.clip_offset(best_buffer_end, Bias::Right);
 
-        buffer.anchor_after(start)..buffer.anchor_before(end)
+        let start = buffer.offset_to_point(start_offset);
+        let end = buffer.offset_to_point(end_offset);
+
+        (start_offset - start.column as usize)
+            ..(end_offset + (buffer.line_len(end.row) - end.column) as usize)
     }
 }
 
@@ -551,14 +839,180 @@ impl Eq for AssistantPatch {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext, Context};
+    use fs::FakeFs;
+    use gpui::{AppContext, Context, TestAppContext};
     use language::{
         language_settings::AllLanguageSettings, Language, LanguageConfig, LanguageMatcher,
     };
+    use serde_json::json;
     use settings::SettingsStore;
     use ui::BorrowAppContext;
     use unindent::Unindent as _;
     use util::test::{generate_marked_text, marked_text_ranges};
+
+    #[gpui::test]
+    async fn test_patch_store(cx: &mut TestAppContext) {
+        let settings_store = cx.update(SettingsStore::test);
+        cx.set_global(settings_store);
+        cx.update(language::init);
+        cx.update(Project::init_settings);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+
+        fs.insert_tree(
+            "/root",
+            json!({
+                "src": {
+                    "lib.rs": "
+                        fn one() -> usize {
+                            1
+                        }
+                        fn two() -> usize {
+                            2
+                        }
+                        fn three() -> usize {
+                            3
+                        }
+                    ".unindent(),
+                    "main.rs": "
+                        use crate::one;
+                        fn main() { one(); }
+                    ".unindent(),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        project.update(cx, |project, _| {
+            project.languages().add(Arc::new(rust_lang()));
+        });
+        let patch_store = cx.new_model(|_| PatchStore::new(project.clone()));
+        let context_buffer = cx.new_model(|cx| Buffer::local("hello", cx));
+        let context_buffer = context_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+        let range = context_buffer.anchor_before(0)..context_buffer.anchor_before(1);
+
+        patch_store.update(cx, |store, cx| {
+            store.insert(
+                AssistantPatch {
+                    range: range.clone(),
+                    title: "first patch".into(),
+                    edits: vec![AssistantEdit {
+                        path: "src/lib.rs".into(),
+                        kind: AssistantEditKind::Update {
+                            old_text: "1".into(),
+                            new_text: "100".into(),
+                            description: None,
+                        },
+                    }]
+                    .into(),
+                    status: AssistantPatchStatus::Pending,
+                },
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+        let patch = patch_store
+            .update(cx, |store, cx| store.resolve_patch(range.clone(), cx))
+            .await
+            .unwrap();
+        assert_apply_patch(
+            &patch,
+            cx,
+            &[(
+                Path::new("src/lib.rs").into(),
+                "
+                fn one() -> usize {
+                    100
+                }
+                fn two() -> usize {
+                    2
+                }
+                fn three() -> usize {
+                    3
+                }
+                "
+                .unindent(),
+            )],
+        );
+
+        patch_store.update(cx, |store, cx| {
+            store.insert(
+                AssistantPatch {
+                    range: range.clone(),
+                    title: "first patch".into(),
+                    edits: vec![
+                        AssistantEdit {
+                            path: "src/lib.rs".into(),
+                            kind: AssistantEditKind::Update {
+                                old_text: "1".into(),
+                                new_text: "100".into(),
+                                description: None,
+                            },
+                        },
+                        AssistantEdit {
+                            path: "src/lib.rs".into(),
+                            kind: AssistantEditKind::Update {
+                                old_text: "3".into(),
+                                new_text: "300".into(),
+                                description: None,
+                            },
+                        },
+                    ]
+                    .into(),
+                    status: AssistantPatchStatus::Pending,
+                },
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+        let patch = patch_store
+            .update(cx, |store, cx| store.resolve_patch(range.clone(), cx))
+            .await
+            .unwrap();
+        assert_apply_patch(
+            &patch,
+            cx,
+            &[(
+                Path::new("src/lib.rs").into(),
+                "
+                fn one() -> usize {
+                    100
+                }
+                fn two() -> usize {
+                    2
+                }
+                fn three() -> usize {
+                    300
+                }
+                "
+                .unindent(),
+            )],
+        );
+    }
+
+    #[track_caller]
+    fn assert_apply_patch(
+        patch: &ResolvedPatch,
+        cx: &mut TestAppContext,
+        expected_output: &[(Arc<Path>, String)],
+    ) {
+        let mut actual_output = Vec::new();
+        for (buffer, edit_groups) in &patch.edit_groups {
+            let branch = buffer.update(cx, |buffer, cx| buffer.branch(cx));
+            cx.update(|cx| {
+                ResolvedPatch::apply_edit_groups(edit_groups, &branch, cx);
+                actual_output.push((
+                    buffer.read(cx).file().unwrap().path().clone(),
+                    branch.read(cx).text(),
+                ));
+            });
+        }
+        pretty_assertions::assert_eq!(actual_output, expected_output);
+    }
 
     #[gpui::test]
     fn test_resolve_location(cx: &mut AppContext) {
@@ -916,7 +1370,8 @@ mod tests {
         let (text, _) = marked_text_ranges(text_with_expected_range, false);
         let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
         let snapshot = buffer.read(cx).snapshot();
-        let range = AssistantEditKind::resolve_location(&snapshot, query).to_offset(&snapshot);
+        let range =
+            AssistantEditKind::resolve_location(snapshot.as_rope(), query).to_offset(&snapshot);
         let text_with_actual_range = generate_marked_text(&text, &[range], false);
         pretty_assertions::assert_eq!(text_with_actual_range, text_with_expected_range);
     }
