@@ -5,7 +5,7 @@ pub mod wasm_host;
 #[cfg(test)]
 mod extension_store_test;
 
-use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
+use crate::extension_lsp_adapter::ExtensionLspAdapter;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -1238,13 +1238,9 @@ impl ExtensionStore {
                             this.registration_hooks.register_lsp_adapter(
                                 language.clone(),
                                 ExtensionLspAdapter {
-                                    extension: wasm_extension.clone(),
-                                    host: this.wasm_host.clone(),
+                                    extension: extension.clone(),
                                     language_server_id: language_server_id.clone(),
-                                    config: wit::LanguageServerConfig {
-                                        name: language_server_id.0.to_string(),
-                                        language_name: language.to_string(),
-                                    },
+                                    language_name: language.clone(),
                                 },
                             );
                         }
