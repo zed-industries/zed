@@ -1,7 +1,7 @@
 use crate::{
     self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
     Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
-    SharedString, StyleRefinement, WhiteSpace,
+    SharedString, StrikethroughStyle, StyleRefinement, WhiteSpace,
 };
 use crate::{TextStyleRefinement, Truncate};
 pub use gpui_macros::{
@@ -436,6 +436,17 @@ pub trait Styled: Sized {
         self.text_style()
             .get_or_insert_with(Default::default)
             .font_style = Some(FontStyle::Italic);
+        self
+    }
+
+    /// Sets the decoration of the text to have a line through it.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration#setting-the-text-decoration)
+    fn line_through(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        style.strikethrough = Some(StrikethroughStyle {
+            thickness: px(1.),
+            ..Default::default()
+        });
         self
     }
 
