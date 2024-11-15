@@ -964,21 +964,19 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         let (expected_text, _) = marked_text_ranges(&expected_marked_text, false);
 
         let (buffer_text, ranges, patches) = context.update(cx, |context, cx| {
+            let patch_store = context.patch_store.read(cx);
             context.buffer.read_with(cx, |buffer, _| {
                 let ranges = context
                     .patches
                     .iter()
-                    .map(|entry| entry.range.to_offset(buffer))
+                    .map(|entry| entry.0.to_offset(buffer))
                     .collect::<Vec<_>>();
-                (
-                    buffer.text(),
-                    ranges,
-                    context
-                        .patches
-                        .iter()
-                        .map(|step| step.edits.clone())
-                        .collect::<Vec<_>>(),
-                )
+                let patches = context
+                    .patches
+                    .iter()
+                    .map(|entry| patch_store.get(entry.1).unwrap().clone())
+                    .collect::<Vec<_>>();
+                (buffer.text(), ranges, patches)
             })
         });
 
@@ -992,6 +990,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
                 .iter()
                 .map(|patch| {
                     patch
+                        .edits
                         .iter()
                         .map(|edit| AssistantEdit {
                             path: edit.path.clone(),

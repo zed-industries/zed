@@ -1,13 +1,14 @@
 #[cfg(test)]
 mod context_tests;
 
+use crate::patch::{PatchId, PatchStore};
 use crate::slash_command_working_set::SlashCommandWorkingSet;
 use crate::{
     prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
     AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
 };
-use crate::{PatchStore, ToolWorkingSet};
+use crate::{ResolvedPatch, ToolWorkingSet};
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
@@ -564,7 +565,8 @@ pub struct Context {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    patches: Vec<AssistantPatch>,
+    patches: Vec<(Range<text::Anchor>, PatchId)>,
+    patch_store: Model<PatchStore>,
     xml_tags: Vec<XmlTag>,
     project: Model<Project>,
     prompt_builder: Arc<PromptBuilder>,
@@ -583,6 +585,12 @@ impl ContextAnnotation for ParsedSlashCommand {
 impl ContextAnnotation for AssistantPatch {
     fn range(&self) -> &Range<language::Anchor> {
         &self.range
+    }
+}
+
+impl ContextAnnotation for (Range<language::Anchor>, PatchId) {
+    fn range(&self) -> &Range<language::Anchor> {
+        &self.0
     }
 }
 
@@ -667,6 +675,7 @@ impl Context {
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
+            patch_store: cx.new_model(|_| PatchStore::new(project.clone())),
             buffer,
             telemetry,
             project,
@@ -1048,41 +1057,52 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub(crate) fn patch_containing(
-        &self,
+    pub(crate) fn patch_containing<'a>(
+        &'a self,
         position: Point,
-        cx: &AppContext,
-    ) -> Option<&AssistantPatch> {
+        cx: &'a AppContext,
+    ) -> Option<(PatchId, &'a AssistantPatch)> {
         let buffer = self.buffer.read(cx);
-        let index = self.patches.binary_search_by(|patch| {
-            let patch_range = patch.range.to_point(&buffer);
-            if position < patch_range.start {
-                Ordering::Greater
-            } else if position > patch_range.end {
-                Ordering::Less
-            } else {
-                Ordering::Equal
-            }
-        });
-        if let Ok(ix) = index {
-            Some(&self.patches[ix])
-        } else {
-            None
-        }
+        let index = self
+            .patches
+            .binary_search_by(|patch| {
+                let patch_range = patch.0.to_point(&buffer);
+                if position < patch_range.start {
+                    Ordering::Greater
+                } else if position > patch_range.end {
+                    Ordering::Less
+                } else {
+                    Ordering::Equal
+                }
+            })
+            .ok()?;
+        let id = self.patches[index].1;
+        let patch = self.patch_store.read(cx).get(id)?;
+        Some((id, patch))
     }
 
     pub fn patch_ranges(&self) -> impl Iterator<Item = Range<language::Anchor>> + '_ {
-        self.patches.iter().map(|patch| patch.range.clone())
+        self.patches.iter().map(|patch| patch.0.clone())
     }
 
-    pub(crate) fn patch_for_range(
-        &self,
+    pub(crate) fn patch_for_range<'a>(
+        &'a self,
         range: &Range<language::Anchor>,
-        cx: &AppContext,
-    ) -> Option<&AssistantPatch> {
+        cx: &'a AppContext,
+    ) -> Option<(PatchId, &AssistantPatch)> {
         let buffer = self.buffer.read(cx);
-        let index = self.patch_index_for_range(range, buffer).ok()?;
-        Some(&self.patches[index])
+        let ix = self.patch_index_for_range(range, buffer).ok()?;
+        let id = self.patches[ix].1;
+        let patch = self.patch_store.read(cx).get(id)?;
+        Some((id, patch))
+    }
+
+    pub(crate) fn resolve_patch(
+        &self,
+        id: PatchId,
+        cx: &AppContext,
+    ) -> Task<Result<ResolvedPatch>> {
+        self.patch_store.read(cx).resolve_patch(id, cx)
     }
 
     fn patch_index_for_range(
@@ -1091,7 +1111,7 @@ impl Context {
         buffer: &text::BufferSnapshot,
     ) -> Result<usize, usize> {
         self.patches
-            .binary_search_by(|probe| probe.range.cmp(&tagged_range, buffer))
+            .binary_search_by(|(range, _)| range.cmp(&tagged_range, buffer))
     }
 
     pub fn parsed_slash_commands(&self) -> &[ParsedSlashCommand] {
@@ -1550,13 +1570,13 @@ impl Context {
 
         // Reparse all tags after the last unchanged patch before the change.
         let mut tags_start_ix = 0;
-        if let Some(preceding_unchanged_patch) =
+        if let Some((preceding_unchanged_patch_range, _)) =
             self.patches[..intersecting_patches_range.start].last()
         {
             tags_start_ix = match self.xml_tags.binary_search_by(|tag| {
                 tag.range
                     .start
-                    .cmp(&preceding_unchanged_patch.range.end, buffer)
+                    .cmp(&preceding_unchanged_patch_range.end, buffer)
                     .then(Ordering::Less)
             }) {
                 Ok(ix) | Err(ix) => ix,
@@ -1565,11 +1585,28 @@ impl Context {
 
         // Rebuild the patches in the range.
         let new_patches = self.parse_patches(tags_start_ix, range.end, buffer, cx);
-        updated.extend(new_patches.iter().map(|patch| patch.range.clone()));
+        let new_patches = self.patch_store.update(cx, |patch_store, cx| {
+            new_patches
+                .into_iter()
+                .map(|patch| {
+                    let id;
+                    let range = patch.range.clone();
+                    if let Ok(ix) = self.patch_index_for_range(&range, buffer) {
+                        id = self.patches[ix].1;
+                        patch_store.update(id, patch, cx).ok();
+                    } else {
+                        id = patch_store.insert(patch, cx);
+                    }
+                    (range, id)
+                })
+                .collect::<Vec<_>>()
+        });
+
+        updated.extend(new_patches.iter().map(|patch| patch.0.clone()));
         let removed_patches = self.patches.splice(intersecting_patches_range, new_patches);
         removed.extend(
             removed_patches
-                .map(|patch| patch.range)
+                .map(|patch| patch.0)
                 .filter(|range| !updated.contains(&range)),
         );
     }
