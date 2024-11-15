@@ -11,6 +11,7 @@ use client::{
     ChannelId, Client, ParticipantIndex, TypedEnvelope, User, UserStore,
 };
 use collections::{BTreeMap, HashMap, HashSet};
+use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
 use gpui::{
@@ -1298,8 +1299,12 @@ impl Room {
         self.live_kit.as_ref().map(|live_kit| live_kit.deafened)
     }
 
-    pub fn can_use_microphone(&self) -> bool {
+    pub fn can_use_microphone(&self, cx: &AppContext) -> bool {
         use proto::ChannelRole::*;
+
+        if cfg!(target_os = "windows") || (cfg!(target_os = "linux") && !cx.is_staff()) {
+            return false;
+        }
         match self.local_participant.role {
             Admin | Member | Talker => true,
             Guest | Banned => false,
@@ -1669,7 +1674,7 @@ fn spawn_room_connection(
                     _handle_updates,
                 });
 
-                if !muted_by_user && this.can_use_microphone() {
+                if !muted_by_user && this.can_use_microphone(cx) {
                     this.share_microphone(cx)
                 } else {
                     Task::ready(Ok(()))

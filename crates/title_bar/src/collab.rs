@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use call::{report_call_event_for_room, ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, User};
-use feature_flags::FeatureFlagAppExt as _;
 use gpui::{actions, AppContext, Task, WindowContext};
 use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
 use rpc::proto::{self};
@@ -297,13 +296,8 @@ impl TitleBar {
         let is_muted = room.is_muted();
         let is_deafened = room.is_deafened().unwrap_or(false);
         let is_screen_sharing = room.is_screen_sharing();
-        let can_use_microphone = room.can_use_microphone();
+        let can_use_microphone = room.can_use_microphone(cx);
         let can_share_projects = room.can_share_projects();
-        let audio_supported = match self.platform_style {
-            PlatformStyle::Linux => cx.is_staff(),
-            PlatformStyle::Mac => true,
-            PlatformStyle::Windows => false,
-        };
         let screen_sharing_supported = match self.platform_style {
             PlatformStyle::Mac => true,
             PlatformStyle::Linux | PlatformStyle::Windows => false,
@@ -371,9 +365,7 @@ impl TitleBar {
                 )
                 .tooltip(move |cx| {
                     Tooltip::text(
-                        if !audio_supported {
-                            "Cannot share microphone"
-                        } else if is_muted {
+                        if is_muted {
                             "Unmute microphone"
                         } else {
                             "Mute microphone"
@@ -383,42 +375,34 @@ impl TitleBar {
                 })
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
-                .selected(audio_supported && is_muted)
-                .disabled(!audio_supported)
+                .selected(is_muted)
                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                 .on_click(move |_, cx| {
                     toggle_mute(&Default::default(), cx);
                 })
                 .into_any_element(),
             );
-        }
 
-        children.push(
-            IconButton::new(
-                "mute-sound",
-                if is_deafened {
-                    ui::IconName::AudioOff
-                } else {
-                    ui::IconName::AudioOn
-                },
-            )
-            .style(ButtonStyle::Subtle)
-            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-            .icon_size(IconSize::Small)
-            .selected(is_deafened)
-            .disabled(!audio_supported)
-            .tooltip(move |cx| {
-                if !audio_supported {
-                    Tooltip::text("Cannot share microphone", cx)
-                } else if can_use_microphone {
+            children.push(
+                IconButton::new(
+                    "mute-sound",
+                    if is_deafened {
+                        ui::IconName::AudioOff
+                    } else {
+                        ui::IconName::AudioOn
+                    },
+                )
+                .style(ButtonStyle::Subtle)
+                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                .icon_size(IconSize::Small)
+                .selected(is_deafened)
+                .tooltip(move |cx| {
                     Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
-                } else {
-                    Tooltip::text("Deafen Audio", cx)
-                }
-            })
-            .on_click(move |_, cx| toggle_deafen(&Default::default(), cx))
-            .into_any_element(),
-        );
+                })
+                .on_click(move |_, cx| toggle_deafen(&Default::default(), cx))
+                .into_any_element(),
+            );
+        }
 
         if can_share_projects {
             children.push(
