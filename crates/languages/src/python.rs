@@ -19,6 +19,7 @@ use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::{json, Value};
 use smol::{lock::OnceCell, process::Command};
+use std::cmp::Ordering;
 
 use std::sync::Mutex;
 use std::{
@@ -425,11 +426,32 @@ impl ToolchainLister for PythonToolchainProvider {
             .lock()
             .ok()
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
+
         toolchains.sort_by(|lhs, rhs| {
             env_priority(lhs.kind)
                 .cmp(&env_priority(rhs.kind))
+                .then_with(|| {
+                    if lhs.kind == Some(PythonEnvironmentKind::Conda) {
+                        environment
+                            .get_env_var("CONDA_PREFIX".to_string())
+                            .map(|conda_prefix| {
+                                let is_match = |exe: &Option<PathBuf>| {
+                                    exe.as_ref().map_or(false, |e| e.starts_with(&conda_prefix))
+                                };
+                                match (is_match(&lhs.executable), is_match(&rhs.executable)) {
+                                    (true, false) => Ordering::Less,
+                                    (false, true) => Ordering::Greater,
+                                    _ => Ordering::Equal,
+                                }
+                            })
+                            .unwrap_or(Ordering::Equal)
+                    } else {
+                        Ordering::Equal
+                    }
+                })
                 .then_with(|| lhs.executable.cmp(&rhs.executable))
         });
+
         let mut toolchains: Vec<_> = toolchains
             .into_iter()
             .filter_map(|toolchain| {
