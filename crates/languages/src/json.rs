@@ -9,7 +9,7 @@ use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::ContextProviderWithTasks;
+use project::{lsp_store::language_server_settings, ContextProviderWithTasks};
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
@@ -25,7 +25,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
@@ -194,15 +194,26 @@ impl LspAdapter for JsonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        cx.update(|cx| {
+        let mut config = cx.update(|cx| {
             self.workspace_config
                 .get_or_init(|| Self::get_workspace_config(self.languages.language_names(), cx))
                 .clone()
-        })
+        })?;
+
+        let project_options = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &self.name(), cx)
+                .and_then(|s| s.settings.clone())
+        })?;
+
+        if let Some(override_options) = project_options {
+            merge_json_value_into(override_options, &mut config);
+        }
+
+        Ok(config)
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
