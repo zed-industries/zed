@@ -383,7 +383,7 @@ impl WasmHost {
 
             Ok(WasmExtension {
                 manifest: manifest.clone(),
-                work_dir: this.work_dir.clone().into(),
+                work_dir: this.work_dir.join(manifest.id.as_ref()).into(),
                 tx,
                 zed_api_version,
             })
@@ -412,11 +412,6 @@ impl WasmHost {
             .env("PWD", extension_work_dir.to_string_lossy())
             .env("RUST_BACKTRACE", "full")
             .build())
-    }
-
-    pub fn path_from_extension(&self, id: &Arc<str>, path: &Path) -> PathBuf {
-        let extension_work_dir = self.work_dir.join(id.as_ref());
-        normalize_path(&extension_work_dir.join(path))
     }
 
     pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {

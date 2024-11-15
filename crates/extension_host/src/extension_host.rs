@@ -1239,8 +1239,6 @@ impl ExtensionStore {
                                 language.clone(),
                                 ExtensionLspAdapter {
                                     extension: extension.clone(),
-                                    wasm_extension: wasm_extension.clone(),
-                                    host: this.wasm_host.clone(),
                                     language_server_id: language_server_id.clone(),
                                     language_name: language.clone(),
                                 },

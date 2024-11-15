@@ -1,4 +1,3 @@
-use crate::wasm_host::{wit, WasmExtension, WasmHost};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -47,10 +46,8 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
 
 pub struct ExtensionLspAdapter {
     pub(crate) extension: Arc<dyn Extension>,
-    pub(crate) wasm_extension: WasmExtension,
     pub(crate) language_server_id: LanguageServerName,
     pub(crate) language_name: LanguageName,
-    pub(crate) host: Arc<WasmHost>,
 }
 
 #[async_trait(?Send)]
@@ -77,9 +74,7 @@ impl LspAdapter for ExtensionLspAdapter {
                 )
                 .await?;
 
-            let path = self
-                .host
-                .path_from_extension(&self.wasm_extension.manifest.id, command.command.as_ref());
+            let path = self.extension.path_from_extension(command.command.as_ref());
 
             // TODO: This should now be done via the `zed::make_file_executable` function in
             // Zed extension API, but we're leaving these existing usages in place temporarily
@@ -88,8 +83,8 @@ impl LspAdapter for ExtensionLspAdapter {
             // We can remove once the following extension versions no longer see any use:
             // - toml@0.0.2
             // - zig@0.0.1
-            if ["toml", "zig"].contains(&self.wasm_extension.manifest.id.as_ref())
-                && path.starts_with(&self.host.work_dir)
+            if ["toml", "zig"].contains(&self.extension.manifest().id.as_ref())
+                && path.starts_with(&self.extension.work_dir())
             {
                 #[cfg(not(windows))]
                 {
@@ -136,8 +131,8 @@ impl LspAdapter for ExtensionLspAdapter {
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         let code_action_kinds = self
-            .wasm_extension
-            .manifest
+            .extension
+            .manifest()
             .language_servers
             .get(&self.language_server_id)
             .and_then(|server| server.code_action_kinds.clone());
@@ -158,12 +153,12 @@ impl LspAdapter for ExtensionLspAdapter {
         //
         // We can remove once the following extension versions no longer see any use:
         // - php@0.0.1
-        if self.wasm_extension.manifest.id.as_ref() == "php" {
+        if self.extension.manifest().id.as_ref() == "php" {
             return HashMap::from_iter([("PHP".into(), "php".into())]);
         }
 
-        self.wasm_extension
-            .manifest
+        self.extension
+            .manifest()
             .language_servers
             .get(&self.language_server_id)
             .map(|server| server.language_ids.clone())
@@ -336,14 +331,6 @@ fn build_code_label(
         runs,
         filter_range,
     })
-}
-
-impl From<wit::Range> for Range<usize> {
-    fn from(range: wit::Range) -> Self {
-        let start = range.start as usize;
-        let end = range.end as usize;
-        start..end
-    }
 }
 
 fn lsp_completion_to_extension(value: lsp::CompletionItem) -> extension::Completion {

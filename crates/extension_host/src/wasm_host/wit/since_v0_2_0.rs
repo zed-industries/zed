@@ -56,6 +56,14 @@ pub fn linker() -> &'static Linker<WasmState> {
     LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
 }
 
+impl From<Range> for std::ops::Range<usize> {
+    fn from(range: Range) -> Self {
+        let start = range.start as usize;
+        let end = range.end as usize;
+        start..end
+    }
+}
+
 impl From<Command> for extension::Command {
     fn from(value: Command) -> Self {
         Self {
