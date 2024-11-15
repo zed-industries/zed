@@ -21,7 +21,9 @@ use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
+use git_ui::git_panel::GitPanel;
 use git_ui::GitStatusIndicator;
+use git_ui::{git_panel, GitStatusIndicator};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem,
     PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, View, ViewContext,
@@ -243,7 +245,14 @@ pub fn initialize_workspace(
         let assistant2_feature_flag = cx.wait_for_flag::<feature_flags::Assistant2FeatureFlag>();
 
         let prompt_builder = prompt_builder.clone();
+        let git_panel = cx.new_view(|cx| GitPanel::new("git-panel", cx));
+
         cx.spawn(|workspace_handle, mut cx| async move {
+
+            let assistant_panel =
+                assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
+
+
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
@@ -273,6 +282,9 @@ pub fn initialize_workspace(
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
+
+                workspace.add_panel(git_panel, cx);
+                workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(outline_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
