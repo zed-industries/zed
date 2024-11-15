@@ -378,7 +378,7 @@ impl Render for ProposedChangesToolbarControls {
                 let focus_handle = editor.focus_handle(cx);
                 let action = {
                     let todo = (); // TODO Change this to Undo All, once we actually have that action.
-                    &ApplyAllDiffHunks
+                    &RevertFile
                 };
                 let keybinding = KeyBinding::for_action_in(action, &focus_handle, cx);
 

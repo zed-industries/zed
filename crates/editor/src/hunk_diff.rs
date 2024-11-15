@@ -1,6 +1,6 @@
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::DiffHunkStatus;
-use gpui::{Action, AnchorCorner, AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
+use gpui::{AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
 use language::{Buffer, BufferId, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
@@ -9,9 +9,8 @@ use multi_buffer::{
 use std::{ops::Range, sync::Arc};
 use text::OffsetRangeExt;
 use ui::{
-    prelude::*, ActiveTheme, ButtonLike, ContextMenu, ElevationIndex, IconButtonShape,
-    InteractiveElement, IntoElement, KeyBinding, ParentElement, PopoverMenu, Styled, TintColor,
-    Tooltip, ViewContext, VisualContext,
+    prelude::*, ActiveTheme, ElevationIndex, IconButtonShape, InteractiveElement, IntoElement,
+    KeyBinding, ParentElement, Styled, TintColor, Tooltip, ViewContext, VisualContext,
 };
 use util::RangeExt;
 use workspace::Item;
@@ -20,7 +19,7 @@ use crate::{
     editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyAllDiffHunks,
     ApplyDiffHunk, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight,
     DisplayRow, DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk,
-    RevertFile, RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -58,7 +57,6 @@ pub enum DisplayDiffHunk {
     Folded {
         display_row: DisplayRow,
     },
-
     Unfolded {
         diff_base_byte_range: Range<usize>,
         display_row_range: Range<DisplayRow>,
