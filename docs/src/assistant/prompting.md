@@ -138,7 +138,6 @@ Zed has the following internal prompt templates:
 - `content_prompt.hbs`: Used for generating content in the editor.
 - `terminal_assistant_prompt.hbs`: Used for the terminal assistant feature.
 - `suggest_edits.hbs`: Used for generating the model instructions for the XML Suggest Edits should return.
-- `step_resolution.hbs`: Used for generating the step resolution prompt.
 
 At this point it is unknown if we will expand templates further to be user-creatable.
 
@@ -156,9 +155,7 @@ The following templates can be overridden:
 
 3. [`suggest_edits.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/suggest_edits.hbs): Used for generating the model instructions for the XML Suggest Edits should return.
 
-4. [`step_resolution.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/step_resolution.hbs): Used for generating the step resolution prompt.
-
-5. [`project_slash_command.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/project_slash_command.hbs)
+4. [`project_slash_command.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/project_slash_command.hbs)
 
 > **Note:** Be sure you want to override these, as you'll miss out on iteration on our built-in features. This should be primarily used when developing Zed.
 
