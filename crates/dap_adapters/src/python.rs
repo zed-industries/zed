@@ -119,6 +119,10 @@ impl DebugAdapter for PythonDebugAdapter {
     }
 
     fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        json!({"program": config.program, "subProcess": true})
+        json!({
+            "program": config.program,
+            "subProcess": true,
+            "cwd": config.cwd,
+        })
     }
 }

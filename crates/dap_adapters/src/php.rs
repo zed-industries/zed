@@ -124,6 +124,9 @@ impl DebugAdapter for PhpDebugAdapter {
     }
 
     fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        json!({"program": config.program})
+        json!({
+            "program": config.program,
+            "cwd": config.cwd,
+        })
     }
 }
