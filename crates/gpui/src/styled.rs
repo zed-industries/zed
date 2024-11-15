@@ -329,7 +329,7 @@ pub trait Styled: Sized {
         &mut style.text
     }
 
-    /// Sets the text color of this elemen.
+    /// Sets the text color of this element.
     ///
     /// This value cascades to its child elements.
     fn text_color(mut self, color: impl Into<Hsla>) -> Self {
