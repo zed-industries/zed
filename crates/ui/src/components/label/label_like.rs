@@ -179,15 +179,7 @@ impl RenderOnce for LabelLike {
                 });
                 this
             })
-            .when(self.strikethrough, |mut this| {
-                this.text_style()
-                    .get_or_insert_with(Default::default)
-                    .strikethrough = Some(StrikethroughStyle {
-                    thickness: px(1.),
-                    color: None,
-                });
-                this
-            })
+            .when(self.strikethrough, |this| this.line_through())
             .text_color(color)
             .font_weight(self.weight.unwrap_or(settings.ui_font.weight))
             .children(self.children)
