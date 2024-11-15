@@ -139,6 +139,11 @@ impl Vim {
                         options |= SearchOptions::REGEX;
                     }
                     search_bar.set_search_options(options, cx);
+                    let prior_mode = if self.temp_mode {
+                        Mode::Insert
+                    } else {
+                        self.mode
+                    };
 
                     self.search = SearchState {
                         direction,
@@ -146,7 +151,7 @@ impl Vim {
                         initial_query: query,
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
-                        prior_mode: self.mode,
+                        prior_mode,
                     }
                 });
             }

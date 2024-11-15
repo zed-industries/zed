@@ -14,7 +14,7 @@ use gpui::{
     percentage, svg, Animation, AnimationExt, AnyView, AppContext, AsyncAppContext, Model, Render,
     Subscription, Task, Transformation,
 };
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::{
@@ -23,7 +23,6 @@ use ui::{
     ViewContext, VisualContext, WindowContext,
 };
 
-use crate::settings::AllLanguageModelSettings;
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest, RateLimiter, Role,
@@ -37,9 +36,7 @@ const PROVIDER_ID: &str = "copilot_chat";
 const PROVIDER_NAME: &str = "GitHub Copilot Chat";
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct CopilotChatSettings {
-    pub low_speed_timeout: Option<Duration>,
-}
+pub struct CopilotChatSettings {}
 
 pub struct CopilotChatLanguageModelProvider {
     state: Model<State>,
@@ -218,17 +215,10 @@ impl LanguageModel for CopilotChatLanguageModel {
 
         let copilot_request = self.to_copilot_chat_request(request);
         let is_streaming = copilot_request.stream;
-        let Ok(low_speed_timeout) = cx.update(|cx| {
-            AllLanguageModelSettings::get_global(cx)
-                .copilot_chat
-                .low_speed_timeout
-        }) else {
-            return futures::future::ready(Err(anyhow::anyhow!("App state dropped"))).boxed();
-        };
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(|cx| async move {
-            let response = CopilotChat::stream_completion(copilot_request, low_speed_timeout, cx);
+            let response = CopilotChat::stream_completion(copilot_request, cx);
             request_limiter.stream(async move {
                 let response = response.await?;
                 let stream = response

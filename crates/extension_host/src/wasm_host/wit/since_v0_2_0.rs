@@ -1,5 +1,6 @@
+use crate::wasm_host::wit::since_v0_2_0::slash_command::SlashCommandOutputSection;
+use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
-use crate::DocsDatabase;
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
 use anyhow::{anyhow, bail, Context, Result};
@@ -7,12 +8,10 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use context_servers::manager::ContextServerSettings;
+use extension::{KeyValueStoreDelegate, WorktreeDelegate};
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
-use language::{
-    language_settings::AllLanguageSettings, LanguageName, LanguageServerBinaryStatus,
-    LspAdapterDelegate,
-};
+use language::{language_settings::AllLanguageSettings, LanguageName, LanguageServerBinaryStatus};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
@@ -44,8 +43,8 @@ mod settings {
     include!(concat!(env!("OUT_DIR"), "/since_v0.2.0/settings.rs"));
 }
 
-pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
-pub type ExtensionKeyValueStore = Arc<dyn DocsDatabase>;
+pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
+pub type ExtensionKeyValueStore = Arc<dyn KeyValueStoreDelegate>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
 
 pub struct ExtensionProject {
@@ -55,6 +54,198 @@ pub struct ExtensionProject {
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
     LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
+}
+
+impl From<Range> for std::ops::Range<usize> {
+    fn from(range: Range) -> Self {
+        let start = range.start as usize;
+        let end = range.end as usize;
+        start..end
+    }
+}
+
+impl From<Command> for extension::Command {
+    fn from(value: Command) -> Self {
+        Self {
+            command: value.command,
+            args: value.args,
+            env: value.env,
+        }
+    }
+}
+
+impl From<CodeLabel> for extension::CodeLabel {
+    fn from(value: CodeLabel) -> Self {
+        Self {
+            code: value.code,
+            spans: value.spans.into_iter().map(Into::into).collect(),
+            filter_range: value.filter_range.into(),
+        }
+    }
+}
+
+impl From<CodeLabelSpan> for extension::CodeLabelSpan {
+    fn from(value: CodeLabelSpan) -> Self {
+        match value {
+            CodeLabelSpan::CodeRange(range) => Self::CodeRange(range.into()),
+            CodeLabelSpan::Literal(literal) => Self::Literal(literal.into()),
+        }
+    }
+}
+
+impl From<CodeLabelSpanLiteral> for extension::CodeLabelSpanLiteral {
+    fn from(value: CodeLabelSpanLiteral) -> Self {
+        Self {
+            text: value.text,
+            highlight_name: value.highlight_name,
+        }
+    }
+}
+
+impl From<extension::Completion> for Completion {
+    fn from(value: extension::Completion) -> Self {
+        Self {
+            label: value.label,
+            label_details: value.label_details.map(Into::into),
+            detail: value.detail,
+            kind: value.kind.map(Into::into),
+            insert_text_format: value.insert_text_format.map(Into::into),
+        }
+    }
+}
+
+impl From<extension::CompletionLabelDetails> for CompletionLabelDetails {
+    fn from(value: extension::CompletionLabelDetails) -> Self {
+        Self {
+            detail: value.detail,
+            description: value.description,
+        }
+    }
+}
+
+impl From<extension::CompletionKind> for CompletionKind {
+    fn from(value: extension::CompletionKind) -> Self {
+        match value {
+            extension::CompletionKind::Text => Self::Text,
+            extension::CompletionKind::Method => Self::Method,
+            extension::CompletionKind::Function => Self::Function,
+            extension::CompletionKind::Constructor => Self::Constructor,
+            extension::CompletionKind::Field => Self::Field,
+            extension::CompletionKind::Variable => Self::Variable,
+            extension::CompletionKind::Class => Self::Class,
+            extension::CompletionKind::Interface => Self::Interface,
+            extension::CompletionKind::Module => Self::Module,
+            extension::CompletionKind::Property => Self::Property,
+            extension::CompletionKind::Unit => Self::Unit,
+            extension::CompletionKind::Value => Self::Value,
+            extension::CompletionKind::Enum => Self::Enum,
+            extension::CompletionKind::Keyword => Self::Keyword,
+            extension::CompletionKind::Snippet => Self::Snippet,
+            extension::CompletionKind::Color => Self::Color,
+            extension::CompletionKind::File => Self::File,
+            extension::CompletionKind::Reference => Self::Reference,
+            extension::CompletionKind::Folder => Self::Folder,
+            extension::CompletionKind::EnumMember => Self::EnumMember,
+            extension::CompletionKind::Constant => Self::Constant,
+            extension::CompletionKind::Struct => Self::Struct,
+            extension::CompletionKind::Event => Self::Event,
+            extension::CompletionKind::Operator => Self::Operator,
+            extension::CompletionKind::TypeParameter => Self::TypeParameter,
+            extension::CompletionKind::Other(value) => Self::Other(value),
+        }
+    }
+}
+
+impl From<extension::InsertTextFormat> for InsertTextFormat {
+    fn from(value: extension::InsertTextFormat) -> Self {
+        match value {
+            extension::InsertTextFormat::PlainText => Self::PlainText,
+            extension::InsertTextFormat::Snippet => Self::Snippet,
+            extension::InsertTextFormat::Other(value) => Self::Other(value),
+        }
+    }
+}
+
+impl From<extension::Symbol> for Symbol {
+    fn from(value: extension::Symbol) -> Self {
+        Self {
+            kind: value.kind.into(),
+            name: value.name,
+        }
+    }
+}
+
+impl From<extension::SymbolKind> for SymbolKind {
+    fn from(value: extension::SymbolKind) -> Self {
+        match value {
+            extension::SymbolKind::File => Self::File,
+            extension::SymbolKind::Module => Self::Module,
+            extension::SymbolKind::Namespace => Self::Namespace,
+            extension::SymbolKind::Package => Self::Package,
+            extension::SymbolKind::Class => Self::Class,
+            extension::SymbolKind::Method => Self::Method,
+            extension::SymbolKind::Property => Self::Property,
+            extension::SymbolKind::Field => Self::Field,
+            extension::SymbolKind::Constructor => Self::Constructor,
+            extension::SymbolKind::Enum => Self::Enum,
+            extension::SymbolKind::Interface => Self::Interface,
+            extension::SymbolKind::Function => Self::Function,
+            extension::SymbolKind::Variable => Self::Variable,
+            extension::SymbolKind::Constant => Self::Constant,
+            extension::SymbolKind::String => Self::String,
+            extension::SymbolKind::Number => Self::Number,
+            extension::SymbolKind::Boolean => Self::Boolean,
+            extension::SymbolKind::Array => Self::Array,
+            extension::SymbolKind::Object => Self::Object,
+            extension::SymbolKind::Key => Self::Key,
+            extension::SymbolKind::Null => Self::Null,
+            extension::SymbolKind::EnumMember => Self::EnumMember,
+            extension::SymbolKind::Struct => Self::Struct,
+            extension::SymbolKind::Event => Self::Event,
+            extension::SymbolKind::Operator => Self::Operator,
+            extension::SymbolKind::TypeParameter => Self::TypeParameter,
+            extension::SymbolKind::Other(value) => Self::Other(value),
+        }
+    }
+}
+
+impl From<extension::SlashCommand> for SlashCommand {
+    fn from(value: extension::SlashCommand) -> Self {
+        Self {
+            name: value.name,
+            description: value.description,
+            tooltip_text: value.tooltip_text,
+            requires_argument: value.requires_argument,
+        }
+    }
+}
+
+impl From<SlashCommandOutput> for extension::SlashCommandOutput {
+    fn from(value: SlashCommandOutput) -> Self {
+        Self {
+            text: value.text,
+            sections: value.sections.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<SlashCommandOutputSection> for extension::SlashCommandOutputSection {
+    fn from(value: SlashCommandOutputSection) -> Self {
+        Self {
+            range: value.range.start as usize..value.range.end as usize,
+            label: value.label,
+        }
+    }
+}
+
+impl From<SlashCommandArgumentCompletion> for extension::SlashCommandArgumentCompletion {
+    fn from(value: SlashCommandArgumentCompletion) -> Self {
+        Self {
+            label: value.label,
+            new_text: value.new_text,
+            run_command: value.run_command,
+        }
+    }
 }
 
 #[async_trait]
@@ -93,25 +284,22 @@ impl HostProject for WasmState {
 
 #[async_trait]
 impl HostWorktree for WasmState {
-    async fn id(
-        &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
-    ) -> wasmtime::Result<u64> {
+    async fn id(&mut self, delegate: Resource<Arc<dyn WorktreeDelegate>>) -> wasmtime::Result<u64> {
         let delegate = self.table.get(&delegate)?;
-        Ok(delegate.worktree_id().to_proto())
+        Ok(delegate.id())
     }
 
     async fn root_path(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> wasmtime::Result<String> {
         let delegate = self.table.get(&delegate)?;
-        Ok(delegate.worktree_root_path().to_string_lossy().to_string())
+        Ok(delegate.root_path())
     }
 
     async fn read_text_file(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
         path: String,
     ) -> wasmtime::Result<Result<String, String>> {
         let delegate = self.table.get(&delegate)?;
@@ -123,7 +311,7 @@ impl HostWorktree for WasmState {
 
     async fn shell_env(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> wasmtime::Result<EnvVars> {
         let delegate = self.table.get(&delegate)?;
         Ok(delegate.shell_env().await.into_iter().collect())
@@ -131,14 +319,11 @@ impl HostWorktree for WasmState {
 
     async fn which(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
         binary_name: String,
     ) -> wasmtime::Result<Option<String>> {
         let delegate = self.table.get(&delegate)?;
-        Ok(delegate
-            .which(binary_name.as_ref())
-            .await
-            .map(|path| path.to_string_lossy().to_string()))
+        Ok(delegate.which(binary_name).await)
     }
 
     fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {

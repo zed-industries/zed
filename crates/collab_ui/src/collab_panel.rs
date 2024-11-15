@@ -474,11 +474,10 @@ impl CollabPanel {
                             project_id: project.id,
                             worktree_root_names: project.worktree_root_names.clone(),
                             host_user_id: participant.user.id,
-                            is_last: projects.peek().is_none()
-                                && participant.video_tracks.is_empty(),
+                            is_last: projects.peek().is_none() && !participant.has_video_tracks(),
                         });
                     }
-                    if !participant.video_tracks.is_empty() {
+                    if participant.has_video_tracks() {
                         self.entries.push(ListEntry::ParticipantScreen {
                             peer_id: Some(participant.peer_id),
                             is_last: true,
@@ -2521,7 +2520,7 @@ impl CollabPanel {
             .flex()
             .w_full()
             .when(!channel.is_root_channel(), |el| {
-                el.on_drag(channel.clone(), move |channel, cx| {
+                el.on_drag(channel.clone(), move |channel, _, cx| {
                     cx.new_view(|_| DraggedChannelView {
                         channel: channel.clone(),
                         width,

@@ -63,6 +63,7 @@ Here is the compatibility of the `zed_extension_api` with versions of Zed:
 
 | Zed version | `zed_extension_api` version |
 | ----------- | --------------------------- |
+| `0.162.x`   | `0.0.1` - `0.2.0`           |
 | `0.149.x`   | `0.0.1` - `0.1.0`           |
 | `0.131.x`   | `0.0.1` - `0.0.6`           |
 | `0.130.x`   | `0.0.1` - `0.0.5`           |

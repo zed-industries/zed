@@ -47,7 +47,7 @@ use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
-    pub test_live_kit_server: Arc<live_kit_client::TestServer>,
+    pub test_live_kit_server: Arc<live_kit_client::test::TestServer>,
     server: Arc<Server>,
     next_github_user_id: i32,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
@@ -89,7 +89,7 @@ impl TestServer {
             TestDb::sqlite(deterministic.clone())
         };
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
-        let live_kit_server = live_kit_client::TestServer::create(
+        let live_kit_server = live_kit_client::test::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),
             format!("devkey-{}", live_kit_server_id),
             format!("secret-{}", live_kit_server_id),
@@ -499,7 +499,7 @@ impl TestServer {
 
     pub async fn build_app_state(
         test_db: &TestDb,
-        live_kit_test_server: &live_kit_client::TestServer,
+        live_kit_test_server: &live_kit_client::test::TestServer,
         executor: Executor,
     ) -> Arc<AppState> {
         Arc::new(AppState {
@@ -512,6 +512,7 @@ impl TestServer {
             rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             clickhouse_client: None,
+            kinesis_client: None,
             config: Config {
                 http_port: 0,
                 database_url: "".into(),
@@ -550,6 +551,10 @@ impl TestServer {
                 stripe_api_key: None,
                 supermaven_admin_api_key: None,
                 user_backfiller_github_access_token: None,
+                kinesis_region: None,
+                kinesis_stream: None,
+                kinesis_access_key: None,
+                kinesis_secret_key: None,
             },
         })
     }
