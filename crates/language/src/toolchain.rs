@@ -20,6 +20,8 @@ pub struct Toolchain {
     pub name: SharedString,
     pub path: SharedString,
     pub language_name: LanguageName,
+    /// Full toolchain data (including language-specific details)
+    pub as_json: serde_json::Value,
 }
 
 #[async_trait(?Send)]

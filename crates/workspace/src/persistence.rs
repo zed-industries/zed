@@ -1,6 +1,6 @@
 pub mod model;
 
-use std::path::Path;
+use std::{path::Path, str::FromStr};
 
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
@@ -379,6 +379,9 @@ define_connection! {
             path TEXT NOT NULL,
             PRIMARY KEY (workspace_id, worktree_id, language_name)
         );
+    ),
+    sql!(
+        ALTER TABLE toolchains ADD COLUMN raw_json TEXT DEFAULT "{}";
     ),
     ];
 }
@@ -1080,18 +1083,19 @@ impl WorkspaceDb {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ?
+                    SELECT name, path, raw_json FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ?
                 ))
                 .context("Preparing insertion")?;
 
-            let toolchain: Vec<(String, String)> =
+            let toolchain: Vec<(String, String, String)> =
                 select((workspace_id, language_name.0.to_owned(), worktree_id.to_usize()))?;
 
-            Ok(toolchain.into_iter().next().map(|(name, path)| Toolchain {
+            Ok(toolchain.into_iter().next().and_then(|(name, path, raw_json)| Some(Toolchain {
                 name: name.into(),
                 path: path.into(),
                 language_name,
-            }))
+                as_json: serde_json::Value::from_str(&raw_json).ok()?
+            })))
         })
         .await
     }
@@ -1103,18 +1107,19 @@ impl WorkspaceDb {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, worktree_id, language_name FROM toolchains WHERE workspace_id = ?
+                    SELECT name, path, worktree_id, language_name, raw_json FROM toolchains WHERE workspace_id = ?
                 ))
                 .context("Preparing insertion")?;
 
-            let toolchain: Vec<(String, String, u64, String)> =
+            let toolchain: Vec<(String, String, u64, String, String)> =
                 select(workspace_id)?;
 
-            Ok(toolchain.into_iter().map(|(name, path, worktree_id, language_name)| (Toolchain {
+            Ok(toolchain.into_iter().filter_map(|(name, path, worktree_id, language_name, raw_json)| Some((Toolchain {
                 name: name.into(),
                 path: path.into(),
                 language_name: LanguageName::new(&language_name),
-            }, WorktreeId::from_proto(worktree_id))).collect())
+                as_json: serde_json::Value::from_str(&raw_json).ok()?
+            }, WorktreeId::from_proto(worktree_id)))).collect())
         })
         .await
     }
