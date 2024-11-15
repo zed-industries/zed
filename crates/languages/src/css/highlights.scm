@@ -36,9 +36,8 @@
   (id_name)
   (namespace_name)
   (feature_name)
+  (property_name)
 ] @property
-
-(property_name) @constant
 
 (function_name) @function
 
