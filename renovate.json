@@ -9,9 +9,7 @@
   ],
   "dependencyDashboard": true,
   "timezone": "America/New_York",
-  "schedule": [
-    "after 3pm on Wednesday"
-  ],
+  "schedule": ["after 3pm on Wednesday"],
   "major": {
     "dependencyDashboardApproval": true
   },
@@ -20,9 +18,7 @@
     {
       "description": "Group wasmtime crates together.",
       "groupName": "wasmtime",
-      "matchPackageNames": [
-        "wasmtime{/,}**"
-      ]
+      "matchPackageNames": ["wasmtime{/,}**"]
     }
   ]
 }
