@@ -219,30 +219,16 @@ impl LspAdapter for ExtensionLspAdapter {
     ) -> Result<Vec<Option<CodeLabel>>> {
         let completions = completions
             .iter()
-            .map(|completion| wit::Completion::from(completion.clone()))
+            .cloned()
+            .map(lsp_completion_to_extension)
             .collect::<Vec<_>>();
 
         let labels = self
-            .wasm_extension
-            .call({
-                let this = self.clone();
-                |extension, store| {
-                    async move {
-                        extension
-                            .call_labels_for_completions(
-                                store,
-                                &this.language_server_id,
-                                completions,
-                            )
-                            .await?
-                            .map_err(|e| anyhow!("{}", e))
-                    }
-                    .boxed()
-                }
-            })
+            .extension
+            .labels_for_completions(self.language_server_id.clone(), completions)
             .await?;
 
-        Ok(labels_from_wit(labels, language))
+        Ok(labels_from_extension(labels, language))
     }
 
     async fn labels_for_symbols(
@@ -275,12 +261,18 @@ impl LspAdapter for ExtensionLspAdapter {
             })
             .await?;
 
-        Ok(labels_from_wit(labels, language))
+        Ok(labels_from_extension(
+            labels
+                .into_iter()
+                .map(|label| label.map(Into::into))
+                .collect(),
+            language,
+        ))
     }
 }
 
-fn labels_from_wit(
-    labels: Vec<Option<wit::CodeLabel>>,
+fn labels_from_extension(
+    labels: Vec<Option<extension::CodeLabel>>,
     language: &Arc<Language>,
 ) -> Vec<Option<CodeLabel>> {
     labels
@@ -298,7 +290,7 @@ fn labels_from_wit(
 }
 
 fn build_code_label(
-    label: &wit::CodeLabel,
+    label: &extension::CodeLabel,
     parsed_runs: &[(Range<usize>, HighlightId)],
     language: &Arc<Language>,
 ) -> Option<CodeLabel> {
@@ -307,8 +299,7 @@ fn build_code_label(
 
     for span in &label.spans {
         match span {
-            wit::CodeLabelSpan::CodeRange(range) => {
-                let range = Range::from(*range);
+            extension::CodeLabelSpan::CodeRange(range) => {
                 let code_span = &label.code.get(range.clone())?;
                 let mut input_ix = range.start;
                 let mut output_ix = text.len();
@@ -334,7 +325,7 @@ fn build_code_label(
 
                 text.push_str(code_span);
             }
-            wit::CodeLabelSpan::Literal(span) => {
+            extension::CodeLabelSpan::Literal(span) => {
                 let highlight_id = language
                     .grammar()
                     .zip(span.highlight_name.as_ref())
@@ -349,7 +340,7 @@ fn build_code_label(
         }
     }
 
-    let filter_range = Range::from(label.filter_range);
+    let filter_range = label.filter_range.clone();
     text.get(filter_range.clone())?;
     Some(CodeLabel {
         text,
@@ -366,67 +357,69 @@ impl From<wit::Range> for Range<usize> {
     }
 }
 
-impl From<lsp::CompletionItem> for wit::Completion {
-    fn from(value: lsp::CompletionItem) -> Self {
-        Self {
-            label: value.label,
-            label_details: value.label_details.map(Into::into),
-            detail: value.detail,
-            kind: value.kind.map(Into::into),
-            insert_text_format: value.insert_text_format.map(Into::into),
-        }
+fn lsp_completion_to_extension(value: lsp::CompletionItem) -> extension::Completion {
+    extension::Completion {
+        label: value.label,
+        label_details: value
+            .label_details
+            .map(lsp_completion_item_label_details_to_extension),
+        detail: value.detail,
+        kind: value.kind.map(lsp_completion_item_kind_to_extension),
+        insert_text_format: value
+            .insert_text_format
+            .map(lsp_insert_text_format_to_extension),
     }
 }
 
-impl From<lsp::CompletionItemLabelDetails> for wit::CompletionLabelDetails {
-    fn from(value: lsp::CompletionItemLabelDetails) -> Self {
-        Self {
-            detail: value.detail,
-            description: value.description,
-        }
+fn lsp_completion_item_label_details_to_extension(
+    value: lsp::CompletionItemLabelDetails,
+) -> extension::CompletionLabelDetails {
+    extension::CompletionLabelDetails {
+        detail: value.detail,
+        description: value.description,
     }
 }
 
-impl From<lsp::CompletionItemKind> for wit::CompletionKind {
-    fn from(value: lsp::CompletionItemKind) -> Self {
-        match value {
-            lsp::CompletionItemKind::TEXT => Self::Text,
-            lsp::CompletionItemKind::METHOD => Self::Method,
-            lsp::CompletionItemKind::FUNCTION => Self::Function,
-            lsp::CompletionItemKind::CONSTRUCTOR => Self::Constructor,
-            lsp::CompletionItemKind::FIELD => Self::Field,
-            lsp::CompletionItemKind::VARIABLE => Self::Variable,
-            lsp::CompletionItemKind::CLASS => Self::Class,
-            lsp::CompletionItemKind::INTERFACE => Self::Interface,
-            lsp::CompletionItemKind::MODULE => Self::Module,
-            lsp::CompletionItemKind::PROPERTY => Self::Property,
-            lsp::CompletionItemKind::UNIT => Self::Unit,
-            lsp::CompletionItemKind::VALUE => Self::Value,
-            lsp::CompletionItemKind::ENUM => Self::Enum,
-            lsp::CompletionItemKind::KEYWORD => Self::Keyword,
-            lsp::CompletionItemKind::SNIPPET => Self::Snippet,
-            lsp::CompletionItemKind::COLOR => Self::Color,
-            lsp::CompletionItemKind::FILE => Self::File,
-            lsp::CompletionItemKind::REFERENCE => Self::Reference,
-            lsp::CompletionItemKind::FOLDER => Self::Folder,
-            lsp::CompletionItemKind::ENUM_MEMBER => Self::EnumMember,
-            lsp::CompletionItemKind::CONSTANT => Self::Constant,
-            lsp::CompletionItemKind::STRUCT => Self::Struct,
-            lsp::CompletionItemKind::EVENT => Self::Event,
-            lsp::CompletionItemKind::OPERATOR => Self::Operator,
-            lsp::CompletionItemKind::TYPE_PARAMETER => Self::TypeParameter,
-            _ => Self::Other(extract_int(value)),
-        }
+fn lsp_completion_item_kind_to_extension(
+    value: lsp::CompletionItemKind,
+) -> extension::CompletionKind {
+    match value {
+        lsp::CompletionItemKind::TEXT => extension::CompletionKind::Text,
+        lsp::CompletionItemKind::METHOD => extension::CompletionKind::Method,
+        lsp::CompletionItemKind::FUNCTION => extension::CompletionKind::Function,
+        lsp::CompletionItemKind::CONSTRUCTOR => extension::CompletionKind::Constructor,
+        lsp::CompletionItemKind::FIELD => extension::CompletionKind::Field,
+        lsp::CompletionItemKind::VARIABLE => extension::CompletionKind::Variable,
+        lsp::CompletionItemKind::CLASS => extension::CompletionKind::Class,
+        lsp::CompletionItemKind::INTERFACE => extension::CompletionKind::Interface,
+        lsp::CompletionItemKind::MODULE => extension::CompletionKind::Module,
+        lsp::CompletionItemKind::PROPERTY => extension::CompletionKind::Property,
+        lsp::CompletionItemKind::UNIT => extension::CompletionKind::Unit,
+        lsp::CompletionItemKind::VALUE => extension::CompletionKind::Value,
+        lsp::CompletionItemKind::ENUM => extension::CompletionKind::Enum,
+        lsp::CompletionItemKind::KEYWORD => extension::CompletionKind::Keyword,
+        lsp::CompletionItemKind::SNIPPET => extension::CompletionKind::Snippet,
+        lsp::CompletionItemKind::COLOR => extension::CompletionKind::Color,
+        lsp::CompletionItemKind::FILE => extension::CompletionKind::File,
+        lsp::CompletionItemKind::REFERENCE => extension::CompletionKind::Reference,
+        lsp::CompletionItemKind::FOLDER => extension::CompletionKind::Folder,
+        lsp::CompletionItemKind::ENUM_MEMBER => extension::CompletionKind::EnumMember,
+        lsp::CompletionItemKind::CONSTANT => extension::CompletionKind::Constant,
+        lsp::CompletionItemKind::STRUCT => extension::CompletionKind::Struct,
+        lsp::CompletionItemKind::EVENT => extension::CompletionKind::Event,
+        lsp::CompletionItemKind::OPERATOR => extension::CompletionKind::Operator,
+        lsp::CompletionItemKind::TYPE_PARAMETER => extension::CompletionKind::TypeParameter,
+        _ => extension::CompletionKind::Other(extract_int(value)),
     }
 }
 
-impl From<lsp::InsertTextFormat> for wit::InsertTextFormat {
-    fn from(value: lsp::InsertTextFormat) -> Self {
-        match value {
-            lsp::InsertTextFormat::PLAIN_TEXT => Self::PlainText,
-            lsp::InsertTextFormat::SNIPPET => Self::Snippet,
-            _ => Self::Other(extract_int(value)),
-        }
+fn lsp_insert_text_format_to_extension(
+    value: lsp::InsertTextFormat,
+) -> extension::InsertTextFormat {
+    match value {
+        lsp::InsertTextFormat::PLAIN_TEXT => extension::InsertTextFormat::PlainText,
+        lsp::InsertTextFormat::SNIPPET => extension::InsertTextFormat::Snippet,
+        _ => extension::InsertTextFormat::Other(extract_int(value)),
     }
 }
 
@@ -487,21 +480,14 @@ fn test_build_code_label() {
         .collect::<Vec<_>>();
 
     let label = build_code_label(
-        &wit::CodeLabel {
+        &extension::CodeLabel {
             spans: vec![
-                wit::CodeLabelSpan::CodeRange(wit::Range {
-                    start: code.find("pqrs").unwrap() as u32,
-                    end: code.len() as u32,
-                }),
-                wit::CodeLabelSpan::CodeRange(wit::Range {
-                    start: code.find(": fn").unwrap() as u32,
-                    end: code.find(" = ").unwrap() as u32,
-                }),
+                extension::CodeLabelSpan::CodeRange(code.find("pqrs").unwrap()..code.len()),
+                extension::CodeLabelSpan::CodeRange(
+                    code.find(": fn").unwrap()..code.find(" = ").unwrap(),
+                ),
             ],
-            filter_range: wit::Range {
-                start: 0,
-                end: "pqrs.tuv".len() as u32,
-            },
+            filter_range: 0.."pqrs.tuv".len(),
             code,
         },
         &code_runs,
@@ -539,21 +525,14 @@ fn test_build_code_label_with_invalid_ranges() {
     // A span uses a code range that is invalid because it starts inside of
     // a multi-byte character.
     let label = build_code_label(
-        &wit::CodeLabel {
+        &extension::CodeLabel {
             spans: vec![
-                wit::CodeLabelSpan::CodeRange(wit::Range {
-                    start: code.find('B').unwrap() as u32,
-                    end: code.find(" = ").unwrap() as u32,
-                }),
-                wit::CodeLabelSpan::CodeRange(wit::Range {
-                    start: code.find('🏀').unwrap() as u32 + 1,
-                    end: code.len() as u32,
-                }),
+                extension::CodeLabelSpan::CodeRange(
+                    code.find('B').unwrap()..code.find(" = ").unwrap(),
+                ),
+                extension::CodeLabelSpan::CodeRange((code.find('🏀').unwrap() + 1)..code.len()),
             ],
-            filter_range: wit::Range {
-                start: 0,
-                end: "B".len() as u32,
-            },
+            filter_range: 0.."B".len(),
             code,
         },
         &code_runs,
@@ -563,12 +542,14 @@ fn test_build_code_label_with_invalid_ranges() {
 
     // Filter range extends beyond actual text
     let label = build_code_label(
-        &wit::CodeLabel {
-            spans: vec![wit::CodeLabelSpan::Literal(wit::CodeLabelSpanLiteral {
-                text: "abc".into(),
-                highlight_name: Some("type".into()),
-            })],
-            filter_range: wit::Range { start: 0, end: 5 },
+        &extension::CodeLabel {
+            spans: vec![extension::CodeLabelSpan::Literal(
+                extension::CodeLabelSpanLiteral {
+                    text: "abc".into(),
+                    highlight_name: Some("type".into()),
+                },
+            )],
+            filter_range: 0..5,
             code: String::new(),
         },
         &code_runs,

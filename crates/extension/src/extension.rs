@@ -56,6 +56,12 @@ pub trait Extension: Send + Sync + 'static {
         worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<Option<String>>;
 
+    async fn labels_for_completions(
+        &self,
+        language_server_id: LanguageServerName,
+        completions: Vec<Completion>,
+    ) -> Result<Vec<Option<CodeLabel>>>;
+
     async fn complete_slash_command_argument(
         &self,
         command: SlashCommand,

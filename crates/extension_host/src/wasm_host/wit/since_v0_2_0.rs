@@ -1,4 +1,5 @@
 use crate::wasm_host::wit::since_v0_2_0::slash_command::SlashCommandOutputSection;
+use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat};
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
@@ -61,6 +62,98 @@ impl From<Command> for extension::Command {
             command: value.command,
             args: value.args,
             env: value.env,
+        }
+    }
+}
+
+impl From<CodeLabel> for extension::CodeLabel {
+    fn from(value: CodeLabel) -> Self {
+        Self {
+            code: value.code,
+            spans: value.spans.into_iter().map(Into::into).collect(),
+            filter_range: value.filter_range.into(),
+        }
+    }
+}
+
+impl From<CodeLabelSpan> for extension::CodeLabelSpan {
+    fn from(value: CodeLabelSpan) -> Self {
+        match value {
+            CodeLabelSpan::CodeRange(range) => Self::CodeRange(range.into()),
+            CodeLabelSpan::Literal(literal) => Self::Literal(literal.into()),
+        }
+    }
+}
+
+impl From<CodeLabelSpanLiteral> for extension::CodeLabelSpanLiteral {
+    fn from(value: CodeLabelSpanLiteral) -> Self {
+        Self {
+            text: value.text,
+            highlight_name: value.highlight_name,
+        }
+    }
+}
+
+impl From<extension::Completion> for Completion {
+    fn from(value: extension::Completion) -> Self {
+        Self {
+            label: value.label,
+            label_details: value.label_details.map(Into::into),
+            detail: value.detail,
+            kind: value.kind.map(Into::into),
+            insert_text_format: value.insert_text_format.map(Into::into),
+        }
+    }
+}
+
+impl From<extension::CompletionLabelDetails> for CompletionLabelDetails {
+    fn from(value: extension::CompletionLabelDetails) -> Self {
+        Self {
+            detail: value.detail,
+            description: value.description,
+        }
+    }
+}
+
+impl From<extension::CompletionKind> for CompletionKind {
+    fn from(value: extension::CompletionKind) -> Self {
+        match value {
+            extension::CompletionKind::Text => Self::Text,
+            extension::CompletionKind::Method => Self::Method,
+            extension::CompletionKind::Function => Self::Function,
+            extension::CompletionKind::Constructor => Self::Constructor,
+            extension::CompletionKind::Field => Self::Field,
+            extension::CompletionKind::Variable => Self::Variable,
+            extension::CompletionKind::Class => Self::Class,
+            extension::CompletionKind::Interface => Self::Interface,
+            extension::CompletionKind::Module => Self::Module,
+            extension::CompletionKind::Property => Self::Property,
+            extension::CompletionKind::Unit => Self::Unit,
+            extension::CompletionKind::Value => Self::Value,
+            extension::CompletionKind::Enum => Self::Enum,
+            extension::CompletionKind::Keyword => Self::Keyword,
+            extension::CompletionKind::Snippet => Self::Snippet,
+            extension::CompletionKind::Color => Self::Color,
+            extension::CompletionKind::File => Self::File,
+            extension::CompletionKind::Reference => Self::Reference,
+            extension::CompletionKind::Folder => Self::Folder,
+            extension::CompletionKind::EnumMember => Self::EnumMember,
+            extension::CompletionKind::Constant => Self::Constant,
+            extension::CompletionKind::Struct => Self::Struct,
+            extension::CompletionKind::Event => Self::Event,
+            extension::CompletionKind::Operator => Self::Operator,
+            extension::CompletionKind::TypeParameter => Self::TypeParameter,
+            extension::CompletionKind::Other(value) => Self::Other(value),
+        }
+    }
+}
+
+impl From<extension::InsertTextFormat> for InsertTextFormat {
+    fn from(value: extension::InsertTextFormat) -> Self {
+        match value {
+            extension::InsertTextFormat::PlainText => Self::PlainText,
+            extension::InsertTextFormat::Snippet => Self::Snippet,
+            extension::InsertTextFormat::Other(value) => Self::Other(value),
         }
     }
 }

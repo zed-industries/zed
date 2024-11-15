@@ -4,8 +4,8 @@ use crate::{ExtensionManifest, ExtensionRegistrationHooks};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use extension::{
-    Command, KeyValueStoreDelegate, SlashCommand, SlashCommandArgumentCompletion,
-    SlashCommandOutput, WorktreeDelegate,
+    CodeLabel, Command, Completion, KeyValueStoreDelegate, SlashCommand,
+    SlashCommandArgumentCompletion, SlashCommandOutput, WorktreeDelegate,
 };
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
@@ -109,6 +109,32 @@ impl extension::Extension for WasmExtension {
                     .await?
                     .map_err(|err| anyhow!("{err}"))?;
                 anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn labels_for_completions(
+        &self,
+        language_server_id: LanguageServerName,
+        completions: Vec<Completion>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        self.call(|extension, store| {
+            async move {
+                let labels = extension
+                    .call_labels_for_completions(
+                        store,
+                        &language_server_id,
+                        completions.into_iter().map(Into::into).collect(),
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(labels
+                    .into_iter()
+                    .map(|label| label.map(Into::into))
+                    .collect())
             }
             .boxed()
         })
