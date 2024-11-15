@@ -3,9 +3,9 @@ use std::{path::Path, sync::Arc, time::Duration};
 use anyhow::anyhow;
 use gpui::{
     black, div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
-    AppContext, Asset, AssetSource, Bounds, Hsla, Length, Pixels, RenderImage, Resource,
-    ResourceLoader, SharedString, ViewContext, WindowBounds, WindowContext, WindowOptions,
-    LOADING_DELAY,
+    AppContext, Asset, AssetSource, Bounds, Hsla, ImageCacheError, Length, Pixels, RenderImage,
+    Resource, ResourceLoader, SharedString, ViewContext, WindowBounds, WindowContext,
+    WindowOptions, LOADING_DELAY,
 };
 
 struct Assets {}
@@ -42,7 +42,7 @@ struct LoadImageWithParameters {}
 impl Asset for LoadImageWithParameters {
     type Source = LoadImageParameters;
 
-    type Output = Result<Arc<RenderImage>, Arc<anyhow::Error>>;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
 
     fn load(
         parameters: Self::Source,
@@ -53,7 +53,7 @@ impl Asset for LoadImageWithParameters {
         async move {
             timer.await;
             if parameters.fail {
-                Err(Arc::new(anyhow!("Failed to load image")))
+                Err(anyhow!("Failed to load image").into())
             } else {
                 data.await
             }

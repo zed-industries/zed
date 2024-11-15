@@ -4,20 +4,23 @@ use crate::{
     Length, ObjectFit, Pixels, RenderImage, Resource, SharedString, SharedUri, StyleRefinement,
     Styled, SvgSize, WindowContext,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 
-use futures::{AsyncReadExt, Future, TryFutureExt};
-use image::{codecs::gif::GifDecoder, AnimationDecoder, Frame, ImageBuffer, ImageFormat};
+use futures::{AsyncReadExt, Future};
+use image::{
+    codecs::gif::GifDecoder, AnimationDecoder, Frame, ImageBuffer, ImageError, ImageFormat,
+};
 use smallvec::SmallVec;
 use std::{
     fs,
-    io::Cursor,
+    io::{self, Cursor},
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
+use thiserror::Error;
 use util::ResultExt;
 
 use super::{FocusableElement, Stateful, StatefulInteractiveElement};
@@ -35,7 +38,7 @@ pub enum ImageSource {
     /// Cached image data
     Image(Arc<Image>),
     /// A custom loading function to use
-    Custom(Arc<dyn Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, Arc<anyhow::Error>>>>),
+    Custom(Arc<dyn Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
 }
 
 fn is_uri(uri: &str) -> bool {
@@ -98,9 +101,8 @@ impl From<Arc<Image>> for ImageSource {
     }
 }
 
-impl<
-        F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, Arc<anyhow::Error>>> + 'static,
-    > From<F> for ImageSource
+impl<F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static>
+    From<F> for ImageSource
 {
     fn from(value: F) -> Self {
         Self::Custom(Arc::new(value))
@@ -422,7 +424,7 @@ impl ImageSource {
     pub(crate) fn use_data(
         &self,
         cx: &mut WindowContext,
-    ) -> Option<Result<Arc<RenderImage>, Arc<anyhow::Error>>> {
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
             ImageSource::Resource(resource) => cx.use_asset::<ResourceLoader>(&resource),
             ImageSource::Custom(loading_fn) => loading_fn(cx),
@@ -437,13 +439,13 @@ enum ImageDecoder {}
 
 impl Asset for ImageDecoder {
     type Source = Arc<Image>;
-    type Output = Result<Arc<RenderImage>, Arc<anyhow::Error>>;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
 
     fn load(
         source: Self::Source,
         cx: &mut AppContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let result = source.to_image_data(cx).map_err(Arc::new);
+        let result = source.to_image_data(cx).map_err(Into::into);
         async { result }
     }
 }
@@ -454,7 +456,7 @@ pub enum ResourceLoader {}
 
 impl Asset for ResourceLoader {
     type Source = Resource;
-    type Output = Result<Arc<RenderImage>, Arc<anyhow::Error>>;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
 
     fn load(
         source: Self::Source,
@@ -479,12 +481,11 @@ impl Asset for ResourceLoader {
                         let mut body = String::from_utf8_lossy(&body).into_owned();
                         let first_line = body.lines().next().unwrap_or("").trim_end();
                         body.truncate(first_line.len());
-                        bail!(
-                            "Request for {:?} failed with status {:?}: {}",
+                        return Err(ImageCacheError::BadStatus {
                             uri,
-                            response.status(),
-                            body
-                        );
+                            status: response.status(),
+                            body,
+                        });
                     }
                     body
                 }
@@ -493,7 +494,9 @@ impl Asset for ResourceLoader {
                     if let Some(data) = data {
                         data.to_vec()
                     } else {
-                        bail!("Embedded resource not found: {}", path);
+                        return Err(ImageCacheError::Asset(
+                            format!("Embedded resource not found: {}", path).into(),
+                        ));
                     }
                 }
             };
@@ -547,6 +550,59 @@ impl Asset for ResourceLoader {
 
             Ok(Arc::new(data))
         }
-        .map_err(Arc::new)
+    }
+}
+
+/// An error that can occur when interacting with the image cache.
+#[derive(Debug, Error, Clone)]
+pub enum ImageCacheError {
+    /// Some other kind of error occurred
+    #[error("error: {0}")]
+    Other(#[from] Arc<anyhow::Error>),
+    /// An error that occurred while reading the image from disk.
+    #[error("IO error: {0}")]
+    Io(Arc<std::io::Error>),
+    /// An error that occurred while processing an image.
+    #[error("unexpected http status for {uri}: {status}, body: {body}")]
+    BadStatus {
+        /// The URI of the image.
+        uri: SharedUri,
+        /// The HTTP status code.
+        status: http_client::StatusCode,
+        /// The HTTP response body.
+        body: String,
+    },
+    /// An error that occurred while processing an asset.
+    #[error("asset error: {0}")]
+    Asset(SharedString),
+    /// An error that occurred while processing an image.
+    #[error("image error: {0}")]
+    Image(Arc<ImageError>),
+    /// An error that occurred while processing an SVG.
+    #[error("svg error: {0}")]
+    Usvg(Arc<usvg::Error>),
+}
+
+impl From<anyhow::Error> for ImageCacheError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Other(Arc::new(value))
+    }
+}
+
+impl From<io::Error> for ImageCacheError {
+    fn from(value: io::Error) -> Self {
+        Self::Io(Arc::new(value))
+    }
+}
+
+impl From<usvg::Error> for ImageCacheError {
+    fn from(value: usvg::Error) -> Self {
+        Self::Usvg(Arc::new(value))
+    }
+}
+
+impl From<image::ImageError> for ImageCacheError {
+    fn from(value: image::ImageError) -> Self {
+        Self::Image(Arc::new(value))
     }
 }
