@@ -301,6 +301,7 @@ impl BackgroundExecutor {
 
     /// Block the current thread until the given future resolves
     /// or `duration` has elapsed.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn block_to_shutdown<R>(
         &self,
         duration: Duration,
