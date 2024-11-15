@@ -150,15 +150,15 @@ Zed allows you to override the default prompts used for various assistant featur
 
 The following templates can be overridden:
 
-1. [`content_prompt.hbs`](../../../assets/prompts/content_prompt.hbs): Used for generating content in the editor.
+1. [`content_prompt.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/content_prompt.hbs): Used for generating content in the editor.
 
-2. [`terminal_assistant_prompt.hbs`](../../../assets/prompts/terminal_assistant_prompt.hbs): Used for the terminal assistant feature.
+2. [`terminal_assistant_prompt.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/terminal_assistant_prompt.hbs): Used for the terminal assistant feature.
 
-3. [`suggest_edits.hbs`](../../../assets/prompts/suggest_edits.hbs): Used for generating the model instructions for the XML Suggest Edits should return.
+3. [`suggest_edits.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/suggest_edits.hbs): Used for generating the model instructions for the XML Suggest Edits should return.
 
-4. [`step_resolution.hbs`](../../../assets/prompts/step_resolution.hbs): Used for generating the step resolution prompt.
+4. [`step_resolution.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/step_resolution.hbs): Used for generating the step resolution prompt.
 
-5. [`project_slash_command.hbs`](../../../assets/prompts/project_slash_command.hbs)
+5. [`project_slash_command.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/project_slash_command.hbs)
 
 > **Note:** Be sure you want to override these, as you'll miss out on iteration on our built-in features. This should be primarily used when developing Zed.
 
