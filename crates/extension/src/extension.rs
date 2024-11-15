@@ -62,6 +62,12 @@ pub trait Extension: Send + Sync + 'static {
         completions: Vec<Completion>,
     ) -> Result<Vec<Option<CodeLabel>>>;
 
+    async fn labels_for_symbols(
+        &self,
+        language_server_id: LanguageServerName,
+        symbols: Vec<Symbol>,
+    ) -> Result<Vec<Option<CodeLabel>>>;
+
     async fn complete_slash_command_argument(
         &self,
         command: SlashCommand,

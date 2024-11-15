@@ -5,7 +5,7 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use extension::{
     CodeLabel, Command, Completion, KeyValueStoreDelegate, SlashCommand,
-    SlashCommandArgumentCompletion, SlashCommandOutput, WorktreeDelegate,
+    SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
@@ -153,6 +153,32 @@ impl extension::Extension for WasmExtension {
                         store,
                         &language_server_id,
                         completions.into_iter().map(Into::into).collect(),
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(labels
+                    .into_iter()
+                    .map(|label| label.map(Into::into))
+                    .collect())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn labels_for_symbols(
+        &self,
+        language_server_id: LanguageServerName,
+        symbols: Vec<Symbol>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        self.call(|extension, store| {
+            async move {
+                let labels = extension
+                    .call_labels_for_symbols(
+                        store,
+                        &language_server_id,
+                        symbols.into_iter().map(Into::into).collect(),
                     )
                     .await?
                     .map_err(|err| anyhow!("{err}"))?;

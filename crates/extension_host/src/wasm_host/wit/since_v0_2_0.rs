@@ -1,5 +1,5 @@
 use crate::wasm_host::wit::since_v0_2_0::slash_command::SlashCommandOutputSection;
-use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat};
+use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
@@ -154,6 +154,49 @@ impl From<extension::InsertTextFormat> for InsertTextFormat {
             extension::InsertTextFormat::PlainText => Self::PlainText,
             extension::InsertTextFormat::Snippet => Self::Snippet,
             extension::InsertTextFormat::Other(value) => Self::Other(value),
+        }
+    }
+}
+
+impl From<extension::Symbol> for Symbol {
+    fn from(value: extension::Symbol) -> Self {
+        Self {
+            kind: value.kind.into(),
+            name: value.name,
+        }
+    }
+}
+
+impl From<extension::SymbolKind> for SymbolKind {
+    fn from(value: extension::SymbolKind) -> Self {
+        match value {
+            extension::SymbolKind::File => Self::File,
+            extension::SymbolKind::Module => Self::Module,
+            extension::SymbolKind::Namespace => Self::Namespace,
+            extension::SymbolKind::Package => Self::Package,
+            extension::SymbolKind::Class => Self::Class,
+            extension::SymbolKind::Method => Self::Method,
+            extension::SymbolKind::Property => Self::Property,
+            extension::SymbolKind::Field => Self::Field,
+            extension::SymbolKind::Constructor => Self::Constructor,
+            extension::SymbolKind::Enum => Self::Enum,
+            extension::SymbolKind::Interface => Self::Interface,
+            extension::SymbolKind::Function => Self::Function,
+            extension::SymbolKind::Variable => Self::Variable,
+            extension::SymbolKind::Constant => Self::Constant,
+            extension::SymbolKind::String => Self::String,
+            extension::SymbolKind::Number => Self::Number,
+            extension::SymbolKind::Boolean => Self::Boolean,
+            extension::SymbolKind::Array => Self::Array,
+            extension::SymbolKind::Object => Self::Object,
+            extension::SymbolKind::Key => Self::Key,
+            extension::SymbolKind::Null => Self::Null,
+            extension::SymbolKind::EnumMember => Self::EnumMember,
+            extension::SymbolKind::Struct => Self::Struct,
+            extension::SymbolKind::Event => Self::Event,
+            extension::SymbolKind::Operator => Self::Operator,
+            extension::SymbolKind::TypeParameter => Self::TypeParameter,
+            extension::SymbolKind::Other(value) => Self::Other(value),
         }
     }
 }

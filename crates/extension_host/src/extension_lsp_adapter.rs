@@ -1,5 +1,5 @@
 use crate::wasm_host::{wit, WasmExtension, WasmHost};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use extension::{Extension, WorktreeDelegate};
@@ -239,26 +239,15 @@ impl LspAdapter for ExtensionLspAdapter {
         let symbols = symbols
             .iter()
             .cloned()
-            .map(|(name, kind)| wit::Symbol {
+            .map(|(name, kind)| extension::Symbol {
                 name,
-                kind: kind.into(),
+                kind: lsp_symbol_kind_to_extension(kind),
             })
             .collect::<Vec<_>>();
 
         let labels = self
-            .wasm_extension
-            .call({
-                let this = self.clone();
-                |extension, store| {
-                    async move {
-                        extension
-                            .call_labels_for_symbols(store, &this.language_server_id, symbols)
-                            .await?
-                            .map_err(|e| anyhow!("{}", e))
-                    }
-                    .boxed()
-                }
-            })
+            .extension
+            .labels_for_symbols(self.language_server_id.clone(), symbols)
             .await?;
 
         Ok(labels_from_extension(
@@ -423,37 +412,35 @@ fn lsp_insert_text_format_to_extension(
     }
 }
 
-impl From<lsp::SymbolKind> for wit::SymbolKind {
-    fn from(value: lsp::SymbolKind) -> Self {
-        match value {
-            lsp::SymbolKind::FILE => Self::File,
-            lsp::SymbolKind::MODULE => Self::Module,
-            lsp::SymbolKind::NAMESPACE => Self::Namespace,
-            lsp::SymbolKind::PACKAGE => Self::Package,
-            lsp::SymbolKind::CLASS => Self::Class,
-            lsp::SymbolKind::METHOD => Self::Method,
-            lsp::SymbolKind::PROPERTY => Self::Property,
-            lsp::SymbolKind::FIELD => Self::Field,
-            lsp::SymbolKind::CONSTRUCTOR => Self::Constructor,
-            lsp::SymbolKind::ENUM => Self::Enum,
-            lsp::SymbolKind::INTERFACE => Self::Interface,
-            lsp::SymbolKind::FUNCTION => Self::Function,
-            lsp::SymbolKind::VARIABLE => Self::Variable,
-            lsp::SymbolKind::CONSTANT => Self::Constant,
-            lsp::SymbolKind::STRING => Self::String,
-            lsp::SymbolKind::NUMBER => Self::Number,
-            lsp::SymbolKind::BOOLEAN => Self::Boolean,
-            lsp::SymbolKind::ARRAY => Self::Array,
-            lsp::SymbolKind::OBJECT => Self::Object,
-            lsp::SymbolKind::KEY => Self::Key,
-            lsp::SymbolKind::NULL => Self::Null,
-            lsp::SymbolKind::ENUM_MEMBER => Self::EnumMember,
-            lsp::SymbolKind::STRUCT => Self::Struct,
-            lsp::SymbolKind::EVENT => Self::Event,
-            lsp::SymbolKind::OPERATOR => Self::Operator,
-            lsp::SymbolKind::TYPE_PARAMETER => Self::TypeParameter,
-            _ => Self::Other(extract_int(value)),
-        }
+fn lsp_symbol_kind_to_extension(value: lsp::SymbolKind) -> extension::SymbolKind {
+    match value {
+        lsp::SymbolKind::FILE => extension::SymbolKind::File,
+        lsp::SymbolKind::MODULE => extension::SymbolKind::Module,
+        lsp::SymbolKind::NAMESPACE => extension::SymbolKind::Namespace,
+        lsp::SymbolKind::PACKAGE => extension::SymbolKind::Package,
+        lsp::SymbolKind::CLASS => extension::SymbolKind::Class,
+        lsp::SymbolKind::METHOD => extension::SymbolKind::Method,
+        lsp::SymbolKind::PROPERTY => extension::SymbolKind::Property,
+        lsp::SymbolKind::FIELD => extension::SymbolKind::Field,
+        lsp::SymbolKind::CONSTRUCTOR => extension::SymbolKind::Constructor,
+        lsp::SymbolKind::ENUM => extension::SymbolKind::Enum,
+        lsp::SymbolKind::INTERFACE => extension::SymbolKind::Interface,
+        lsp::SymbolKind::FUNCTION => extension::SymbolKind::Function,
+        lsp::SymbolKind::VARIABLE => extension::SymbolKind::Variable,
+        lsp::SymbolKind::CONSTANT => extension::SymbolKind::Constant,
+        lsp::SymbolKind::STRING => extension::SymbolKind::String,
+        lsp::SymbolKind::NUMBER => extension::SymbolKind::Number,
+        lsp::SymbolKind::BOOLEAN => extension::SymbolKind::Boolean,
+        lsp::SymbolKind::ARRAY => extension::SymbolKind::Array,
+        lsp::SymbolKind::OBJECT => extension::SymbolKind::Object,
+        lsp::SymbolKind::KEY => extension::SymbolKind::Key,
+        lsp::SymbolKind::NULL => extension::SymbolKind::Null,
+        lsp::SymbolKind::ENUM_MEMBER => extension::SymbolKind::EnumMember,
+        lsp::SymbolKind::STRUCT => extension::SymbolKind::Struct,
+        lsp::SymbolKind::EVENT => extension::SymbolKind::Event,
+        lsp::SymbolKind::OPERATOR => extension::SymbolKind::Operator,
+        lsp::SymbolKind::TYPE_PARAMETER => extension::SymbolKind::TypeParameter,
+        _ => extension::SymbolKind::Other(extract_int(value)),
     }
 }
 
