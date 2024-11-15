@@ -512,6 +512,7 @@ impl TestServer {
             rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             clickhouse_client: None,
+            kinesis_client: None,
             config: Config {
                 http_port: 0,
                 database_url: "".into(),
@@ -550,6 +551,10 @@ impl TestServer {
                 stripe_api_key: None,
                 supermaven_admin_api_key: None,
                 user_backfiller_github_access_token: None,
+                kinesis_region: None,
+                kinesis_stream: None,
+                kinesis_access_key: None,
+                kinesis_secret_key: None,
             },
         })
     }
