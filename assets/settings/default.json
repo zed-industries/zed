@@ -157,7 +157,7 @@
   "auto_signature_help": false,
   /// Whether to show the signature help after completion or a bracket pair inserted.
   /// If `auto_signature_help` is enabled, this setting will be treated as enabled also.
-  "show_signature_help_after_edits": true,
+  "show_signature_help_after_edits": false,
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
