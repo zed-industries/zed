@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context as _, Result};
-use collections::{hash_map, HashMap};
+use collections::HashMap;
 use editor::ProposedChangesEditor;
 use futures::{future, TryFutureExt as _};
 use gpui::{AppContext, AsyncAppContext, Model, ModelContext, SharedString, Task};
@@ -10,66 +10,64 @@ use std::{cmp, ops::Range, path::Path, sync::Arc};
 use text::{AnchorRangeExt as _, Bias, OffsetRangeExt as _, Point};
 use util::ResultExt;
 
-struct PatchStore {
+pub struct PatchStore {
     project: Model<Project>,
-    located_patches: HashMap<Range<text::Anchor>, (LocatedPatch, Option<Task<Result<()>>>)>,
+    entries: HashMap<Range<text::Anchor>, PatchStoreEntry>,
+}
+
+struct PatchStoreEntry {
+    patch: LocatedPatch,
+    locate_task: Option<Task<Result<()>>>,
 }
 
 impl PatchStore {
-    fn new(project: Model<Project>) -> Self {
+    pub fn new(project: Model<Project>) -> Self {
         Self {
             project,
-            located_patches: HashMap::default(),
+            entries: HashMap::default(),
         }
     }
 
-    fn insert(&mut self, patch: AssistantPatch, cx: &mut ModelContext<Self>) {
-        let project = self.project.clone();
+    pub(crate) fn insert(&mut self, patch: AssistantPatch, cx: &mut ModelContext<Self>) {
         let range = patch.range.clone();
-        match self.located_patches.entry(range.clone()) {
-            hash_map::Entry::Occupied(mut e) => {
-                let current_patch = e.get().0.clone();
-                let task = cx.spawn(|this, mut cx| async move {
-                    let located_patch =
-                        Self::locate_patch(patch, project, Some(current_patch), &mut cx).await?;
-                    this.update(&mut cx, |this, _cx| {
-                        this.located_patches.insert(range, (located_patch, None));
-                    })
-                });
-                e.get_mut().1 = Some(task);
-            }
-            hash_map::Entry::Vacant(e) => {
-                let task = cx.spawn({
-                    let patch = patch.clone();
-                    |this, mut cx| async move {
-                        let located_patch =
-                            Self::locate_patch(patch, project, None, &mut cx).await?;
-                        this.update(&mut cx, |this, _cx| {
-                            this.located_patches.insert(range, (located_patch, None));
-                        })
-                    }
-                });
-                e.insert((
-                    LocatedPatch {
-                        buffers: Vec::new(),
-                        input: patch,
+
+        let entry = self
+            .entries
+            .entry(range.clone())
+            .or_insert_with(|| PatchStoreEntry {
+                patch: LocatedPatch {
+                    buffers: Vec::new(),
+                    input: patch.clone(),
+                },
+                locate_task: None,
+            });
+
+        let project = self.project.clone();
+        let prev_patch = entry.patch.clone();
+        entry.locate_task = Some(cx.spawn(|this, mut cx| async move {
+            let located_patch = Self::locate_patch(patch, project, prev_patch, &mut cx).await?;
+            this.update(&mut cx, |this, _cx| {
+                this.entries.insert(
+                    range,
+                    PatchStoreEntry {
+                        patch: located_patch,
+                        locate_task: None,
                     },
-                    Some(task),
-                ));
-            }
-        }
+                );
+            })
+        }));
     }
 
-    fn resolve_patch(
+    pub fn resolve_patch(
         &mut self,
         range: Range<text::Anchor>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ResolvedPatch>> {
         let project = self.project.clone();
-        let Some(patch) = self.located_patches.get(&range) else {
+        let Some(entry) = self.entries.get(&range) else {
             return Task::ready(Err(anyhow!("no patch for the given range")));
         };
-        let patch = patch.0.clone();
+        let patch = entry.patch.clone();
 
         cx.spawn(|_, mut cx| async move {
             let mut result = ResolvedPatch {
@@ -84,9 +82,10 @@ impl PatchStore {
                     let buffer = buffer.await?;
                     let snapshot = buffer.read_with(&cx, |buffer, _| buffer.text_snapshot())?;
 
-                    // compute a diff between `snapshot` and `patch_buffer.content`
-                    // update the edit ranges based on this diff.
-                    // clip the offsets to make sure they are valid.
+                    // todo!(max):
+                    // * compute a diff between `snapshot` and `patch_buffer.content`
+                    // * update the edit ranges based on this diff.
+                    // * clip the offsets to make sure they are valid.
 
                     let edits = patch_buffer
                         .edits
@@ -111,78 +110,90 @@ impl PatchStore {
     async fn locate_patch(
         patch: AssistantPatch,
         project: Model<Project>,
-        prev_located_patch: Option<LocatedPatch>,
+        old_located_patch: LocatedPatch,
         cx: &mut AsyncAppContext,
     ) -> Result<LocatedPatch> {
-        let prev_edits = prev_located_patch
-            .as_ref()
-            .map(|patch| patch.input.edits.clone())
-            .unwrap_or(Arc::new([]));
+        let old_input_edits = old_located_patch.input.edits;
+        let old_outputs = old_located_patch.buffers;
 
-        let mut result = match prev_located_patch {
-            Some(mut prev_patch) => {
-                prev_patch.input = patch;
-                prev_patch
-            }
-            None => LocatedPatch {
-                input: patch,
-                buffers: Vec::new(),
-            },
-        };
+        // Convert each input edit into a located edit.
+        let mut new_outputs = Vec::<LocatedPatchBuffer>::new();
+        for (input_edit_ix, input_edit) in patch.edits.iter().enumerate() {
+            let path: Arc<Path> = Path::new(&input_edit.path).into();
 
-        for edit in result.input.edits.iter() {
-            if prev_edits.contains(&edit) {
-                continue;
-            }
+            let new_buffer_ix = new_outputs.binary_search_by_key(&&path, |buffer| &buffer.path);
+            let old_buffer_ix = old_outputs.binary_search_by_key(&&path, |buffer| &buffer.path);
+            let old_buffer = old_buffer_ix.ok().map(|ix| &old_outputs[ix]);
 
-            let buffer_ix = match result
-                .buffers
-                .binary_search_by_key(&Path::new(&edit.path), |buffer| &buffer.path)
-            {
+            // Find or load the buffer for this edit.
+            let new_buffer_ix = match new_buffer_ix {
                 Ok(ix) => ix,
                 Err(ix) => {
-                    let buffer =
-                        open_buffer_for_edit_path(&project, Path::new(&edit.path).into(), cx);
-                    if let Some(buffer) = buffer {
-                        if let Some(buffer) = buffer.await.log_err() {
-                            let content =
-                                buffer.read_with(cx, |buffer, _| buffer.as_rope().clone())?;
-                            result.buffers.insert(
-                                ix,
-                                LocatedPatchBuffer {
-                                    content,
-                                    path: Path::new(&edit.path).into(),
-                                    edits: Vec::new(),
-                                },
-                            )
-                        }
-                    }
+                    let content = if let Some(old_buffer) = old_buffer {
+                        old_buffer.content.clone()
+                    } else {
+                        let Some(buffer) = open_buffer_for_edit_path(&project, path.clone(), cx)
+                        else {
+                            continue;
+                        };
+                        let Some(buffer) = buffer.await.log_err() else {
+                            continue;
+                        };
+                        buffer.read_with(cx, |buffer, _| buffer.as_rope().clone())?
+                    };
 
+                    new_outputs.insert(
+                        ix,
+                        LocatedPatchBuffer {
+                            content,
+                            path,
+                            edits: Vec::new(),
+                        },
+                    );
                     ix
                 }
             };
+            let new_buffer = &mut new_outputs[new_buffer_ix];
 
-            let buffer = &mut result.buffers[buffer_ix];
-            let located_edit = edit.kind.clone().locate(&buffer.content);
+            // Determine if this edit has already been located in the previoius patch.
+            // If this edit is new, then locate it.
+            let old_located_edit = old_input_edits
+                .iter()
+                .position(|old_input_edit| old_input_edit == input_edit)
+                .and_then(|old_input_edit_ix| {
+                    old_buffer?
+                        .edits
+                        .iter()
+                        .find(|old_edit| old_edit.input_ix == old_input_edit_ix)
+                });
 
-            match buffer
+            let mut located_edit = if let Some(old_located_edit) = old_located_edit {
+                old_located_edit.clone()
+            } else {
+                cx.background_executor()
+                    .spawn({
+                        let edit = input_edit.kind.clone();
+                        let content = new_buffer.content.clone();
+                        async move { edit.clone().locate(input_edit_ix, &content) }
+                    })
+                    .await
+            };
+
+            located_edit.input_ix = input_edit_ix;
+
+            match new_buffer
                 .edits
                 .binary_search_by_key(&&located_edit.range.start, |edit| &edit.range.start)
             {
-                Ok(ix) => buffer.edits[ix] = located_edit,
-                Err(ix) => buffer.edits.insert(ix, located_edit),
+                Ok(ix) => new_buffer.edits[ix] = located_edit,
+                Err(ix) => new_buffer.edits.insert(ix, located_edit),
             }
         }
 
-        Ok(result)
-    }
-
-    fn serialize(&self) -> Box<serde_json::value::RawValue> {
-        todo!()
-    }
-
-    fn deserialize(&self, json: &serde_json::value::RawValue) -> Result<()> {
-        todo!()
+        Ok(LocatedPatch {
+            input: patch,
+            buffers: new_outputs,
+        })
     }
 }
 
@@ -281,6 +292,7 @@ struct LocatedEdit {
     range: Range<usize>,
     new_text: String,
     description: Option<String>,
+    input_ix: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -559,7 +571,7 @@ impl AssistantEditKind {
         }
     }
 
-    fn locate(self, buffer: &Rope) -> LocatedEdit {
+    fn locate(self, input_ix: usize, buffer: &Rope) -> LocatedEdit {
         match self {
             Self::Update {
                 old_text,
@@ -571,6 +583,7 @@ impl AssistantEditKind {
                     range,
                     new_text,
                     description,
+                    input_ix,
                 }
             }
             Self::Create {
@@ -580,6 +593,7 @@ impl AssistantEditKind {
                 range: 0..buffer.len(),
                 description,
                 new_text,
+                input_ix,
             },
             Self::InsertBefore {
                 old_text,
@@ -592,6 +606,7 @@ impl AssistantEditKind {
                     range: range.start..range.start,
                     new_text,
                     description,
+                    input_ix,
                 }
             }
             Self::InsertAfter {
@@ -605,6 +620,7 @@ impl AssistantEditKind {
                     range: range.end..range.end,
                     new_text,
                     description,
+                    input_ix,
                 }
             }
             Self::Delete { old_text } => {
@@ -613,6 +629,7 @@ impl AssistantEditKind {
                     range,
                     new_text: String::new(),
                     description: None,
+                    input_ix,
                 }
             }
         }
