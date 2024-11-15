@@ -1,11 +1,12 @@
 #![allow(unused, dead_code)]
-use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
+use gpui::{actions, hsla, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
-    prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar,
-    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, Checkbox, ElevationIndex,
-    Facepile, Indicator, TintColor, Tooltip,
+    element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus,
+    Availability, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
+    Checkbox, CheckboxWithLabel, ContentGroup, DecoratedIcon, ElevationIndex, Facepile,
+    IconDecoration, Indicator, Table, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -509,11 +510,16 @@ impl ThemePreview {
             .overflow_scroll()
             .size_full()
             .gap_2()
+            .child(ContentGroup::render_component_previews(cx))
+            .child(IconDecoration::render_component_previews(cx))
+            .child(DecoratedIcon::render_component_previews(cx))
             .child(Checkbox::render_component_previews(cx))
+            .child(CheckboxWithLabel::render_component_previews(cx))
             .child(Facepile::render_component_previews(cx))
             .child(Button::render_component_previews(cx))
             .child(Indicator::render_component_previews(cx))
             .child(Icon::render_component_previews(cx))
+            .child(Table::render_component_previews(cx))
             .child(self.render_avatars(cx))
             .child(self.render_buttons(layer, cx))
     }

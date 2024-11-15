@@ -296,9 +296,9 @@ impl TitleBar {
         let is_muted = room.is_muted();
         let is_deafened = room.is_deafened().unwrap_or(false);
         let is_screen_sharing = room.is_screen_sharing();
-        let can_use_microphone = room.can_use_microphone();
+        let can_use_microphone = room.can_use_microphone(cx);
         let can_share_projects = room.can_share_projects();
-        let platform_supported = match self.platform_style {
+        let screen_sharing_supported = match self.platform_style {
             PlatformStyle::Mac => true,
             PlatformStyle::Linux | PlatformStyle::Windows => false,
         };
@@ -365,9 +365,7 @@ impl TitleBar {
                 )
                 .tooltip(move |cx| {
                     Tooltip::text(
-                        if !platform_supported {
-                            "Cannot share microphone"
-                        } else if is_muted {
+                        if is_muted {
                             "Unmute microphone"
                         } else {
                             "Mute microphone"
@@ -377,56 +375,45 @@ impl TitleBar {
                 })
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
-                .selected(platform_supported && is_muted)
-                .disabled(!platform_supported)
+                .selected(is_muted)
                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                 .on_click(move |_, cx| {
                     toggle_mute(&Default::default(), cx);
                 })
                 .into_any_element(),
             );
+
+            children.push(
+                IconButton::new(
+                    "mute-sound",
+                    if is_deafened {
+                        ui::IconName::AudioOff
+                    } else {
+                        ui::IconName::AudioOn
+                    },
+                )
+                .style(ButtonStyle::Subtle)
+                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                .icon_size(IconSize::Small)
+                .selected(is_deafened)
+                .tooltip(move |cx| {
+                    Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
+                })
+                .on_click(move |_, cx| toggle_deafen(&Default::default(), cx))
+                .into_any_element(),
+            );
         }
 
-        children.push(
-            IconButton::new(
-                "mute-sound",
-                if is_deafened {
-                    ui::IconName::AudioOff
-                } else {
-                    ui::IconName::AudioOn
-                },
-            )
-            .style(ButtonStyle::Subtle)
-            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-            .icon_size(IconSize::Small)
-            .selected(is_deafened)
-            .disabled(!platform_supported)
-            .tooltip(move |cx| {
-                if !platform_supported {
-                    Tooltip::text("Cannot share microphone", cx)
-                } else if can_use_microphone {
-                    Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
-                } else {
-                    Tooltip::text("Deafen Audio", cx)
-                }
-            })
-            .on_click(move |_, cx| toggle_deafen(&Default::default(), cx))
-            .into_any_element(),
-        );
-
-        if can_share_projects {
+        if screen_sharing_supported {
             children.push(
                 IconButton::new("screen-share", ui::IconName::Screen)
                     .style(ButtonStyle::Subtle)
                     .icon_size(IconSize::Small)
                     .selected(is_screen_sharing)
-                    .disabled(!platform_supported)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .tooltip(move |cx| {
                         Tooltip::text(
-                            if !platform_supported {
-                                "Cannot share screen"
-                            } else if is_screen_sharing {
+                            if is_screen_sharing {
                                 "Stop Sharing Screen"
                             } else {
                                 "Share Screen"

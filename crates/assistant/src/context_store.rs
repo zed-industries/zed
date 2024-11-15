@@ -8,9 +8,8 @@ use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
 use collections::HashMap;
-use command_palette_hooks::CommandPaletteFilter;
-use context_servers::manager::{ContextServerManager, ContextServerSettings};
-use context_servers::CONTEXT_SERVERS_NAMESPACE;
+use context_servers::manager::ContextServerManager;
+use context_servers::ContextServerFactoryRegistry;
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
@@ -22,7 +21,6 @@ use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
 use rpc::AnyProtoClient;
-use settings::{Settings as _, SettingsStore};
 use std::{
     cmp::Reverse,
     ffi::OsStr,
@@ -51,8 +49,8 @@ pub struct ContextStore {
     contexts: Vec<ContextHandle>,
     contexts_metadata: Vec<SavedContextMetadata>,
     context_server_manager: Model<ContextServerManager>,
-    context_server_slash_command_ids: HashMap<String, Vec<SlashCommandId>>,
-    context_server_tool_ids: HashMap<String, Vec<ToolId>>,
+    context_server_slash_command_ids: HashMap<Arc<str>, Vec<SlashCommandId>>,
+    context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     host_contexts: Vec<RemoteContextMetadata>,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
@@ -111,7 +109,11 @@ impl ContextStore {
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
             let this = cx.new_model(|cx: &mut ModelContext<Self>| {
-                let context_server_manager = cx.new_model(|_cx| ContextServerManager::new());
+                let context_server_factory_registry =
+                    ContextServerFactoryRegistry::default_global(cx);
+                let context_server_manager = cx.new_model(|cx| {
+                    ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
+                });
                 let mut this = Self {
                     contexts: Vec::new(),
                     contexts_metadata: Vec::new(),
@@ -145,7 +147,7 @@ impl ContextStore {
                     project: project.clone(),
                     prompt_builder,
                 };
-                this.handle_project_changed(project, cx);
+                this.handle_project_changed(project.clone(), cx);
                 this.synchronize_contexts(cx);
                 this.register_context_server_handlers(cx);
                 this
@@ -154,39 +156,8 @@ impl ContextStore {
                 .await
                 .log_err();
 
-            this.update(&mut cx, |this, cx| {
-                this.watch_context_server_settings(cx);
-            })
-            .log_err();
-
             Ok(this)
         })
-    }
-
-    fn watch_context_server_settings(&self, cx: &mut ModelContext<Self>) {
-        cx.observe_global::<SettingsStore>(move |this, cx| {
-            this.context_server_manager.update(cx, |manager, cx| {
-                let location = this.project.read(cx).worktrees(cx).next().map(|worktree| {
-                    settings::SettingsLocation {
-                        worktree_id: worktree.read(cx).id(),
-                        path: Path::new(""),
-                    }
-                });
-                let settings = ContextServerSettings::get(location, cx);
-
-                manager.maintain_servers(settings, cx);
-
-                let has_any_context_servers = !manager.servers().is_empty();
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    if has_any_context_servers {
-                        filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
-                    } else {
-                        filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
-                    }
-                });
-            })
-        })
-        .detach();
     }
 
     async fn handle_advertise_contexts(

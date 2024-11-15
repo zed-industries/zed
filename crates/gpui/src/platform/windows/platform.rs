@@ -197,6 +197,14 @@ impl Platform for WindowsPlatform {
         self.text_system.clone()
     }
 
+    fn keyboard_layout(&self) -> String {
+        "unknown".into()
+    }
+
+    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
+        // todo(windows)
+    }
+
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
         let vsync_event = unsafe { Owned::new(CreateEventW(None, false, false, None).unwrap()) };
@@ -315,6 +323,14 @@ impl Platform for WindowsPlatform {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (mut tx, rx) = oneshot::channel();
+        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
+        rx
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

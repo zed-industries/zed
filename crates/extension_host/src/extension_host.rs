@@ -2,13 +2,17 @@ pub mod extension_lsp_adapter;
 pub mod extension_settings;
 pub mod wasm_host;
 
-use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
+#[cfg(test)]
+mod extension_store_test;
+
+use crate::extension_lsp_adapter::ExtensionLspAdapter;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
 use collections::{btree_map, BTreeMap, HashSet};
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+use extension::Extension;
 pub use extension::ExtensionManifest;
 use fs::{Fs, RemoveOptions};
 use futures::{
@@ -28,6 +32,7 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
     QUERY_FILENAME_PREFIXES,
 };
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
@@ -89,10 +94,6 @@ pub fn is_version_compatible(
     true
 }
 
-pub trait DocsDatabase: Send + Sync + 'static {
-    fn insert(&self, key: String, docs: String) -> Task<Result<()>>;
-}
-
 pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     fn remove_user_themes(&self, _themes: Vec<SharedString>) {}
 
@@ -121,12 +122,7 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
 
     fn register_lsp_adapter(&self, _language: LanguageName, _adapter: ExtensionLspAdapter) {}
 
-    fn remove_lsp_adapter(
-        &self,
-        _language: &LanguageName,
-        _server_name: &language::LanguageServerName,
-    ) {
-    }
+    fn remove_lsp_adapter(&self, _language: &LanguageName, _server_name: &LanguageServerName) {}
 
     fn register_wasm_grammars(&self, _grammars: Vec<(Arc<str>, PathBuf)>) {}
 
@@ -139,19 +135,20 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
 
     fn register_slash_command(
         &self,
-        _slash_command: wit::SlashCommand,
-        _extension: WasmExtension,
-        _host: Arc<WasmHost>,
+        _extension: Arc<dyn Extension>,
+        _command: extension::SlashCommand,
     ) {
     }
 
-    fn register_docs_provider(
+    fn register_context_server(
         &self,
+        _id: Arc<str>,
         _extension: WasmExtension,
-        _host: Arc<WasmHost>,
-        _provider_id: Arc<str>,
+        _cx: &mut AppContext,
     ) {
     }
+
+    fn register_docs_provider(&self, _extension: Arc<dyn Extension>, _provider_id: Arc<str>) {}
 
     fn register_snippets(&self, _path: &PathBuf, _snippet_contents: &str) -> Result<()> {
         Ok(())
@@ -159,7 +156,7 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
 
     fn update_lsp_status(
         &self,
-        _server_name: language::LanguageServerName,
+        _server_name: lsp::LanguageServerName,
         _status: language::LanguageServerBinaryStatus,
     ) {
     }
@@ -1234,18 +1231,16 @@ impl ExtensionStore {
                 this.reload_complete_senders.clear();
 
                 for (manifest, wasm_extension) in &wasm_extensions {
+                    let extension = Arc::new(wasm_extension.clone());
+
                     for (language_server_id, language_server_config) in &manifest.language_servers {
                         for language in language_server_config.languages() {
                             this.registration_hooks.register_lsp_adapter(
                                 language.clone(),
                                 ExtensionLspAdapter {
-                                    extension: wasm_extension.clone(),
-                                    host: this.wasm_host.clone(),
+                                    extension: extension.clone(),
                                     language_server_id: language_server_id.clone(),
-                                    config: wit::LanguageServerConfig {
-                                        name: language_server_id.0.to_string(),
-                                        language_name: language.to_string(),
-                                    },
+                                    language_name: language.clone(),
                                 },
                             );
                         }
@@ -1253,7 +1248,8 @@ impl ExtensionStore {
 
                     for (slash_command_name, slash_command) in &manifest.slash_commands {
                         this.registration_hooks.register_slash_command(
-                            crate::wit::SlashCommand {
+                            extension.clone(),
+                            extension::SlashCommand {
                                 name: slash_command_name.to_string(),
                                 description: slash_command.description.to_string(),
                                 // We don't currently expose this as a configurable option, as it currently drives
@@ -1262,17 +1258,20 @@ impl ExtensionStore {
                                 tooltip_text: String::new(),
                                 requires_argument: slash_command.requires_argument,
                             },
+                        );
+                    }
+
+                    for (id, _context_server_entry) in &manifest.context_servers {
+                        this.registration_hooks.register_context_server(
+                            id.clone(),
                             wasm_extension.clone(),
-                            this.wasm_host.clone(),
+                            cx,
                         );
                     }
 
                     for (provider_id, _provider) in &manifest.indexed_docs_providers {
-                        this.registration_hooks.register_docs_provider(
-                            wasm_extension.clone(),
-                            this.wasm_host.clone(),
-                            provider_id.clone(),
-                        );
+                        this.registration_hooks
+                            .register_docs_provider(extension.clone(), provider_id.clone());
                     }
                 }
 

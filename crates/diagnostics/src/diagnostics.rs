@@ -32,6 +32,7 @@ use std::{
     cmp::Ordering,
     mem,
     ops::Range,
+    sync::Arc,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
@@ -726,6 +727,10 @@ impl Item for ProjectDiagnosticsEditor {
         self.excerpts.read(cx).is_dirty(cx)
     }
 
+    fn has_deleted_file(&self, cx: &AppContext) -> bool {
+        self.excerpts.read(cx).has_deleted_file(cx)
+    }
+
     fn has_conflict(&self, cx: &AppContext) -> bool {
         self.excerpts.read(cx).has_conflict(cx)
     }
@@ -790,10 +795,11 @@ const DIAGNOSTIC_HEADER: &str = "diagnostic header";
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic, None);
     let message: SharedString = message;
-    Box::new(move |cx| {
+    Arc::new(move |cx| {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
         h_flex()
             .id(DIAGNOSTIC_HEADER)
+            .block_mouse_down()
             .h(2. * cx.line_height())
             .pl_10()
             .pr_5()

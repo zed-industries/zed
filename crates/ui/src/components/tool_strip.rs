@@ -46,8 +46,8 @@ impl RenderOnce for ToolStrip {
                 Axis::Horizontal => element.h_flex(),
             })
             .flex_none()
-            .gap(Spacing::Small.rems(cx))
-            .p(Spacing::XSmall.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
+            .p(DynamicSpacing::Base02.rems(cx))
             .border_1()
             .border_color(cx.theme().colors().border)
             .rounded(rems_from_px(6.0))

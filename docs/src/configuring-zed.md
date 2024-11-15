@@ -359,6 +359,40 @@ There are two options to choose from:
 
 List of `string` values
 
+## Inline Completions Disabled in
+
+- Description: A list of language scopes in which inline completions should be disabled.
+- Setting: `inline_completions_disabled_in`
+- Default: `[]`
+
+**Options**
+
+List of `string` values
+
+1. Don't show inline completions in comments:
+
+```json
+"disabled_in": ["comment"]
+```
+
+2. Don't show inline completions in strings and comments:
+
+```json
+"disabled_in": ["comment", "string"]
+```
+
+3. Only in Go, don't show inline completions in strings and comments:
+
+```json
+{
+  "languages": {
+    "Go": {
+      "inline_completions_disabled_in": ["comment", "string"]
+    }
+  }
+}
+```
+
 ## Current Line Highlight
 
 - Description: How to highlight the current line in the editor.
@@ -790,6 +824,8 @@ While other options may be changed at a runtime and should be placed under `sett
 ```
 
 3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like prettier support receiving the file path via a command line argument which can then used to impact formatting decisions.
+
+WARNING: `{buffer_path}` should not be used to direct your formatter to read from a filename. Your formatter should only read from standard input and should not read or write files directly.
 
 ```json
   "formatter": {

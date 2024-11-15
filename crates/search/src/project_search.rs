@@ -1,7 +1,7 @@
 use crate::{
-    BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
-    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
-    ToggleRegex, ToggleReplace, ToggleWholeWord,
+    buffer_search::Deploy, BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery,
+    ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive,
+    ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
 };
 use collections::{HashMap, HashSet};
 use editor::{
@@ -58,6 +58,9 @@ impl Global for ActiveSettings {}
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSettings::default());
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+        register_workspace_action(workspace, move |search_bar, _: &Deploy, cx| {
+            search_bar.focus_search(cx);
+        });
         register_workspace_action(workspace, move |search_bar, _: &FocusSearch, cx| {
             search_bar.focus_search(cx);
         });

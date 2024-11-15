@@ -11,9 +11,10 @@ use axum::{
     routing::post,
     Extension, Router, TypedHeader,
 };
+use chrono::Duration;
 use rpc::ExtensionMetadata;
 use semantic_version::SemanticVersion;
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
 use telemetry_events::{
@@ -21,6 +22,7 @@ use telemetry_events::{
     EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, Panic,
     ReplEvent, SettingEvent,
 };
+use util::ResultExt;
 use uuid::Uuid;
 
 const CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
@@ -388,13 +390,6 @@ pub async fn post_events(
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     body: Bytes,
 ) -> Result<()> {
-    let Some(clickhouse_client) = app.clickhouse_client.clone() else {
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
-
     let Some(expected) = calculate_json_checksum(app.clone(), &body) else {
         return Err(Error::http(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -415,6 +410,34 @@ pub async fn post_events(
         return Err(Error::http(StatusCode::BAD_REQUEST, "no events".into()))?;
     };
     let country_code = country_code_header.map(|h| h.to_string());
+
+    let first_event_at = chrono::Utc::now()
+        - chrono::Duration::milliseconds(last_event.milliseconds_since_first_event);
+
+    if let Some(kinesis_client) = app.kinesis_client.clone() {
+        if let Some(stream) = app.config.kinesis_stream.clone() {
+            let mut request = kinesis_client.put_records().stream_name(stream);
+            for row in for_snowflake(request_body.clone(), first_event_at) {
+                if let Some(data) = serde_json::to_vec(&row).log_err() {
+                    request = request.records(
+                        aws_sdk_kinesis::types::PutRecordsRequestEntry::builder()
+                            .partition_key(request_body.system_id.clone().unwrap_or_default())
+                            .data(data.into())
+                            .build()
+                            .unwrap(),
+                    );
+                }
+            }
+            request.send().await.log_err();
+        }
+    };
+
+    let Some(clickhouse_client) = app.clickhouse_client.clone() else {
+        Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "not supported".into(),
+        ))?
+    };
 
     let first_event_at = chrono::Utc::now()
         - chrono::Duration::milliseconds(last_event.milliseconds_since_first_event);
@@ -1363,4 +1386,160 @@ pub fn calculate_json_checksum(app: Arc<AppState>, json: &impl AsRef<[u8]>) -> O
     summer.update(json);
     summer.update(checksum_seed);
     Some(summer.finalize().into_iter().collect())
+}
+
+fn for_snowflake(
+    body: EventRequestBody,
+    first_event_at: chrono::DateTime<chrono::Utc>,
+) -> impl Iterator<Item = SnowflakeRow> {
+    body.events.into_iter().map(move |event| SnowflakeRow {
+        event: match &event.event {
+            Event::Editor(editor_event) => format!("editor_{}", editor_event.operation),
+            Event::InlineCompletion(inline_completion_event) => format!(
+                "inline_completion_{}",
+                if inline_completion_event.suggestion_accepted {
+                    "accept "
+                } else {
+                    "discard"
+                }
+            ),
+            Event::Call(call_event) => format!("call_{}", call_event.operation.replace(" ", "_")),
+            Event::Assistant(assistant_event) => {
+                format!(
+                    "assistant_{}",
+                    match assistant_event.phase {
+                        telemetry_events::AssistantPhase::Response => "response",
+                        telemetry_events::AssistantPhase::Invoked => "invoke",
+                        telemetry_events::AssistantPhase::Accepted => "accept",
+                        telemetry_events::AssistantPhase::Rejected => "reject",
+                    }
+                )
+            }
+            Event::Cpu(_) => "system_cpu".to_string(),
+            Event::Memory(_) => "system_memory".to_string(),
+            Event::App(app_event) => app_event.operation.replace(" ", "_"),
+            Event::Setting(_) => "setting_change".to_string(),
+            Event::Extension(_) => "extension_load".to_string(),
+            Event::Edit(_) => "edit".to_string(),
+            Event::Action(_) => "command_palette_action".to_string(),
+            Event::Repl(_) => "repl".to_string(),
+        },
+        system_id: body.system_id.clone(),
+        timestamp: first_event_at + Duration::milliseconds(event.milliseconds_since_first_event),
+        data: SnowflakeData {
+            installation_id: body.installation_id.clone(),
+            session_id: body.session_id.clone(),
+            metrics_id: body.metrics_id.clone(),
+            is_staff: body.is_staff,
+            app_version: body.app_version.clone(),
+            os_name: body.os_name.clone(),
+            os_version: body.os_version.clone(),
+            architecture: body.architecture.clone(),
+            release_channel: body.release_channel.clone(),
+            signed_in: event.signed_in,
+            editor_event: match &event.event {
+                Event::Editor(editor_event) => Some(editor_event.clone()),
+                _ => None,
+            },
+            inline_completion_event: match &event.event {
+                Event::InlineCompletion(inline_completion_event) => {
+                    Some(inline_completion_event.clone())
+                }
+                _ => None,
+            },
+            call_event: match &event.event {
+                Event::Call(call_event) => Some(call_event.clone()),
+                _ => None,
+            },
+            assistant_event: match &event.event {
+                Event::Assistant(assistant_event) => Some(assistant_event.clone()),
+                _ => None,
+            },
+            cpu_event: match &event.event {
+                Event::Cpu(cpu_event) => Some(cpu_event.clone()),
+                _ => None,
+            },
+            memory_event: match &event.event {
+                Event::Memory(memory_event) => Some(memory_event.clone()),
+                _ => None,
+            },
+            app_event: match &event.event {
+                Event::App(app_event) => Some(app_event.clone()),
+                _ => None,
+            },
+            setting_event: match &event.event {
+                Event::Setting(setting_event) => Some(setting_event.clone()),
+                _ => None,
+            },
+            extension_event: match &event.event {
+                Event::Extension(extension_event) => Some(extension_event.clone()),
+                _ => None,
+            },
+            edit_event: match &event.event {
+                Event::Edit(edit_event) => Some(edit_event.clone()),
+                _ => None,
+            },
+            repl_event: match &event.event {
+                Event::Repl(repl_event) => Some(repl_event.clone()),
+                _ => None,
+            },
+            action_event: match event.event {
+                Event::Action(action_event) => Some(action_event.clone()),
+                _ => None,
+            },
+        },
+    })
+}
+
+#[derive(Serialize, Deserialize)]
+struct SnowflakeRow {
+    pub event: String,
+    pub system_id: Option<String>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub data: SnowflakeData,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SnowflakeData {
+    /// Identifier unique to each Zed installation (differs for stable, preview, dev)
+    pub installation_id: Option<String>,
+    /// Identifier unique to each logged in Zed user (randomly generated on first sign in)
+    /// Identifier unique to each Zed session (differs for each time you open Zed)
+    pub session_id: Option<String>,
+    pub metrics_id: Option<String>,
+    /// True for Zed staff, otherwise false
+    pub is_staff: Option<bool>,
+    /// Zed version number
+    pub app_version: String,
+    pub os_name: String,
+    pub os_version: Option<String>,
+    pub architecture: String,
+    /// Zed release channel (stable, preview, dev)
+    pub release_channel: Option<String>,
+    pub signed_in: bool,
+
+    #[serde(flatten)]
+    pub editor_event: Option<EditorEvent>,
+    #[serde(flatten)]
+    pub inline_completion_event: Option<InlineCompletionEvent>,
+    #[serde(flatten)]
+    pub call_event: Option<CallEvent>,
+    #[serde(flatten)]
+    pub assistant_event: Option<AssistantEvent>,
+    #[serde(flatten)]
+    pub cpu_event: Option<CpuEvent>,
+    #[serde(flatten)]
+    pub memory_event: Option<MemoryEvent>,
+    #[serde(flatten)]
+    pub app_event: Option<AppEvent>,
+    #[serde(flatten)]
+    pub setting_event: Option<SettingEvent>,
+    #[serde(flatten)]
+    pub extension_event: Option<ExtensionEvent>,
+    #[serde(flatten)]
+    pub edit_event: Option<EditEvent>,
+    #[serde(flatten)]
+    pub repl_event: Option<ReplEvent>,
+    #[serde(flatten)]
+    pub action_event: Option<ActionEvent>,
 }

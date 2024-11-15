@@ -36,7 +36,7 @@ use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
-use fold_map::{FoldMap, FoldMapWriter, FoldOffset, FoldSnapshot};
+use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{
     AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
@@ -65,7 +65,7 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
-use text::{Edit, LineIndent};
+use text::LineIndent;
 use ui::{div, px, IntoElement, ParentElement, SharedString, Styled, WindowContext};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
@@ -197,22 +197,86 @@ impl DisplayMap {
             other
                 .folds_in_range(0..other.buffer_snapshot.len())
                 .map(|fold| {
-                    (
+                    Crease::simple(
                         fold.range.to_offset(&other.buffer_snapshot),
                         fold.placeholder.clone(),
                     )
-                }),
+                })
+                .collect(),
             cx,
         );
     }
 
-    /// Creates folds for the given ranges.
-    pub fn fold<T: ToOffset>(
+    /// Creates folds for the given creases.
+    pub fn fold<T: Clone + ToOffset>(
         &mut self,
-        ranges: impl IntoIterator<Item = (Range<T>, FoldPlaceholder)>,
+        creases: Vec<Crease<T>>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.update_fold_map(cx, |fold_map| fold_map.fold(ranges))
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot.clone(), edits);
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
+
+        let inline = creases.iter().filter_map(|crease| {
+            if let Crease::Inline {
+                range, placeholder, ..
+            } = crease
+            {
+                Some((range.clone(), placeholder.clone()))
+            } else {
+                None
+            }
+        });
+        let (snapshot, edits) = fold_map.fold(inline);
+
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits);
+        let blocks = creases.into_iter().filter_map(|crease| {
+            if let Crease::Block {
+                range,
+                block_height,
+                render_block,
+                block_style,
+                block_priority,
+                ..
+            } = crease
+            {
+                Some((
+                    range,
+                    render_block,
+                    block_height,
+                    block_style,
+                    block_priority,
+                ))
+            } else {
+                None
+            }
+        });
+        block_map.insert(
+            blocks
+                .into_iter()
+                .map(|(range, render, height, style, priority)| {
+                    let start = buffer_snapshot.anchor_before(range.start);
+                    let end = buffer_snapshot.anchor_after(range.end);
+                    BlockProperties {
+                        placement: BlockPlacement::Replace(start..end),
+                        render,
+                        height,
+                        style,
+                        priority,
+                    }
+                }),
+        );
     }
 
     /// Removes any folds with the given ranges.
@@ -221,26 +285,6 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         type_id: TypeId,
         cx: &mut ModelContext<Self>,
-    ) {
-        self.update_fold_map(cx, |fold_map| fold_map.remove_folds(ranges, type_id))
-    }
-
-    /// Removes any folds whose ranges intersect any of the given ranges.
-    pub fn unfold_intersecting<T: ToOffset>(
-        &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
-        inclusive: bool,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.update_fold_map(cx, |fold_map| {
-            fold_map.unfold_intersecting(ranges, inclusive)
-        })
-    }
-
-    fn update_fold_map(
-        &mut self,
-        cx: &mut ModelContext<Self>,
-        callback: impl FnOnce(&mut FoldMapWriter) -> (FoldSnapshot, Vec<Edit<FoldOffset>>),
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -252,17 +296,49 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-        let (snapshot, edits) = callback(&mut fold_map);
+        let (snapshot, edits) = fold_map.remove_folds(ranges, type_id);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.write(snapshot, edits);
+    }
+
+    /// Removes any folds whose ranges intersect any of the given ranges.
+    pub fn unfold_intersecting<T: ToOffset>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        inclusive: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let offset_ranges = ranges
+            .into_iter()
+            .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot))
+            .collect::<Vec<_>>();
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
+
+        let (snapshot, edits) =
+            fold_map.unfold_intersecting(offset_ranges.iter().cloned(), inclusive);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.remove_intersecting_replace_blocks(offset_ranges, inclusive);
     }
 
     pub fn insert_creases(
         &mut self,
-        creases: impl IntoIterator<Item = Crease>,
+        creases: impl IntoIterator<Item = Crease<Anchor>>,
         cx: &mut ModelContext<Self>,
     ) -> Vec<CreaseId> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -596,7 +672,7 @@ impl DisplaySnapshot {
     ) -> impl Iterator<Item = Option<MultiBufferRow>> + '_ {
         self.block_snapshot
             .buffer_rows(BlockRow(start_row.0))
-            .map(|row| row.map(|row| MultiBufferRow(row.0)))
+            .map(|row| row.map(MultiBufferRow))
     }
 
     pub fn max_buffer_row(&self) -> MultiBufferRow {
@@ -987,7 +1063,12 @@ impl DisplaySnapshot {
     }
 
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
-        self.fold_snapshot.is_line_folded(buffer_row)
+        self.block_snapshot.is_line_replaced(buffer_row)
+            || self.fold_snapshot.is_line_folded(buffer_row)
+    }
+
+    pub fn is_line_replaced(&self, buffer_row: MultiBufferRow) -> bool {
+        self.block_snapshot.is_line_replaced(buffer_row)
     }
 
     pub fn is_block_line(&self, display_row: DisplayRow) -> bool {
@@ -1061,19 +1142,42 @@ impl DisplaySnapshot {
             .unwrap_or(false)
     }
 
-    pub fn foldable_range(
-        &self,
-        buffer_row: MultiBufferRow,
-    ) -> Option<(Range<Point>, FoldPlaceholder)> {
+    pub fn crease_for_buffer_row(&self, buffer_row: MultiBufferRow) -> Option<Crease<Point>> {
         let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
         if let Some(crease) = self
             .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
         {
-            Some((
-                crease.range.to_point(&self.buffer_snapshot),
-                crease.placeholder.clone(),
-            ))
+            match crease {
+                Crease::Inline {
+                    range,
+                    placeholder,
+                    render_toggle,
+                    render_trailer,
+                    metadata,
+                } => Some(Crease::Inline {
+                    range: range.to_point(&self.buffer_snapshot),
+                    placeholder: placeholder.clone(),
+                    render_toggle: render_toggle.clone(),
+                    render_trailer: render_trailer.clone(),
+                    metadata: metadata.clone(),
+                }),
+                Crease::Block {
+                    range,
+                    block_height,
+                    block_style,
+                    render_block,
+                    block_priority,
+                    render_toggle,
+                } => Some(Crease::Block {
+                    range: range.to_point(&self.buffer_snapshot),
+                    block_height: *block_height,
+                    block_style: *block_style,
+                    render_block: render_block.clone(),
+                    block_priority: *block_priority,
+                    render_toggle: render_toggle.clone(),
+                }),
+            }
         } else if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
@@ -1110,7 +1214,13 @@ impl DisplaySnapshot {
                     .line_len(MultiBufferRow(row_before_line_breaks.row)),
             );
 
-            Some((start..row_before_line_breaks, self.fold_placeholder.clone()))
+            Some(Crease::Inline {
+                range: start..row_before_line_breaks,
+                placeholder: self.fold_placeholder.clone(),
+                render_toggle: None,
+                render_trailer: None,
+                metadata: None,
+            })
         } else {
             None
         }
@@ -1418,7 +1528,7 @@ pub mod tests {
                                         placement,
                                         style: BlockStyle::Fixed,
                                         height,
-                                        render: Box::new(|_| div().into_any()),
+                                        render: Arc::new(|_| div().into_any()),
                                         priority,
                                     }
                                 })
@@ -1457,7 +1567,8 @@ pub mod tests {
                             map.fold(
                                 ranges
                                     .into_iter()
-                                    .map(|range| (range, FoldPlaceholder::test())),
+                                    .map(|range| Crease::simple(range, FoldPlaceholder::test()))
+                                    .collect(),
                                 cx,
                             );
                         });
@@ -1832,7 +1943,7 @@ pub mod tests {
 
         map.update(cx, |map, cx| {
             map.fold(
-                vec![(
+                vec![Crease::simple(
                     MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
                     FoldPlaceholder::test(),
                 )],
@@ -1922,7 +2033,7 @@ pub mod tests {
                     ),
                     height: 1,
                     style: BlockStyle::Sticky,
-                    render: Box::new(|_| div().into_any()),
+                    render: Arc::new(|_| div().into_any()),
                     priority: 0,
                 }],
                 cx,
@@ -2028,7 +2139,7 @@ pub mod tests {
                     ),
                     height: 1,
                     style: BlockStyle::Sticky,
-                    render: Box::new(|_| div().into_any()),
+                    render: Arc::new(|_| div().into_any()),
                     priority: 0,
                 }],
                 cx,
@@ -2104,7 +2215,7 @@ pub mod tests {
                     ),
                     height: 4,
                     style: BlockStyle::Fixed,
-                    render: Box::new(|_| div().into_any()),
+                    render: Arc::new(|_| div().into_any()),
                     priority: 0,
                 }],
                 cx,
@@ -2253,7 +2364,7 @@ pub mod tests {
 
         map.update(cx, |map, cx| {
             map.fold(
-                vec![(
+                vec![Crease::simple(
                     MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
                     FoldPlaceholder::test(),
                 )],
@@ -2452,7 +2563,7 @@ pub mod tests {
                 snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_after(Point::new(3, 3));
 
             map.crease_map.insert(
-                [Crease::new(
+                [Crease::inline(
                     range,
                     FoldPlaceholder::test(),
                     |_row, _status, _toggle, _cx| div(),

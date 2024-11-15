@@ -1,6 +1,7 @@
 mod avatar;
 mod button;
 mod checkbox;
+mod content_group;
 mod context_menu;
 mod disclosure;
 mod divider;
@@ -26,6 +27,7 @@ mod settings_group;
 mod stack;
 mod tab;
 mod tab_bar;
+mod table;
 mod tool_strip;
 mod tooltip;
 
@@ -35,6 +37,7 @@ mod stories;
 pub use avatar::*;
 pub use button::*;
 pub use checkbox::*;
+pub use content_group::*;
 pub use context_menu::*;
 pub use disclosure::*;
 pub use divider::*;
@@ -60,6 +63,7 @@ pub use settings_group::*;
 pub use stack::*;
 pub use tab::*;
 pub use tab_bar::*;
+pub use table::*;
 pub use tool_strip::*;
 pub use tooltip::*;
 

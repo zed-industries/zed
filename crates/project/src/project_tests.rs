@@ -481,7 +481,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // The buffer is configured based on the language server's capabilities.
     rust_buffer.update(cx, |buffer, _| {
         assert_eq!(
-            buffer.completion_triggers(),
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
         );
     });
@@ -528,7 +532,14 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // This buffer is configured based on the second language server's
     // capabilities.
     json_buffer.update(cx, |buffer, _| {
-        assert_eq!(buffer.completion_triggers(), &[":".to_string()]);
+        assert_eq!(
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            &[":".to_string()]
+        );
     });
 
     // When opening another buffer whose language server is already running,
@@ -541,7 +552,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         .unwrap();
     rust_buffer2.update(cx, |buffer, _| {
         assert_eq!(
-            buffer.completion_triggers(),
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
         );
     });
@@ -1228,7 +1243,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         events.next().await.unwrap(),
         Event::LanguageServerAdded(
             LanguageServerId(0),
-            fake_server.server.name().into(),
+            fake_server.server.name(),
             Some(worktree_id)
         ),
     );
@@ -1363,7 +1378,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         events.next().await.unwrap(),
         Event::LanguageServerAdded(
             LanguageServerId(1),
-            fake_server.server.name().into(),
+            fake_server.server.name(),
             Some(worktree_id)
         )
     );
@@ -4640,61 +4655,6 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_search_ordering(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.background_executor.clone());
-    fs.insert_tree(
-        "/dir",
-        json!({
-            ".git": {},
-            ".gitignore": "**/target\n/node_modules\n",
-            "aaa.txt": "key:value",
-            "bbb": {
-                "index.txt": "index_key:index_value"
-            },
-            "node_modules": {
-                "10 eleven": "key",
-                "1 two": "key"
-            },
-        }),
-    )
-    .await;
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-
-    let mut search = project.update(cx, |project, cx| {
-        project.search(
-            SearchQuery::text(
-                "key",
-                false,
-                false,
-                true,
-                Default::default(),
-                Default::default(),
-                None,
-            )
-            .unwrap(),
-            cx,
-        )
-    });
-
-    fn file_name(search_result: Option<SearchResult>, cx: &mut gpui::TestAppContext) -> String {
-        match search_result.unwrap() {
-            SearchResult::Buffer { buffer, .. } => buffer.read_with(cx, |buffer, _| {
-                buffer.file().unwrap().path().to_string_lossy().to_string()
-            }),
-            _ => panic!("Expected buffer"),
-        }
-    }
-
-    assert_eq!(file_name(search.next().await, cx), "bbb/index.txt");
-    assert_eq!(file_name(search.next().await, cx), "node_modules/1 two");
-    assert_eq!(file_name(search.next().await, cx), "node_modules/10 eleven");
-    assert_eq!(file_name(search.next().await, cx), "aaa.txt");
-    assert!(search.next().await.is_none())
-}
-
-#[gpui::test]
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -4850,11 +4810,10 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         });
         let new_server_name = new_server.server.name();
         assert!(
-            !servers_with_hover_requests.contains_key(new_server_name),
+            !servers_with_hover_requests.contains_key(&new_server_name),
             "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
         );
-        let new_server_name = new_server_name.to_string();
-        match new_server_name.as_str() {
+        match new_server_name.as_ref() {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
@@ -5074,11 +5033,10 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         let new_server_name = new_server.server.name();
 
         assert!(
-            !servers_with_actions_requests.contains_key(new_server_name),
+            !servers_with_actions_requests.contains_key(&new_server_name),
             "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
         );
-        let new_server_name = new_server_name.to_string();
-        match new_server_name.as_str() {
+        match new_server_name.0.as_ref() {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_actions_requests.insert(
                     new_server_name.clone(),

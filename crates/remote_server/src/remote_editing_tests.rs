@@ -6,10 +6,9 @@ use gpui::{Context, Model, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     language_settings::{language_settings, AllLanguageSettings},
-    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
-    LineEnding,
+    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
 };
-use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind};
+use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{
     search::{SearchQuery, SearchResult},

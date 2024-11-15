@@ -2,6 +2,7 @@ pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
+pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_ext_command;
 pub mod lsp_store;
@@ -35,6 +36,8 @@ use futures::{
     future::try_join_all,
     StreamExt,
 };
+pub use image_store::{ImageItem, ImageStore};
+use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
@@ -45,12 +48,12 @@ use itertools::Itertools;
 use language::{
     language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
     CachedLspAdapter, Capability, CodeLabel, DiagnosticEntry, Documentation, File as _, Language,
-    LanguageName, LanguageRegistry, LanguageServerName, PointUtf16, ToOffset, ToPointUtf16,
-    Toolchain, ToolchainList, Transaction, Unclipped,
+    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
+    Transaction, Unclipped,
 };
 use lsp::{
     CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
-    MessageActionItem,
+    LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -79,6 +82,7 @@ use std::{
 use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
+use toolchain_store::EmptyToolchainStore;
 use util::{paths::compare_paths, ResultExt as _};
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
@@ -146,6 +150,7 @@ pub struct Project {
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Model<WorktreeStore>,
     buffer_store: Model<BufferStore>,
+    image_store: Model<ImageStore>,
     lsp_store: Model<LspStore>,
     _subscriptions: Vec<gpui::Subscription>,
     buffers_needing_diff: HashSet<WeakModel<Buffer>>,
@@ -205,10 +210,11 @@ enum BufferOrderedMessage {
 
 #[derive(Debug)]
 enum ProjectClientState {
+    /// Single-player mode.
     Local,
-    Shared {
-        remote_id: u64,
-    },
+    /// Multi-player mode but still a local project.
+    Shared { remote_id: u64 },
+    /// Multi-player mode but working on a remote project.
     Remote {
         sharing_has_stopped: bool,
         capability: Capability,
@@ -606,6 +612,10 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
+            let image_store = cx.new_model(|cx| ImageStore::local(worktree_store.clone(), cx));
+            cx.subscribe(&image_store, Self::on_image_store_event)
+                .detach();
+
             let prettier_store = cx.new_model(|cx| {
                 PrettierStore::new(
                     node.clone(),
@@ -617,12 +627,20 @@ impl Project {
             });
 
             let environment = ProjectEnvironment::new(&worktree_store, env, cx);
-
+            let toolchain_store = cx.new_model(|cx| {
+                ToolchainStore::local(
+                    languages.clone(),
+                    worktree_store.clone(),
+                    environment.clone(),
+                    cx,
+                )
+            });
             let task_store = cx.new_model(|cx| {
                 TaskStore::local(
                     fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
+                    toolchain_store.read(cx).as_language_toolchain_store(),
                     environment.clone(),
                     cx,
                 )
@@ -638,14 +656,7 @@ impl Project {
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
-            let toolchain_store = cx.new_model(|cx| {
-                ToolchainStore::local(
-                    languages.clone(),
-                    worktree_store.clone(),
-                    environment.clone(),
-                    cx,
-                )
-            });
+
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
                     buffer_store.clone(),
@@ -666,6 +677,7 @@ impl Project {
                 collaborators: Default::default(),
                 worktree_store,
                 buffer_store,
+                image_store,
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
@@ -729,14 +741,25 @@ impl Project {
                     cx,
                 )
             });
+            let image_store = cx.new_model(|cx| {
+                ImageStore::remote(
+                    worktree_store.clone(),
+                    ssh.read(cx).proto_client(),
+                    SSH_PROJECT_ID,
+                    cx,
+                )
+            });
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
-
+            let toolchain_store = cx.new_model(|cx| {
+                ToolchainStore::remote(SSH_PROJECT_ID, ssh.read(cx).proto_client(), cx)
+            });
             let task_store = cx.new_model(|cx| {
                 TaskStore::remote(
                     fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
+                    toolchain_store.read(cx).as_language_toolchain_store(),
                     ssh.read(cx).proto_client(),
                     SSH_PROJECT_ID,
                     cx,
@@ -750,14 +773,12 @@ impl Project {
                 .detach();
 
             let environment = ProjectEnvironment::new(&worktree_store, None, cx);
-            let toolchain_store = Some(cx.new_model(|cx| {
-                ToolchainStore::remote(SSH_PROJECT_ID, ssh.read(cx).proto_client(), cx)
-            }));
+
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_remote(
                     buffer_store.clone(),
                     worktree_store.clone(),
-                    toolchain_store.clone(),
+                    Some(toolchain_store.clone()),
                     languages.clone(),
                     ssh_proto.clone(),
                     SSH_PROJECT_ID,
@@ -774,6 +795,7 @@ impl Project {
                 collaborators: Default::default(),
                 worktree_store,
                 buffer_store,
+                image_store,
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
@@ -816,7 +838,7 @@ impl Project {
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
 
-                toolchain_store,
+                toolchain_store: Some(toolchain_store),
             };
 
             let ssh = ssh.read(cx);
@@ -920,6 +942,9 @@ impl Project {
         let buffer_store = cx.new_model(|cx| {
             BufferStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
+        let image_store = cx.new_model(|cx| {
+            ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
+        })?;
 
         let lsp_store = cx.new_model(|cx| {
             let mut lsp_store = LspStore::new_remote(
@@ -941,6 +966,7 @@ impl Project {
                     fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
+                    Arc::new(EmptyToolchainStore),
                     client.clone().into(),
                     remote_id,
                     cx,
@@ -982,6 +1008,7 @@ impl Project {
             let mut this = Self {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
+                image_store,
                 worktree_store: worktree_store.clone(),
                 lsp_store: lsp_store.clone(),
                 active_entry: None,
@@ -1783,7 +1810,7 @@ impl Project {
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        if (self.is_via_collab() || self.is_via_ssh()) && self.is_disconnected(cx) {
+        if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
 
@@ -1877,6 +1904,20 @@ impl Project {
         .detach();
 
         Ok(())
+    }
+
+    pub fn open_image(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<ImageItem>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+
+        self.image_store.update(cx, |image_store, cx| {
+            image_store.open_image(path.into(), cx)
+        })
     }
 
     async fn send_buffer_ordered_messages(
@@ -2009,6 +2050,22 @@ impl Project {
                         })
                         .log_err();
                 }
+            }
+        }
+    }
+
+    fn on_image_store_event(
+        &mut self,
+        _: Model<ImageStore>,
+        event: &ImageStoreEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            ImageStoreEvent::ImageAdded(image) => {
+                cx.subscribe(image, |this, image, event, cx| {
+                    this.on_image_event(image, event, cx);
+                })
+                .detach();
             }
         }
     }
@@ -2253,6 +2310,25 @@ impl Project {
         None
     }
 
+    fn on_image_event(
+        &mut self,
+        image: Model<ImageItem>,
+        event: &ImageItemEvent,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        match event {
+            ImageItemEvent::ReloadNeeded => {
+                if !self.is_via_collab() {
+                    self.reload_images([image.clone()].into_iter().collect(), cx)
+                        .detach_and_log_err(cx);
+                }
+            }
+            _ => {}
+        }
+
+        None
+    }
+
     fn request_buffer_diff_recalculation(
         &mut self,
         buffer: &Model<Buffer>,
@@ -2464,6 +2540,15 @@ impl Project {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.reload_buffers(buffers, push_to_history, cx)
         })
+    }
+
+    pub fn reload_images(
+        &self,
+        images: HashSet<Model<ImageItem>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        self.image_store
+            .update(cx, |image_store, cx| image_store.reload_images(images, cx))
     }
 
     pub fn format(

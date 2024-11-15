@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.162.0"
+version = "0.163.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -35,6 +35,7 @@ collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
 command_palette_hooks.workspace = true
+context_servers.workspace = true
 copilot.workspace = true
 db.workspace = true
 diagnostics.workspace = true
@@ -125,7 +126,7 @@ windows.workspace = true
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
 
 [dev-dependencies]

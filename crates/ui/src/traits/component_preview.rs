@@ -2,6 +2,20 @@
 use crate::prelude::*;
 use gpui::{AnyElement, SharedString};
 
+/// Which side of the preview to show labels on
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExampleLabelSide {
+    /// Left side
+    Left,
+    /// Right side
+    Right,
+    #[default]
+    /// Top side
+    Top,
+    /// Bottom side
+    Bottom,
+}
+
 /// Implement this trait to enable rich UI previews with metadata in the Theme Preview tool.
 pub trait ComponentPreview: IntoElement {
     fn title() -> &'static str {
@@ -12,10 +26,18 @@ pub trait ComponentPreview: IntoElement {
         None
     }
 
-    fn examples() -> Vec<ComponentExampleGroup<Self>>;
+    fn example_label_side() -> ExampleLabelSide {
+        ExampleLabelSide::default()
+    }
 
-    fn component_previews() -> Vec<AnyElement> {
-        Self::examples()
+    fn examples(_cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>>;
+
+    fn custom_example(_cx: &WindowContext) -> impl Into<Option<AnyElement>> {
+        None::<AnyElement>
+    }
+
+    fn component_previews(cx: &WindowContext) -> Vec<AnyElement> {
+        Self::examples(cx)
             .into_iter()
             .map(|example| Self::render_example_group(example))
             .collect()
@@ -29,7 +51,8 @@ pub trait ComponentPreview: IntoElement {
         let description = Self::description().into();
 
         v_flex()
-            .gap_3()
+            .w_full()
+            .gap_6()
             .p_4()
             .border_1()
             .border_color(cx.theme().colors().border)
@@ -55,16 +78,23 @@ pub trait ComponentPreview: IntoElement {
                         )
                     }),
             )
-            .children(Self::component_previews())
+            .when_some(Self::custom_example(cx).into(), |this, custom_example| {
+                this.child(custom_example)
+            })
+            .children(Self::component_previews(cx))
             .into_any_element()
     }
 
     fn render_example_group(group: ComponentExampleGroup<Self>) -> AnyElement {
         v_flex()
-            .gap_2()
-            .child(Label::new(group.title).size(LabelSize::Small))
+            .gap_6()
+            .when(group.grow, |this| this.w_full().flex_1())
+            .when_some(group.title, |this, title| {
+                this.child(Label::new(title).size(LabelSize::Small))
+            })
             .child(
                 h_flex()
+                    .w_full()
                     .gap_6()
                     .children(group.examples.into_iter().map(Self::render_example))
                     .into_any_element(),
@@ -73,8 +103,17 @@ pub trait ComponentPreview: IntoElement {
     }
 
     fn render_example(example: ComponentExample<Self>) -> AnyElement {
-        v_flex()
-            .gap_1()
+        let base = div().flex();
+
+        let base = match Self::example_label_side() {
+            ExampleLabelSide::Right => base.flex_row(),
+            ExampleLabelSide::Left => base.flex_row_reverse(),
+            ExampleLabelSide::Bottom => base.flex_col(),
+            ExampleLabelSide::Top => base.flex_col_reverse(),
+        };
+
+        base.gap_1()
+            .when(example.grow, |this| this.flex_1())
             .child(example.element)
             .child(
                 Label::new(example.variant_name)
@@ -89,6 +128,7 @@ pub trait ComponentPreview: IntoElement {
 pub struct ComponentExample<T> {
     variant_name: SharedString,
     element: T,
+    grow: bool,
 }
 
 impl<T> ComponentExample<T> {
@@ -97,23 +137,47 @@ impl<T> ComponentExample<T> {
         Self {
             variant_name: variant_name.into(),
             element: example,
+            grow: false,
         }
+    }
+
+    /// Set the example to grow to fill the available horizontal space.
+    pub fn grow(mut self) -> Self {
+        self.grow = true;
+        self
     }
 }
 
 /// A group of component examples.
 pub struct ComponentExampleGroup<T> {
-    pub title: SharedString,
+    pub title: Option<SharedString>,
     pub examples: Vec<ComponentExample<T>>,
+    pub grow: bool,
 }
 
 impl<T> ComponentExampleGroup<T> {
     /// Create a new group of examples with the given title.
-    pub fn new(title: impl Into<SharedString>, examples: Vec<ComponentExample<T>>) -> Self {
+    pub fn new(examples: Vec<ComponentExample<T>>) -> Self {
         Self {
-            title: title.into(),
+            title: None,
             examples,
+            grow: false,
         }
+    }
+
+    /// Create a new group of examples with the given title.
+    pub fn with_title(title: impl Into<SharedString>, examples: Vec<ComponentExample<T>>) -> Self {
+        Self {
+            title: Some(title.into()),
+            examples,
+            grow: false,
+        }
+    }
+
+    /// Set the group to grow to fill the available horizontal space.
+    pub fn grow(mut self) -> Self {
+        self.grow = true;
+        self
     }
 }
 
@@ -122,10 +186,15 @@ pub fn single_example<T>(variant_name: impl Into<SharedString>, example: T) -> C
     ComponentExample::new(variant_name, example)
 }
 
-/// Create a group of examples
-pub fn example_group<T>(
+/// Create a group of examples without a title
+pub fn example_group<T>(examples: Vec<ComponentExample<T>>) -> ComponentExampleGroup<T> {
+    ComponentExampleGroup::new(examples)
+}
+
+/// Create a group of examples with a title
+pub fn example_group_with_title<T>(
     title: impl Into<SharedString>,
     examples: Vec<ComponentExample<T>>,
 ) -> ComponentExampleGroup<T> {
-    ComponentExampleGroup::new(title, examples)
+    ComponentExampleGroup::with_title(title, examples)
 }
