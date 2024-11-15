@@ -443,7 +443,7 @@ impl Interactivity {
     pub fn on_drag<T, W>(
         &mut self,
         value: T,
-        constructor: impl Fn(&T, &mut WindowContext) -> View<W> + 'static,
+        constructor: impl Fn(&T, Point<Pixels>, &mut WindowContext) -> View<W> + 'static,
     ) where
         Self: Sized,
         T: 'static,
@@ -455,7 +455,9 @@ impl Interactivity {
         );
         self.drag_listener = Some((
             Box::new(value),
-            Box::new(move |value, cx| constructor(value.downcast_ref().unwrap(), cx).into()),
+            Box::new(move |value, offset, cx| {
+                constructor(value.downcast_ref().unwrap(), offset, cx).into()
+            }),
         ));
     }
 
@@ -511,7 +513,7 @@ impl Interactivity {
     }
 
     /// Block the mouse from interacting with this element or any of its children
-    /// The imperative API equivalent to [`InteractiveElement::block_mouse`]
+    /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
         self.occlude_mouse = true;
     }
@@ -874,10 +876,16 @@ pub trait InteractiveElement: Sized {
     }
 
     /// Block the mouse from interacting with this element or any of its children
-    /// The fluent API equivalent to [`Interactivity::block_mouse`]
+    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
     fn occlude(mut self) -> Self {
         self.interactivity().occlude_mouse();
         self
+    }
+
+    /// Block the mouse from interacting with this element or any of its children
+    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
+    fn block_mouse_down(mut self) -> Self {
+        self.on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
     }
 }
 
@@ -960,14 +968,15 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
-    /// the [`Self::on_drag_move`] API
+    /// the [`Self::on_drag_move`] API.
+    /// The callback also has access to the offset of triggering click from the origin of parent element.
     /// The fluent API equivalent to [`Interactivity::on_drag`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_drag<T, W>(
         mut self,
         value: T,
-        constructor: impl Fn(&T, &mut WindowContext) -> View<W> + 'static,
+        constructor: impl Fn(&T, Point<Pixels>, &mut WindowContext) -> View<W> + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -1050,7 +1059,8 @@ pub(crate) type ScrollWheelListener =
 
 pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>;
 
-pub(crate) type DragListener = Box<dyn Fn(&dyn Any, &mut WindowContext) -> AnyView + 'static>;
+pub(crate) type DragListener =
+    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut WindowContext) -> AnyView + 'static>;
 
 type DropListener = Box<dyn Fn(&dyn Any, &mut WindowContext) + 'static>;
 
@@ -1812,7 +1822,8 @@ impl Interactivity {
                                 if let Some((drag_value, drag_listener)) = drag_listener.take() {
                                     *clicked_state.borrow_mut() = ElementClickedState::default();
                                     let cursor_offset = event.position - hitbox.origin;
-                                    let drag = (drag_listener)(drag_value.as_ref(), cx);
+                                    let drag =
+                                        (drag_listener)(drag_value.as_ref(), cursor_offset, cx);
                                     cx.active_drag = Some(AnyDrag {
                                         view: drag,
                                         value: drag_value,

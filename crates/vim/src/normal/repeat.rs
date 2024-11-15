@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     insert::NormalBefore,
     motion::Motion,
+    normal::InsertBefore,
     state::{Mode, Operator, RecordedSelection, ReplayableAction, VimGlobals},
     Vim,
 };
@@ -307,6 +308,11 @@ impl Vim {
         }
 
         actions.push(ReplayableAction::Action(EndRepeat.boxed_clone()));
+
+        if self.temp_mode {
+            self.temp_mode = false;
+            actions.push(ReplayableAction::Action(InsertBefore.boxed_clone()));
+        }
 
         let globals = Vim::globals(cx);
         globals.dot_replaying = true;

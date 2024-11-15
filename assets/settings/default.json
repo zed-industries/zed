@@ -1053,13 +1053,11 @@
       "api_url": "https://generativelanguage.googleapis.com"
     },
     "ollama": {
-      "api_url": "http://localhost:11434",
-      "low_speed_timeout_in_seconds": 60
+      "api_url": "http://localhost:11434"
     },
     "openai": {
       "version": "1",
-      "api_url": "https://api.openai.com/v1",
-      "low_speed_timeout_in_seconds": 600
+      "api_url": "https://api.openai.com/v1"
     }
   },
   // Zed's Prettier integration settings.

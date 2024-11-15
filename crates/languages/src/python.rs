@@ -2,8 +2,8 @@ use anyhow::ensure;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::AppContext;
 use gpui::AsyncAppContext;
+use gpui::{AppContext, Task};
 use language::LanguageName;
 use language::LanguageToolchainStore;
 use language::Toolchain;
@@ -19,6 +19,7 @@ use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::{json, Value};
 use smol::{lock::OnceCell, process::Command};
+use std::cmp::Ordering;
 
 use std::sync::Mutex;
 use std::{
@@ -267,14 +268,17 @@ pub(crate) struct PythonContextProvider;
 const PYTHON_UNITTEST_TARGET_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_UNITTEST_TARGET"));
 
+const PYTHON_ACTIVE_TOOLCHAIN_PATH: VariableName =
+    VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN"));
 impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
         variables: &task::TaskVariables,
-        _location: &project::Location,
-        _: Option<&HashMap<String, String>>,
-        _cx: &mut gpui::AppContext,
-    ) -> Result<task::TaskVariables> {
+        location: &project::Location,
+        _: Option<HashMap<String, String>>,
+        toolchains: Arc<dyn LanguageToolchainStore>,
+        cx: &mut gpui::AppContext,
+    ) -> Task<Result<task::TaskVariables>> {
         let python_module_name = python_module_name_from_relative_path(
             variables.get(&VariableName::RelativeFile).unwrap_or(""),
         );
@@ -290,15 +294,26 @@ impl ContextProvider for PythonContextProvider {
             }
             (Some(class_name), None) => format!("{}.{}", python_module_name, class_name),
             (None, None) => python_module_name,
-            (None, Some(_)) => return Ok(task::TaskVariables::default()), // should never happen, a TestCase class is the unit of testing
+            (None, Some(_)) => return Task::ready(Ok(task::TaskVariables::default())), // should never happen, a TestCase class is the unit of testing
         };
 
         let unittest_target = (
             PYTHON_UNITTEST_TARGET_TASK_VARIABLE.clone(),
             unittest_target_str,
         );
-
-        Ok(task::TaskVariables::from_iter([unittest_target]))
+        let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
+        cx.spawn(move |mut cx| async move {
+            let active_toolchain = if let Some(worktree_id) = worktree_id {
+                toolchains
+                    .active_toolchain(worktree_id, "Python".into(), &mut cx)
+                    .await
+                    .map_or_else(|| "python3".to_owned(), |toolchain| toolchain.path.into())
+            } else {
+                String::from("python3")
+            };
+            let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
+            Ok(task::TaskVariables::from_iter([unittest_target, toolchain]))
+        })
     }
 
     fn associated_tasks(
@@ -309,19 +324,19 @@ impl ContextProvider for PythonContextProvider {
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: "execute selection".to_owned(),
-                command: "python3".to_owned(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec!["-c".to_owned(), VariableName::SelectedText.template_value()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: format!("run '{}'", VariableName::File.template_value()),
-                command: "python3".to_owned(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: format!("unittest '{}'", VariableName::File.template_value()),
-                command: "python3".to_owned(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![
                     "-m".to_owned(),
                     "unittest".to_owned(),
@@ -331,7 +346,7 @@ impl ContextProvider for PythonContextProvider {
             },
             TaskTemplate {
                 label: "unittest $ZED_CUSTOM_PYTHON_UNITTEST_TARGET".to_owned(),
-                command: "python3".to_owned(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![
                     "-m".to_owned(),
                     "unittest".to_owned(),
@@ -399,6 +414,10 @@ impl ToolchainLister for PythonToolchainProvider {
         );
         let mut config = Configuration::default();
         config.workspace_directories = Some(vec![worktree_root]);
+        for locator in locators.iter() {
+            locator.configure(&config);
+        }
+
         let reporter = pet_reporter::collect::create_reporter();
         pet::find::find_and_report_envs(&reporter, config, &locators, &environment, None);
 
@@ -407,11 +426,32 @@ impl ToolchainLister for PythonToolchainProvider {
             .lock()
             .ok()
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
+
         toolchains.sort_by(|lhs, rhs| {
             env_priority(lhs.kind)
                 .cmp(&env_priority(rhs.kind))
+                .then_with(|| {
+                    if lhs.kind == Some(PythonEnvironmentKind::Conda) {
+                        environment
+                            .get_env_var("CONDA_PREFIX".to_string())
+                            .map(|conda_prefix| {
+                                let is_match = |exe: &Option<PathBuf>| {
+                                    exe.as_ref().map_or(false, |e| e.starts_with(&conda_prefix))
+                                };
+                                match (is_match(&lhs.executable), is_match(&rhs.executable)) {
+                                    (true, false) => Ordering::Less,
+                                    (false, true) => Ordering::Greater,
+                                    _ => Ordering::Equal,
+                                }
+                            })
+                            .unwrap_or(Ordering::Equal)
+                    } else {
+                        Ordering::Equal
+                    }
+                })
                 .then_with(|| lhs.executable.cmp(&rhs.executable))
         });
+
         let mut toolchains: Vec<_> = toolchains
             .into_iter()
             .filter_map(|toolchain| {

@@ -27,7 +27,7 @@ pub struct ContextServerSlashCommand {
 impl ContextServerSlashCommand {
     pub fn new(
         server_manager: Model<ContextServerManager>,
-        server: &Arc<dyn ContextServer>,
+        server: &Arc<ContextServer>,
         prompt: Prompt,
     ) -> Self {
         Self {
@@ -152,7 +152,7 @@ impl SlashCommand for ContextServerSlashCommand {
                 if result
                     .messages
                     .iter()
-                    .any(|msg| !matches!(msg.role, context_servers::types::SamplingRole::User))
+                    .any(|msg| !matches!(msg.role, context_servers::types::Role::User))
                 {
                     return Err(anyhow!(
                         "Prompt contains non-user roles, which is not supported"
@@ -164,7 +164,7 @@ impl SlashCommand for ContextServerSlashCommand {
                     .messages
                     .into_iter()
                     .filter_map(|msg| match msg.content {
-                        context_servers::types::SamplingContent::Text { text } => Some(text),
+                        context_servers::types::MessageContent::Text { text } => Some(text),
                         _ => None,
                     })
                     .collect::<Vec<String>>()

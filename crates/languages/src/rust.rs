@@ -3,7 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{io::BufReader, StreamExt};
-use gpui::{AppContext, AsyncAppContext};
+use gpui::{AppContext, AsyncAppContext, Task};
 use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
@@ -26,13 +26,13 @@ pub struct RustLspAdapter;
 
 #[cfg(target_os = "macos")]
 impl RustLspAdapter {
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
     const ARCH_SERVER_NAME: &str = "apple-darwin";
 }
 
 #[cfg(target_os = "linux")]
 impl RustLspAdapter {
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
     const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
 }
 
@@ -47,7 +47,8 @@ impl RustLspAdapter {
 
     fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz => "gz", // Nb: rust-analyzer releases use .gz not .tar.gz
+            AssetKind::TarGz => "tar.gz",
+            AssetKind::Gz => "gz",
             AssetKind::Zip => "zip",
         };
 
@@ -134,7 +135,7 @@ impl LspAdapter for RustLspAdapter {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
         let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz => destination_path.clone(), // Tar extracts in place.
+            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
             AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
         };
 
@@ -145,19 +146,40 @@ impl LspAdapter for RustLspAdapter {
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .with_context(|| format!("downloading release from {}", version.url))?;
             match Self::GITHUB_ASSET_KIND {
                 AssetKind::TarGz => {
                     let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                     let archive = async_tar::Archive::new(decompressed_bytes);
-                    archive.unpack(&destination_path).await?;
+                    archive.unpack(&destination_path).await.with_context(|| {
+                        format!("extracting {} to {:?}", version.url, destination_path)
+                    })?;
+                }
+                AssetKind::Gz => {
+                    let mut decompressed_bytes =
+                        GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let mut file =
+                        fs::File::create(&destination_path).await.with_context(|| {
+                            format!(
+                                "creating a file {:?} for a download from {}",
+                                destination_path, version.url,
+                            )
+                        })?;
+                    futures::io::copy(&mut decompressed_bytes, &mut file)
+                        .await
+                        .with_context(|| {
+                            format!("extracting {} to {:?}", version.url, destination_path)
+                        })?;
                 }
                 AssetKind::Zip => {
                     node_runtime::extract_zip(
                         &destination_path,
                         BufReader::new(response.body_mut()),
                     )
-                    .await?;
+                    .await
+                    .with_context(|| {
+                        format!("unzipping {} to {:?}", version.url, destination_path)
+                    })?;
                 }
             };
 
@@ -424,9 +446,10 @@ impl ContextProvider for RustContextProvider {
         &self,
         task_variables: &TaskVariables,
         location: &Location,
-        project_env: Option<&HashMap<String, String>>,
+        project_env: Option<HashMap<String, String>>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::AppContext,
-    ) -> Result<TaskVariables> {
+    ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
             .buffer
             .read(cx)
@@ -440,27 +463,27 @@ impl ContextProvider for RustContextProvider {
             .is_some();
 
         if is_main_function {
-            if let Some((package_name, bin_name)) = local_abs_path
-                .and_then(|path| package_name_and_bin_name_from_abs_path(path, project_env))
-            {
-                return Ok(TaskVariables::from_iter([
+            if let Some((package_name, bin_name)) = local_abs_path.and_then(|path| {
+                package_name_and_bin_name_from_abs_path(path, project_env.as_ref())
+            }) {
+                return Task::ready(Ok(TaskVariables::from_iter([
                     (RUST_PACKAGE_TASK_VARIABLE.clone(), package_name),
                     (RUST_BIN_NAME_TASK_VARIABLE.clone(), bin_name),
-                ]));
+                ])));
             }
         }
 
         if let Some(package_name) = local_abs_path
             .and_then(|local_abs_path| local_abs_path.parent())
-            .and_then(|path| human_readable_package_name(path, project_env))
+            .and_then(|path| human_readable_package_name(path, project_env.as_ref()))
         {
-            return Ok(TaskVariables::from_iter([(
+            return Task::ready(Ok(TaskVariables::from_iter([(
                 RUST_PACKAGE_TASK_VARIABLE.clone(),
                 package_name,
-            )]));
+            )])));
         }
 
-        Ok(TaskVariables::default())
+        Task::ready(Ok(TaskVariables::default()))
     }
 
     fn associated_tasks(

@@ -3621,7 +3621,6 @@ async fn count_language_model_tokens(
                 google_ai::API_URL,
                 api_key,
                 serde_json::from_str(&request.request)?,
-                None,
             )
             .await?
         }
