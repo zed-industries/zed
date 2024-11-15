@@ -37,8 +37,8 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_project_settings_content, initial_tasks_content, KeymapFile, Settings, SettingsStore,
-    DEFAULT_KEYMAP_PATH,
+    initial_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
+    KeymapFile, Settings, SettingsStore, DEFAULT_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
@@ -47,7 +47,10 @@ use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
 use workspace::CloseIntent;
 
-use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
+use paths::{
+    local_debug_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path,
+};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
@@ -72,7 +75,9 @@ actions!(
         OpenDefaultSettings,
         OpenProjectSettings,
         OpenProjectTasks,
+        OpenProjectDebugTasks,
         OpenTasks,
+        OpenDebugTasks,
         ResetDatabase,
         ShowAll,
         ToggleFullScreen,
@@ -475,8 +480,18 @@ pub fn initialize_workspace(
                     );
                 },
             )
+            .register_action(
+                move |_: &mut Workspace, _: &OpenDebugTasks, cx: &mut ViewContext<Workspace>| {
+                    open_settings_file(
+                        paths::debug_tasks_file(),
+                        || settings::initial_debug_tasks_content().as_ref().into(),
+                        cx,
+                    );
+                },
+            )
             .register_action(open_project_settings_file)
             .register_action(open_project_tasks_file)
+            .register_action(open_project_debug_tasks_file)
             .register_action(
                 move |workspace: &mut Workspace,
                       _: &zed_actions::OpenDefaultKeymap,
@@ -936,6 +951,19 @@ fn open_project_tasks_file(
         workspace,
         local_tasks_file_relative_path(),
         initial_tasks_content(),
+        cx,
+    )
+}
+
+fn open_project_debug_tasks_file(
+    workspace: &mut Workspace,
+    _: &OpenProjectDebugTasks,
+    cx: &mut ViewContext<Workspace>,
+) {
+    open_local_file(
+        workspace,
+        local_debug_file_relative_path(),
+        initial_debug_tasks_content(),
         cx,
     )
 }
