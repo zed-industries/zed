@@ -26,13 +26,13 @@ pub struct RustLspAdapter;
 
 #[cfg(target_os = "macos")]
 impl RustLspAdapter {
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
     const ARCH_SERVER_NAME: &str = "apple-darwin";
 }
 
 #[cfg(target_os = "linux")]
 impl RustLspAdapter {
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
     const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
 }
 
@@ -47,7 +47,8 @@ impl RustLspAdapter {
 
     fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz => "gz", // Nb: rust-analyzer releases use .gz not .tar.gz
+            AssetKind::TarGz => "tar.gz",
+            AssetKind::Gz => "gz",
             AssetKind::Zip => "zip",
         };
 
@@ -134,7 +135,7 @@ impl LspAdapter for RustLspAdapter {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
         let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz => destination_path.clone(), // Tar extracts in place.
+            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
             AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
         };
 
@@ -148,6 +149,13 @@ impl LspAdapter for RustLspAdapter {
                 .with_context(|| format!("downloading release from {}", version.url))?;
             match Self::GITHUB_ASSET_KIND {
                 AssetKind::TarGz => {
+                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let archive = async_tar::Archive::new(decompressed_bytes);
+                    archive.unpack(&destination_path).await.with_context(|| {
+                        format!("extracting {} to {:?}", version.url, destination_path)
+                    })?;
+                }
+                AssetKind::Gz => {
                     let mut decompressed_bytes =
                         GzipDecoder::new(BufReader::new(response.body_mut()));
                     let mut file =
