@@ -2,7 +2,6 @@
 use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
-use theme::Theme;
 
 use crate::{prelude::*, DynamicSpacing, ElevationIndex};
 
