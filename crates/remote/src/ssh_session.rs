@@ -36,7 +36,9 @@ use smol::{
 use std::{
     any::TypeId,
     collections::VecDeque,
-    fmt, iter,
+    fmt,
+    io::{BufRead, Read, Write},
+    iter,
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::{
@@ -1358,16 +1360,6 @@ impl RemoteConnection for SshRemoteConnection {
 }
 
 impl SshRemoteConnection {
-    #[cfg(not(unix))]
-    async fn new(
-        _connection_options: SshConnectionOptions,
-        _delegate: Arc<dyn SshClientDelegate>,
-        _cx: &mut AsyncAppContext,
-    ) -> Result<Self> {
-        Err(anyhow!("ssh is not supported on this platform"))
-    }
-
-    #[cfg(unix)]
     async fn new(
         connection_options: SshConnectionOptions,
         delegate: Arc<dyn SshClientDelegate>,
@@ -1375,9 +1367,13 @@ impl SshRemoteConnection {
     ) -> Result<Self> {
         use futures::AsyncWriteExt as _;
         use futures::{io::BufReader, AsyncBufReadExt as _};
+        #[cfg(unix)]
         use smol::net::unix::UnixStream;
+        #[cfg(unix)]
         use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
+        #[cfg(not(unix))]
+        use windows_net::{listener::UnixListener, stream::UnixStream};
 
         delegate.set_status(Some("Connecting"), cx);
 
@@ -1405,10 +1401,14 @@ impl SshRemoteConnection {
                         askpass_opened_tx.send(()).ok();
                     }
                     let mut buffer = Vec::new();
-                    let mut reader = BufReader::new(&mut stream);
-                    if reader.read_until(b'\0', &mut buffer).await.is_err() {
+                    let mut reader = std::io::BufReader::new(&mut stream);
+                    if reader.read_until(b'\0', &mut buffer).is_err() {
                         buffer.clear();
                     }
+                    // let mut reader = BufReader::new(&mut stream);
+                    // if reader.read_until(b'\0', &mut buffer).await.is_err() {
+                    //     buffer.clear();
+                    // }
                     let password_prompt = String::from_utf8_lossy(&buffer);
                     if let Some(password) = delegate
                         .ask_password(password_prompt.to_string(), &mut cx)
@@ -1417,7 +1417,8 @@ impl SshRemoteConnection {
                         .and_then(|p| p)
                         .log_err()
                     {
-                        stream.write_all(password.as_bytes()).await.log_err();
+                        // stream.write_all(password.as_bytes()).await.log_err();
+                        stream.write_all(password.as_bytes()).log_err();
                     } else {
                         if let Some(kill_tx) = kill_tx.take() {
                             kill_tx.send(stream).log_err();
@@ -1429,15 +1430,29 @@ impl SshRemoteConnection {
         });
 
         // Create an askpass script that communicates back to this process.
+        // let askpass_script = format!(
+        //     "{shebang}\n{print_args} | nc -U {askpass_socket} 2> /dev/null \n",
+        //     askpass_socket = askpass_socket.display(),
+        //     print_args = "printf '%s\\0' \"$@\"",
+        //     shebang = "#!/bin/sh",
+        // );
         let askpass_script = format!(
-            "{shebang}\n{print_args} | nc -U {askpass_socket} 2> /dev/null \n",
-            askpass_socket = askpass_socket.display(),
-            print_args = "printf '%s\\0' \"$@\"",
-            shebang = "#!/bin/sh",
+            r#"
+            @echo off
+            "{}" "{}" %*
+            "#,
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("askpass_helper.exe")
+                .display(),
+            askpass_socket.display()
         );
-        let askpass_script_path = temp_dir.path().join("askpass.sh");
+        // let askpass_script_path = temp_dir.path().join("askpass.sh");
+        let askpass_script_path = temp_dir.path().join("askpass.cmd");
         fs::write(&askpass_script_path, askpass_script).await?;
-        fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
+        // fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
 
         // Start the master SSH process, which does not do anything except for establish
         // the connection and keep it open, allowing other ssh commands to reuse it
@@ -1453,13 +1468,13 @@ impl SshRemoteConnection {
             .args(connection_options.additional_args().unwrap_or(&Vec::new()))
             .args([
                 "-N",
-                "-o",
-                "ControlPersist=no",
-                "-o",
-                "ControlMaster=yes",
-                "-o",
+                // "-o",
+                // "ControlPersist=no",
+                // "-o",
+                // "ControlMaster=yes",
+                // "-o",
             ])
-            .arg(format!("ControlPath={}", socket_path.display()))
+            // .arg(format!("ControlPath={}", socket_path.display()))
             .arg(&url)
             .kill_on_drop(true)
             .spawn()?;
@@ -1468,7 +1483,7 @@ impl SshRemoteConnection {
         // has completed.
         let mut stdout = master_process.stdout.take().unwrap();
         let mut output = Vec::new();
-        let connection_timeout = Duration::from_secs(10);
+        let connection_timeout = Duration::from_secs(1000);
 
         let result = select_biased! {
             _ = askpass_opened_rx.fuse() => {

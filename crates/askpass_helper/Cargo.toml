@@ -1,0 +1,27 @@
+[package]
+name = "askpass_helper"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "askpass_helper"
+path = "src/askpass_helper.rs"
+doctest = false
+
+[dependencies]
+windows_net.workspace = true
+
+# [target.'cfg(windows)'.dependencies]
+# windows.workspace = true
+
+[dev-dependencies]
+# futures-lite = "*"
+# tempfile.workspace = true
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc"]
