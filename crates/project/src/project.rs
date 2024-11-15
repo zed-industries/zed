@@ -92,6 +92,7 @@ use std::{
 use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
+use toolchain_store::EmptyToolchainStore;
 use util::{maybe, paths::compare_paths, ResultExt as _};
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
@@ -663,11 +664,21 @@ impl Project {
                 )
             });
 
+            let toolchain_store = cx.new_model(|cx| {
+                ToolchainStore::local(
+                    languages.clone(),
+                    worktree_store.clone(),
+                    environment.clone(),
+                    cx,
+                )
+            });
+
             let task_store = cx.new_model(|cx| {
                 TaskStore::local(
                     fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
+                    toolchain_store.read(cx).as_language_toolchain_store(),
                     environment.clone(),
                     cx,
                 )
@@ -683,14 +694,7 @@ impl Project {
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
-            let toolchain_store = cx.new_model(|cx| {
-                ToolchainStore::local(
-                    languages.clone(),
-                    worktree_store.clone(),
-                    environment.clone(),
-                    cx,
-                )
-            });
+
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
                     buffer_store.clone(),
@@ -787,12 +791,15 @@ impl Project {
             });
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
-
+            let toolchain_store = cx.new_model(|cx| {
+                ToolchainStore::remote(SSH_PROJECT_ID, ssh.read(cx).proto_client(), cx)
+            });
             let task_store = cx.new_model(|cx| {
                 TaskStore::remote(
                     fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
+                    toolchain_store.read(cx).as_language_toolchain_store(),
                     ssh.read(cx).proto_client(),
                     SSH_PROJECT_ID,
                     cx,
@@ -806,14 +813,12 @@ impl Project {
                 .detach();
 
             let environment = ProjectEnvironment::new(&worktree_store, None, cx);
-            let toolchain_store = Some(cx.new_model(|cx| {
-                ToolchainStore::remote(SSH_PROJECT_ID, ssh.read(cx).proto_client(), cx)
-            }));
+
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_remote(
                     buffer_store.clone(),
                     worktree_store.clone(),
-                    toolchain_store.clone(),
+                    Some(toolchain_store.clone()),
                     languages.clone(),
                     ssh_proto.clone(),
                     SSH_PROJECT_ID,
@@ -885,7 +890,7 @@ impl Project {
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
 
-                toolchain_store,
+                toolchain_store: Some(toolchain_store),
             };
 
             let ssh = ssh.read(cx);
@@ -1026,6 +1031,7 @@ impl Project {
                     fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
+                    Arc::new(EmptyToolchainStore),
                     client.clone().into(),
                     remote_id,
                     cx,

@@ -635,12 +635,20 @@ impl Item for Editor {
             Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
         });
 
+        let is_deleted: bool = self
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).file())
+            .map_or(true, |file| file.is_deleted());
+
         h_flex()
             .gap_2()
             .child(
                 Label::new(self.title(cx).to_string())
                     .color(label_color)
-                    .italic(params.preview),
+                    .italic(params.preview)
+                    .strikethrough(is_deleted),
             )
             .when_some(description, |this, description| {
                 this.child(

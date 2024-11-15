@@ -33,8 +33,8 @@ use std::{
 };
 use text::Point;
 use ui::{
-    prelude::*, ButtonLike, ContextMenu, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
-    PopoverMenu, PopoverMenuHandle, TintColor,
+    prelude::*, ContextMenu, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, PopoverMenu,
+    PopoverMenuHandle,
 };
 use util::{paths::PathWithPosition, post_inc, ResultExt};
 use workspace::{
@@ -1222,54 +1222,43 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
-        let menu_open = self.popover_menu_handle.is_focused(cx);
         Some(
             h_flex()
                 .w_full()
-                .border_t_1()
-                .py_2()
-                .pr_2()
-                .border_color(cx.theme().colors().border)
+                .p_2()
+                .gap_2()
                 .justify_end()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
                 .child(
-                    ButtonLike::new("open-selection")
-                        .when_some(KeyBinding::for_action(&menu::Confirm, cx), |button, key| {
-                            button.child(key)
-                        })
-                        .child(Label::new("Open"))
+                    Button::new("open-selection", "Open")
+                        .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
                         .on_click(|_, cx| cx.dispatch_action(menu::Confirm.boxed_clone())),
                 )
                 .child(
-                    div().pl_2().child(
-                        PopoverMenu::new("menu-popover")
-                            .with_handle(self.popover_menu_handle.clone())
-                            .attach(gpui::AnchorCorner::TopRight)
-                            .anchor(gpui::AnchorCorner::BottomRight)
-                            .trigger(
-                                ButtonLike::new("menu-trigger")
-                                    .selected(menu_open)
-                                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                    .when_some(
-                                        KeyBinding::for_action_in(
-                                            &OpenMenu,
-                                            &self.focus_handle,
-                                            cx,
-                                        ),
-                                        |button, key| button.child(key),
-                                    )
-                                    .child(Label::new("More actions")),
-                            )
-                            .menu({
-                                move |cx| {
-                                    Some(ContextMenu::build(cx, move |menu, _| {
-                                        menu.action("Split left", pane::SplitLeft.boxed_clone())
-                                            .action("Split right", pane::SplitRight.boxed_clone())
-                                            .action("Split up", pane::SplitUp.boxed_clone())
-                                            .action("Split down", pane::SplitDown.boxed_clone())
-                                    }))
-                                }
-                            }),
-                    ),
+                    PopoverMenu::new("menu-popover")
+                        .with_handle(self.popover_menu_handle.clone())
+                        .attach(gpui::AnchorCorner::TopRight)
+                        .anchor(gpui::AnchorCorner::BottomRight)
+                        .trigger(
+                            Button::new("actions-trigger", "Split Options")
+                                .selected_label_color(Color::Accent)
+                                .key_binding(KeyBinding::for_action_in(
+                                    &OpenMenu,
+                                    &self.focus_handle,
+                                    cx,
+                                )),
+                        )
+                        .menu({
+                            move |cx| {
+                                Some(ContextMenu::build(cx, move |menu, _| {
+                                    menu.action("Split Left", pane::SplitLeft.boxed_clone())
+                                        .action("Split Right", pane::SplitRight.boxed_clone())
+                                        .action("Split Up", pane::SplitUp.boxed_clone())
+                                        .action("Split Down", pane::SplitDown.boxed_clone())
+                                }))
+                            }
+                        }),
                 )
                 .into_any(),
         )

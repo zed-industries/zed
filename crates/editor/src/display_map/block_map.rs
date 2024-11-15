@@ -7,7 +7,7 @@ use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, EntityId, Pixels, WindowContext};
 use language::{Chunk, Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBufferRow, MultiBufferSnapshot, ToPoint as _,
+    Anchor, ExcerptId, ExcerptInfo, MultiBufferRow, MultiBufferSnapshot, ToOffset, ToPoint as _,
 };
 use parking_lot::Mutex;
 use std::{
@@ -77,7 +77,7 @@ pub struct BlockRow(pub(super) u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-pub type RenderBlock = Box<dyn Send + FnMut(&mut BlockContext) -> AnyElement>;
+pub type RenderBlock = Arc<dyn Send + Sync + Fn(&mut BlockContext) -> AnyElement>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlockPlacement<T> {
@@ -350,6 +350,13 @@ impl Block {
         match self {
             Block::Custom(block) => matches!(block.placement, BlockPlacement::Below(_)),
             Block::ExcerptBoundary { next_excerpt, .. } => next_excerpt.is_none(),
+        }
+    }
+
+    fn is_replacement(&self) -> bool {
+        match self {
+            Block::Custom(block) => matches!(block.placement, BlockPlacement::Replace(_)),
+            Block::ExcerptBoundary { .. } => false,
         }
     }
 }
@@ -1119,6 +1126,64 @@ impl<'a> BlockMapWriter<'a> {
             .retain(|id, _| !block_ids.contains(id));
         self.0.sync(wrap_snapshot, edits);
     }
+
+    pub fn remove_intersecting_replace_blocks<T>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        inclusive: bool,
+    ) where
+        T: ToOffset,
+    {
+        let wrap_snapshot = self.0.wrap_snapshot.borrow();
+        let mut blocks_to_remove = HashSet::default();
+        for range in ranges {
+            let range = range.start.to_offset(wrap_snapshot.buffer_snapshot())
+                ..range.end.to_offset(wrap_snapshot.buffer_snapshot());
+            for block in self.blocks_intersecting_buffer_range(range, inclusive) {
+                if matches!(block.placement, BlockPlacement::Replace(_)) {
+                    blocks_to_remove.insert(block.id);
+                }
+            }
+        }
+        drop(wrap_snapshot);
+        self.remove(blocks_to_remove);
+    }
+
+    fn blocks_intersecting_buffer_range(
+        &self,
+        range: Range<usize>,
+        inclusive: bool,
+    ) -> &[Arc<CustomBlock>] {
+        let wrap_snapshot = self.0.wrap_snapshot.borrow();
+        let buffer = wrap_snapshot.buffer_snapshot();
+        let start_block_ix = match self.0.custom_blocks.binary_search_by(|probe| {
+            probe
+                .end()
+                .to_offset(buffer)
+                .cmp(&range.start)
+                .then(if inclusive {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                })
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_block_ix = match self.0.custom_blocks.binary_search_by(|probe| {
+            probe
+                .start()
+                .to_offset(buffer)
+                .cmp(&range.end)
+                .then(if inclusive {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                })
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        &self.0.custom_blocks[start_block_ix..end_block_ix]
+    }
 }
 
 impl BlockSnapshot {
@@ -1296,6 +1361,21 @@ impl BlockSnapshot {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&row, Bias::Right, &());
         cursor.item().map_or(false, |t| t.block.is_some())
+    }
+
+    pub(super) fn is_line_replaced(&self, row: MultiBufferRow) -> bool {
+        let wrap_point = self
+            .wrap_snapshot
+            .make_wrap_point(Point::new(row.0, 0), Bias::Left);
+        let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
+        cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
+        cursor.item().map_or(false, |transform| {
+            if let Some(Block::Custom(block)) = transform.block.as_ref() {
+                matches!(block.placement, BlockPlacement::Replace(_))
+            } else {
+                false
+            }
+        })
     }
 
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
@@ -1515,7 +1595,7 @@ impl<'a> Iterator for BlockChunks<'a> {
 }
 
 impl<'a> Iterator for BlockBufferRows<'a> {
-    type Item = Option<BlockRow>;
+    type Item = Option<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.started {
@@ -1538,16 +1618,25 @@ impl<'a> Iterator for BlockBufferRows<'a> {
                 }
             }
 
-            if self.transforms.item()?.block.is_none() {
+            let transform = self.transforms.item()?;
+            if transform
+                .block
+                .as_ref()
+                .map_or(true, |block| block.is_replacement())
+            {
                 self.input_buffer_rows.seek(self.transforms.start().1 .0);
             }
         }
 
         let transform = self.transforms.item()?;
-        if transform.block.is_some() {
-            Some(None)
+        if let Some(block) = transform.block.as_ref() {
+            if block.is_replacement() && self.transforms.start().0 == self.output_row {
+                Some(self.input_buffer_rows.next().unwrap())
+            } else {
+                Some(None)
+            }
         } else {
-            Some(self.input_buffer_rows.next().unwrap().map(BlockRow))
+            Some(self.input_buffer_rows.next().unwrap())
         }
     }
 }
@@ -1709,21 +1798,21 @@ mod tests {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 2))),
                 height: 2,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 3))),
                 height: 3,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
         ]);
@@ -1821,10 +1910,7 @@ mod tests {
         );
 
         assert_eq!(
-            snapshot
-                .buffer_rows(BlockRow(0))
-                .map(|row| row.map(|r| r.0))
-                .collect::<Vec<_>>(),
+            snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
             &[
                 Some(0),
                 None,
@@ -1960,21 +2046,21 @@ mod tests {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 2))),
                 height: 2,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 3))),
                 height: 3,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
         ]);
@@ -2062,14 +2148,14 @@ mod tests {
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 12))),
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 height: 1,
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(1, 1))),
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 height: 1,
                 priority: 0,
             },
@@ -2109,7 +2195,7 @@ mod tests {
                     ..buffer_snapshot.anchor_before(Point::new(3, 1)),
             ),
             height: 4,
-            render: Box::new(|_| div().into_any()),
+            render: Arc::new(|_| div().into_any()),
             priority: 0,
         }]);
 
@@ -2162,14 +2248,14 @@ mod tests {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 3))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(6, 2))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
         ]);
@@ -2183,21 +2269,21 @@ mod tests {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(1, 3))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(2, 1))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(6, 1))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
         ]);
@@ -2302,7 +2388,7 @@ mod tests {
                                 style: BlockStyle::Fixed,
                                 placement,
                                 height,
-                                render: Box::new(|_| div().into_any()),
+                                render: Arc::new(|_| div().into_any()),
                                 priority: 0,
                             }
                         })
@@ -2321,7 +2407,7 @@ mod tests {
                         placement: props.placement.clone(),
                         height: props.height,
                         style: props.style,
-                        render: Box::new(|_| div().into_any()),
+                        render: Arc::new(|_| div().into_any()),
                         priority: 0,
                     }));
                 }
@@ -2409,6 +2495,7 @@ mod tests {
             let mut expected_buffer_rows = Vec::new();
             let mut expected_text = String::new();
             let mut expected_block_positions = Vec::new();
+            let mut expected_replaced_buffer_rows = HashSet::default();
             let input_text = wraps_snapshot.text();
 
             // Loop over the input lines, creating (N - 1) empty lines for
@@ -2422,6 +2509,9 @@ mod tests {
             let mut block_row = 0;
             while let Some((wrap_row, input_line)) = input_text_lines.next() {
                 let wrap_row = wrap_row as u32;
+                let multibuffer_row = wraps_snapshot
+                    .to_point(WrapPoint::new(wrap_row, 0), Bias::Left)
+                    .row;
 
                 // Create empty lines for the above block
                 while let Some((placement, block)) = sorted_blocks_iter.peek() {
@@ -2451,30 +2541,33 @@ mod tests {
                 {
                     if wrap_row >= replace_range.start.0 {
                         is_in_replace_block = true;
+
+                        if wrap_row == replace_range.start.0 {
+                            expected_buffer_rows.push(input_buffer_rows[multibuffer_row as usize]);
+                        }
+
                         if wrap_row == replace_range.end.0 {
                             expected_block_positions.push((block_row, block.id()));
-                            if block.height() > 0 {
-                                let text = "\n".repeat((block.height() - 1) as usize);
-                                if block_row > 0 {
-                                    expected_text.push('\n');
-                                }
-                                expected_text.push_str(&text);
-                                for _ in 0..block.height() {
-                                    expected_buffer_rows.push(None);
-                                }
-                                block_row += block.height();
+                            let text = "\n".repeat((block.height() - 1) as usize);
+                            if block_row > 0 {
+                                expected_text.push('\n');
                             }
+                            expected_text.push_str(&text);
+
+                            for _ in 1..block.height() {
+                                expected_buffer_rows.push(None);
+                            }
+                            block_row += block.height();
 
                             sorted_blocks_iter.next();
                         }
                     }
                 }
 
-                if !is_in_replace_block {
-                    let buffer_row = input_buffer_rows[wraps_snapshot
-                        .to_point(WrapPoint::new(wrap_row, 0), Bias::Left)
-                        .row as usize];
-
+                if is_in_replace_block {
+                    expected_replaced_buffer_rows.insert(MultiBufferRow(multibuffer_row));
+                } else {
+                    let buffer_row = input_buffer_rows[multibuffer_row as usize];
                     let soft_wrapped = wraps_snapshot
                         .to_tab_point(WrapPoint::new(wrap_row, 0))
                         .column()
@@ -2543,9 +2636,10 @@ mod tests {
                 assert_eq!(
                     blocks_snapshot
                         .buffer_rows(BlockRow(start_row as u32))
-                        .map(|row| row.map(|r| r.0))
                         .collect::<Vec<_>>(),
-                    &expected_buffer_rows[start_row..]
+                    &expected_buffer_rows[start_row..],
+                    "incorrect buffer_rows starting at row {:?}",
+                    start_row
                 );
             }
 
@@ -2665,6 +2759,16 @@ mod tests {
                 } else {
                     block_point.column += c.len_utf8() as u32;
                 }
+            }
+
+            for buffer_row in 0..=buffer_snapshot.max_point().row {
+                let buffer_row = MultiBufferRow(buffer_row);
+                assert_eq!(
+                    blocks_snapshot.is_line_replaced(buffer_row),
+                    expected_replaced_buffer_rows.contains(&buffer_row),
+                    "incorrect is_line_replaced({:?})",
+                    buffer_row
+                );
             }
         }
     }

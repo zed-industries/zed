@@ -1,6 +1,7 @@
 mod avatar;
 mod button;
 mod checkbox;
+mod content_group;
 mod context_menu;
 mod disclosure;
 mod divider;
@@ -36,6 +37,7 @@ mod stories;
 pub use avatar::*;
 pub use button::*;
 pub use checkbox::*;
+pub use content_group::*;
 pub use context_menu::*;
 pub use disclosure::*;
 pub use divider::*;

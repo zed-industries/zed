@@ -3,15 +3,14 @@ mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_1_0;
 mod since_v0_2_0;
+use extension::{KeyValueStoreDelegate, WorktreeDelegate};
+use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
 use since_v0_2_0 as latest;
 
-use crate::DocsDatabase;
-
 use super::{wasm_engine, WasmState};
 use anyhow::{anyhow, Context, Result};
-use language::LspAdapterDelegate;
 use semantic_version::SemanticVersion;
 use std::{ops::RangeInclusive, sync::Arc};
 use wasmtime::{
@@ -59,10 +58,33 @@ pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive
 
     let max_version = match release_channel {
         ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
-        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_1_0::MAX_VERSION,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => latest::MAX_VERSION,
     };
 
     since_v0_0_1::MIN_VERSION..=max_version
+}
+
+/// Authorizes access to use unreleased versions of the Wasm API, based on the provided [`ReleaseChannel`].
+///
+/// Note: If there isn't currently an unreleased Wasm API version this function may be unused. Don't delete it!
+pub fn authorize_access_to_unreleased_wasm_api_version(
+    release_channel: ReleaseChannel,
+) -> Result<()> {
+    let allow_unreleased_version = match release_channel {
+        ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => {
+            // We always allow the latest in tests so that the extension tests pass on release branches.
+            cfg!(any(test, feature = "test-support"))
+        }
+    };
+
+    if !allow_unreleased_version {
+        Err(anyhow!(
+            "unreleased versions of the extension API can only be used on development builds of Zed"
+        ))?;
+    }
+
+    Ok(())
 }
 
 pub enum Extension {
@@ -80,20 +102,10 @@ impl Extension {
         version: SemanticVersion,
         component: &Component,
     ) -> Result<Self> {
+        // Note: The release channel can be used to stage a new version of the extension API.
+        let _ = release_channel;
+
         if version >= latest::MIN_VERSION {
-            // Note: The release channel can be used to stage a new version of the extension API.
-            // We always allow the latest in tests so that the extension tests pass on release branches.
-            let allow_latest_version = match release_channel {
-                ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
-                ReleaseChannel::Stable | ReleaseChannel::Preview => {
-                    cfg!(any(test, feature = "test-support"))
-                }
-            };
-            if !allow_latest_version {
-                Err(anyhow!(
-                    "unreleased versions of the extension API can only be used on development builds of Zed"
-                ))?;
-            }
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker())
                     .await
@@ -152,8 +164,8 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
-        config: &LanguageServerConfig,
-        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+        language_name: &LanguageName,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Command, String>> {
         match self {
             Extension::V020(ext) => {
@@ -169,11 +181,26 @@ impl Extension {
                 .await?
                 .map(|command| command.into())),
             Extension::V004(ext) => Ok(ext
-                .call_language_server_command(store, config, resource)
+                .call_language_server_command(
+                    store,
+                    &LanguageServerConfig {
+                        name: language_server_id.0.to_string(),
+                        language_name: language_name.to_string(),
+                    },
+                    resource,
+                )
                 .await?
                 .map(|command| command.into())),
             Extension::V001(ext) => Ok(ext
-                .call_language_server_command(store, &config.clone().into(), resource)
+                .call_language_server_command(
+                    store,
+                    &LanguageServerConfig {
+                        name: language_server_id.0.to_string(),
+                        language_name: language_name.to_string(),
+                    }
+                    .into(),
+                    resource,
+                )
                 .await?
                 .map(|command| command.into())),
         }
@@ -183,8 +210,8 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
-        config: &LanguageServerConfig,
-        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+        language_name: &LanguageName,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
             Extension::V020(ext) => {
@@ -212,13 +239,24 @@ impl Extension {
                 .await
             }
             Extension::V004(ext) => {
-                ext.call_language_server_initialization_options(store, config, resource)
-                    .await
+                ext.call_language_server_initialization_options(
+                    store,
+                    &LanguageServerConfig {
+                        name: language_server_id.0.to_string(),
+                        language_name: language_name.to_string(),
+                    },
+                    resource,
+                )
+                .await
             }
             Extension::V001(ext) => {
                 ext.call_language_server_initialization_options(
                     store,
-                    &config.clone().into(),
+                    &LanguageServerConfig {
+                        name: language_server_id.0.to_string(),
+                        language_name: language_name.to_string(),
+                    }
+                    .into(),
                     resource,
                 )
                 .await
@@ -230,7 +268,7 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
-        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
             Extension::V020(ext) => {
@@ -367,7 +405,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         command: &SlashCommand,
         arguments: &[String],
-        resource: Option<Resource<Arc<dyn LspAdapterDelegate>>>,
+        resource: Option<Resource<Arc<dyn WorktreeDelegate>>>,
     ) -> Result<Result<SlashCommandOutput, String>> {
         match self {
             Extension::V020(ext) => {
@@ -422,15 +460,15 @@ impl Extension {
         store: &mut Store<WasmState>,
         provider: &str,
         package_name: &str,
-        database: Resource<Arc<dyn DocsDatabase>>,
+        kv_store: Resource<Arc<dyn KeyValueStoreDelegate>>,
     ) -> Result<Result<(), String>> {
         match self {
             Extension::V020(ext) => {
-                ext.call_index_docs(store, provider, package_name, database)
+                ext.call_index_docs(store, provider, package_name, kv_store)
                     .await
             }
             Extension::V010(ext) => {
-                ext.call_index_docs(store, provider, package_name, database)
+                ext.call_index_docs(store, provider, package_name, kv_store)
                     .await
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {

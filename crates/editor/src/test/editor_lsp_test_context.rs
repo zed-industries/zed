@@ -234,7 +234,16 @@ impl EditorLspTestContext {
                 ..Default::default()
             },
             Some(tree_sitter_html::language()),
-        );
+        )
+        .with_queries(LanguageQueries {
+            brackets: Some(Cow::from(indoc! {r#"
+                ("<" @open "/>" @close)
+                ("</" @open ">" @close)
+                ("<" @open ">" @close)
+                ("\"" @open "\"" @close)"#})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries");
         Self::new(language, Default::default(), cx).await
     }
 

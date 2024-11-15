@@ -1046,14 +1046,20 @@ impl Item for TerminalView {
                 .on_click(move |_, cx| {
                     cx.dispatch_action(Box::new(tasks_ui::Rerun {
                         task_id: Some(task_id.clone()),
-                        ..tasks_ui::Rerun::default()
+                        allow_concurrent_runs: Some(true),
+                        use_new_terminal: Some(false),
+                        reevaluate_context: false,
                     }));
                 })
         };
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Running => (IconName::Play, Color::Disabled, None),
+                TaskStatus::Running => (
+                    IconName::Play,
+                    Color::Disabled,
+                    Some(rerun_button(terminal_task.id.clone())),
+                ),
                 TaskStatus::Unknown => (
                     IconName::Warning,
                     Color::Warning,
@@ -1465,7 +1471,7 @@ mod tests {
         });
     }
 
-    // Active entry with a work tree, worktree is a file -> home_dir()
+    // Active entry with a work tree, worktree is a file -> worktree_folder()
     #[gpui::test]
     async fn active_entry_worktree_is_file(cx: &mut TestAppContext) {
         let (project, workspace) = init_test(cx).await;
@@ -1481,7 +1487,7 @@ mod tests {
             assert!(active_entry.is_some());
 
             let res = default_working_directory(workspace, cx);
-            assert_eq!(res, None);
+            assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
         });

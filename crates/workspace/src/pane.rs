@@ -782,6 +782,7 @@ impl Pane {
         project_entry_id: Option<ProjectEntryId>,
         focus_item: bool,
         allow_preview: bool,
+        suggested_position: Option<usize>,
         cx: &mut ViewContext<Self>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
@@ -817,7 +818,7 @@ impl Pane {
             let destination_index = if allow_preview {
                 self.close_current_preview_item(cx)
             } else {
-                None
+                suggested_position
             };
 
             let new_item = build_item(cx);
@@ -1829,7 +1830,7 @@ impl Pane {
     fn pin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
         maybe!({
             let pane = cx.view().clone();
-            let destination_index = self.pinned_tab_count;
+            let destination_index = self.pinned_tab_count.min(ix);
             self.pinned_tab_count += 1;
             let id = self.item_for_index(ix)?.item_id();
 
@@ -1957,7 +1958,7 @@ impl Pane {
                     is_active,
                     ix,
                 },
-                |tab, cx| cx.new_view(|_| tab.clone()),
+                |tab, _, cx| cx.new_view(|_| tab.clone()),
             )
             .drag_over::<DraggedTab>(|tab, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
@@ -1974,7 +1975,7 @@ impl Pane {
             }))
             .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
                 this.drag_split_direction = None;
-                this.handle_dragged_selection_drop(selection, cx)
+                this.handle_dragged_selection_drop(selection, Some(ix), cx)
             }))
             .on_drop(cx.listener(move |this, paths, cx| {
                 this.drag_split_direction = None;
@@ -2267,7 +2268,7 @@ impl Pane {
             .zip(tab_details(&self.items, cx))
             .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, &focus_handle, cx))
             .collect::<Vec<_>>();
-
+        let tab_count = tab_items.len();
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
         TabBar::new("tab_bar")
@@ -2323,6 +2324,7 @@ impl Pane {
                                 this.drag_split_direction = None;
                                 this.handle_project_entry_drop(
                                     &selection.active_selection.entry_id,
+                                    Some(tab_count),
                                     cx,
                                 )
                             }))
@@ -2470,6 +2472,7 @@ impl Pane {
     fn handle_dragged_selection_drop(
         &mut self,
         dragged_selection: &DraggedSelection,
+        dragged_onto: Option<usize>,
         cx: &mut ViewContext<'_, Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
@@ -2477,12 +2480,17 @@ impl Pane {
                 return;
             }
         }
-        self.handle_project_entry_drop(&dragged_selection.active_selection.entry_id, cx);
+        self.handle_project_entry_drop(
+            &dragged_selection.active_selection.entry_id,
+            dragged_onto,
+            cx,
+        );
     }
 
     fn handle_project_entry_drop(
         &mut self,
         project_entry_id: &ProjectEntryId,
+        target: Option<usize>,
         cx: &mut ViewContext<'_, Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
@@ -2517,6 +2525,7 @@ impl Pane {
                                                 project_entry_id,
                                                 true,
                                                 false,
+                                                target,
                                                 cx,
                                                 build_item,
                                             )
@@ -2530,7 +2539,9 @@ impl Pane {
                                         else {
                                             return;
                                         };
-                                        if !this.is_tab_pinned(index) {
+
+                                        if target.map_or(false, |target| this.is_tab_pinned(target))
+                                        {
                                             this.pin_tab_at(index, cx);
                                         }
                                     })
@@ -2830,7 +2841,7 @@ impl Render for Pane {
                                 this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
                             }))
                             .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
-                                this.handle_dragged_selection_drop(selection, cx)
+                                this.handle_dragged_selection_drop(selection, None, cx)
                             }))
                             .on_drop(cx.listener(move |this, paths, cx| {
                                 this.handle_external_paths_drop(paths, cx)
