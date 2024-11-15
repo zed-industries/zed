@@ -419,7 +419,6 @@ pub async fn post_events(
             let mut request = kinesis_client.put_records().stream_name(stream);
             for row in for_snowflake(request_body.clone(), first_event_at) {
                 if let Some(data) = serde_json::to_vec(&row).log_err() {
-                    println!("{}", String::from_utf8_lossy(&data));
                     request = request.records(
                         aws_sdk_kinesis::types::PutRecordsRequestEntry::builder()
                             .partition_key(request_body.system_id.clone().unwrap_or_default())
