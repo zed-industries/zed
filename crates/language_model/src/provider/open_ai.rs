@@ -13,7 +13,7 @@ use open_ai::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
@@ -32,7 +32,6 @@ const PROVIDER_NAME: &str = "OpenAI";
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiSettings {
     pub api_url: String,
-    pub low_speed_timeout: Option<Duration>,
     pub available_models: Vec<AvailableModel>,
     pub needs_setting_migration: bool,
 }
@@ -229,26 +228,16 @@ impl OpenAiLanguageModel {
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
     {
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
+        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).openai;
-            (
-                state.api_key.clone(),
-                settings.api_url.clone(),
-                settings.low_speed_timeout,
-            )
+            (state.api_key.clone(), settings.api_url.clone())
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
             let api_key = api_key.ok_or_else(|| anyhow!("Missing OpenAI API Key"))?;
-            let request = stream_completion(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                low_speed_timeout,
-            );
+            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             Ok(response)
         });
