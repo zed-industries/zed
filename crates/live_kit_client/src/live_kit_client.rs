@@ -13,7 +13,7 @@ use futures::{io, Stream, StreamExt as _};
 use gpui::{AppContext, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task};
 use parking_lot::Mutex;
 use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc};
-use util::{ResultExt as _, TryFutureExt};
+use util::{debug_panic, ResultExt as _, TryFutureExt};
 #[cfg(not(target_os = "windows"))]
 use webrtc::{
     audio_frame::AudioFrame,
@@ -93,10 +93,9 @@ impl livekit::dispatcher::HttpClient for HttpClientAdapter {
         }
 
         if !request.extensions().is_empty() {
-            log::error!(
+            debug_panic!(
                 "Livekit sent an HTTP request with a protocol extension that Zed doesn't support!"
             );
-            debug_assert!(false);
         }
 
         let request = builder
