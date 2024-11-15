@@ -75,17 +75,46 @@ impl PatchStore {
                 errors: Vec::new(),
             };
 
-            for patch_buffer in patch.buffers {
+            for mut patch_buffer in patch.buffers {
                 let buffer =
                     open_buffer_for_edit_path(&project, patch_buffer.path.clone(), &mut cx);
                 if let Some(buffer) = buffer {
                     let buffer = buffer.await?;
                     let snapshot = buffer.read_with(&cx, |buffer, _| buffer.text_snapshot())?;
 
-                    // todo!(max):
-                    // * compute a diff between `snapshot` and `patch_buffer.content`
-                    // * update the edit ranges based on this diff.
-                    // * clip the offsets to make sure they are valid.
+                    let diff = buffer
+                        .update(&mut cx, |buffer, cx| {
+                            buffer.diff_rope(&patch_buffer.content, cx)
+                        })?
+                        .await;
+
+                    let mut delta = 0isize;
+                    let mut patch_edits = patch_buffer.edits.iter_mut().peekable();
+                    for (diff_range, new_text) in &diff.edits {
+                        while let Some(edit) = patch_edits.peek_mut() {
+                            if diff_range.start >= edit.range.end {
+                                break;
+                            } else {
+                                if diff_range.end > edit.range.start {
+                                    edit.range.start = cmp::min(edit.range.start, diff_range.start);
+                                    edit.range.end = diff_range.start
+                                        + new_text.len()
+                                        + edit.range.end.saturating_sub(diff_range.end);
+                                }
+
+                                edit.range.start = (edit.range.start as isize + delta) as usize;
+                                edit.range.end = (edit.range.end as isize + delta) as usize;
+                                patch_edits.next();
+                            }
+                        }
+
+                        delta += new_text.len() as isize - diff_range.len() as isize;
+                    }
+
+                    for edit in patch_edits {
+                        edit.range.start = (edit.range.start as isize + delta) as usize;
+                        edit.range.end = (edit.range.end as isize + delta) as usize;
+                    }
 
                     let edits = patch_buffer
                         .edits
@@ -296,7 +325,7 @@ struct LocatedEdit {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ResolvedPatch {
+pub struct ResolvedPatch {
     pub edit_groups: HashMap<Model<Buffer>, Vec<ResolvedEditGroup>>,
     pub errors: Vec<AssistantPatchResolutionError>,
 }
@@ -315,7 +344,7 @@ pub struct ResolvedEdit {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct AssistantPatchResolutionError {
+pub struct AssistantPatchResolutionError {
     pub edit_ix: usize,
     pub message: String,
 }
