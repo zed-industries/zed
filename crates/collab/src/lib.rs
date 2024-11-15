@@ -242,6 +242,10 @@ impl Config {
             stripe_api_key: None,
             supermaven_admin_api_key: None,
             user_backfiller_github_access_token: None,
+            firehose_region: None,
+            firehose_access_key: None,
+            firehose_secret_key: None,
+            firehose_delivery_stream: None,
         }
     }
 }

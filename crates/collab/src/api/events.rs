@@ -421,6 +421,7 @@ pub async fn post_events(
                 .delivery_stream_name(stream);
             for row in for_snowflake(request_body.clone(), first_event_at) {
                 if let Some(data) = serde_json::to_vec(&row).log_err() {
+                    println!("{}", String::from_utf8_lossy(&data));
                     request = request.records(
                         aws_sdk_firehose::types::Record::builder()
                             .data(data.into())
