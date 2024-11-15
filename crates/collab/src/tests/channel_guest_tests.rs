@@ -136,7 +136,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
 
     // B sees themselves as muted, and can unmute.
     cx_b.update(|cx_b| {
-        assert!(room_b.read_with(cx_b, |room, cx| !room.can_use_microphone(cx)));
+        assert!(room_b.read_with(cx_b, |room, cx| room.can_use_microphone(cx)));
     });
     room_b.read_with(cx_b, |room, _| assert!(room.is_muted()));
     room_b.update(cx_b, |room, cx| room.toggle_mute(cx));
@@ -271,7 +271,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     cx_a.run_until_parked();
     assert!(room_b.read_with(cx_b, |room, _| !room.can_share_projects()));
     cx_b.update(|cx_b| {
-        assert!(room_b.read_with(cx_b, |room, cx| !room.can_use_microphone(cx)));
+        assert!(room_b.read_with(cx_b, |room, cx| room.can_use_microphone(cx)));
     });
 
     // User B signs the zed CLA.
@@ -298,6 +298,6 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     cx_a.run_until_parked();
     assert!(room_b.read_with(cx_b, |room, _| room.can_share_projects()));
     cx_b.update(|cx_b| {
-        assert!(room_b.read_with(cx_b, |room, cx| !room.can_use_microphone(cx)));
+        assert!(room_b.read_with(cx_b, |room, cx| room.can_use_microphone(cx)));
     });
 }

@@ -404,19 +404,16 @@ impl TitleBar {
             );
         }
 
-        if can_share_projects {
+        if screen_sharing_supported {
             children.push(
                 IconButton::new("screen-share", ui::IconName::Screen)
                     .style(ButtonStyle::Subtle)
                     .icon_size(IconSize::Small)
                     .selected(is_screen_sharing)
-                    .disabled(!screen_sharing_supported)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .tooltip(move |cx| {
                         Tooltip::text(
-                            if !screen_sharing_supported {
-                                "Cannot share screen"
-                            } else if is_screen_sharing {
+                            if is_screen_sharing {
                                 "Stop Sharing Screen"
                             } else {
                                 "Share Screen"
