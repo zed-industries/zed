@@ -3920,7 +3920,7 @@ impl ContextEditor {
             .child(
                 div()
                     .id("error-message")
-                    .max_h_24()
+                    .max_h_32()
                     .overflow_y_scroll()
                     .child(Label::new(error_message.clone())),
             )

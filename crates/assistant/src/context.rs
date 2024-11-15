@@ -2383,7 +2383,11 @@ impl Context {
                             });
                             Some(error.to_string())
                         } else {
-                            let error_message = error.to_string().trim().to_string();
+                            let error_message = error
+                                .chain()
+                                .map(|err| err.to_string())
+                                .collect::<Vec<_>>()
+                                .join("\n");
                             cx.emit(ContextEvent::ShowAssistError(SharedString::from(
                                 error_message.clone(),
                             )));
