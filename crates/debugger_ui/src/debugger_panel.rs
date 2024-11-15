@@ -21,6 +21,7 @@ use project::terminals::TerminalKind;
 use serde_json::Value;
 use settings::Settings;
 use std::any::TypeId;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::u64;
 use task::DebugRequestType;
@@ -70,6 +71,7 @@ pub struct DebugPanel {
     workspace: WeakView<Workspace>,
     show_did_not_stop_warning: bool,
     _subscriptions: Vec<Subscription>,
+    message_queue: HashMap<DebugAdapterClientId, VecDeque<OutputEvent>>,
     thread_states: BTreeMap<(DebugAdapterClientId, u64), Model<ThreadState>>,
 }
 
@@ -130,6 +132,7 @@ impl DebugPanel {
                         project::Event::DebugClientStopped(client_id) => {
                             cx.emit(DebugPanelEvent::ClientStopped(*client_id));
 
+                            this.message_queue.remove(client_id);
                             this.thread_states
                                 .retain(|&(client_id_, _), _| client_id_ != *client_id);
 
@@ -147,6 +150,7 @@ impl DebugPanel {
                 focus_handle: cx.focus_handle(),
                 show_did_not_stop_warning: false,
                 thread_states: Default::default(),
+                message_queue: Default::default(),
                 workspace: workspace.weak_handle(),
                 dap_store: project.read(cx).dap_store(),
             }
@@ -575,6 +579,12 @@ impl DebugPanel {
 
                             pane.add_item(Box::new(tab), true, true, None, cx);
                         });
+
+                        if let Some(message_queue) = this.message_queue.get(&client_id) {
+                            while let Some(output) = message_queue.iter().next() {
+                                cx.emit(DebugPanelEvent::Output((client_id, output.clone())));
+                            }
+                        }
                     }
 
                     let go_to_stack_frame = if let Some(item) = this.pane.read(cx).active_item() {
@@ -680,6 +690,11 @@ impl DebugPanel {
         event: &OutputEvent,
         cx: &mut ViewContext<Self>,
     ) {
+        self.message_queue
+            .entry(*client_id)
+            .or_default()
+            .push_back(event.clone());
+
         cx.emit(DebugPanelEvent::Output((*client_id, event.clone())));
     }
 
