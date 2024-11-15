@@ -1586,7 +1586,7 @@ impl Pane {
                         PromptLevel::Warning,
                         DELETED_MESSAGE,
                         None,
-                        &["Overwrite", "Close", "Cancel"],
+                        &["Save", "Close", "Cancel"],
                     )
                 })?;
                 match answer.await {
