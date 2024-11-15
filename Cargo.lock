@@ -1124,10 +1124,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aws-sdk-firehose"
-version = "1.55.0"
+name = "aws-sdk-kinesis"
+version = "1.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "756fe0c412c07c1109b21d9dba3a51c1a4b0099f460c842b32ab4bb8eb431f1d"
+checksum = "ad48026d3d53881146469b36358d633f1b8c9ad6eb3033f348600f981f2f449b"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -2582,7 +2582,7 @@ dependencies = [
  "async-tungstenite",
  "audio",
  "aws-config",
- "aws-sdk-firehose",
+ "aws-sdk-kinesis",
  "aws-sdk-s3",
  "axum",
  "axum-extra",

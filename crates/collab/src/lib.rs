@@ -170,10 +170,10 @@ pub struct Config {
     pub blob_store_access_key: Option<String>,
     pub blob_store_secret_key: Option<String>,
     pub blob_store_bucket: Option<String>,
-    pub firehose_region: Option<String>,
-    pub firehose_delivery_stream: Option<String>,
-    pub firehose_access_key: Option<String>,
-    pub firehose_secret_key: Option<String>,
+    pub kinesis_region: Option<String>,
+    pub kinesis_stream: Option<String>,
+    pub kinesis_access_key: Option<String>,
+    pub kinesis_secret_key: Option<String>,
     pub zed_environment: Arc<str>,
     pub openai_api_key: Option<Arc<str>>,
     pub google_ai_api_key: Option<Arc<str>>,
@@ -242,10 +242,10 @@ impl Config {
             stripe_api_key: None,
             supermaven_admin_api_key: None,
             user_backfiller_github_access_token: None,
-            firehose_region: None,
-            firehose_access_key: None,
-            firehose_secret_key: None,
-            firehose_delivery_stream: None,
+            kinesis_region: None,
+            kinesis_access_key: None,
+            kinesis_secret_key: None,
+            kinesis_stream: None,
         }
     }
 }
@@ -284,7 +284,7 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
     pub clickhouse_client: Option<::clickhouse::Client>,
-    pub firehose_client: Option<::aws_sdk_firehose::Client>,
+    pub kinesis_client: Option<::aws_sdk_kinesis::Client>,
     pub config: Config,
 }
 
@@ -341,8 +341,8 @@ impl AppState {
                 .clickhouse_url
                 .as_ref()
                 .and_then(|_| build_clickhouse_client(&config).log_err()),
-            firehose_client: if config.firehose_access_key.is_some() {
-                build_firehose_client(&config).await.log_err()
+            kinesis_client: if config.kinesis_access_key.is_some() {
+                build_kinesis_client(&config).await.log_err()
             } else {
                 None
             },
@@ -395,25 +395,25 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
     Ok(aws_sdk_s3::Client::new(&s3_config))
 }
 
-async fn build_firehose_client(config: &Config) -> anyhow::Result<aws_sdk_firehose::Client> {
+async fn build_kinesis_client(config: &Config) -> anyhow::Result<aws_sdk_kinesis::Client> {
     let keys = aws_sdk_s3::config::Credentials::new(
         config
-            .firehose_access_key
+            .kinesis_access_key
             .clone()
-            .ok_or_else(|| anyhow!("missing firehose_access_key"))?,
+            .ok_or_else(|| anyhow!("missing kinesis_access_key"))?,
         config
-            .firehose_secret_key
+            .kinesis_secret_key
             .clone()
-            .ok_or_else(|| anyhow!("missing firehose_secret_key"))?,
+            .ok_or_else(|| anyhow!("missing kinesis_secret_key"))?,
         None,
         None,
         "env",
     );
 
-    let firehose_config = aws_config::defaults(BehaviorVersion::latest())
+    let kinesis_config = aws_config::defaults(BehaviorVersion::latest())
         .region(Region::new(
             config
-                .firehose_region
+                .kinesis_region
                 .clone()
                 .ok_or_else(|| anyhow!("missing blob_store_region"))?,
         ))
@@ -421,7 +421,7 @@ async fn build_firehose_client(config: &Config) -> anyhow::Result<aws_sdk_fireho
         .load()
         .await;
 
-    Ok(aws_sdk_firehose::Client::new(&firehose_config))
+    Ok(aws_sdk_kinesis::Client::new(&kinesis_config))
 }
 
 fn build_clickhouse_client(config: &Config) -> anyhow::Result<::clickhouse::Client> {

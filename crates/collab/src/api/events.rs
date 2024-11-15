@@ -414,16 +414,15 @@ pub async fn post_events(
     let first_event_at = chrono::Utc::now()
         - chrono::Duration::milliseconds(last_event.milliseconds_since_first_event);
 
-    if let Some(firehose_client) = app.firehose_client.clone() {
-        if let Some(stream) = app.config.firehose_delivery_stream.clone() {
-            let mut request = firehose_client
-                .put_record_batch()
-                .delivery_stream_name(stream);
+    if let Some(kinesis_client) = app.kinesis_client.clone() {
+        if let Some(stream) = app.config.kinesis_stream.clone() {
+            let mut request = kinesis_client.put_records().stream_name(stream);
             for row in for_snowflake(request_body.clone(), first_event_at) {
                 if let Some(data) = serde_json::to_vec(&row).log_err() {
                     println!("{}", String::from_utf8_lossy(&data));
                     request = request.records(
-                        aws_sdk_firehose::types::Record::builder()
+                        aws_sdk_kinesis::types::PutRecordsRequestEntry::builder()
+                            .partition_key(request_body.system_id.clone().unwrap_or_default())
                             .data(data.into())
                             .build()
                             .unwrap(),
@@ -1432,13 +1431,13 @@ fn for_snowflake(
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             metrics_id: body.metrics_id.clone(),
-            is_staff: body.is_staff.clone(),
+            is_staff: body.is_staff,
             app_version: body.app_version.clone(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone(),
             architecture: body.architecture.clone(),
             release_channel: body.release_channel.clone(),
-            signed_in: event.signed_in.clone(),
+            signed_in: event.signed_in,
             editor_event: match &event.event {
                 Event::Editor(editor_event) => Some(editor_event.clone()),
                 _ => None,
