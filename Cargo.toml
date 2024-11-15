@@ -363,6 +363,7 @@ heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 hyper = "0.14"
+http = "1.1"
 ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
@@ -371,6 +372,7 @@ itertools = "0.13.0"
 jsonwebtoken = "9.3"
 libc = "0.2"
 linkify = "0.10.0"
+livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="4262308983646ab5b0e0802c3d8bc52154f99aab", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
@@ -548,6 +550,10 @@ features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ]
+
+# TODO livekit https://github.com/RustAudio/cpal/pull/891
+[patch.crates-io]
+cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
