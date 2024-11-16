@@ -144,7 +144,7 @@ impl lsp::request::Request for LspOpenDocs {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenDocsParams {    
+pub struct OpenDocsParams {
     pub text_document: lsp::TextDocumentIdentifier,
     pub position: lsp::Position,
 }
@@ -213,7 +213,7 @@ impl LspCommand for OpenDocs {
             )),
         }
     }
-    
+
     async fn from_proto(
         message: Self::ProtoRequest,
         _: Model<LspStore>,
