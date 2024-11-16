@@ -35,7 +35,7 @@ pub struct OllamaSettings {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    /// The model name in the Ollama API (e.g. "llama3.1:latest")
+    /// The model name in the Ollama API (e.g. "llama3.2:latest")
     pub name: String,
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
@@ -446,7 +446,7 @@ impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
-        let ollama_intro = "Get up and running with Llama 3.1, Mistral, Gemma 2, and other large language models with Ollama.";
+        let ollama_intro = "Get up and running with Llama 3.2, Mistral, Gemma 2, and other large language models with Ollama.";
         let ollama_reqs =
             "Ollama must be running with at least one model installed to use it in the assistant.";
 
@@ -475,7 +475,7 @@ impl Render for ConfigurationView {
                                         .bg(inline_code_bg)
                                         .px_1p5()
                                         .rounded_md()
-                                        .child(Label::new("ollama run llama3.1")),
+                                        .child(Label::new("ollama run llama3.2")),
                                 ),
                         ),
                 )
