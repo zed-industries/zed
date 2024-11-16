@@ -305,6 +305,7 @@ pub struct Pane {
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
+    end_slot_hover_state: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -504,6 +505,7 @@ impl Pane {
             split_item_context_menu_handle: Default::default(),
             new_item_context_menu_handle: Default::default(),
             pinned_tab_count: 0,
+            end_slot_hover_state: false,
         }
     }
 
@@ -2007,7 +2009,6 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
-            .start_slot::<Indicator>(indicator)
             .map(|this| {
                 let end_slot_action: &'static dyn Action;
                 let end_slot_tooltip_text: &'static str;
@@ -2018,9 +2019,21 @@ impl Pane {
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .on_click(cx.listener(move |pane, _, cx| {
                             pane.unpin_tab_at(ix, cx);
+                        }))
+                } else if is_active {
+                    end_slot_action = &CloseActiveItem { save_intent: None };
+                    end_slot_tooltip_text = "Close Tab";
+                    IconButton::new("close tab", IconName::Close)
+                        .shape(IconButtonShape::Square)
+                        .icon_color(Color::Default)
+                        .size(ButtonSize::None)
+                        .icon_size(IconSize::Small)
+                        .on_click(cx.listener(move |pane, _, cx| {
+                            pane.close_item_by_id(item_id, SaveIntent::Close, cx)
+                                .detach_and_log_err(cx);
                         }))
                 } else {
                     end_slot_action = &CloseActiveItem { save_intent: None };
@@ -2030,7 +2043,7 @@ impl Pane {
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .on_click(cx.listener(move |pane, _, cx| {
                             pane.close_item_by_id(item_id, SaveIntent::Close, cx)
                                 .detach_and_log_err(cx);
@@ -2051,7 +2064,19 @@ impl Pane {
                         this.tooltip(move |cx| Tooltip::text(end_slot_tooltip_text, cx))
                     }
                 });
-                this.end_slot(end_slot)
+
+                if let Some(indicator) = indicator {
+                    this.end_slot(
+                        div()
+                            .when(!self.end_slot_hover_state, |this| this.child(indicator))
+                            .when(self.end_slot_hover_state, |this| this.child(end_slot)),
+                    )
+                    .on_hover(cx.listener(|this, hovered, _| {
+                        this.end_slot_hover_state = *hovered;
+                    }))
+                } else {
+                    this.end_slot(end_slot)
+                }
             })
             .child(
                 h_flex()
@@ -3128,10 +3153,14 @@ pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &AppContext) -> Vec<usize>
 
 pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &WindowContext) -> Option<Indicator> {
     maybe!({
-        let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
-            (true, _) => Color::Warning,
-            (_, true) => Color::Accent,
-            (false, false) => return None,
+        let indicator_color = if item.is_dirty(cx) {
+            if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
+                return None;
+            } else {
+                Color::Accent
+            }
+        } else {
+            return None;
         };
 
         Some(Indicator::dot().color(indicator_color))
