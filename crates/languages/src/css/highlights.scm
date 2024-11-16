@@ -22,7 +22,6 @@
 [
   (tag_name)
   (nesting_selector)
-  (universal_selector)
 ] @tag
 
 (universal_selector ("*") @tag)
@@ -74,7 +73,7 @@
   (float_value)
 ] @number
 
-(unit) @number.unit
+(unit) @keyword
 
 [
   ","
