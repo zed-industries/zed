@@ -1,8 +1,8 @@
 use crate::{
-    px, AbsoluteLength, AnyElement, AppContext, Asset, Bounds, DefiniteLength, Element, ElementId,
-    GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    Length, ObjectFit, Pixels, RenderImage, Resource, SharedString, SharedUri, StyleRefinement,
-    Styled, SvgSize, WindowContext,
+    px, AbsoluteLength, AnyElement, AppContext, Asset, AssetLogger, Bounds, DefiniteLength,
+    Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity,
+    IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource, SharedString,
+    SharedUri, StyleRefinement, Styled, SvgSize, Task, WindowContext,
 };
 use anyhow::{anyhow, Result};
 
@@ -27,6 +27,12 @@ use super::{FocusableElement, Stateful, StatefulInteractiveElement};
 
 /// The delay before showing the loading state.
 pub const LOADING_DELAY: Duration = Duration::from_millis(200);
+
+/// A type alias to the resource loader that the `img()` element uses.
+///
+/// Note: that this is only for Resources, like URLs or file paths.
+/// Custom loaders, or external images will not use this asset loader
+pub type ImgResourceLoader = AssetLogger<ImageAssetLoader>;
 
 /// A source of image content.
 #[derive(Clone)]
@@ -74,6 +80,12 @@ impl From<String> for ImageSource {
 impl From<SharedString> for ImageSource {
     fn from(s: SharedString) -> Self {
         s.as_ref().into()
+    }
+}
+
+impl From<&Path> for ImageSource {
+    fn from(value: &Path) -> Self {
+        Self::Resource(value.to_path_buf().into())
     }
 }
 
@@ -215,7 +227,7 @@ impl DerefMut for Stateful<Img> {
 struct ImgState {
     frame_index: usize,
     last_frame_time: Option<Instant>,
-    started_loading: Option<Instant>,
+    started_loading: Option<(Instant, Task<()>)>,
 }
 
 /// The image layout state between frames
@@ -279,6 +291,7 @@ impl Element for Img {
                                         state.last_frame_time = Some(current_time);
                                     }
                                 }
+                                state.started_loading = None;
                             }
 
                             let image_size = data.size(frame_index);
@@ -319,10 +332,13 @@ impl Element for Img {
                                 replacement_id = Some(element.request_layout(cx));
                                 layout_state.replacement = Some(element);
                             }
+                            if let Some(state) = &mut state {
+                                state.started_loading = None;
+                            }
                         }
                         None => {
                             if let Some(state) = &mut state {
-                                if let Some(started_loading) = state.started_loading {
+                                if let Some((started_loading, _)) = state.started_loading {
                                     if started_loading.elapsed() > LOADING_DELAY {
                                         if let Some(loading) = self.style.loading.as_ref() {
                                             let mut element = loading();
@@ -331,7 +347,15 @@ impl Element for Img {
                                         }
                                     }
                                 } else {
-                                    state.started_loading = Some(Instant::now())
+                                    let parent_view_id = cx.parent_view_id();
+                                    let task = cx.spawn(|mut cx| async move {
+                                        cx.background_executor().timer(LOADING_DELAY).await;
+                                        cx.update(|cx| {
+                                            cx.notify(parent_view_id);
+                                        })
+                                        .ok();
+                                    });
+                                    state.started_loading = Some((Instant::now(), task));
                                 }
                             }
                         }
@@ -426,10 +450,10 @@ impl ImageSource {
         cx: &mut WindowContext,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
-            ImageSource::Resource(resource) => cx.use_asset::<ResourceLoader>(&resource),
+            ImageSource::Resource(resource) => cx.use_asset::<ImgResourceLoader>(&resource),
             ImageSource::Custom(loading_fn) => loading_fn(cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
-            ImageSource::Image(data) => cx.use_asset::<ImageDecoder>(data),
+            ImageSource::Image(data) => cx.use_asset::<AssetLogger<ImageDecoder>>(data),
         }
     }
 }
@@ -445,16 +469,16 @@ impl Asset for ImageDecoder {
         source: Self::Source,
         cx: &mut AppContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let result = source.to_image_data(cx).map_err(Into::into);
-        async { result }
+        let renderer = cx.svg_renderer();
+        async move { source.to_image_data(renderer).map_err(Into::into) }
     }
 }
 
-/// An image asset.
+/// An image loader for the GPUI asset system
 #[derive(Clone)]
-pub enum ResourceLoader {}
+pub enum ImageAssetLoader {}
 
-impl Asset for ResourceLoader {
+impl Asset for ImageAssetLoader {
     type Source = Resource;
     type Output = Result<Arc<RenderImage>, ImageCacheError>;
 

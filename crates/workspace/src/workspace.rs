@@ -5896,7 +5896,7 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                     let edge = cx.try_global::<GlobalResizeEdge>();
                     if new_edge != edge.map(|edge| edge.0) {
                         cx.window_handle()
-                            .update(cx, |workspace, cx| cx.notify(workspace.entity_id()))
+                            .update(cx, |workspace, cx| cx.notify(Some(workspace.entity_id())))
                             .ok();
                     }
                 })
