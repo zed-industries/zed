@@ -73,6 +73,7 @@ impl DebugAdapterClient {
         F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         let (server_rx, server_tx) = self.transport_delegate.start(binary, cx).await?;
+        log::info!("Successfully connected to debug adapter");
 
         // start handling events/reverse requests
         cx.update(|cx| {

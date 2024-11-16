@@ -371,6 +371,7 @@ impl DapStore {
                     )
                     .await?;
 
+                log::info!("Client has started");
                 anyhow::Ok(client)
             })
             .await;
