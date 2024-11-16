@@ -33,8 +33,8 @@ use crate::{
     Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
     Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
     PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
-    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem,
+    View, ViewContext, Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -599,6 +599,13 @@ impl AppContext {
         self.platform.primary_display()
     }
 
+    /// Returns a list of available screen capture sources.
+    pub fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        self.platform.screen_capture_sources()
+    }
+
     /// Returns the display with the given ID, if one exists.
     pub fn find_display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         self.displays()
@@ -740,7 +747,7 @@ impl AppContext {
     }
 
     /// Returns the SVG renderer GPUI uses
-    pub(crate) fn svg_renderer(&self) -> SvgRenderer {
+    pub fn svg_renderer(&self) -> SvgRenderer {
         self.svg_renderer.clone()
     }
 
@@ -1362,7 +1369,7 @@ impl AppContext {
     }
 
     /// Remove an asset from GPUI's cache
-    pub fn remove_cached_asset<A: Asset + 'static>(&mut self, source: &A::Source) {
+    pub fn remove_asset<A: Asset>(&mut self, source: &A::Source) {
         let asset_id = (TypeId::of::<A>(), hash(source));
         self.loading_assets.remove(&asset_id);
     }
@@ -1371,12 +1378,7 @@ impl AppContext {
     ///
     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
     /// time, and the results of this call will be cached
-    ///
-    /// This asset will not be cached by default, see [Self::use_cached_asset]
-    pub fn fetch_asset<A: Asset + 'static>(
-        &mut self,
-        source: &A::Source,
-    ) -> (Shared<Task<A::Output>>, bool) {
+    pub fn fetch_asset<A: Asset>(&mut self, source: &A::Source) -> (Shared<Task<A::Output>>, bool) {
         let asset_id = (TypeId::of::<A>(), hash(source));
         let mut is_first = false;
         let task = self

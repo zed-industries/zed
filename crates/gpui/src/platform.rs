@@ -27,11 +27,11 @@ mod test;
 mod windows;
 
 use crate::{
-    point, Action, AnyWindowHandle, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
-    GPUSpecs, GlyphId, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
-    SharedString, Size, SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
+    point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
+    ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, SvgRenderer,
+    SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
 };
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
@@ -69,6 +69,9 @@ pub use semantic_version::SemanticVersion;
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use test::TestScreenCaptureSource;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
@@ -149,6 +152,10 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -227,6 +234,25 @@ pub trait PlatformDisplay: Send + Sync + Debug {
         Bounds::new(origin, DEFAULT_WINDOW_SIZE)
     }
 }
+
+/// A source of on-screen video content that can be captured.
+pub trait ScreenCaptureSource {
+    /// Returns the video resolution of this source.
+    fn resolution(&self) -> Result<Size<Pixels>>;
+
+    /// Start capture video from this source, invoking the given callback
+    /// with each frame.
+    fn stream(
+        &self,
+        frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+    ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
+}
+
+/// A video stream captured from a screen.
+pub trait ScreenCaptureStream {}
+
+/// A frame of video captured from a screen.
+pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
@@ -1264,11 +1290,13 @@ impl Image {
 
     /// Use the GPUI `use_asset` API to make this image renderable
     pub fn use_render_image(self: Arc<Self>, cx: &mut WindowContext) -> Option<Arc<RenderImage>> {
-        ImageSource::Image(self).use_data(cx)
+        ImageSource::Image(self)
+            .use_data(cx)
+            .and_then(|result| result.ok())
     }
 
     /// Convert the clipboard image to an `ImageData` object.
-    pub fn to_image_data(&self, cx: &AppContext) -> Result<Arc<RenderImage>> {
+    pub fn to_image_data(&self, svg_renderer: SvgRenderer) -> Result<Arc<RenderImage>> {
         fn frames_for_image(
             bytes: &[u8],
             format: image::ImageFormat,
@@ -1305,10 +1333,7 @@ impl Image {
             ImageFormat::Bmp => frames_for_image(&self.bytes, image::ImageFormat::Bmp)?,
             ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Svg => {
-                // TODO: Fix this
-                let pixmap = cx
-                    .svg_renderer()
-                    .render_pixmap(&self.bytes, SvgSize::ScaleFactor(1.0))?;
+                let pixmap = svg_renderer.render_pixmap(&self.bytes, SvgSize::ScaleFactor(1.0))?;
 
                 let buffer =
                     image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())

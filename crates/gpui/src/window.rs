@@ -900,7 +900,13 @@ impl<'a> WindowContext<'a> {
 
     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
-    pub fn notify(&mut self, view_id: EntityId) {
+    /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
+    pub fn notify(&mut self, view_id: Option<EntityId>) {
+        let Some(view_id) = view_id else {
+            self.refresh();
+            return;
+        };
+
         for view_id in self
             .window
             .rendered_frame
@@ -1165,13 +1171,7 @@ impl<'a> WindowContext<'a> {
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
     pub fn request_animation_frame(&self) {
         let parent_id = self.parent_view_id();
-        self.on_next_frame(move |cx| {
-            if let Some(parent_id) = parent_id {
-                cx.notify(parent_id)
-            } else {
-                cx.refresh()
-            }
-        });
+        self.on_next_frame(move |cx| cx.notify(parent_id));
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -1982,9 +1982,7 @@ impl<'a> WindowContext<'a> {
     ///
     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
     /// time.
-    ///
-    /// This asset will not be cached by default, see [Self::use_cached_asset]
-    pub fn use_asset<A: Asset + 'static>(&mut self, source: &A::Source) -> Option<A::Output> {
+    pub fn use_asset<A: Asset>(&mut self, source: &A::Source) -> Option<A::Output> {
         let (task, is_first) = self.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
             if is_first {
@@ -1994,13 +1992,7 @@ impl<'a> WindowContext<'a> {
                     |mut cx| async move {
                         task.await;
 
-                        cx.on_next_frame(move |cx| {
-                            if let Some(parent_id) = parent_id {
-                                cx.notify(parent_id)
-                            } else {
-                                cx.refresh()
-                            }
-                        });
+                        cx.on_next_frame(move |cx| cx.notify(parent_id));
                     }
                 })
                 .detach();
@@ -2163,6 +2155,9 @@ impl<'a> WindowContext<'a> {
     /// A variant of `with_element_state` that allows the element's id to be optional. This is a convenience
     /// method for elements where the element id may or may not be assigned. Prefer using `with_element_state`
     /// when the element is guaranteed to have an id.
+    ///
+    /// The first option means 'no ID provided'
+    /// The second option means 'not yet initialized'
     pub fn with_optional_element_state<S, R>(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -4227,7 +4222,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     pub fn notify(&mut self) {
-        self.window_cx.notify(self.view.entity_id());
+        self.window_cx.notify(Some(self.view.entity_id()));
     }
 
     /// Register a callback to be invoked when the window is resized.

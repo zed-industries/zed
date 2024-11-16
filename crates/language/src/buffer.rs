@@ -1749,13 +1749,20 @@ impl Buffer {
                     .map_or(false, |file| file.is_deleted() || !file.is_created()))
     }
 
+    pub fn is_deleted(&self) -> bool {
+        self.file.as_ref().map_or(false, |file| file.is_deleted())
+    }
+
     /// Checks if the buffer and its file have both changed since the buffer
     /// was last saved or reloaded.
     pub fn has_conflict(&self) -> bool {
-        self.has_conflict
-            || self.file.as_ref().map_or(false, |file| {
-                file.mtime() > self.saved_mtime && self.has_unsaved_edits()
-            })
+        if self.has_conflict {
+            return true;
+        }
+        let Some(file) = self.file.as_ref() else {
+            return false;
+        };
+        file.is_deleted() || (file.mtime() > self.saved_mtime && self.has_unsaved_edits())
     }
 
     /// Gets a [`Subscription`] that tracks all of the changes to the buffer's text.

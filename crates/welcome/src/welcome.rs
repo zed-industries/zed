@@ -267,13 +267,8 @@ impl Render for WelcomePage {
                             ),
                     )
                     .child(
-                        v_flex()
-                            .p_3()
+                        v_group()
                             .gap_2()
-                            .bg(cx.theme().colors().element_background)
-                            .border_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .rounded_md()
                             .child(CheckboxWithLabel::new(
                                 "enable-vim",
                                 Label::new("Enable Vim Mode"),

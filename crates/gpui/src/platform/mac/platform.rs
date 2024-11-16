@@ -1,14 +1,14 @@
 use super::{
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    BoolExt,
+    renderer, screen_capture, BoolExt,
 };
 use crate::{
     hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
     ClipboardString, CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher,
     MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowAppearance,
-    WindowParams,
+    PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task,
+    WindowAppearance, WindowParams,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -57,8 +57,6 @@ use std::{
     sync::Arc,
 };
 use strum::IntoEnumIterator;
-
-use super::renderer;
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -548,6 +546,12 @@ impl Platform for MacPlatform {
         MacDisplay::all()
             .map(|screen| Rc::new(screen) as Rc<_>)
             .collect()
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        screen_capture::get_sources()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

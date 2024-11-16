@@ -58,3 +58,4 @@ language = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
 reqwest_client.workspace = true
+theme = { workspace = true, features = ["test-support"] }

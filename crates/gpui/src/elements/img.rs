@@ -1,9 +1,11 @@
 use crate::{
-    px, AbsoluteLength, AppContext, Asset, Bounds, DefiniteLength, Element, ElementId,
-    GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    Length, ObjectFit, Pixels, RenderImage, SharedString, SharedUri, StyleRefinement, Styled,
-    SvgSize, UriOrPath, WindowContext,
+    px, AbsoluteLength, AnyElement, AppContext, Asset, AssetLogger, Bounds, DefiniteLength,
+    Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity,
+    IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource, SharedString,
+    SharedUri, StyleRefinement, Styled, SvgSize, Task, WindowContext,
 };
+use anyhow::{anyhow, Result};
+
 use futures::{AsyncReadExt, Future};
 use image::{
     codecs::gif::GifDecoder, AnimationDecoder, Frame, ImageBuffer, ImageError, ImageFormat,
@@ -11,45 +13,56 @@ use image::{
 use smallvec::SmallVec;
 use std::{
     fs,
-    io::Cursor,
-    path::PathBuf,
+    io::{self, Cursor},
+    ops::{Deref, DerefMut},
+    path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
 use thiserror::Error;
 use util::ResultExt;
 
+use super::{FocusableElement, Stateful, StatefulInteractiveElement};
+
+/// The delay before showing the loading state.
+pub const LOADING_DELAY: Duration = Duration::from_millis(200);
+
+/// A type alias to the resource loader that the `img()` element uses.
+///
+/// Note: that this is only for Resources, like URLs or file paths.
+/// Custom loaders, or external images will not use this asset loader
+pub type ImgResourceLoader = AssetLogger<ImageAssetLoader>;
+
 /// A source of image content.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum ImageSource {
-    /// Image content will be loaded from provided URI at render time.
-    Uri(SharedUri),
-    /// Image content will be loaded from the provided file at render time.
-    File(Arc<PathBuf>),
+    /// The image content will be loaded from some resource location
+    Resource(Resource),
     /// Cached image data
     Render(Arc<RenderImage>),
     /// Cached image data
     Image(Arc<Image>),
-    /// Image content will be loaded from Asset at render time.
-    Embedded(SharedString),
+    /// A custom loading function to use
+    Custom(Arc<dyn Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
 }
 
 fn is_uri(uri: &str) -> bool {
-    uri.contains("://")
+    http_client::Uri::from_str(uri).is_ok()
 }
 
 impl From<SharedUri> for ImageSource {
     fn from(value: SharedUri) -> Self {
-        Self::Uri(value)
+        Self::Resource(Resource::Uri(value))
     }
 }
 
-impl From<&'static str> for ImageSource {
-    fn from(s: &'static str) -> Self {
+impl<'a> From<&'a str> for ImageSource {
+    fn from(s: &'a str) -> Self {
         if is_uri(s) {
-            Self::Uri(s.into())
+            Self::Resource(Resource::Uri(s.to_string().into()))
         } else {
-            Self::Embedded(s.into())
+            Self::Resource(Resource::Embedded(s.to_string().into()))
         }
     }
 }
@@ -57,32 +70,34 @@ impl From<&'static str> for ImageSource {
 impl From<String> for ImageSource {
     fn from(s: String) -> Self {
         if is_uri(&s) {
-            Self::Uri(s.into())
+            Self::Resource(Resource::Uri(s.into()))
         } else {
-            Self::Embedded(s.into())
+            Self::Resource(Resource::Embedded(s.into()))
         }
     }
 }
 
 impl From<SharedString> for ImageSource {
     fn from(s: SharedString) -> Self {
-        if is_uri(&s) {
-            Self::Uri(s.into())
-        } else {
-            Self::Embedded(s)
-        }
+        s.as_ref().into()
     }
 }
 
-impl From<Arc<PathBuf>> for ImageSource {
-    fn from(value: Arc<PathBuf>) -> Self {
-        Self::File(value)
+impl From<&Path> for ImageSource {
+    fn from(value: &Path) -> Self {
+        Self::Resource(value.to_path_buf().into())
+    }
+}
+
+impl From<Arc<Path>> for ImageSource {
+    fn from(value: Arc<Path>) -> Self {
+        Self::Resource(value.into())
     }
 }
 
 impl From<PathBuf> for ImageSource {
     fn from(value: PathBuf) -> Self {
-        Self::File(value.into())
+        Self::Resource(value.into())
     }
 }
 
@@ -98,12 +113,80 @@ impl From<Arc<Image>> for ImageSource {
     }
 }
 
+impl<F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static>
+    From<F> for ImageSource
+{
+    fn from(value: F) -> Self {
+        Self::Custom(Arc::new(value))
+    }
+}
+
+/// The style of an image element.
+pub struct ImageStyle {
+    grayscale: bool,
+    object_fit: ObjectFit,
+    loading: Option<Box<dyn Fn() -> AnyElement>>,
+    fallback: Option<Box<dyn Fn() -> AnyElement>>,
+}
+
+impl Default for ImageStyle {
+    fn default() -> Self {
+        Self {
+            grayscale: false,
+            object_fit: ObjectFit::Contain,
+            loading: None,
+            fallback: None,
+        }
+    }
+}
+
+/// Style an image element.
+pub trait StyledImage: Sized {
+    /// Get a mutable [ImageStyle] from the element.
+    fn image_style(&mut self) -> &mut ImageStyle;
+
+    /// Set the image to be displayed in grayscale.
+    fn grayscale(mut self, grayscale: bool) -> Self {
+        self.image_style().grayscale = grayscale;
+        self
+    }
+
+    /// Set the object fit for the image.
+    fn object_fit(mut self, object_fit: ObjectFit) -> Self {
+        self.image_style().object_fit = object_fit;
+        self
+    }
+
+    /// Set the object fit for the image.
+    fn with_fallback(mut self, fallback: impl Fn() -> AnyElement + 'static) -> Self {
+        self.image_style().fallback = Some(Box::new(fallback));
+        self
+    }
+
+    /// Set the object fit for the image.
+    fn with_loading(mut self, loading: impl Fn() -> AnyElement + 'static) -> Self {
+        self.image_style().loading = Some(Box::new(loading));
+        self
+    }
+}
+
+impl StyledImage for Img {
+    fn image_style(&mut self) -> &mut ImageStyle {
+        &mut self.style
+    }
+}
+
+impl StyledImage for Stateful<Img> {
+    fn image_style(&mut self) -> &mut ImageStyle {
+        &mut self.element.style
+    }
+}
+
 /// An image element.
 pub struct Img {
     interactivity: Interactivity,
     source: ImageSource,
-    grayscale: bool,
-    object_fit: ObjectFit,
+    style: ImageStyle,
 }
 
 /// Create a new image element.
@@ -111,8 +194,7 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
     Img {
         interactivity: Interactivity::default(),
         source: source.into(),
-        grayscale: false,
-        object_fit: ObjectFit::Contain,
+        style: ImageStyle::default(),
     }
 }
 
@@ -125,16 +207,19 @@ impl Img {
             "hdr", "exr", "pbm", "pam", "ppm", "pgm", "ff", "farbfeld", "qoi", "svg",
         ]
     }
+}
 
-    /// Set the image to be displayed in grayscale.
-    pub fn grayscale(mut self, grayscale: bool) -> Self {
-        self.grayscale = grayscale;
-        self
+impl Deref for Stateful<Img> {
+    type Target = Img;
+
+    fn deref(&self) -> &Self::Target {
+        &self.element
     }
-    /// Set the object fit for the image.
-    pub fn object_fit(mut self, object_fit: ObjectFit) -> Self {
-        self.object_fit = object_fit;
-        self
+}
+
+impl DerefMut for Stateful<Img> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.element
     }
 }
 
@@ -142,10 +227,17 @@ impl Img {
 struct ImgState {
     frame_index: usize,
     last_frame_time: Option<Instant>,
+    started_loading: Option<(Instant, Task<()>)>,
+}
+
+/// The image layout state between frames
+pub struct ImgLayoutState {
+    frame_index: usize,
+    replacement: Option<AnyElement>,
 }
 
 impl Element for Img {
-    type RequestLayoutState = usize;
+    type RequestLayoutState = ImgLayoutState;
     type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
@@ -157,11 +249,17 @@ impl Element for Img {
         global_id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        let mut layout_state = ImgLayoutState {
+            frame_index: 0,
+            replacement: None,
+        };
+
         cx.with_optional_element_state(global_id, |state, cx| {
             let mut state = state.map(|state| {
                 state.unwrap_or(ImgState {
                     frame_index: 0,
                     last_frame_time: None,
+                    started_loading: None,
                 })
             });
 
@@ -170,64 +268,105 @@ impl Element for Img {
             let layout_id = self
                 .interactivity
                 .request_layout(global_id, cx, |mut style, cx| {
-                    if let Some(data) = self.source.use_data(cx) {
-                        if let Some(state) = &mut state {
-                            let frame_count = data.frame_count();
-                            if frame_count > 1 {
-                                let current_time = Instant::now();
-                                if let Some(last_frame_time) = state.last_frame_time {
-                                    let elapsed = current_time - last_frame_time;
-                                    let frame_duration =
-                                        Duration::from(data.delay(state.frame_index));
+                    let mut replacement_id = None;
 
-                                    if elapsed >= frame_duration {
-                                        state.frame_index = (state.frame_index + 1) % frame_count;
-                                        state.last_frame_time =
-                                            Some(current_time - (elapsed - frame_duration));
+                    match self.source.use_data(cx) {
+                        Some(Ok(data)) => {
+                            if let Some(state) = &mut state {
+                                let frame_count = data.frame_count();
+                                if frame_count > 1 {
+                                    let current_time = Instant::now();
+                                    if let Some(last_frame_time) = state.last_frame_time {
+                                        let elapsed = current_time - last_frame_time;
+                                        let frame_duration =
+                                            Duration::from(data.delay(state.frame_index));
+
+                                        if elapsed >= frame_duration {
+                                            state.frame_index =
+                                                (state.frame_index + 1) % frame_count;
+                                            state.last_frame_time =
+                                                Some(current_time - (elapsed - frame_duration));
+                                        }
+                                    } else {
+                                        state.last_frame_time = Some(current_time);
+                                    }
+                                }
+                                state.started_loading = None;
+                            }
+
+                            let image_size = data.size(frame_index);
+
+                            if let Length::Auto = style.size.width {
+                                style.size.width = match style.size.height {
+                                    Length::Definite(DefiniteLength::Absolute(
+                                        AbsoluteLength::Pixels(height),
+                                    )) => Length::Definite(
+                                        px(image_size.width.0 as f32 * height.0
+                                            / image_size.height.0 as f32)
+                                        .into(),
+                                    ),
+                                    _ => Length::Definite(px(image_size.width.0 as f32).into()),
+                                };
+                            }
+
+                            if let Length::Auto = style.size.height {
+                                style.size.height = match style.size.width {
+                                    Length::Definite(DefiniteLength::Absolute(
+                                        AbsoluteLength::Pixels(width),
+                                    )) => Length::Definite(
+                                        px(image_size.height.0 as f32 * width.0
+                                            / image_size.width.0 as f32)
+                                        .into(),
+                                    ),
+                                    _ => Length::Definite(px(image_size.height.0 as f32).into()),
+                                };
+                            }
+
+                            if global_id.is_some() && data.frame_count() > 1 {
+                                cx.request_animation_frame();
+                            }
+                        }
+                        Some(_err) => {
+                            if let Some(fallback) = self.style.fallback.as_ref() {
+                                let mut element = fallback();
+                                replacement_id = Some(element.request_layout(cx));
+                                layout_state.replacement = Some(element);
+                            }
+                            if let Some(state) = &mut state {
+                                state.started_loading = None;
+                            }
+                        }
+                        None => {
+                            if let Some(state) = &mut state {
+                                if let Some((started_loading, _)) = state.started_loading {
+                                    if started_loading.elapsed() > LOADING_DELAY {
+                                        if let Some(loading) = self.style.loading.as_ref() {
+                                            let mut element = loading();
+                                            replacement_id = Some(element.request_layout(cx));
+                                            layout_state.replacement = Some(element);
+                                        }
                                     }
                                 } else {
-                                    state.last_frame_time = Some(current_time);
+                                    let parent_view_id = cx.parent_view_id();
+                                    let task = cx.spawn(|mut cx| async move {
+                                        cx.background_executor().timer(LOADING_DELAY).await;
+                                        cx.update(|cx| {
+                                            cx.notify(parent_view_id);
+                                        })
+                                        .ok();
+                                    });
+                                    state.started_loading = Some((Instant::now(), task));
                                 }
                             }
                         }
-
-                        let image_size = data.size(frame_index);
-
-                        if let Length::Auto = style.size.width {
-                            style.size.width = match style.size.height {
-                                Length::Definite(DefiniteLength::Absolute(
-                                    AbsoluteLength::Pixels(height),
-                                )) => Length::Definite(
-                                    px(image_size.width.0 as f32 * height.0
-                                        / image_size.height.0 as f32)
-                                    .into(),
-                                ),
-                                _ => Length::Definite(px(image_size.width.0 as f32).into()),
-                            };
-                        }
-
-                        if let Length::Auto = style.size.height {
-                            style.size.height = match style.size.width {
-                                Length::Definite(DefiniteLength::Absolute(
-                                    AbsoluteLength::Pixels(width),
-                                )) => Length::Definite(
-                                    px(image_size.height.0 as f32 * width.0
-                                        / image_size.width.0 as f32)
-                                    .into(),
-                                ),
-                                _ => Length::Definite(px(image_size.height.0 as f32).into()),
-                            };
-                        }
-
-                        if global_id.is_some() && data.frame_count() > 1 {
-                            cx.request_animation_frame();
-                        }
                     }
 
-                    cx.request_layout(style, [])
+                    cx.request_layout(style, replacement_id)
                 });
 
-            ((layout_id, frame_index), state)
+            layout_state.frame_index = frame_index;
+
+            ((layout_id, layout_state), state)
         })
     }
 
@@ -235,18 +374,24 @@ impl Element for Img {
         &mut self,
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
+        request_layout: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
-    ) -> Option<Hitbox> {
+    ) -> Self::PrepaintState {
         self.interactivity
-            .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
+            .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, cx| {
+                if let Some(replacement) = &mut request_layout.replacement {
+                    replacement.prepaint(cx);
+                }
+
+                hitbox
+            })
     }
 
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
-        frame_index: &mut Self::RequestLayoutState,
+        layout_state: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
@@ -255,26 +400,23 @@ impl Element for Img {
             .paint(global_id, bounds, hitbox.as_ref(), cx, |style, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
-                if let Some(data) = source.use_data(cx) {
-                    let new_bounds = self.object_fit.get_bounds(bounds, data.size(*frame_index));
+                if let Some(Ok(data)) = source.use_data(cx) {
+                    let new_bounds = self
+                        .style
+                        .object_fit
+                        .get_bounds(bounds, data.size(layout_state.frame_index));
                     cx.paint_image(
                         new_bounds,
                         corner_radii,
                         data.clone(),
-                        *frame_index,
-                        self.grayscale,
+                        layout_state.frame_index,
+                        self.style.grayscale,
                     )
                     .log_err();
+                } else if let Some(replacement) = &mut layout_state.replacement {
+                    replacement.paint(cx);
                 }
             })
-    }
-}
-
-impl IntoElement for Img {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -290,41 +432,28 @@ impl InteractiveElement for Img {
     }
 }
 
-impl ImageSource {
-    pub(crate) fn use_data(&self, cx: &mut WindowContext) -> Option<Arc<RenderImage>> {
-        match self {
-            ImageSource::Uri(_) | ImageSource::Embedded(_) | ImageSource::File(_) => {
-                let uri_or_path: UriOrPath = match self {
-                    ImageSource::Uri(uri) => uri.clone().into(),
-                    ImageSource::File(path) => path.clone().into(),
-                    ImageSource::Embedded(path) => UriOrPath::Embedded(path.clone()),
-                    _ => unreachable!(),
-                };
+impl IntoElement for Img {
+    type Element = Self;
 
-                cx.use_asset::<ImageAsset>(&uri_or_path)?.log_err()
-            }
-
-            ImageSource::Render(data) => Some(data.to_owned()),
-            ImageSource::Image(data) => cx.use_asset::<ImageDecoder>(data)?.log_err(),
-        }
+    fn into_element(self) -> Self::Element {
+        self
     }
+}
 
-    /// Fetch the data associated with this source, using GPUI's asset caching
-    pub async fn data(&self, cx: &mut AppContext) -> Option<Arc<RenderImage>> {
+impl FocusableElement for Img {}
+
+impl StatefulInteractiveElement for Img {}
+
+impl ImageSource {
+    pub(crate) fn use_data(
+        &self,
+        cx: &mut WindowContext,
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
-            ImageSource::Uri(_) | ImageSource::Embedded(_) | ImageSource::File(_) => {
-                let uri_or_path: UriOrPath = match self {
-                    ImageSource::Uri(uri) => uri.clone().into(),
-                    ImageSource::File(path) => path.clone().into(),
-                    ImageSource::Embedded(path) => UriOrPath::Embedded(path.clone()),
-                    _ => unreachable!(),
-                };
-
-                cx.fetch_asset::<ImageAsset>(&uri_or_path).0.await.log_err()
-            }
-
-            ImageSource::Render(data) => Some(data.to_owned()),
-            ImageSource::Image(data) => cx.fetch_asset::<ImageDecoder>(data).0.await.log_err(),
+            ImageSource::Resource(resource) => cx.use_asset::<ImgResourceLoader>(&resource),
+            ImageSource::Custom(loading_fn) => loading_fn(cx),
+            ImageSource::Render(data) => Some(Ok(data.to_owned())),
+            ImageSource::Image(data) => cx.use_asset::<AssetLogger<ImageDecoder>>(data),
         }
     }
 }
@@ -334,22 +463,23 @@ enum ImageDecoder {}
 
 impl Asset for ImageDecoder {
     type Source = Arc<Image>;
-    type Output = Result<Arc<RenderImage>, Arc<anyhow::Error>>;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
 
     fn load(
         source: Self::Source,
         cx: &mut AppContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let result = source.to_image_data(cx).map_err(Arc::new);
-        async { result }
+        let renderer = cx.svg_renderer();
+        async move { source.to_image_data(renderer).map_err(Into::into) }
     }
 }
 
+/// An image loader for the GPUI asset system
 #[derive(Clone)]
-enum ImageAsset {}
+pub enum ImageAssetLoader {}
 
-impl Asset for ImageAsset {
-    type Source = UriOrPath;
+impl Asset for ImageAssetLoader {
+    type Source = Resource;
     type Output = Result<Arc<RenderImage>, ImageCacheError>;
 
     fn load(
@@ -363,12 +493,12 @@ impl Asset for ImageAsset {
         let asset_source = cx.asset_source().clone();
         async move {
             let bytes = match source.clone() {
-                UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
-                UriOrPath::Uri(uri) => {
+                Resource::Path(uri) => fs::read(uri.as_ref())?,
+                Resource::Uri(uri) => {
                     let mut response = client
                         .get(uri.as_ref(), ().into(), true)
                         .await
-                        .map_err(|e| ImageCacheError::Client(Arc::new(e)))?;
+                        .map_err(|e| anyhow!(e))?;
                     let mut body = Vec::new();
                     response.body_mut().read_to_end(&mut body).await?;
                     if !response.status().is_success() {
@@ -383,13 +513,13 @@ impl Asset for ImageAsset {
                     }
                     body
                 }
-                UriOrPath::Embedded(path) => {
+                Resource::Embedded(path) => {
                     let data = asset_source.load(&path).ok().flatten();
                     if let Some(data) = data {
                         data.to_vec()
                     } else {
                         return Err(ImageCacheError::Asset(
-                            format!("not found: {}", path).into(),
+                            format!("Embedded resource not found: {}", path).into(),
                         ));
                     }
                 }
@@ -450,9 +580,9 @@ impl Asset for ImageAsset {
 /// An error that can occur when interacting with the image cache.
 #[derive(Debug, Error, Clone)]
 pub enum ImageCacheError {
-    /// An error that occurred while fetching an image from a remote source.
-    #[error("http error: {0}")]
-    Client(#[from] Arc<anyhow::Error>),
+    /// Some other kind of error occurred
+    #[error("error: {0}")]
+    Other(#[from] Arc<anyhow::Error>),
     /// An error that occurred while reading the image from disk.
     #[error("IO error: {0}")]
     Io(Arc<std::io::Error>),
@@ -477,20 +607,26 @@ pub enum ImageCacheError {
     Usvg(Arc<usvg::Error>),
 }
 
-impl From<std::io::Error> for ImageCacheError {
-    fn from(error: std::io::Error) -> Self {
-        Self::Io(Arc::new(error))
+impl From<anyhow::Error> for ImageCacheError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Other(Arc::new(value))
     }
 }
 
-impl From<ImageError> for ImageCacheError {
-    fn from(error: ImageError) -> Self {
-        Self::Image(Arc::new(error))
+impl From<io::Error> for ImageCacheError {
+    fn from(value: io::Error) -> Self {
+        Self::Io(Arc::new(value))
     }
 }
 
 impl From<usvg::Error> for ImageCacheError {
-    fn from(error: usvg::Error) -> Self {
-        Self::Usvg(Arc::new(error))
+    fn from(value: usvg::Error) -> Self {
+        Self::Usvg(Arc::new(value))
+    }
+}
+
+impl From<image::ImageError> for ImageCacheError {
+    fn from(value: image::ImageError) -> Self {
+        Self::Image(Arc::new(value))
     }
 }

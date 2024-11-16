@@ -704,6 +704,11 @@ pub struct Bounds<T: Clone + Default + Debug> {
     pub size: Size<T>,
 }
 
+/// Create a bounds with the given origin and size
+pub fn bounds<T: Clone + Default + Debug>(origin: Point<T>, size: Size<T>) -> Bounds<T> {
+    Bounds { origin, size }
+}
+
 impl Bounds<Pixels> {
     /// Generate a centered bounds for the given display or primary display if none is provided
     pub fn centered(display_id: Option<DisplayId>, size: Size<Pixels>, cx: &AppContext) -> Self {
