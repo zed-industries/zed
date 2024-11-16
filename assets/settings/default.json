@@ -580,7 +580,21 @@
   // Settings related to the file finder.
   "file_finder": {
     // Whether to show file icons in the file finder.
-    "file_icons": true
+    "file_icons": true,
+    // Width of the file finder modal. This setting can
+    // take four values.
+    //
+    // 1. Small width:
+    //   "modal_width": "small",
+    // 2. Medium width (default):
+    //   "modal_width": "medium",
+    // 3. Large width:
+    //   "modal_width": "large",
+    // 4. Extra Large width:
+    //   "modal_width": "xlarge"
+    // 5. Fullscreen width:
+    //   "modal_width": "full"
+    "modal_width": "medium"
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
