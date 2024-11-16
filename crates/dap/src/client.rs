@@ -110,6 +110,8 @@ impl DebugAdapterClient {
             } {
                 break Err(e);
             }
+
+            smol::future::yield_now().await;
         };
 
         drop(client_tx);

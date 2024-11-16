@@ -187,6 +187,8 @@ impl TransportDelegate {
                     handler(IoKind::StdOut, line.as_str());
                 }
             }
+
+            smol::future::yield_now().await;
         };
 
         log::debug!("Handle adapter log dropped");
@@ -237,6 +239,8 @@ impl TransportDelegate {
                 }
                 Err(error) => break Err(error.into()),
             }
+
+            smol::future::yield_now().await;
         };
 
         log::debug!("Handle adapter input dropped");
@@ -272,6 +276,8 @@ impl TransportDelegate {
                 }
                 Err(e) => break Err(e),
             }
+
+            smol::future::yield_now().await;
         };
 
         drop(client_tx);
@@ -300,6 +306,8 @@ impl TransportDelegate {
                 }
                 Err(error) => break Err(error.into()),
             }
+
+            smol::future::yield_now().await;
         };
 
         log::debug!("Handle adapter error dropped");

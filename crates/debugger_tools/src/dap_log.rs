@@ -104,6 +104,8 @@ impl LogStore {
                         this.on_rpc_log(server_id, io_kind, &message, cx);
                     })?;
                 }
+
+                smol::future::yield_now().await;
             }
             anyhow::Ok(())
         })
@@ -118,6 +120,8 @@ impl LogStore {
                         this.on_adapter_log(server_id, io_kind, &message, cx);
                     })?;
                 }
+
+                smol::future::yield_now().await;
             }
             anyhow::Ok(())
         })

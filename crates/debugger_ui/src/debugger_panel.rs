@@ -581,8 +581,7 @@ impl DebugPanel {
                         });
 
                         if let Some(message_queue) = this.message_queue.get(&client_id) {
-                            let mut message_queue = message_queue.iter();
-                            while let Some(output) = message_queue.next() {
+                            for output in message_queue.iter() {
                                 cx.emit(DebugPanelEvent::Output((client_id, output.clone())));
                             }
                         }
