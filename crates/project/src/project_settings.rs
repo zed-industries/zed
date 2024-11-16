@@ -561,7 +561,7 @@ impl SettingsObserver {
                                 path: directory.as_ref(),
                             }),
                             file_content.as_deref(),
-                            Some(task_kind),
+                            task_kind,
                             cx,
                         )
                         .log_err();

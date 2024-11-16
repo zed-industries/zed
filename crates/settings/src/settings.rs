@@ -107,5 +107,5 @@ pub fn initial_tasks_content() -> Cow<'static, str> {
 }
 
 pub fn initial_debug_tasks_content() -> Cow<'static, str> {
-    asset_str::<SettingsAssets>("settings/initial_debug.json")
+    asset_str::<SettingsAssets>("settings/initial_debug_tasks.json")
 }

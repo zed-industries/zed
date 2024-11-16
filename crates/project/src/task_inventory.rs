@@ -247,8 +247,14 @@ impl Inventory {
             .map(|template| {
                 (
                     TaskSourceKind::AbsPath {
-                        id_base: Cow::Borrowed("global tasks.json"),
-                        abs_path: paths::tasks_file().clone(),
+                        id_base: match template.task_type {
+                            task::TaskType::Script => Cow::Borrowed("global tasks.json"),
+                            task::TaskType::Debug(_) => Cow::Borrowed("global debug.json"),
+                        },
+                        abs_path: match template.task_type {
+                            task::TaskType::Script => paths::tasks_file().clone(),
+                            task::TaskType::Debug(_) => paths::debug_tasks_file().clone(),
+                        },
                     },
                     template,
                 )
