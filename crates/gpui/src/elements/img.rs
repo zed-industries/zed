@@ -1,8 +1,8 @@
 use crate::{
-    px, AbsoluteLength, AnyElement, AppContext, Asset, AssetLogger, Bounds, DefiniteLength,
-    Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource, SharedString,
-    SharedUri, StyleRefinement, Styled, SvgSize, Task, WindowContext,
+    px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, AppContext, Asset, AssetLogger, Bounds,
+    DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
+    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
+    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, WindowContext,
 };
 use anyhow::{anyhow, Result};
 
@@ -564,9 +564,8 @@ impl Asset for ImageAssetLoader {
                 let mut buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
 
-                // Convert from RGBA to BGRA.
                 for pixel in buffer.chunks_exact_mut(4) {
-                    pixel.swap(0, 2);
+                    swap_rgba_pa_to_bgra(pixel);
                 }
 
                 RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1))
