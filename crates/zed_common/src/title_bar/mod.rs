@@ -9,6 +9,7 @@ mod stories;
 use crate::recent_projects::{OpenRemote, RecentProjects};
 use crate::title_bar::application_menu::ApplicationMenu;
 use crate::title_bar::platforms::{platform_linux, platform_mac, platform_windows};
+use crate::vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
@@ -28,7 +29,6 @@ use ui::{
     IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
-use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
 
 #[cfg(feature = "stories")]

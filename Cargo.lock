@@ -12814,21 +12814,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
-name = "vcs_menu"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "fuzzy",
- "git",
- "gpui",
- "picker",
- "project",
- "ui",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "version-compare"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14767,7 +14752,6 @@ dependencies = [
  "unindent",
  "util",
  "uuid",
- "vcs_menu",
  "wasmtime-wasi",
  "workspace",
  "worktree",

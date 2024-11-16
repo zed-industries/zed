@@ -140,7 +140,6 @@ ui.workspace = true
 unindent.workspace = true
 util.workspace = true
 uuid.workspace = true
-vcs_menu.workspace = true
 wasmtime-wasi.workspace = true
 workspace.workspace = true
 worktree.workspace = true

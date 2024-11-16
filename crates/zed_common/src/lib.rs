@@ -23,5 +23,6 @@ pub mod terminal_view;
 pub mod theme_selector;
 pub mod title_bar;
 pub mod toolchain_selector;
+pub mod vcs_menu;
 pub mod vim;
 pub mod welcome;

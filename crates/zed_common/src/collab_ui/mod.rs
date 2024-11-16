@@ -33,7 +33,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     notification_panel::init(cx);
     notifications::init(app_state, cx);
     crate::title_bar::init(cx);
-    vcs_menu::init(cx);
+    crate::vcs_menu::init(cx);
 }
 
 fn notification_window_options(
