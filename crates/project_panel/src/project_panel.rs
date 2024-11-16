@@ -258,7 +258,7 @@ fn get_item_color(cx: &ViewContext<ProjectPanel>) -> ItemColors {
 
     ItemColors {
         default: colors.surface_background,
-        hover: colors.element_active,
+        hover: colors.ghost_element_hover,
         drag_over: colors.drop_target_background,
         marked_active: colors.ghost_element_selected,
     }
@@ -2829,7 +2829,9 @@ impl ProjectPanel {
                                                 IconDecorationKind::Dot
                                             },
                                             bg_color,
-                                            item_colors.marked_active
+                                            cx,
+                                        )
+                                        .color(decoration_color.color(cx))
                                         .position(Point {
                                             x: px(-2.),
                                             y: px(-2.),
