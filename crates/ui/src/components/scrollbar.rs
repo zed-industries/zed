@@ -370,7 +370,7 @@ impl Element for Scrollbar {
                         };
 
                         if let Some(id) = state.parent_id {
-                            cx.notify(id);
+                            cx.notify(Some(id));
                         }
                     }
                 } else {
@@ -382,7 +382,7 @@ impl Element for Scrollbar {
                 if phase.bubble() {
                     state.drag.take();
                     if let Some(id) = state.parent_id {
-                        cx.notify(id);
+                        cx.notify(Some(id));
                     }
                 }
             });
