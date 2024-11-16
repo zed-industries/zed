@@ -5622,6 +5622,82 @@ impl Editor {
         breakpoint_display_points
     }
 
+    fn breakpoint_context_menu(
+        &self,
+        anchor: text::Anchor,
+        kind: Arc<BreakpointKind>,
+        row: DisplayRow,
+        cx: &mut ViewContext<Self>,
+    ) -> View<ui::ContextMenu> {
+        let editor_weak = cx.view().downgrade();
+        let editor_weak2 = editor_weak.clone();
+        let focus_handle = self.focus_handle(cx);
+
+        let log_message = kind.log_message();
+        let second_entry_msg = if log_message.is_some() {
+            "Edit Log Breakpoint"
+        } else {
+            "Toggle Log Breakpoint"
+        };
+
+        ui::ContextMenu::build(cx, |menu, _cx| {
+            menu.on_blur_subscription(Subscription::new(|| {}))
+                .context(focus_handle)
+                .entry("Toggle Breakpoint", None, move |cx| {
+                    if let Some(editor) = editor_weak.upgrade() {
+                        editor.update(cx, |this, cx| {
+                            this.edit_breakpoint_at_anchor(
+                                anchor,
+                                BreakpointKind::Standard,
+                                BreakpointEditAction::Toggle,
+                                cx,
+                            );
+                        })
+                    }
+                })
+                .entry(second_entry_msg, None, move |cx| {
+                    if let Some(editor) = editor_weak2.clone().upgrade() {
+                        let log_message = log_message.clone();
+                        editor.update(cx, |this, cx| {
+                            let position = this
+                                .snapshot(cx)
+                                .display_point_to_anchor(DisplayPoint::new(row, 0), Bias::Right);
+
+                            let weak_editor = cx.view().downgrade();
+                            let bp_prompt = cx.new_view(|cx| {
+                                BreakpointPromptEditor::new(weak_editor, anchor, log_message, cx)
+                            });
+
+                            let height = bp_prompt.update(cx, |this, cx| {
+                                this.prompt
+                                    .update(cx, |prompt, cx| prompt.max_point(cx).row().0 + 1 + 2)
+                            });
+                            let cloned_prompt = bp_prompt.clone();
+                            let blocks = vec![BlockProperties {
+                                style: BlockStyle::Sticky,
+                                placement: BlockPlacement::Above(position),
+                                height,
+                                render: Arc::new(move |cx| {
+                                    *cloned_prompt.read(cx).gutter_dimensions.lock() =
+                                        *cx.gutter_dimensions;
+                                    cloned_prompt.clone().into_any_element()
+                                }),
+                                priority: 0,
+                            }];
+
+                            let focus_handle = bp_prompt.focus_handle(cx);
+                            cx.focus(&focus_handle);
+
+                            let block_ids = this.insert_blocks(blocks, None, cx);
+                            bp_prompt.update(cx, |prompt, _| {
+                                prompt.add_block_ids(block_ids);
+                            });
+                        });
+                    }
+                })
+        })
+    }
+
     fn render_breakpoint(
         &self,
         position: text::Anchor,
@@ -5654,7 +5730,7 @@ impl Editor {
                 editor.focus(cx);
                 editor.edit_breakpoint_at_anchor(
                     position,
-                    (*arc_kind).clone(),
+                    arc_kind.as_ref().clone(),
                     BreakpointEditAction::Toggle,
                     cx,
                 );
@@ -5667,82 +5743,9 @@ impl Editor {
                     .anchor_at(Point::new(row.0, 0u32), Bias::Left);
 
                 let clicked_point = event.down.position;
-                let focus_handle = editor.focus_handle.clone();
-                let editor_weak = cx.view().downgrade();
-                let second_weak = editor_weak.clone();
 
-                let log_message = arc_kind2.log_message();
-
-                let second_entry_msg = if log_message.is_some() {
-                    "Edit Log Breakpoint"
-                } else {
-                    "Toggle Log Breakpoint"
-                };
-
-                let context_menu = ui::ContextMenu::build(cx, move |menu, _cx| {
-                    let anchor = position;
-                    menu.on_blur_subscription(Subscription::new(|| {}))
-                        .context(focus_handle)
-                        .entry("Toggle Breakpoint", None, move |cx| {
-                            if let Some(editor) = editor_weak.upgrade() {
-                                editor.update(cx, |this, cx| {
-                                    this.edit_breakpoint_at_anchor(
-                                        anchor,
-                                        BreakpointKind::Standard,
-                                        BreakpointEditAction::Toggle,
-                                        cx,
-                                    );
-                                })
-                            }
-                        })
-                        .entry(second_entry_msg, None, move |cx| {
-                            if let Some(editor) = second_weak.clone().upgrade() {
-                                let log_message = log_message.clone();
-                                editor.update(cx, |this, cx| {
-                                    let position = this.snapshot(cx).display_point_to_anchor(
-                                        DisplayPoint::new(row, 0),
-                                        Bias::Right,
-                                    );
-
-                                    let weak_editor = cx.view().downgrade();
-                                    let bp_prompt = cx.new_view(|cx| {
-                                        BreakpointPromptEditor::new(
-                                            weak_editor,
-                                            anchor,
-                                            log_message,
-                                            cx,
-                                        )
-                                    });
-
-                                    let height = bp_prompt.update(cx, |this, cx| {
-                                        this.prompt.update(cx, |prompt, cx| {
-                                            prompt.max_point(cx).row().0 + 1 + 2
-                                        })
-                                    });
-                                    let cloned_prompt = bp_prompt.clone();
-                                    let blocks = vec![BlockProperties {
-                                        style: BlockStyle::Sticky,
-                                        placement: BlockPlacement::Above(position),
-                                        height,
-                                        render: Arc::new(move |cx| {
-                                            *cloned_prompt.read(cx).gutter_dimensions.lock() =
-                                                *cx.gutter_dimensions;
-                                            cloned_prompt.clone().into_any_element()
-                                        }),
-                                        priority: 0,
-                                    }];
-
-                                    let focus_handle = bp_prompt.focus_handle(cx);
-                                    cx.focus(&focus_handle);
-
-                                    let block_ids = this.insert_blocks(blocks, None, cx);
-                                    bp_prompt.update(cx, |prompt, _| {
-                                        prompt.add_block_ids(block_ids);
-                                    });
-                                });
-                            }
-                        })
-                });
+                let context_menu =
+                    editor.breakpoint_context_menu(position, arc_kind2.clone(), row, cx);
 
                 editor.mouse_context_menu = MouseContextMenu::pinned_to_editor(
                     editor,
