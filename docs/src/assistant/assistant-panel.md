@@ -7,15 +7,15 @@ To open the assistant panel, toggle the right dock by using the {#action workspa
 
 > **Note**: A custom [key binding](../key-bindings.md) can be set to toggle the right dock.
 
-Once you have [configured a provider](./configuration.md#providers), you can interact with the provider's language models in a context editor.
+Once you have [configured a provider](./configuration.md#providers), you can interact with the provider's language models.
 
-To create a new context editor, press {#kb workspace::NewFile} or use the menu in the top right of the assistant panel and select the `New Context` option.
+To create a new chat in the assistant panel, press {#kb workspace::NewFile} or use the menu in the top right of the assistant panel and select the `New Chat` option.
 
-In the context editor, select a model from one of the configured providers, type a message in the `You` block, and submit with {#kb assistant::Assist}.
+In the panel, select a model from one of the configured providers, type a message in the `You` block, and submit with {#kb assistant::Assist}.
 
 ### Interacting with the Assistant
 
-The context editor in Zed functions similarly to any other editor. You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.
+The assistant panel in Zed functions similarly to any other editor. You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.
 
 However, the assistant editor differs with the inclusion of message blocks. These blocks serve as containers for text that correspond to different roles within the context. These roles include:
 
@@ -41,7 +41,7 @@ After submitting a message, the assistant's response will be streamed below, in 
 
 The stream can be canceled at any point with <kbd>escape</kbd>. This is useful if you realize early on that the response is not what you were looking for.
 
-If you want to start a new conversation at any time, you can hit <kbd>cmd-n|ctrl-n</kbd> or use the `New Context` menu option in the hamburger menu at the top left of the panel.
+If you want to start a new conversation at any time, you can hit <kbd>cmd-n|ctrl-n</kbd> or use the `New Chat` menu option in the hamburger menu at the top left of the panel.
 
 Simple back-and-forth conversations work well with the assistant. However, there may come a time when you want to modify the previous text in the conversation and steer it in a different direction.
 
@@ -59,7 +59,7 @@ The assistant gives you the flexibility to have control over the context. You ca
 6. Add additional context to your original message.
 7. Submit the message with {#kb assistant::Assist}.
 
-Being able to edit previous messages gives you control over how tokens are used. You don't need to start up a new context to correct a mistake or to add additional information, and you don't have to waste tokens by submitting follow-up corrections.
+Being able to edit previous messages gives you control over how tokens are used. You don't need to start up a new chats to correct a mistake or to add additional information, and you don't have to waste tokens by submitting follow-up corrections.
 
 > **Note**: The act of editing past messages is often referred to as "Rewriting History" in the context of the language models.
 

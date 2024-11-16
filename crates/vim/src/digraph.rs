@@ -1,14 +1,24 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::AppContext;
+use editor::Editor;
+use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent};
+use serde::Deserialize;
 use settings::Settings;
 use std::sync::LazyLock;
 use ui::ViewContext;
 
-use crate::{Vim, VimSettings};
+use crate::{state::Operator, Vim, VimSettings};
 
 mod default;
+
+#[derive(PartialEq, Clone, Deserialize)]
+struct Literal(String, char);
+impl_actions!(vim, [Literal]);
+
+pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, Vim::literal)
+}
 
 static DEFAULT_DIGRAPHS_MAP: LazyLock<HashMap<String, Arc<str>>> = LazyLock::new(|| {
     let mut map = HashMap::default();
@@ -48,6 +58,153 @@ impl Vim {
             self.update_editor(cx, |_, editor, cx| editor.insert(&text, cx));
         } else {
             self.input_ignored(text, cx);
+        }
+    }
+
+    fn literal(&mut self, action: &Literal, cx: &mut ViewContext<Self>) {
+        if let Some(Operator::Literal { prefix }) = self.active_operator() {
+            if let Some(prefix) = prefix {
+                if let Some(keystroke) = Keystroke::parse(&action.0).ok() {
+                    cx.window_context().defer(|cx| {
+                        cx.dispatch_keystroke(keystroke);
+                    });
+                }
+                return self.handle_literal_input(prefix, "", cx);
+            }
+        }
+
+        self.insert_literal(Some(action.1), "", cx);
+    }
+
+    pub fn handle_literal_keystroke(
+        &mut self,
+        keystroke_event: &KeystrokeEvent,
+        prefix: String,
+        cx: &mut ViewContext<Self>,
+    ) {
+        // handled by handle_literal_input
+        if keystroke_event.keystroke.ime_key.is_some() {
+            return;
+        };
+
+        if prefix.len() > 0 {
+            self.handle_literal_input(prefix, "", cx);
+        } else {
+            self.pop_operator(cx);
+        }
+
+        // give another chance to handle the binding outside
+        // of waiting mode.
+        if keystroke_event.action.is_none() {
+            let keystroke = keystroke_event.keystroke.clone();
+            cx.window_context().defer(|cx| {
+                cx.dispatch_keystroke(keystroke);
+            });
+        }
+        return;
+    }
+
+    pub fn handle_literal_input(
+        &mut self,
+        mut prefix: String,
+        text: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let first = prefix.chars().next();
+        let next = text.chars().next().unwrap_or(' ');
+        match first {
+            Some('o' | 'O') => {
+                if next.is_digit(8) {
+                    prefix.push(next);
+                    if prefix.len() == 4 {
+                        let ch: char = u8::from_str_radix(&prefix[1..], 8).unwrap_or(255).into();
+                        return self.insert_literal(Some(ch), "", cx);
+                    }
+                } else {
+                    let ch = if prefix.len() > 1 {
+                        Some(u8::from_str_radix(&prefix[1..], 8).unwrap_or(255).into())
+                    } else {
+                        None
+                    };
+                    return self.insert_literal(ch, text, cx);
+                }
+            }
+            Some('x' | 'X' | 'u' | 'U') => {
+                let max_len = match first.unwrap() {
+                    'x' => 3,
+                    'X' => 3,
+                    'u' => 5,
+                    'U' => 9,
+                    _ => unreachable!(),
+                };
+                if next.is_ascii_hexdigit() {
+                    prefix.push(next);
+                    if prefix.len() == max_len {
+                        let ch: char = u32::from_str_radix(&prefix[1..], 16)
+                            .ok()
+                            .and_then(|n| n.try_into().ok())
+                            .unwrap_or('\u{FFFD}');
+                        return self.insert_literal(Some(ch), "", cx);
+                    }
+                } else {
+                    let ch = if prefix.len() > 1 {
+                        Some(
+                            u32::from_str_radix(&prefix[1..], 16)
+                                .ok()
+                                .and_then(|n| n.try_into().ok())
+                                .unwrap_or('\u{FFFD}'),
+                        )
+                    } else {
+                        None
+                    };
+                    return self.insert_literal(ch, text, cx);
+                }
+            }
+            Some('0'..='9') => {
+                if next.is_ascii_hexdigit() {
+                    prefix.push(next);
+                    if prefix.len() == 3 {
+                        let ch: char = u8::from_str_radix(&prefix, 10).unwrap_or(255).into();
+                        return self.insert_literal(Some(ch), "", cx);
+                    }
+                } else {
+                    let ch: char = u8::from_str_radix(&prefix, 10).unwrap_or(255).into();
+                    return self.insert_literal(Some(ch), "", cx);
+                }
+            }
+            None if matches!(next, 'o' | 'O' | 'x' | 'X' | 'u' | 'U' | '0'..='9') => {
+                prefix.push(next)
+            }
+            _ => {
+                return self.insert_literal(None, text, cx);
+            }
+        };
+
+        self.pop_operator(cx);
+        self.push_operator(
+            Operator::Literal {
+                prefix: Some(prefix),
+            },
+            cx,
+        );
+    }
+
+    fn insert_literal(&mut self, ch: Option<char>, suffix: &str, cx: &mut ViewContext<Self>) {
+        self.pop_operator(cx);
+        let mut text = String::new();
+        if let Some(c) = ch {
+            if c == '\n' {
+                text.push('\x00')
+            } else {
+                text.push(c)
+            }
+        }
+        text.push_str(suffix);
+
+        if self.editor_input_enabled() {
+            self.update_editor(cx, |_, editor, cx| editor.insert(&text, cx));
+        } else {
+            self.input_ignored(text.into(), cx);
         }
     }
 }
@@ -153,5 +310,44 @@ mod test {
         cx.set_shared_state("Hellˇo").await;
         cx.simulate_shared_keystrokes("a ctrl-k s , escape").await;
         cx.shared_state().await.assert_eq("Helloˇş");
+    }
+
+    #[gpui::test]
+    async fn test_ctrl_v(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇ").await;
+        cx.simulate_shared_keystrokes("i ctrl-v 0 0 0").await;
+        cx.shared_state().await.assert_eq("\x00ˇ");
+
+        cx.simulate_shared_keystrokes("ctrl-v j").await;
+        cx.shared_state().await.assert_eq("\x00jˇ");
+        cx.simulate_shared_keystrokes("ctrl-v x 6 5").await;
+        cx.shared_state().await.assert_eq("\x00jeˇ");
+        cx.simulate_shared_keystrokes("ctrl-v U 1 F 6 4 0 space")
+            .await;
+        cx.shared_state().await.assert_eq("\x00je🙀 ˇ");
+    }
+
+    #[gpui::test]
+    async fn test_ctrl_v_escape(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇ").await;
+        cx.simulate_shared_keystrokes("i ctrl-v 9 escape").await;
+        cx.shared_state().await.assert_eq("ˇ\t");
+        cx.simulate_shared_keystrokes("i ctrl-v escape").await;
+        cx.shared_state().await.assert_eq("\x1bˇ\t");
+    }
+
+    #[gpui::test]
+    async fn test_ctrl_v_control(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇ").await;
+        cx.simulate_shared_keystrokes("i ctrl-v ctrl-d").await;
+        cx.shared_state().await.assert_eq("\x04ˇ");
+        cx.simulate_shared_keystrokes("ctrl-v ctrl-j").await;
+        cx.shared_state().await.assert_eq("\x04\x00ˇ");
+        cx.simulate_shared_keystrokes("ctrl-v tab").await;
+        cx.shared_state().await.assert_eq("\x04\x00\x09ˇ");
     }
 }

@@ -9,10 +9,9 @@ use collab_ui::{
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
     point, BackgroundExecutor, BorrowAppContext, Context, Entity, SharedString, TestAppContext,
-    View, VisualContext, VisualTestContext,
+    TestScreenCaptureSource, View, VisualContext, VisualTestContext,
 };
 use language::Capability;
-use live_kit_client::MacOSDisplay;
 use project::WorktreeSettings;
 use rpc::proto::PeerId;
 use serde_json::json;
@@ -429,17 +428,17 @@ async fn test_basic_following(
     );
 
     // Client B activates an external window, which causes a new screen-sharing item to be added to the pane.
-    let display = MacOSDisplay::new();
+    let display = TestScreenCaptureSource::new();
     active_call_b
         .update(cx_b, |call, cx| call.set_location(None, cx))
         .await
         .unwrap();
+    cx_b.set_screen_capture_sources(vec![display]);
     active_call_b
         .update(cx_b, |call, cx| {
-            call.room().unwrap().update(cx, |room, cx| {
-                room.set_display_sources(vec![display.clone()]);
-                room.share_screen(cx)
-            })
+            call.room()
+                .unwrap()
+                .update(cx, |room, cx| room.share_screen(cx))
         })
         .await
         .unwrap();
@@ -1957,9 +1956,10 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     });
     channel_notes_1_b.update(cx_b, |notes, cx| {
         assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
-        let editor = notes.editor.read(cx);
-        assert_eq!(editor.text(cx), "Hello from A.");
-        assert_eq!(editor.selections.ranges::<usize>(cx), &[3..4]);
+        notes.editor.update(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Hello from A.");
+            assert_eq!(editor.selections.ranges::<usize>(cx), &[3..4]);
+        })
     });
 
     //  Client A opens the notes for channel 2.

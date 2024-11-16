@@ -20,19 +20,18 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::{maybe, ResultExt};
 
-const PROVIDER_ID: &str = "anthropic";
+pub const PROVIDER_ID: &str = "anthropic";
 const PROVIDER_NAME: &str = "Anthropic";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
     pub api_url: String,
-    pub low_speed_timeout: Option<Duration>,
     /// Extend Zed's list of Anthropic models.
     pub available_models: Vec<AvailableModel>,
     pub needs_setting_migration: bool,
@@ -309,26 +308,17 @@ impl AnthropicModel {
     {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
+        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
-            (
-                state.api_key.clone(),
-                settings.api_url.clone(),
-                settings.low_speed_timeout,
-            )
+            (state.api_key.clone(), settings.api_url.clone())
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("Missing Anthropic API Key"))?;
-            let request = anthropic::stream_completion(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                low_speed_timeout,
-            );
+            let request =
+                anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             request.await.context("failed to stream completion")
         }
         .boxed()
@@ -354,6 +344,10 @@ impl LanguageModel for AnthropicModel {
 
     fn telemetry_id(&self) -> String {
         format!("anthropic/{}", self.model.id())
+    }
+
+    fn api_key(&self, cx: &AppContext) -> Option<String> {
+        self.state.read(cx).api_key.clone()
     }
 
     fn max_token_count(&self) -> usize {
@@ -505,16 +499,28 @@ pub fn map_to_language_model_completion_events(
                                             LanguageModelToolUse {
                                                 id: tool_use.id,
                                                 name: tool_use.name,
-                                                input: serde_json::Value::from_str(
-                                                    &tool_use.input_json,
-                                                )
-                                                .map_err(|err| anyhow!(err))?,
+                                                input: if tool_use.input_json.is_empty() {
+                                                    serde_json::Value::Null
+                                                } else {
+                                                    serde_json::Value::from_str(
+                                                        &tool_use.input_json,
+                                                    )
+                                                    .map_err(|err| anyhow!(err))?
+                                                },
                                             },
                                         ))
                                     })),
                                     state,
                                 ));
                             }
+                        }
+                        Event::MessageStart { message } => {
+                            return Some((
+                                Some(Ok(LanguageModelCompletionEvent::StartMessage {
+                                    message_id: message.id,
+                                })),
+                                state,
+                            ))
                         }
                         Event::MessageDelta { delta, .. } => {
                             if let Some(stop_reason) = delta.stop_reason.as_deref() {

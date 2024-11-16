@@ -35,8 +35,8 @@ use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
-    PlatformWindow, Point, PromptLevel, Result, SemanticVersion, SharedString, Size, Task,
-    WindowAppearance, WindowOptions, WindowParams,
+    PlatformWindow, Point, PromptLevel, Result, ScreenCaptureSource, SemanticVersion, SharedString,
+    Size, Task, WindowAppearance, WindowOptions, WindowParams,
 };
 
 pub(crate) const SCROLL_LINES: f32 = 3.0;
@@ -138,6 +138,14 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.text_system.clone())
     }
 
+    fn keyboard_layout(&self) -> String {
+        "unknown".into()
+    }
+
+    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
+        // todo(linux)
+    }
+
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
 
@@ -232,6 +240,14 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.displays()
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (mut tx, rx) = oneshot::channel();
+        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
+        rx
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

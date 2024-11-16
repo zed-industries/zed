@@ -9,7 +9,7 @@ use ollama::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc};
 use ui::{prelude::*, ButtonLike, Indicator};
 use util::ResultExt;
 
@@ -30,13 +30,12 @@ const PROVIDER_NAME: &str = "Ollama";
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
     pub api_url: String,
-    pub low_speed_timeout: Option<Duration>,
     pub available_models: Vec<AvailableModel>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    /// The model name in the Ollama API (e.g. "llama3.1:latest")
+    /// The model name in the Ollama API (e.g. "llama3.2:latest")
     pub name: String,
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
@@ -54,6 +53,7 @@ pub struct OllamaLanguageModelProvider {
 pub struct State {
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<ollama::Model>,
+    fetch_model_task: Option<Task<Result<()>>>,
     _subscription: Subscription,
 }
 
@@ -89,6 +89,11 @@ impl State {
         })
     }
 
+    fn restart_fetch_models_task(&mut self, cx: &mut ModelContext<Self>) {
+        let task = self.fetch_models(cx);
+        self.fetch_model_task.replace(task);
+    }
+
     fn authenticate(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if self.is_authenticated() {
             Task::ready(Ok(()))
@@ -102,17 +107,29 @@ impl OllamaLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let this = Self {
             http_client: http_client.clone(),
-            state: cx.new_model(|cx| State {
-                http_client,
-                available_models: Default::default(),
-                _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                    this.fetch_models(cx).detach();
-                    cx.notify();
-                }),
+            state: cx.new_model(|cx| {
+                let subscription = cx.observe_global::<SettingsStore>({
+                    let mut settings = AllLanguageModelSettings::get_global(cx).ollama.clone();
+                    move |this: &mut State, cx| {
+                        let new_settings = &AllLanguageModelSettings::get_global(cx).ollama;
+                        if &settings != new_settings {
+                            settings = new_settings.clone();
+                            this.restart_fetch_models_task(cx);
+                            cx.notify();
+                        }
+                    }
+                });
+
+                State {
+                    http_client,
+                    available_models: Default::default(),
+                    fetch_model_task: None,
+                    _subscription: subscription,
+                }
             }),
         };
         this.state
-            .update(cx, |state, cx| state.fetch_models(cx).detach());
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
         this
     }
 }
@@ -309,17 +326,15 @@ impl LanguageModel for OllamaLanguageModel {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
-        let Ok((api_url, low_speed_timeout)) = cx.update(|cx| {
+        let Ok(api_url) = cx.update(|cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-            (settings.api_url.clone(), settings.low_speed_timeout)
+            settings.api_url.clone()
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
-            let response =
-                stream_chat_completion(http_client.as_ref(), &api_url, request, low_speed_timeout)
-                    .await?;
+            let response = stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
             let stream = response
                 .filter_map(|response| async move {
                     match response {
@@ -431,7 +446,7 @@ impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
-        let ollama_intro = "Get up and running with Llama 3.1, Mistral, Gemma 2, and other large language models with Ollama.";
+        let ollama_intro = "Get up and running with Llama 3.2, Mistral, Gemma 2, and other large language models with Ollama.";
         let ollama_reqs =
             "Ollama must be running with at least one model installed to use it in the assistant.";
 
@@ -460,7 +475,7 @@ impl Render for ConfigurationView {
                                         .bg(inline_code_bg)
                                         .px_1p5()
                                         .rounded_md()
-                                        .child(Label::new("ollama run llama3.1")),
+                                        .child(Label::new("ollama run llama3.2")),
                                 ),
                         ),
                 )

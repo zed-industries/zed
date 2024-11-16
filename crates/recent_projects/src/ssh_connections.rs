@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
@@ -6,15 +7,15 @@ use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
     percentage, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
-    EventEmitter, FocusableView, ParentElement as _, PromptLevel, Render, SemanticVersion,
-    SharedString, Task, TextStyleRefinement, Transformation, View, WeakView,
+    EventEmitter, FocusableView, FontFeatures, ParentElement as _, PromptLevel, Render,
+    SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation, View, WeakView,
 };
 use gpui::{AppContext, Model};
 
 use language::CursorShape;
 use markdown::{Markdown, MarkdownStyle};
-use release_channel::{AppVersion, ReleaseChannel};
-use remote::ssh_session::ServerBinary;
+use release_channel::ReleaseChannel;
+use remote::ssh_session::ConnectionIdentifier;
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -64,7 +65,7 @@ impl SshSettings {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct SshConnection {
     pub host: SharedString,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -75,7 +76,7 @@ pub struct SshConnection {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub projects: Vec<SshProject>,
+    pub projects: BTreeSet<SshProject>,
     /// Name to use for this server in UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<String>,
@@ -101,7 +102,7 @@ impl From<SshConnection> for SshConnectionOptions {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema)]
 pub struct SshProject {
     pub paths: Vec<String>,
 }
@@ -177,6 +178,7 @@ impl SshPrompt {
         let mut text_style = cx.text_style();
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
+            font_features: Some(FontFeatures::disable_ligatures()),
             font_size: Some(theme.buffer_font_size.into()),
             color: Some(cx.theme().colors().editor_foreground),
             background_color: Some(gpui::transparent_black()),
@@ -319,9 +321,9 @@ impl RenderOnce for SshConnectionHeader {
         };
 
         h_flex()
-            .px(Spacing::XLarge.rems(cx))
-            .pt(Spacing::Large.rems(cx))
-            .pb(Spacing::Small.rems(cx))
+            .px(DynamicSpacing::Base12.rems(cx))
+            .pt(DynamicSpacing::Base08.rems(cx))
+            .pb(DynamicSpacing::Base04.rems(cx))
             .rounded_t_md()
             .w_full()
             .gap_1p5()
@@ -441,37 +443,54 @@ impl remote::SshClientDelegate for SshClientDelegate {
         self.update_status(status, cx)
     }
 
-    fn get_server_binary(
+    fn download_server_binary_locally(
         &self,
         platform: SshPlatform,
-        upload_binary_over_ssh: bool,
+        release_channel: ReleaseChannel,
+        version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>> {
-        let (tx, rx) = oneshot::channel();
-        let this = self.clone();
+    ) -> Task<anyhow::Result<PathBuf>> {
         cx.spawn(|mut cx| async move {
-            tx.send(
-                this.get_server_binary_impl(platform, upload_binary_over_ssh, &mut cx)
-                    .await,
+            let binary_path = AutoUpdater::download_remote_server_release(
+                platform.os,
+                platform.arch,
+                release_channel,
+                version,
+                &mut cx,
             )
-            .ok();
+            .await
+            .map_err(|e| {
+                anyhow!(
+                    "Failed to download remote server binary (version: {}, os: {}, arch: {}): {}",
+                    version
+                        .map(|v| format!("{}", v))
+                        .unwrap_or("unknown".to_string()),
+                    platform.os,
+                    platform.arch,
+                    e
+                )
+            })?;
+            Ok(binary_path)
         })
-        .detach();
-        rx
     }
 
-    fn remote_server_binary_path(
+    fn get_download_params(
         &self,
         platform: SshPlatform,
+        release_channel: ReleaseChannel,
+        version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf> {
-        let release_channel = cx.update(|cx| ReleaseChannel::global(cx))?;
-        Ok(paths::remote_server_dir_relative().join(format!(
-            "zed-remote-server-{}-{}-{}",
-            release_channel.dev_name(),
-            platform.os,
-            platform.arch
-        )))
+    ) -> Task<Result<Option<(String, String)>>> {
+        cx.spawn(|mut cx| async move {
+            AutoUpdater::get_remote_server_release_url(
+                platform.os,
+                platform.arch,
+                release_channel,
+                version,
+                &mut cx,
+            )
+            .await
+        })
     }
 }
 
@@ -485,201 +504,14 @@ impl SshClientDelegate {
             })
             .ok();
     }
+}
 
-    async fn get_server_binary_impl(
-        &self,
-        platform: SshPlatform,
-        upload_binary_via_ssh: bool,
-        cx: &mut AsyncAppContext,
-    ) -> Result<(ServerBinary, SemanticVersion)> {
-        let (version, release_channel) = cx.update(|cx| {
-            let version = AppVersion::global(cx);
-            let channel = ReleaseChannel::global(cx);
-
-            (version, channel)
-        })?;
-
-        // In dev mode, build the remote server binary from source
-        #[cfg(debug_assertions)]
-        if release_channel == ReleaseChannel::Dev {
-            let result = self.build_local(cx, platform, version).await?;
-            // Fall through to a remote binary if we're not able to compile a local binary
-            if let Some((path, version)) = result {
-                return Ok((ServerBinary::LocalBinary(path), version));
-            }
-        }
-
-        // For nightly channel, always get latest
-        let current_version = if release_channel == ReleaseChannel::Nightly {
-            None
-        } else {
-            Some(version)
-        };
-
-        self.update_status(
-            Some(&format!("Checking remote server release {}", version)),
-            cx,
-        );
-
-        if upload_binary_via_ssh {
-            let binary_path = AutoUpdater::download_remote_server_release(
-                platform.os,
-                platform.arch,
-                release_channel,
-                current_version,
-                cx,
-            )
-            .await
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to download remote server binary (version: {}, os: {}, arch: {}): {}",
-                    version,
-                    platform.os,
-                    platform.arch,
-                    e
-                )
-            })?;
-
-            Ok((ServerBinary::LocalBinary(binary_path), version))
-        } else {
-            let (request_url, request_body) = AutoUpdater::get_remote_server_release_url(
-                    platform.os,
-                    platform.arch,
-                    release_channel,
-                    current_version,
-                    cx,
-                )
-                .await
-                .map_err(|e| {
-                    anyhow!(
-                        "Failed to get remote server binary download url (version: {}, os: {}, arch: {}): {}",
-                        version,
-                        platform.os,
-                        platform.arch,
-                        e
-                    )
-                })?;
-
-            Ok((
-                ServerBinary::ReleaseUrl {
-                    url: request_url,
-                    body: request_body,
-                },
-                version,
-            ))
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    async fn build_local(
-        &self,
-        cx: &mut AsyncAppContext,
-        platform: SshPlatform,
-        version: gpui::SemanticVersion,
-    ) -> Result<Option<(PathBuf, gpui::SemanticVersion)>> {
-        use smol::process::{Command, Stdio};
-
-        async fn run_cmd(command: &mut Command) -> Result<()> {
-            let output = command
-                .kill_on_drop(true)
-                .stderr(Stdio::inherit())
-                .output()
-                .await?;
-            if !output.status.success() {
-                Err(anyhow!("Failed to run command: {:?}", command))?;
-            }
-            Ok(())
-        }
-
-        if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
-            self.update_status(Some("Building remote server binary from source"), cx);
-            log::info!("building remote server binary from source");
-            run_cmd(Command::new("cargo").args([
-                "build",
-                "--package",
-                "remote_server",
-                "--features",
-                "debug-embed",
-                "--target-dir",
-                "target/remote_server",
-            ]))
-            .await?;
-
-            self.update_status(Some("Compressing binary"), cx);
-
-            run_cmd(Command::new("gzip").args([
-                "-9",
-                "-f",
-                "target/remote_server/debug/remote_server",
-            ]))
-            .await?;
-
-            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
-            return Ok(Some((path, version)));
-        } else if let Some(triple) = platform.triple() {
-            smol::fs::create_dir_all("target/remote_server").await?;
-
-            self.update_status(Some("Installing cross.rs for cross-compilation"), cx);
-            log::info!("installing cross");
-            run_cmd(Command::new("cargo").args([
-                "install",
-                "cross",
-                "--git",
-                "https://github.com/cross-rs/cross",
-            ]))
-            .await?;
-
-            self.update_status(
-                Some(&format!(
-                    "Building remote server binary from source for {}",
-                    &triple
-                )),
-                cx,
-            );
-            log::info!("building remote server binary from source for {}", &triple);
-            run_cmd(
-                Command::new("cross")
-                    .args([
-                        "build",
-                        "--package",
-                        "remote_server",
-                        "--features",
-                        "debug-embed",
-                        "--target-dir",
-                        "target/remote_server",
-                        "--target",
-                        &triple,
-                    ])
-                    .env(
-                        "CROSS_CONTAINER_OPTS",
-                        "--mount type=bind,src=./target,dst=/app/target",
-                    ),
-            )
-            .await?;
-
-            self.update_status(Some("Compressing binary"), cx);
-
-            run_cmd(Command::new("gzip").args([
-                "-9",
-                "-f",
-                &format!("target/remote_server/{}/debug/remote_server", triple),
-            ]))
-            .await?;
-
-            let path = std::env::current_dir()?.join(format!(
-                "target/remote_server/{}/debug/remote_server.gz",
-                triple
-            ));
-
-            return Ok(Some((path, version)));
-        } else {
-            return Ok(None);
-        }
-    }
+pub fn is_connecting_over_ssh(workspace: &Workspace, cx: &AppContext) -> bool {
+    workspace.active_modal::<SshConnectionModal>(cx).is_some()
 }
 
 pub fn connect_over_ssh(
-    unique_identifier: String,
+    unique_identifier: ConnectionIdentifier,
     connection_options: SshConnectionOptions,
     ui: View<SshPrompt>,
     cx: &mut WindowContext,

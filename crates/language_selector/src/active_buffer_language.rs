@@ -66,7 +66,7 @@ impl StatusItemView for ActiveBufferLanguage {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             self._observe_active_editor = Some(cx.observe(&editor, Self::update_language));
             self.update_language(editor, cx);
         } else {

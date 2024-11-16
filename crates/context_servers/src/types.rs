@@ -2,8 +2,8 @@ use collections::HashMap;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+pub const LATEST_PROTOCOL_VERSION: &str = "2024-11-05";
+
 pub enum RequestType {
     Initialize,
     CallTool,
@@ -16,6 +16,9 @@ pub enum RequestType {
     PromptsList,
     CompletionComplete,
     Ping,
+    ListTools,
+    ListResourceTemplates,
+    ListRoots,
 }
 
 impl RequestType {
@@ -32,16 +35,16 @@ impl RequestType {
             RequestType::PromptsList => "prompts/list",
             RequestType::CompletionComplete => "completion/complete",
             RequestType::Ping => "ping",
+            RequestType::ListTools => "tools/list",
+            RequestType::ListResourceTemplates => "resources/templates/list",
+            RequestType::ListRoots => "roots/list",
         }
     }
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ProtocolVersion {
-    VersionString(String),
-    VersionNumber(u32),
-}
+#[serde(transparent)]
+pub struct ProtocolVersion(pub String);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +52,8 @@ pub struct InitializeParams {
     pub protocol_version: ProtocolVersion,
     pub capabilities: ClientCapabilities,
     pub client_info: Implementation,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,30 +62,40 @@ pub struct CallToolParams {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<HashMap<String, serde_json::Value>>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesUnsubscribeParams {
     pub uri: Url,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesSubscribeParams {
     pub uri: Url,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesReadParams {
     pub uri: Url,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoggingSetLevelParams {
     pub level: LoggingLevel,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,6 +104,8 @@ pub struct PromptsGetParams {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<HashMap<String, String>>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -96,6 +113,8 @@ pub struct PromptsGetParams {
 pub struct CompletionCompleteParams {
     pub r#ref: CompletionReference,
     pub argument: CompletionArgument,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -141,12 +160,16 @@ pub struct InitializeResponse {
     pub protocol_version: ProtocolVersion,
     pub capabilities: ServerCapabilities,
     pub server_info: Implementation,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesReadResponse {
-    pub contents: Vec<ResourceContent>,
+    pub contents: Vec<ResourceContents>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,29 +178,39 @@ pub struct ResourcesListResponse {
     pub resources: Vec<Resource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SamplingMessage {
+    pub role: Role,
+    pub content: MessageContent,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SamplingMessage {
-    pub role: SamplingRole,
-    pub content: SamplingContent,
+pub struct PromptMessage {
+    pub role: Role,
+    pub content: MessageContent,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum SamplingRole {
+pub enum Role {
     User,
     Assistant,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum SamplingContent {
+pub enum MessageContent {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "image")]
     Image { data: String, mime_type: String },
+    #[serde(rename = "resource")]
+    Resource { resource: ResourceContents },
 }
 
 #[derive(Debug, Deserialize)]
@@ -185,7 +218,9 @@ pub enum SamplingContent {
 pub struct PromptsGetResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub messages: Vec<SamplingMessage>,
+    pub messages: Vec<PromptMessage>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,12 +229,16 @@ pub struct PromptsListResponse {
     pub prompts: Vec<Prompt>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionCompleteResponse {
     pub completion: CompletionResult,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -210,6 +249,8 @@ pub struct CompletionResult {
     pub total: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_more: Option<bool>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -239,6 +280,8 @@ pub struct ClientCapabilities {
     pub experimental: Option<HashMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sampling: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roots: Option<RootsCapabilities>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -281,6 +324,13 @@ pub struct ToolsCapabilities {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RootsCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub list_changed: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Tool {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -308,14 +358,28 @@ pub struct Resource {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ResourceContent {
+pub struct ResourceContents {
     pub uri: Url,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextResourceContents {
+    pub uri: Url,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
+    pub mime_type: Option<String>,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobResourceContents {
+    pub uri: Url,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub blob: Option<String>,
+    pub mime_type: Option<String>,
+    pub blob: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -334,8 +398,32 @@ pub struct ResourceTemplate {
 pub enum LoggingLevel {
     Debug,
     Info,
+    Notice,
     Warning,
     Error,
+    Critical,
+    Alert,
+    Emergency,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPreferences {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hints: Option<Vec<ModelHint>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_priority: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed_priority: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intelligence_priority: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelHint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -348,6 +436,7 @@ pub enum NotificationType {
     ResourcesListChanged,
     ToolsListChanged,
     PromptsListChanged,
+    RootsListChanged,
 }
 
 impl NotificationType {
@@ -360,6 +449,7 @@ impl NotificationType {
             NotificationType::ResourcesListChanged => "notifications/resources/list_changed",
             NotificationType::ToolsListChanged => "notifications/tools/list_changed",
             NotificationType::PromptsListChanged => "notifications/prompts/list_changed",
+            NotificationType::RootsListChanged => "notifications/roots/list_changed",
         }
     }
 }
@@ -369,6 +459,14 @@ impl NotificationType {
 pub enum ClientNotification {
     Initialized,
     Progress(ProgressParams),
+    RootsListChanged,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ProgressToken {
+    String(String),
+    Number(f64),
 }
 
 #[derive(Debug, Serialize)]
@@ -378,9 +476,9 @@ pub struct ProgressParams {
     pub progress: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<f64>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }
-
-pub type ProgressToken = String;
 
 pub enum CompletionTotal {
     Exact(u32),
@@ -401,4 +499,51 @@ impl CompletionTotal {
 pub struct Completion {
     pub values: Vec<String>,
     pub total: CompletionTotal,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallToolResponse {
+    pub content: Vec<ToolResponseContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_error: Option<bool>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ToolResponseContent {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image")]
+    Image { data: String, mime_type: String },
+    #[serde(rename = "resource")]
+    Resource { resource: ResourceContents },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListToolsResponse {
+    pub tools: Vec<Tool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListRootsResponse {
+    pub roots: Vec<Root>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Root {
+    pub uri: Url,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }

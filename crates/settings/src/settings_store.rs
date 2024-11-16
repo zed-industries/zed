@@ -61,6 +61,7 @@ pub trait Settings: 'static + Send + Sync {
         anyhow::anyhow!("missing default")
     }
 
+    #[track_caller]
     fn register(cx: &mut AppContext)
     where
         Self: Sized,
@@ -271,6 +272,7 @@ impl SettingsStore {
     pub fn register_setting<T: Settings>(&mut self, cx: &mut AppContext) {
         let setting_type_id = TypeId::of::<T>();
         let entry = self.setting_values.entry(setting_type_id);
+
         if matches!(entry, hash_map::Entry::Occupied(_)) {
             return;
         }
@@ -744,7 +746,7 @@ impl SettingsStore {
         };
 
         let settings = SchemaSettings::draft07().with(|settings| {
-            settings.option_add_null_type = false;
+            settings.option_add_null_type = true;
         });
         let mut generator = SchemaGenerator::new(settings);
         let mut combined_schema = RootSchema::default();

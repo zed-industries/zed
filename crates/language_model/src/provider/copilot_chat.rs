@@ -14,7 +14,7 @@ use gpui::{
     percentage, svg, Animation, AnimationExt, AnyView, AppContext, AsyncAppContext, Model, Render,
     Subscription, Task, Transformation,
 };
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::{
@@ -23,22 +23,20 @@ use ui::{
     ViewContext, VisualContext, WindowContext,
 };
 
-use crate::settings::AllLanguageModelSettings;
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest, RateLimiter, Role,
 };
 use crate::{LanguageModelCompletionEvent, LanguageModelProviderState};
 
+use super::anthropic::count_anthropic_tokens;
 use super::open_ai::count_open_ai_tokens;
 
 const PROVIDER_ID: &str = "copilot_chat";
 const PROVIDER_NAME: &str = "GitHub Copilot Chat";
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct CopilotChatSettings {
-    pub low_speed_timeout: Option<Duration>,
-}
+pub struct CopilotChatSettings {}
 
 pub struct CopilotChatLanguageModelProvider {
     state: Model<State>,
@@ -179,13 +177,19 @@ impl LanguageModel for CopilotChatLanguageModel {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        let model = match self.model {
-            CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
-            CopilotChatModel::Gpt4 => open_ai::Model::Four,
-            CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-        };
-
-        count_open_ai_tokens(request, model, cx)
+        match self.model {
+            CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
+            _ => {
+                let model = match self.model {
+                    CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
+                    CopilotChatModel::Gpt4 => open_ai::Model::Four,
+                    CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
+                    CopilotChatModel::O1Preview | CopilotChatModel::O1Mini => open_ai::Model::Four,
+                    CopilotChatModel::Claude3_5Sonnet => unreachable!(),
+                };
+                count_open_ai_tokens(request, model, cx)
+            }
+        }
     }
 
     fn stream_completion(
@@ -209,27 +213,36 @@ impl LanguageModel for CopilotChatLanguageModel {
             }
         }
 
-        let request = self.to_copilot_chat_request(request);
-        let Ok(low_speed_timeout) = cx.update(|cx| {
-            AllLanguageModelSettings::get_global(cx)
-                .copilot_chat
-                .low_speed_timeout
-        }) else {
-            return futures::future::ready(Err(anyhow::anyhow!("App state dropped"))).boxed();
-        };
+        let copilot_request = self.to_copilot_chat_request(request);
+        let is_streaming = copilot_request.stream;
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(|cx| async move {
-            let response = CopilotChat::stream_completion(request, low_speed_timeout, cx);
+            let response = CopilotChat::stream_completion(copilot_request, cx);
             request_limiter.stream(async move {
                 let response = response.await?;
                 let stream = response
-                    .filter_map(|response| async move {
+                    .filter_map(move |response| async move {
                         match response {
                             Ok(result) => {
                                 let choice = result.choices.first();
                                 match choice {
-                                    Some(choice) => Some(Ok(choice.delta.content.clone().unwrap_or_default())),
+                                    Some(choice) if !is_streaming => {
+                                        match &choice.message {
+                                            Some(msg) => Some(Ok(msg.content.clone().unwrap_or_default())),
+                                            None => Some(Err(anyhow::anyhow!(
+                                                "The Copilot Chat API returned a response with no message content"
+                                            ))),
+                                        }
+                                    },
+                                    Some(choice) => {
+                                        match &choice.delta {
+                                            Some(delta) => Some(Ok(delta.content.clone().unwrap_or_default())),
+                                            None => Some(Err(anyhow::anyhow!(
+                                                "The Copilot Chat API returned a response with no delta content"
+                                            ))),
+                                        }
+                                    },
                                     None => Some(Err(anyhow::anyhow!(
                                         "The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again."
                                     ))),

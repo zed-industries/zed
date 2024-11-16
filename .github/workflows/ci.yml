@@ -13,7 +13,7 @@ on:
     branches:
       - "**"
     paths-ignore:
-      - "docs/**"
+      - "docs/**/*"
       - ".github/workflows/community_*"
 
 concurrency:
@@ -25,6 +25,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   migration_checks:
@@ -91,6 +92,7 @@ jobs:
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - test
@@ -115,17 +117,18 @@ jobs:
         uses: ./.github/actions/run_tests
 
       - name: Build collab
-        run: RUSTFLAGS="-D warnings" cargo build -p collab
+        run: cargo build -p collab
 
       - name: Build other binaries and features
         run: |
-          RUSTFLAGS="-D warnings" cargo build --workspace --bins --all-features
+          cargo build --workspace --bins --all-features
           cargo check -p gpui --features "macos-blade"
-          RUSTFLAGS="-D warnings" cargo build -p remote_server
+          cargo build -p remote_server
 
   linux_tests:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
@@ -153,11 +156,12 @@ jobs:
         uses: ./.github/actions/run_tests
 
       - name: Build Zed
-        run: RUSTFLAGS="-D warnings" cargo build -p zed
+        run: cargo build -p zed
 
   build_remote_server:
     timeout-minutes: 60
     name: (Linux) Build Remote Server
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
@@ -179,14 +183,18 @@ jobs:
         run: ./script/remote-server && ./script/install-mold 2.34.0
 
       - name: Build Remote Server
-        run: RUSTFLAGS="-D warnings" cargo build -p remote_server
+        run: cargo build -p remote_server
 
   # todo(windows): Actually run the tests
   windows_tests:
     timeout-minutes: 60
     name: (Windows) Run Clippy and tests
+    if: github.repository_owner == 'zed-industries'
     runs-on: hosted-windows-1
     steps:
+      # more info here:- https://github.com/rust-lang/cargo/issues/13020
+      - name: Enable longer pathnames for git
+        run: git config --system core.longpaths true
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
@@ -203,7 +211,7 @@ jobs:
         run: cargo xtask clippy
 
       - name: Build Zed
-        run: $env:RUSTFLAGS="-D warnings"; cargo build
+        run: cargo build
 
   bundle-mac:
     timeout-minutes: 60
@@ -224,7 +232,7 @@ jobs:
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
         with:
           node-version: "18"
 
@@ -252,7 +260,7 @@ jobs:
         run: |
           mkdir -p target/
           # Ignore any errors that occur while drafting release notes to not fail the build.
-          script/draft-release-notes "$version" "$channel" > target/release-notes.md || true
+          script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true
 
       - name: Generate license file
         run: script/generate-licenses

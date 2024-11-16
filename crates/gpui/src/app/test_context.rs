@@ -4,8 +4,8 @@ use crate::{
     Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
     ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
-    TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext, WindowBounds,
-    WindowContext, WindowHandle, WindowOptions,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, View, ViewContext,
+    VisualContext, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -287,6 +287,12 @@ impl TestAppContext {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Causes the given sources to be returned if the application queries for screen
+    /// capture sources.
+    pub fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
+        self.test_platform.set_screen_capture_sources(sources);
+    }
+
     /// Returns all windows open in the test.
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
         self.app.borrow().windows().clone()
@@ -477,6 +483,12 @@ impl TestAppContext {
         .race(timer.map(|_| Err(anyhow!("condition timed out"))))
         .await
         .unwrap();
+    }
+
+    /// Set a name for this App.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_name(&mut self, name: &'static str) {
+        self.update(|cx| cx.name = Some(name))
     }
 }
 

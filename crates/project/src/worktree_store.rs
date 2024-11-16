@@ -23,7 +23,7 @@ use smol::{
     stream::StreamExt,
 };
 use text::ReplicaId;
-use util::{paths::compare_paths, ResultExt};
+use util::ResultExt;
 use worktree::{Entry, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
 
 use crate::{search::SearchQuery, ProjectPath};
@@ -73,6 +73,8 @@ impl WorktreeStore {
         client.add_model_request_handler(Self::handle_copy_project_entry);
         client.add_model_request_handler(Self::handle_delete_project_entry);
         client.add_model_request_handler(Self::handle_expand_project_entry);
+        client.add_model_request_handler(Self::handle_git_branches);
+        client.add_model_request_handler(Self::handle_update_branch);
     }
 
     pub fn local(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
@@ -125,6 +127,13 @@ impl WorktreeStore {
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &AppContext) -> Option<Model<Worktree>> {
         self.worktrees()
             .find(|worktree| worktree.read(cx).id() == id)
+    }
+
+    pub fn current_branch(&self, repository: ProjectPath, cx: &AppContext) -> Option<Arc<str>> {
+        self.worktree_for_id(repository.worktree_id, cx)?
+            .read(cx)
+            .git_entry(repository.path)?
+            .branch()
     }
 
     pub fn worktree_for_entry(
@@ -716,9 +725,7 @@ impl WorktreeStore {
                     !metadata.is_dir,
                 ))
             }
-            results.sort_by(|(a_path, a_is_file), (b_path, b_is_file)| {
-                compare_paths((a_path, *a_is_file), (b_path, *b_is_file))
-            });
+            results.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path));
             for (path, is_file) in results {
                 if is_file {
                     if query.filters_path() {
@@ -773,9 +780,7 @@ impl WorktreeStore {
     ) -> Result<()> {
         let include_root = snapshots.len() > 1;
         for (snapshot, settings) in snapshots {
-            let mut entries: Vec<_> = snapshot.entries(query.include_ignored(), 0).collect();
-            entries.sort_by(|a, b| compare_paths((&a.path, a.is_file()), (&b.path, b.is_file())));
-            for entry in entries {
+            for entry in snapshot.entries(query.include_ignored(), 0) {
                 if entry.is_dir() && entry.is_ignored {
                     if !settings.is_path_excluded(&entry.path) {
                         Self::scan_ignored_dir(
@@ -834,6 +839,131 @@ impl WorktreeStore {
             }
         }
         Ok(())
+    }
+
+    pub fn branches(
+        &self,
+        project_path: ProjectPath,
+        cx: &AppContext,
+    ) -> Task<Result<Vec<git::repository::Branch>>> {
+        let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("No worktree found for ProjectPath")));
+        };
+
+        match worktree.read(cx) {
+            Worktree::Local(local_worktree) => {
+                let branches = util::maybe!({
+                    let worktree_error = |error| {
+                        format!(
+                            "{} for worktree {}",
+                            error,
+                            local_worktree.abs_path().to_string_lossy()
+                        )
+                    };
+
+                    let entry = local_worktree
+                        .git_entry(project_path.path)
+                        .with_context(|| worktree_error("No git entry found"))?;
+
+                    let repo = local_worktree
+                        .get_local_repo(&entry)
+                        .with_context(|| worktree_error("No repository found"))?
+                        .repo()
+                        .clone();
+
+                    repo.branches()
+                });
+
+                Task::ready(branches)
+            }
+            Worktree::Remote(remote_worktree) => {
+                let request = remote_worktree.client().request(proto::GitBranches {
+                    project_id: remote_worktree.project_id(),
+                    repository: Some(proto::ProjectPath {
+                        worktree_id: project_path.worktree_id.to_proto(),
+                        path: project_path.path.to_string_lossy().to_string(), // Root path
+                    }),
+                });
+
+                cx.background_executor().spawn(async move {
+                    let response = request.await?;
+
+                    let branches = response
+                        .branches
+                        .into_iter()
+                        .map(|proto_branch| git::repository::Branch {
+                            is_head: proto_branch.is_head,
+                            name: proto_branch.name.into(),
+                            unix_timestamp: proto_branch
+                                .unix_timestamp
+                                .map(|timestamp| timestamp as i64),
+                        })
+                        .collect();
+
+                    Ok(branches)
+                })
+            }
+        }
+    }
+
+    pub fn update_or_create_branch(
+        &self,
+        repository: ProjectPath,
+        new_branch: String,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        let Some(worktree) = self.worktree_for_id(repository.worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("No worktree found for ProjectPath")));
+        };
+
+        match worktree.read(cx) {
+            Worktree::Local(local_worktree) => {
+                let result = util::maybe!({
+                    let worktree_error = |error| {
+                        format!(
+                            "{} for worktree {}",
+                            error,
+                            local_worktree.abs_path().to_string_lossy()
+                        )
+                    };
+
+                    let entry = local_worktree
+                        .git_entry(repository.path)
+                        .with_context(|| worktree_error("No git entry found"))?;
+
+                    let repo = local_worktree
+                        .get_local_repo(&entry)
+                        .with_context(|| worktree_error("No repository found"))?
+                        .repo()
+                        .clone();
+
+                    if !repo.branch_exits(&new_branch)? {
+                        repo.create_branch(&new_branch)?;
+                    }
+
+                    repo.change_branch(&new_branch)?;
+
+                    Ok(())
+                });
+
+                Task::ready(result)
+            }
+            Worktree::Remote(remote_worktree) => {
+                let request = remote_worktree.client().request(proto::UpdateGitBranch {
+                    project_id: remote_worktree.project_id(),
+                    repository: Some(proto::ProjectPath {
+                        worktree_id: repository.worktree_id.to_proto(),
+                        path: repository.path.to_string_lossy().to_string(), // Root path
+                    }),
+                    branch_name: new_branch,
+                });
+
+                cx.background_executor().spawn(async move {
+                    request.await?;
+                    Ok(())
+                })
+            }
+        }
     }
 
     async fn filter_paths(
@@ -916,6 +1046,61 @@ impl WorktreeStore {
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
             .ok_or_else(|| anyhow!("invalid request"))?;
         Worktree::handle_expand_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_git_branches(
+        this: Model<Self>,
+        branches: TypedEnvelope<proto::GitBranches>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::GitBranchesResponse> {
+        let project_path = branches
+            .payload
+            .repository
+            .clone()
+            .context("Invalid GitBranches call")?;
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_proto(project_path.worktree_id),
+            path: Path::new(&project_path.path).into(),
+        };
+
+        let branches = this
+            .read_with(&cx, |this, cx| this.branches(project_path, cx))?
+            .await?;
+
+        Ok(proto::GitBranchesResponse {
+            branches: branches
+                .into_iter()
+                .map(|branch| proto::Branch {
+                    is_head: branch.is_head,
+                    name: branch.name.to_string(),
+                    unix_timestamp: branch.unix_timestamp.map(|timestamp| timestamp as u64),
+                })
+                .collect(),
+        })
+    }
+
+    pub async fn handle_update_branch(
+        this: Model<Self>,
+        update_branch: TypedEnvelope<proto::UpdateGitBranch>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        let project_path = update_branch
+            .payload
+            .repository
+            .clone()
+            .context("Invalid GitBranches call")?;
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_proto(project_path.worktree_id),
+            path: Path::new(&project_path.path).into(),
+        };
+        let new_branch = update_branch.payload.branch_name;
+
+        this.read_with(&cx, |this, cx| {
+            this.update_or_create_branch(project_path, new_branch, cx)
+        })?
+        .await?;
+
+        Ok(proto::Ack {})
     }
 }
 
