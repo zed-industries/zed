@@ -656,7 +656,7 @@ List of `string` values
 
 - Description: Whether to show the file icon for a tab.
 - Setting: `file_icons`
-- Default: `false`
+- Default: `true`
 
 ### Git Status
 

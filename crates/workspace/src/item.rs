@@ -79,7 +79,7 @@ pub struct ItemSettingsContent {
     close_position: Option<ClosePosition>,
     /// Whether to show the file icon for a tab.
     ///
-    /// Default: false
+    /// Default: true
     file_icons: Option<bool>,
     /// What to do after closing the current tab.
     ///

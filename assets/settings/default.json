@@ -556,7 +556,7 @@
     // Position of the close button on the editor tabs.
     "close_position": "right",
     // Whether to show the file icon for a tab.
-    "file_icons": false,
+    "file_icons": true,
     // What to do after closing the current tab.
     //
     // 1. Activate the tab that was open previously (default)

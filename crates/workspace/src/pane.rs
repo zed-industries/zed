@@ -1932,6 +1932,18 @@ impl Pane {
             Self::icon_color(is_active)
         };
 
+        let canonical_path = if let Some(entry) = project_path
+            .as_ref()
+            .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
+        {
+            entry
+                .canonical_path
+                .as_ref()
+                .map(|f| f.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
         let icon = item.tab_icon(cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
@@ -2009,6 +2021,28 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
+            .start_slot(h_flex().size_3().justify_center().when_some(
+                canonical_path,
+                |this, path| {
+                    this.child(
+                        div()
+                            .id("symlink_icon")
+                            .tooltip(move |cx| {
+                                Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
+                            })
+                            .child(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .size(IconSize::Indicator)
+                                    .color(if is_active {
+                                        Color::Default
+                                    } else {
+                                        Color::Muted
+                                    }),
+                            )
+                            .into_any_element(),
+                    )
+                },
+            ))
             .map(|this| {
                 let end_slot_action: &'static dyn Action;
                 let end_slot_tooltip_text: &'static str;
