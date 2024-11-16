@@ -5480,14 +5480,27 @@ impl Editor {
         _style: &EditorStyle,
         row: DisplayRow,
         is_active: bool,
+        breakpoint: Option<Breakpoint>,
         cx: &mut ViewContext<Self>,
     ) -> Option<IconButton> {
+        let color = if breakpoint.is_some() {
+            Color::Debugger
+        } else {
+            Color::Muted
+        };
+
+        let bp_kind = Arc::new(
+            breakpoint
+                .map(|bp| bp.kind)
+                .unwrap_or(BreakpointKind::Standard),
+        );
+
         if self.available_code_actions.is_some() {
             Some(
                 IconButton::new("code_actions_indicator", ui::IconName::Bolt)
                     .shape(ui::IconButtonShape::Square)
                     .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
+                    .icon_color(color)
                     .selected(is_active)
                     .tooltip({
                         let focus_handle = self.focus_handle.clone();
@@ -5510,6 +5523,27 @@ impl Editor {
                             },
                             cx,
                         );
+                    }))
+                    .on_right_click(cx.listener(move |editor, event: &ClickEvent, cx| {
+                        let source = editor
+                            .buffer
+                            .read(cx)
+                            .snapshot(cx)
+                            .anchor_at(Point::new(row.0, 0u32), Bias::Left);
+
+                        let anchor = source.text_anchor;
+
+                        let context_menu =
+                            editor.breakpoint_context_menu(anchor, bp_kind.clone(), row, cx);
+
+                        let clicked_point = event.down.position;
+                        editor.mouse_context_menu = MouseContextMenu::pinned_to_editor(
+                            editor,
+                            source,
+                            clicked_point,
+                            context_menu,
+                            cx,
+                        )
                     })),
             )
         } else {
@@ -5888,14 +5922,20 @@ impl Editor {
         _style: &EditorStyle,
         is_active: bool,
         row: DisplayRow,
-        overlaps_breakpoint: bool,
+        breakpoint: Option<Breakpoint>,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
-        let color = if overlaps_breakpoint {
+        let color = if breakpoint.is_some() {
             Color::Debugger
         } else {
             Color::Muted
         };
+
+        let bp_kind = Arc::new(
+            breakpoint
+                .map(|bp| bp.kind)
+                .unwrap_or(BreakpointKind::Standard),
+        );
 
         IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
             .shape(ui::IconButtonShape::Square)
@@ -5910,6 +5950,26 @@ impl Editor {
                     },
                     cx,
                 );
+            }))
+            .on_right_click(cx.listener(move |editor, event: &ClickEvent, cx| {
+                let source = editor
+                    .buffer
+                    .read(cx)
+                    .snapshot(cx)
+                    .anchor_at(Point::new(row.0, 0u32), Bias::Left);
+
+                let anchor = source.text_anchor;
+
+                let context_menu = editor.breakpoint_context_menu(anchor, bp_kind.clone(), row, cx);
+
+                let clicked_point = event.down.position;
+                editor.mouse_context_menu = MouseContextMenu::pinned_to_editor(
+                    editor,
+                    source,
+                    clicked_point,
+                    context_menu,
+                    cx,
+                )
             }))
     }
 

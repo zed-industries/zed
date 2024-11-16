@@ -1794,7 +1794,7 @@ impl EditorElement {
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
                         display_row,
-                        breakpoints.remove(&display_row).is_some(),
+                        breakpoints.remove(&display_row),
                         cx,
                     );
 
@@ -1837,15 +1837,12 @@ impl EditorElement {
             {
                 active = deployed_from_indicator.map_or(true, |indicator_row| indicator_row == row);
             };
-            button = editor.render_code_actions_indicator(&self.style, row, active, cx);
+
+            let breakpoint = breakpoint_points.remove(&row);
+            button = editor.render_code_actions_indicator(&self.style, row, active, breakpoint, cx);
         });
 
         let button = button?;
-        let button = if breakpoint_points.remove(&row).is_some() {
-            button.icon_color(Color::Debugger)
-        } else {
-            button
-        };
 
         let button = prepaint_gutter_button(
             button,
