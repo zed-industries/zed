@@ -16,7 +16,8 @@ use gpui::{
     VisualContext, WeakView, WindowContext,
 };
 use language::{
-    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, Point, SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
+    SelectionGoal,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::AnchorRangeExt;
@@ -641,7 +642,7 @@ impl Item for Editor {
             .read(cx)
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
-            .map_or(false, |file| file.is_deleted() && file.is_created());
+            .map_or(false, |file| file.disk_state() == DiskState::Deleted);
 
         h_flex()
             .gap_2()
