@@ -1392,111 +1392,206 @@ fn for_snowflake(
     body: EventRequestBody,
     first_event_at: chrono::DateTime<chrono::Utc>,
 ) -> impl Iterator<Item = SnowflakeRow> {
-    body.events.into_iter().map(move |event| SnowflakeRow {
-        event: match &event.event {
-            Event::Editor(editor_event) => format!("editor_{}", editor_event.operation),
-            Event::InlineCompletion(inline_completion_event) => format!(
-                "inline_completion_{}",
-                if inline_completion_event.suggestion_accepted {
-                    "accept "
-                } else {
-                    "discard"
-                }
+    body.events.into_iter().map(move |event| {
+        let timestamp =
+            first_event_at + Duration::milliseconds(event.milliseconds_since_first_event);
+        let (event_type, mut event_properties) = match &event.event {
+            Event::Editor(e) => (
+                format!("editor_{}", e.operation),
+                serde_json::to_value(e).unwrap(),
             ),
-            Event::Call(call_event) => format!("call_{}", call_event.operation.replace(" ", "_")),
-            Event::Assistant(assistant_event) => {
+            Event::InlineCompletion(e) => (
+                format!(
+                    "inline_completion_{}",
+                    if e.suggestion_accepted {
+                        "accept"
+                    } else {
+                        "discard"
+                    }
+                ),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Call(e) => (
+                format!("call_{}", e.operation.replace(" ", "_")),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Assistant(e) => (
                 format!(
                     "assistant_{}",
-                    match assistant_event.phase {
+                    match e.phase {
                         telemetry_events::AssistantPhase::Response => "response",
                         telemetry_events::AssistantPhase::Invoked => "invoke",
                         telemetry_events::AssistantPhase::Accepted => "accept",
                         telemetry_events::AssistantPhase::Rejected => "reject",
                     }
-                )
-            }
-            Event::Cpu(_) => "system_cpu".to_string(),
-            Event::Memory(_) => "system_memory".to_string(),
-            Event::App(app_event) => app_event.operation.replace(" ", "_"),
-            Event::Setting(_) => "setting_change".to_string(),
-            Event::Extension(_) => "extension_load".to_string(),
-            Event::Edit(_) => "edit".to_string(),
-            Event::Action(_) => "command_palette_action".to_string(),
-            Event::Repl(_) => "repl".to_string(),
-        },
-        system_id: body.system_id.clone(),
-        timestamp: first_event_at + Duration::milliseconds(event.milliseconds_since_first_event),
-        data: SnowflakeData {
-            installation_id: body.installation_id.clone(),
-            session_id: body.session_id.clone(),
-            metrics_id: body.metrics_id.clone(),
-            is_staff: body.is_staff,
-            app_version: body.app_version.clone(),
-            os_name: body.os_name.clone(),
-            os_version: body.os_version.clone(),
-            architecture: body.architecture.clone(),
-            release_channel: body.release_channel.clone(),
-            signed_in: event.signed_in,
-            editor_event: match &event.event {
-                Event::Editor(editor_event) => Some(editor_event.clone()),
-                _ => None,
-            },
-            inline_completion_event: match &event.event {
-                Event::InlineCompletion(inline_completion_event) => {
-                    Some(inline_completion_event.clone())
-                }
-                _ => None,
-            },
-            call_event: match &event.event {
-                Event::Call(call_event) => Some(call_event.clone()),
-                _ => None,
-            },
-            assistant_event: match &event.event {
-                Event::Assistant(assistant_event) => Some(assistant_event.clone()),
-                _ => None,
-            },
-            cpu_event: match &event.event {
-                Event::Cpu(cpu_event) => Some(cpu_event.clone()),
-                _ => None,
-            },
-            memory_event: match &event.event {
-                Event::Memory(memory_event) => Some(memory_event.clone()),
-                _ => None,
-            },
-            app_event: match &event.event {
-                Event::App(app_event) => Some(app_event.clone()),
-                _ => None,
-            },
-            setting_event: match &event.event {
-                Event::Setting(setting_event) => Some(setting_event.clone()),
-                _ => None,
-            },
-            extension_event: match &event.event {
-                Event::Extension(extension_event) => Some(extension_event.clone()),
-                _ => None,
-            },
-            edit_event: match &event.event {
-                Event::Edit(edit_event) => Some(edit_event.clone()),
-                _ => None,
-            },
-            repl_event: match &event.event {
-                Event::Repl(repl_event) => Some(repl_event.clone()),
-                _ => None,
-            },
-            action_event: match event.event {
-                Event::Action(action_event) => Some(action_event.clone()),
-                _ => None,
-            },
-        },
+                ),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Cpu(e) => ("system_cpu".to_string(), serde_json::to_value(e).unwrap()),
+            Event::Memory(e) => (
+                "system_memory".to_string(),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::App(e) => (
+                e.operation.replace(" ", "_"),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Setting(e) => (
+                "setting_change".to_string(),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Extension(e) => (
+                "extension_load".to_string(),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Edit(e) => ("edit".to_string(), serde_json::to_value(e).unwrap()),
+            Event::Action(e) => (
+                "command_palette_action".to_string(),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Repl(e) => ("repl".to_string(), serde_json::to_value(e).unwrap()),
+        };
+
+        if let serde_json::Value::Object(ref mut map) = event_properties {
+            map.insert("app_version".to_string(), body.app_version.clone().into());
+            map.insert("os_name".to_string(), body.os_name.clone().into());
+            map.insert("os_version".to_string(), body.os_version.clone().into());
+            map.insert("architecture".to_string(), body.architecture.clone().into());
+            map.insert(
+                "release_channel".to_string(),
+                body.release_channel.clone().into(),
+            );
+            map.insert("signed_in".to_string(), event.signed_in.into());
+        }
+
+        let user_properties = Some(serde_json::json!({
+            "is_staff": body.is_staff,
+        }));
+
+        SnowflakeRow {
+            time: timestamp,
+            user_id: body.metrics_id.clone(),
+            device_id: body.system_id.clone(),
+            event_type,
+            event_properties,
+            user_properties,
+            insert_id: Some(Uuid::new_v4().to_string()),
+        }
     })
 }
 
+// fn for_snowflake(
+//     body: EventRequestBody,
+//     first_event_at: chrono::DateTime<chrono::Utc>,
+// ) -> impl Iterator<Item = SnowflakeRow> {
+//     body.events.into_iter().map(move |event| SnowflakeRow {
+//         event: match &event.event {
+//             Event::Editor(editor_event) => format!("editor_{}", editor_event.operation),
+//             Event::InlineCompletion(inline_completion_event) => format!(
+//                 "inline_completion_{}",
+//                 if inline_completion_event.suggestion_accepted {
+//                     "accept "
+//                 } else {
+//                     "discard"
+//                 }
+//             ),
+//             Event::Call(call_event) => format!("call_{}", call_event.operation.replace(" ", "_")),
+//             Event::Assistant(assistant_event) => {
+//                 format!(
+//                     "assistant_{}",
+//                     match assistant_event.phase {
+//                         telemetry_events::AssistantPhase::Response => "response",
+//                         telemetry_events::AssistantPhase::Invoked => "invoke",
+//                         telemetry_events::AssistantPhase::Accepted => "accept",
+//                         telemetry_events::AssistantPhase::Rejected => "reject",
+//                     }
+//                 )
+//             }
+//             Event::Cpu(_) => "system_cpu".to_string(),
+//             Event::Memory(_) => "system_memory".to_string(),
+//             Event::App(app_event) => app_event.operation.replace(" ", "_"),
+//             Event::Setting(_) => "setting_change".to_string(),
+//             Event::Extension(_) => "extension_load".to_string(),
+//             Event::Edit(_) => "edit".to_string(),
+//             Event::Action(_) => "command_palette_action".to_string(),
+//             Event::Repl(_) => "repl".to_string(),
+//         },
+//         system_id: body.system_id.clone(),
+//         timestamp: first_event_at + Duration::milliseconds(event.milliseconds_since_first_event),
+//         data: SnowflakeData {
+//             installation_id: body.installation_id.clone(),
+//             session_id: body.session_id.clone(),
+//             metrics_id: body.metrics_id.clone(),
+//             is_staff: body.is_staff,
+//             app_version: body.app_version.clone(),
+//             os_name: body.os_name.clone(),
+//             os_version: body.os_version.clone(),
+//             architecture: body.architecture.clone(),
+//             release_channel: body.release_channel.clone(),
+//             signed_in: event.signed_in,
+//             editor_event: match &event.event {
+//                 Event::Editor(editor_event) => Some(editor_event.clone()),
+//                 _ => None,
+//             },
+//             inline_completion_event: match &event.event {
+//                 Event::InlineCompletion(inline_completion_event) => {
+//                     Some(inline_completion_event.clone())
+//                 }
+//                 _ => None,
+//             },
+//             call_event: match &event.event {
+//                 Event::Call(call_event) => Some(call_event.clone()),
+//                 _ => None,
+//             },
+//             assistant_event: match &event.event {
+//                 Event::Assistant(assistant_event) => Some(assistant_event.clone()),
+//                 _ => None,
+//             },
+//             cpu_event: match &event.event {
+//                 Event::Cpu(cpu_event) => Some(cpu_event.clone()),
+//                 _ => None,
+//             },
+//             memory_event: match &event.event {
+//                 Event::Memory(memory_event) => Some(memory_event.clone()),
+//                 _ => None,
+//             },
+//             app_event: match &event.event {
+//                 Event::App(app_event) => Some(app_event.clone()),
+//                 _ => None,
+//             },
+//             setting_event: match &event.event {
+//                 Event::Setting(setting_event) => Some(setting_event.clone()),
+//                 _ => None,
+//             },
+//             extension_event: match &event.event {
+//                 Event::Extension(extension_event) => Some(extension_event.clone()),
+//                 _ => None,
+//             },
+//             edit_event: match &event.event {
+//                 Event::Edit(edit_event) => Some(edit_event.clone()),
+//                 _ => None,
+//             },
+//             repl_event: match &event.event {
+//                 Event::Repl(repl_event) => Some(repl_event.clone()),
+//                 _ => None,
+//             },
+//             action_event: match event.event {
+//                 Event::Action(action_event) => Some(action_event.clone()),
+//                 _ => None,
+//             },
+//         },
+//     })
+// }
+
 #[derive(Serialize, Deserialize)]
 struct SnowflakeRow {
-    pub event: String,
-    pub system_id: Option<String>,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub data: SnowflakeData,
+    pub time: chrono::DateTime<chrono::Utc>,
+    pub user_id: Option<String>,
+    pub device_id: Option<String>,
+    pub event_type: String,
+    pub event_properties: serde_json::Value,
+    pub user_properties: Option<serde_json::Value>,
+    pub insert_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
