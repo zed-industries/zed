@@ -880,33 +880,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "auto_update"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "db",
- "editor",
- "gpui",
- "http_client",
- "log",
- "markdown_preview",
- "menu",
- "paths",
- "release_channel",
- "schemars",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
- "smol",
- "tempfile",
- "util",
- "which 6.0.3",
- "workspace",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14518,7 +14491,6 @@ dependencies = [
  "assets",
  "async-watch",
  "audio",
- "auto_update",
  "backtrace",
  "call",
  "channel",
@@ -14639,7 +14611,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "async-watch",
- "auto_update",
  "base64 0.22.1",
  "blake3",
  "call",
@@ -14753,6 +14724,7 @@ dependencies = [
  "util",
  "uuid",
  "wasmtime-wasi",
+ "which 6.0.3",
  "workspace",
  "worktree",
  "zed_actions",

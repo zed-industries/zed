@@ -19,7 +19,6 @@ anyhow.workspace = true
 assets.workspace = true
 async-watch.workspace = true
 audio.workspace = true
-auto_update.workspace = true
 backtrace = "0.3"
 call.workspace = true
 channel.workspace = true

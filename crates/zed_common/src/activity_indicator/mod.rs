@@ -1,4 +1,4 @@
-use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
+use crate::auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::StreamExt;

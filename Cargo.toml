@@ -5,7 +5,6 @@ members = [
     "crates/assets",
     "crates/assistant_tool",
     "crates/audio",
-    "crates/auto_update",
     "crates/call",
     "crates/channel",
     "crates/cli",
@@ -155,7 +154,6 @@ anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant_tool = { path = "crates/assistant_tool" }
 audio = { path = "crates/audio" }
-auto_update = { path = "crates/auto_update" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
 cli = { path = "crates/cli" }

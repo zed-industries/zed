@@ -48,7 +48,7 @@ impl Render for UpdateNotification {
                     .on_click(cx.listener(|this, _, cx| {
                         this.workspace
                             .update(cx, |workspace, cx| {
-                                crate::view_release_notes_locally(workspace, cx);
+                                crate::auto_update::view_release_notes_locally(workspace, cx);
                             })
                             .log_err();
                         this.dismiss(&menu::Cancel, cx)

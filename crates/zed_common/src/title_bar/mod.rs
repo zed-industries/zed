@@ -6,11 +6,11 @@ mod window_controls;
 #[cfg(feature = "stories")]
 mod stories;
 
+use crate::auto_update::AutoUpdateStatus;
 use crate::recent_projects::{OpenRemote, RecentProjects};
 use crate::title_bar::application_menu::ApplicationMenu;
 use crate::title_bar::platforms::{platform_linux, platform_mac, platform_windows};
 use crate::vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
-use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
@@ -508,7 +508,7 @@ impl TitleBar {
                     .into_any_element(),
             ),
             client::Status::UpgradeRequired => {
-                let auto_updater = auto_update::AutoUpdater::get(cx);
+                let auto_updater = crate::auto_update::AutoUpdater::get(cx);
                 let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
                     Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
                     Some(AutoUpdateStatus::Installing)
@@ -523,13 +523,13 @@ impl TitleBar {
                     Button::new("connection-status", label)
                         .label_size(LabelSize::Small)
                         .on_click(|_, cx| {
-                            if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
+                            if let Some(auto_updater) = crate::auto_update::AutoUpdater::get(cx) {
                                 if auto_updater.read(cx).status().is_updated() {
                                     workspace::reload(&Default::default(), cx);
                                     return;
                                 }
                             }
-                            auto_update::check(&Default::default(), cx);
+                            crate::auto_update::check(&Default::default(), cx);
                         })
                         .into_any_element(),
                 )

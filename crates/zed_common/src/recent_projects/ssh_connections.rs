@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use crate::auto_update::AutoUpdater;
 use anyhow::{anyhow, Result};
-use auto_update::AutoUpdater;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
