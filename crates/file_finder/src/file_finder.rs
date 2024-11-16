@@ -259,8 +259,8 @@ impl Render for FileFinder {
         let key_context = self.picker.read(cx).delegate.key_context(cx);
 
         let window_max_width: Pixels = cx.viewport_size().width;
-        let window_choice = FileFinderSettings::get_global(cx).window_width;
-        let width = window_choice.calc_width(window_max_width);
+        let modal_choice = FileFinderSettings::get_global(cx).modal_width;
+        let width = modal_choice.calc_width(window_max_width);
 
         v_flex()
             .key_context(key_context)

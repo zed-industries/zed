@@ -8,7 +8,7 @@ use ui::Pixels;
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct FileFinderSettings {
     pub file_icons: bool,
-    pub window_width: FileFinderWidth,
+    pub modal_width: FileFinderWidth,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -17,10 +17,10 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: true
     pub file_icons: Option<bool>,
-    /// The width of the file finder window in rem.
+    /// The width of the file finder modal.
     ///
     /// Default: "medium"
-    pub window_width: Option<FileFinderWidth>,
+    pub modal_width: Option<FileFinderWidth>,
 }
 
 impl Settings for FileFinderSettings {
@@ -45,7 +45,7 @@ pub enum FileFinderWidth {
 }
 
 impl FileFinderWidth {
-    const MIN_WINDOW_WIDTH_PX: f32 = 384.;
+    const MIN_MODAL_WIDTH_PX: f32 = 384.;
 
     pub fn padding_px(&self) -> Pixels {
         let padding_val = match self {
@@ -64,11 +64,11 @@ impl FileFinderWidth {
             return window_width;
         }
 
-        let min_window_width_px = Pixels(FileFinderWidth::MIN_WINDOW_WIDTH_PX);
+        let min_modal_width_px = Pixels(FileFinderWidth::MIN_MODAL_WIDTH_PX);
 
         let padding_px = self.padding_px();
         let width_val = window_width - padding_px;
-        let finder_width = cmp::max(min_window_width_px, width_val);
+        let finder_width = cmp::max(min_modal_width_px, width_val);
 
         finder_width
     }
