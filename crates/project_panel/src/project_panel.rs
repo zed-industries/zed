@@ -2630,12 +2630,12 @@ impl ProjectPanel {
             marked_selections: selections,
         };
 
-        let bg_color = if is_hovered && !self.mouse_down {
-            item_colors.hover
-        } else if is_marked || is_active || (is_hovered && self.mouse_down) {
-            item_colors.marked_active
-        } else {
-            item_colors.default
+        let (bg_color, border_color) = match (is_hovered, is_marked || is_active, self.mouse_down) {
+            (true, _, true) => (item_colors.marked_active, item_colors.hover),
+            (true, false, false) => (item_colors.hover, item_colors.hover),
+            (true, true, false) => (item_colors.hover, item_colors.marked_active),
+            (false, true, _) => (item_colors.marked_active, item_colors.marked_active),
+            _ => (item_colors.default, item_colors.default),
         };
 
         div()
@@ -2784,6 +2784,7 @@ impl ProjectPanel {
             }))
             .cursor_pointer()
             .bg(bg_color)
+            .border_color(border_color)
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
