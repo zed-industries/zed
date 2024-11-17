@@ -21,6 +21,7 @@ jobs:
       uses: ChristopheLav/windows-sdk-install@v1.0.3
       with:
         version-sdk: 26100
+        features: 'OptionId.UWPCPP,OptionId.DesktopCPPx64'
 
     #- name: Visual Studio shell
     #  uses: egor-tensin/vs-shell@v2
