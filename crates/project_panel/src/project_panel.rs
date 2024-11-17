@@ -1190,6 +1190,7 @@ impl ProjectPanel {
 
             let mut dirty_buffers = 0;
             let file_paths = items_to_delete
+                .clone()
                 .into_iter()
                 .filter_map(|selection| {
                     let project_path = project.path_for_entry(selection.entry_id, cx)?;
@@ -1293,24 +1294,27 @@ impl ProjectPanel {
 
     fn find_next_selection_after_deletion(
         &self,
-        items_to_delete: BTreeSet<SelectedEntry>,
+        sanitized_entries: BTreeSet<SelectedEntry>,
         cx: &mut ViewContext<Self>,
     ) -> Option<SelectedEntry> {
-        if items_to_delete.is_empty() {
+        if sanitized_entries.is_empty() {
             return None;
         }
         let project = self.project.read(cx);
 
-        let last_worktree_id = items_to_delete.iter().map(|e| e.worktree_id).max()?;
-        let worktree = project.worktree_for_id(last_worktree_id, cx)?;
-        let worktree = worktree.read(cx);
+        let last_worktree_id = sanitized_entries.iter().map(|e| e.worktree_id).max()?;
+        let last_worktree = project.worktree_for_id(last_worktree_id, cx)?.read(cx);
 
-        let last_deleted_entry = items_to_delete
+        let marked_entries_in_last_worktree: Vec<&SelectedEntry> = sanitized_entries
             .iter()
             .filter(|e| e.worktree_id == last_worktree_id)
+            .collect();
+
+        let last_marked_entry = marked_entries_in_last_worktree
+            .iter()
             .max_by(|a, b| {
-                let a_entry = worktree.entry_for_id(a.entry_id);
-                let b_entry = worktree.entry_for_id(b.entry_id);
+                let a_entry = last_worktree.entry_for_id(a.entry_id);
+                let b_entry = last_worktree.entry_for_id(b.entry_id);
                 match (a_entry, b_entry) {
                     (Some(a), Some(b)) => {
                         compare_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
@@ -1318,19 +1322,18 @@ impl ProjectPanel {
                     _ => std::cmp::Ordering::Equal,
                 }
             })
-            .copied()
-            .map(|e| worktree.entry_for_id(e.entry_id))??;
+            .map(|e| last_worktree.entry_for_id(e.entry_id))??;
 
-        let parent_path = last_deleted_entry.path.parent()?;
-        let parent_entry = worktree.entry_for_path(parent_path)?;
+        let parent_path = last_marked_entry.path.parent()?;
+        let parent_entry = last_worktree.entry_for_path(parent_path)?;
 
-        // Remove all siblings that are being deleted except the last deleted entry
-        let mut remaining_siblings: Vec<Entry> = worktree
+        // Remove all siblings that are being deleted except the last marked entry
+        let mut remaining_siblings: Vec<Entry> = last_worktree
             .snapshot()
             .child_entries(parent_path)
             .filter(|sibling| {
-                sibling.id == last_deleted_entry.id
-                    || !items_to_delete.contains(&SelectedEntry {
+                sibling.id == last_marked_entry.id
+                    || !marked_entries_in_last_worktree.contains(&&SelectedEntry {
                         worktree_id: last_worktree_id,
                         entry_id: sibling.id,
                     })
@@ -1341,7 +1344,7 @@ impl ProjectPanel {
         project::sort_worktree_entries(&mut remaining_siblings);
         let deleted_entry_position = remaining_siblings
             .iter()
-            .position(|sibling| sibling.id == last_deleted_entry.id)?;
+            .position(|sibling| sibling.id == last_marked_entry.id)?;
 
         // Try next sibling
         if let Some(next_sibling) = remaining_siblings.get(deleted_entry_position + 1) {
@@ -1352,13 +1355,11 @@ impl ProjectPanel {
         }
 
         // Try previous sibling
-        if deleted_entry_position > 0 {
-            if let Some(prev_sibling) = remaining_siblings.get(deleted_entry_position - 1) {
-                return Some(SelectedEntry {
-                    worktree_id: last_worktree_id,
-                    entry_id: prev_sibling.id,
-                });
-            }
+        if let Some(prev_sibling) = remaining_siblings.get(deleted_entry_position - 1) {
+            return Some(SelectedEntry {
+                worktree_id: last_worktree_id,
+                entry_id: prev_sibling.id,
+            });
         }
 
         // Fall back to parent
