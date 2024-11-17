@@ -19,6 +19,8 @@ jobs:
             
     - name: Windows SDK Install
       uses: ChristopheLav/windows-sdk-install@v1.0.3
+      with:
+        version-sdk: 26100
 
     - name: Visual Studio shell
       uses: egor-tensin/vs-shell@v2
