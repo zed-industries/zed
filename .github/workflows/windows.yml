@@ -23,6 +23,10 @@ jobs:
         version-sdk: 26100
         features: 'OptionId.UWPCPP,OptionId.DesktopCPPx64'
 
+    - name: long-path
+      run:
+        New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+
     #- name: Visual Studio shell
     #  uses: egor-tensin/vs-shell@v2
 
