@@ -56,8 +56,8 @@ impl GoToLine {
     }
 
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
-        let editor = active_editor.read(cx);
-        let cursor = editor.selections.last::<Point>(cx).head();
+        let cursor =
+            active_editor.update(cx, |editor, cx| editor.selections.last::<Point>(cx).head());
 
         let line = cursor.row + 1;
         let column = cursor.column + 1;
@@ -229,7 +229,7 @@ mod tests {
     use indoc::indoc;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
     use workspace::{AppState, Workspace};
 
     #[gpui::test]
@@ -379,6 +379,7 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
 
+        cx.executor().advance_clock(Duration::from_millis(200));
         workspace.update(cx, |workspace, cx| {
             assert_eq!(
                 &SelectionStats {
@@ -397,6 +398,7 @@ mod tests {
             );
         });
         editor.update(cx, |editor, cx| editor.select_all(&SelectAll, cx));
+        cx.executor().advance_clock(Duration::from_millis(200));
         workspace.update(cx, |workspace, cx| {
             assert_eq!(
                 &SelectionStats {

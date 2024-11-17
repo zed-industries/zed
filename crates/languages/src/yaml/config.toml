@@ -10,6 +10,7 @@ brackets = [
     { start = "'", end = "'", close = true, newline = false, not_in = ["string"] },
 ]
 
+auto_indent_on_paste = false
 auto_indent_using_last_non_empty_line = false
 increase_indent_pattern = ":\\s*[|>]?\\s*$"
 prettier_parser_name = "yaml"

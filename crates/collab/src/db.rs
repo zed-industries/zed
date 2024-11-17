@@ -42,6 +42,9 @@ pub use tests::TestDb;
 
 pub use ids::*;
 pub use queries::billing_customers::{CreateBillingCustomerParams, UpdateBillingCustomerParams};
+pub use queries::billing_preferences::{
+    CreateBillingPreferencesParams, UpdateBillingPreferencesParams,
+};
 pub use queries::billing_subscriptions::{
     CreateBillingSubscriptionParams, UpdateBillingSubscriptionParams,
 };
@@ -614,7 +617,6 @@ pub struct ChannelsForUser {
     pub channels: Vec<Channel>,
     pub channel_memberships: Vec<channel_member::Model>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
-    pub hosted_projects: Vec<proto::HostedProject>,
     pub invited_channels: Vec<Channel>,
 
     pub observed_buffer_versions: Vec<proto::ChannelBufferVersion>,
@@ -723,7 +725,6 @@ pub struct Project {
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
-    pub dev_server_project_id: Option<DevServerProjectId>,
 }
 
 pub struct ProjectCollaborator {
@@ -739,6 +740,7 @@ impl ProjectCollaborator {
             peer_id: Some(self.connection_id.into()),
             replica_id: self.replica_id.0 as u32,
             user_id: self.user_id.to_proto(),
+            is_host: self.is_host,
         }
     }
 }

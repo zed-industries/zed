@@ -11,10 +11,11 @@ on:
 jobs:
   check_formatting:
     name: "Check formatting"
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
         with:
@@ -29,5 +30,8 @@ jobs:
             false
           }
 
-      - name: Check spelling
-        run: script/check-spelling docs/
+      - name: Check for Typos with Typos-CLI
+        uses: crate-ci/typos@8e6a4285bcbde632c5d79900a7779746e8b7ea3f # v1.24.6
+        with:
+          config: ./typos.toml
+          files: ./docs/

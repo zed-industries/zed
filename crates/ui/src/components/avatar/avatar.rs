@@ -84,7 +84,6 @@ impl RenderOnce for Avatar {
         div()
             .size(container_size)
             .rounded_full()
-            .overflow_hidden()
             .when_some(self.border_color, |this, color| {
                 this.border(border_width).border_color(color)
             })

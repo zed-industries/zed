@@ -16,6 +16,7 @@
     "allow_concurrent_runs": false,
     // What to do with the terminal pane and tab, after the command was started:
     // * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
+    // * `no_focus` — always show the terminal pane, add/reuse the task's tab there, but don't focus it
     // * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
     "reveal": "always",
     // What to do with the terminal pane and tab, after the command had finished:

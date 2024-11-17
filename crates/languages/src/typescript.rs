@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
 use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
-use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp::{CodeActionKind, LanguageServerBinary};
+use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::lsp_store::language_server_settings;
 use project::ContextProviderWithTasks;
@@ -230,6 +230,7 @@ impl LspAdapter for TypeScriptLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
@@ -325,6 +326,7 @@ impl LspAdapter for EsLintLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
@@ -443,14 +445,35 @@ impl LspAdapter for EsLintLspAdapter {
                 AssetKind::TarGz => {
                     let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                     let archive = Archive::new(decompressed_bytes);
-                    archive.unpack(&destination_path).await?;
+                    archive.unpack(&destination_path).await.with_context(|| {
+                        format!("extracting {} to {:?}", version.url, destination_path)
+                    })?;
+                }
+                AssetKind::Gz => {
+                    let mut decompressed_bytes =
+                        GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let mut file =
+                        fs::File::create(&destination_path).await.with_context(|| {
+                            format!(
+                                "creating a file {:?} for a download from {}",
+                                destination_path, version.url,
+                            )
+                        })?;
+                    futures::io::copy(&mut decompressed_bytes, &mut file)
+                        .await
+                        .with_context(|| {
+                            format!("extracting {} to {:?}", version.url, destination_path)
+                        })?;
                 }
                 AssetKind::Zip => {
                     node_runtime::extract_zip(
                         &destination_path,
                         BufReader::new(response.body_mut()),
                     )
-                    .await?;
+                    .await
+                    .with_context(|| {
+                        format!("unzipping {} to {:?}", version.url, destination_path)
+                    })?;
                 }
             }
 

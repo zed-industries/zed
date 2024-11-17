@@ -140,8 +140,13 @@ impl FromStr for VariableName {
         let without_prefix = s.strip_prefix(ZED_VARIABLE_NAME_PREFIX).ok_or(())?;
         let value = match without_prefix {
             "FILE" => Self::File,
+            "FILENAME" => Self::Filename,
+            "RELATIVE_FILE" => Self::RelativeFile,
+            "DIRNAME" => Self::Dirname,
+            "STEM" => Self::Stem,
             "WORKTREE_ROOT" => Self::WorktreeRoot,
             "SYMBOL" => Self::Symbol,
+            "RUNNABLE_SYMBOL" => Self::RunnableSymbol,
             "SELECTED_TEXT" => Self::SelectedText,
             "ROW" => Self::Row,
             "COLUMN" => Self::Column,
@@ -264,5 +269,7 @@ pub enum Shell {
         program: String,
         /// The arguments to pass to the program.
         args: Vec<String>,
+        /// An optional string to override the title of the terminal tab
+        title_override: Option<SharedString>,
     },
 }

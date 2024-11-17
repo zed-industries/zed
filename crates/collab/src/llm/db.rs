@@ -20,7 +20,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::anyhow;
-pub use queries::usages::ActiveUserCount;
+pub use queries::usages::{ActiveUserCount, TokenUsage};
 use sea_orm::prelude::*;
 pub use sea_orm::ConnectOptions;
 use sea_orm::{
@@ -95,6 +95,14 @@ impl LlmDatabase {
             .models
             .get(&(provider, name.to_string()))
             .ok_or_else(|| anyhow!("unknown model {provider:?}:{name}"))?)
+    }
+
+    pub fn model_by_id(&self, id: ModelId) -> Result<&model::Model> {
+        Ok(self
+            .models
+            .values()
+            .find(|model| model.id == id)
+            .ok_or_else(|| anyhow!("no model for ID {id:?}"))?)
     }
 
     pub fn options(&self) -> &ConnectOptions {

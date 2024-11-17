@@ -1,126 +1,179 @@
-[
-  (container_doc_comment)
-  (doc_comment)
+; Variables
 
-] @comment.doc
+(identifier) @variable
 
-[
-    (line_comment)
-] @comment
+; Parameters
 
-[
-  variable: (IDENTIFIER)
-  variable_type_function: (IDENTIFIER)
-] @variable
+(parameter
+  name: (identifier) @variable.parameter)
 
-;; func parameter
-parameter: (IDENTIFIER) @property
+; Types
 
-[
-  field_member: (IDENTIFIER)
-  field_access: (IDENTIFIER)
-] @property
+(parameter
+  type: (identifier) @type)
 
-;; assume TitleCase is a type
-(
+((identifier) @type
+  (#match? @type "^[A-Z_][a-zA-Z0-9_]*"))
+
+(variable_declaration
+  (identifier) @type
+  "="
   [
-    variable_type_function: (IDENTIFIER)
-    field_access: (IDENTIFIER)
-    parameter: (IDENTIFIER)
-  ] @type
-  (#match? @type "^[A-Z]([a-z]+[A-Za-z0-9]*)+$")
-)
-
-;; assume camelCase is a function
-(
-  [
-    variable_type_function: (IDENTIFIER)
-    field_access: (IDENTIFIER)
-    parameter: (IDENTIFIER)
-  ] @function
-  (#match? @function "^[a-z]+([A-Z][a-z0-9]*)+$")
-)
-
-;; assume all CAPS_1 is a constant
-(
-  [
-    variable_type_function: (IDENTIFIER)
-    field_access: (IDENTIFIER)
-  ] @constant
-  (#match? @constant "^[A-Z][A-Z_0-9]+$")
-)
+    (struct_declaration)
+    (enum_declaration)
+    (union_declaration)
+    (opaque_declaration)
+  ])
 
 [
-  function_call: (IDENTIFIER)
-  function: (IDENTIFIER)
-] @function
+  (builtin_type)
+  "anyframe"
+] @type.builtin
 
-exception: "!" @keyword
+; Constants
 
-(
-  (IDENTIFIER) @variable.special
-  (#eq? @variable.special "_")
-)
-
-(PtrTypeStart "c" @variable.special)
-
-(
-  (ContainerDeclType
-    [
-      (ErrorUnionExpr)
-      "enum"
-    ]
-  )
-  (ContainerField (IDENTIFIER) @constant)
-)
-
-field_constant: (IDENTIFIER) @constant
-
-(BUILTINIDENTIFIER) @keyword
-
-((BUILTINIDENTIFIER) @function
-  (#any-of? @function "@import" "@cImport"))
-
-(INTEGER) @number
-
-(FLOAT) @number
+((identifier) @constant
+  (#match? @constant "^[A-Z][A-Z_0-9]+$"))
 
 [
-  "true"
-  "false"
-] @boolean
+  "null"
+  "unreachable"
+  "undefined"
+] @constant.builtin
+
+(field_expression
+  .
+  member: (identifier) @constant)
+
+(enum_declaration
+  (container_field
+    type: (identifier) @constant))
+
+; Labels
+
+(block_label (identifier) @label)
+
+(break_label (identifier) @label)
+
+; Fields
+
+(field_initializer
+  .
+  (identifier) @variable.member)
+
+(field_expression
+  (_)
+  member: (identifier) @property)
+
+(field_expression
+  (_)
+  member: (identifier) @type (#match? @type "^[A-Z_][a-zA-Z0-9_]*"))
+
+(container_field
+  name: (identifier) @property)
+
+(initializer_list
+  (assignment_expression
+      left: (field_expression
+              .
+              member: (identifier) @property)))
+
+; Functions
+
+(builtin_identifier) @function.builtin
+
+(call_expression
+  function: (identifier) @function.call)
+
+(call_expression
+  function: (field_expression
+    member: (identifier) @function.call))
+
+(function_declaration
+  name: (identifier) @function)
+
+; Modules
+
+(variable_declaration
+  (identifier) @module
+  (builtin_function
+    (builtin_identifier) @keyword.import
+    (#any-of? @keyword.import "@import" "@cImport")))
+
+; Builtins
 
 [
-  (LINESTRING)
-  (STRINGLITERALSINGLE)
-] @string
+  "c"
+  "..."
+] @variable.builtin
 
-(CHAR_LITERAL) @string.special.symbol
-(EscapeSequence) @string.escape
-(FormatSequence) @string.special
+((identifier) @variable.builtin
+  (#eq? @variable.builtin "_"))
 
-(BreakLabel (IDENTIFIER) @tag)
-(BlockLabel (IDENTIFIER) @tag)
+(calling_convention
+  (identifier) @variable.builtin)
+
+; Keywords
 
 [
-  "fn"
   "asm"
   "defer"
   "errdefer"
   "test"
+  "error"
+  "const"
+  "var"
+] @keyword
+
+[
   "struct"
   "union"
   "enum"
   "opaque"
-  "error"
-  "try"
-  "catch"
+] @keyword.type
+
+[
+  "async"
+  "await"
+  "suspend"
+  "nosuspend"
+  "resume"
+] @keyword.coroutine
+
+"fn" @keyword.function
+
+[
+  "and"
+  "or"
+  "orelse"
+] @keyword.operator
+
+"return" @keyword.return
+
+[
+  "if"
+  "else"
+  "switch"
+] @keyword.conditional
+
+[
   "for"
   "while"
   "break"
   "continue"
-  "const"
-  "var"
+] @keyword.repeat
+
+[
+  "usingnamespace"
+  "export"
+] @keyword.import
+
+[
+  "try"
+  "catch"
+] @keyword.exception
+
+[
   "volatile"
   "allowzero"
   "noalias"
@@ -128,71 +181,91 @@ field_constant: (IDENTIFIER) @constant
   "align"
   "callconv"
   "linksection"
-  "comptime"
-  "export"
-  "extern"
+  "pub"
   "inline"
   "noinline"
+  "extern"
+  "comptime"
   "packed"
-  "pub"
   "threadlocal"
-  "async"
-  "await"
-  "suspend"
-  "nosuspend"
-  "resume"
-  "and"
-  "or"
-  "orelse"
-  "return"
-  "if"
-  "else"
-  "switch"
-] @keyword
+] @keyword.modifier
+
+; Operator
 
 [
-  "usingnamespace"
-] @constant
-
-[
-  "anytype"
-  "anyframe"
-  (BuildinTypeExpr)
-] @type
-
-[
-  "null"
-  "unreachable"
-  "undefined"
-] @constant
-
-[
-  (CompareOp)
-  (BitwiseOp)
-  (BitShiftOp)
-  (AdditionOp)
-  (AssignOp)
-  (MultiplyOp)
-  (PrefixOp)
+  "="
+  "*="
+  "*%="
+  "*|="
+  "/="
+  "%="
+  "+="
+  "+%="
+  "+|="
+  "-="
+  "-%="
+  "-|="
+  "<<="
+  "<<|="
+  ">>="
+  "&="
+  "^="
+  "|="
+  "!"
+  "~"
+  "-"
+  "-%"
+  "&"
+  "=="
+  "!="
+  ">"
+  ">="
+  "<="
+  "<"
+  "&"
+  "^"
+  "|"
+  "<<"
+  ">>"
+  "<<|"
+  "+"
+  "++"
+  "+%"
+  "-%"
+  "+|"
+  "-|"
   "*"
+  "/"
+  "%"
   "**"
-  "->"
-  ".?"
+  "*%"
+  "*|"
+  "||"
   ".*"
+  ".?"
   "?"
+  ".."
 ] @operator
 
-[
-  ";"
-  "."
-  ","
-  ":"
-] @punctuation.delimiter
+; Literals
 
-[
-  ".."
-  "..."
-] @punctuation.special
+(character) @character
+
+([
+  (string)
+  (multiline_string)
+] @string
+  (#set! "priority" 95))
+
+(integer) @number
+
+(float) @number.float
+
+(boolean) @boolean
+
+(escape_sequence) @string.escape
+
+; Punctuation
 
 [
   "["
@@ -201,10 +274,22 @@ field_constant: (IDENTIFIER) @constant
   ")"
   "{"
   "}"
-  (Payload "|")
-  (PtrPayload "|")
-  (PtrIndexPayload "|")
 ] @punctuation.bracket
 
-; Error
-(ERROR) @error
+[
+  ";"
+  "."
+  ","
+  ":"
+  "=>"
+  "->"
+] @punctuation.delimiter
+
+(payload "|" @punctuation.bracket)
+
+; Comments
+
+(comment) @comment
+
+((comment) @comment.documentation
+  (#match? @comment.documentation "^//(/|!)"))

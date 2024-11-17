@@ -14,7 +14,7 @@ function finalize {
   # verify the mold situation
   if ! command -v mold >/dev/null 2>&1; then
     echo "Warning: Mold binaries are unavailable on your system." >&2
-    echo "    Builds will be slower without mold. Try: scripts/install-mold" >&2
+    echo "    Builds will be slower without mold. Try: script/install-mold" >&2
   fi
   echo "Finished installing Linux dependencies with script/linux"
 }
@@ -42,12 +42,14 @@ if [[ -n $apt ]]; then
     gettext-base
     elfutils
     libsqlite3-dev
+    musl-tools
+    musl-dev
   )
-  if (grep -qP 'PRETTY_NAME="(.+24\.04)' /etc/os-release); then
+  if (grep -qP 'PRETTY_NAME="(Linux Mint 22|.+24\.04)' /etc/os-release); then
     deps+=( mold libstdc++-14-dev )
-  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|.+22\.04)' /etc/os-release); then
+  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|Linux Mint 21|.+22\.04)' /etc/os-release); then
     deps+=( mold libstdc++-12-dev )
-  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|.+20\.04)' /etc/os-release); then
+  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|Linux Mint 20|.+20\.04)' /etc/os-release); then
     deps+=( libstdc++-10-dev )
   fi
 
@@ -127,23 +129,26 @@ fi
 zyp=$(command -v zypper || true)
 if [[ -n $zyp ]]; then
   deps=(
+    alsa-devel
+    clang
+    cmake
+    fontconfig-devel
     gcc
     gcc-c++
-    clang
-    make
-    cmake
-    alsa-devel
-    fontconfig-devel
-    wayland-devel
-    libxkbcommon-x11-devel
-    openssl-devel
-    libzstd-devel
-    libvulkan1
-    sqlite3-devel
-    jq
     git
-    tar
     gzip
+    jq
+    libvulkan1
+    libxkbcommon-devel
+    libxkbcommon-x11-devel
+    libzstd-devel
+    make
+    mold
+    openssl-devel
+    sqlite3-devel
+    tar
+    wayland-devel
+    xcb-util-devel
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   finalize

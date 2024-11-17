@@ -1,17 +1,19 @@
 mod event_coalescer;
 
 use crate::{ChannelId, TelemetrySettings};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use http_client::{self, HttpClient, HttpClientWithUrl, Method};
+use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
+use std::fs::File;
 use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
@@ -20,10 +22,7 @@ use telemetry_events::{
     EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent,
     SettingEvent,
 };
-use tempfile::NamedTempFile;
-#[cfg(not(debug_assertions))]
-use util::ResultExt;
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
@@ -45,7 +44,7 @@ struct TelemetryState {
     architecture: &'static str,
     events_queue: Vec<EventWrapper>,
     flush_events_task: Option<Task<()>>,
-    log_file: Option<NamedTempFile>,
+    log_file: Option<File>,
     is_staff: Option<bool>,
     first_event_date_time: Option<DateTime<Utc>>,
     event_coalescer: EventCoalescer,
@@ -101,7 +100,7 @@ pub fn os_name() -> String {
     {
         "macOS".to_string()
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         format!("Linux {}", gpui::guess_compositor())
     }
@@ -130,7 +129,7 @@ pub fn os_version() -> String {
             .to_string()
         }
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         use std::path::Path;
 
@@ -222,15 +221,13 @@ impl Telemetry {
             os_name: os_name(),
             app_version: release_channel::AppVersion::global(cx).to_string(),
         }));
+        Self::log_file_path();
 
-        #[cfg(not(debug_assertions))]
         cx.background_executor()
             .spawn({
                 let state = state.clone();
                 async move {
-                    if let Some(tempfile) =
-                        NamedTempFile::new_in(paths::logs_dir().as_path()).log_err()
-                    {
+                    if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
                         state.lock().log_file = Some(tempfile);
                     }
                 }
@@ -279,8 +276,8 @@ impl Telemetry {
         Task::ready(())
     }
 
-    pub fn log_file_path(&self) -> Option<PathBuf> {
-        Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
+    pub fn log_file_path() -> PathBuf {
+        paths::logs_dir().join("telemetry.log")
     }
 
     pub fn start(
@@ -340,6 +337,13 @@ impl Telemetry {
             .detach();
     }
 
+    pub fn metrics_enabled(self: &Arc<Self>) -> bool {
+        let state = self.state.lock();
+        let enabled = state.settings.metrics;
+        drop(state);
+        enabled
+    }
+
     pub fn set_authenticated_user_info(
         self: &Arc<Self>,
         metrics_id: Option<String>,
@@ -364,6 +368,7 @@ impl Telemetry {
         operation: &'static str,
         copilot_enabled: bool,
         copilot_enabled_for_language: bool,
+        is_via_ssh: bool,
     ) {
         let event = Event::Editor(EditorEvent {
             file_extension,
@@ -371,6 +376,7 @@ impl Telemetry {
             operation: operation.into(),
             copilot_enabled,
             copilot_enabled_for_language,
+            is_via_ssh,
         });
 
         self.report_event(event)
@@ -456,7 +462,7 @@ impl Telemetry {
         }))
     }
 
-    pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
+    pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
         drop(state);
@@ -465,6 +471,7 @@ impl Telemetry {
             let event = Event::Edit(EditEvent {
                 duration: end.timestamp_millis() - start.timestamp_millis(),
                 environment: environment.to_string(),
+                is_via_ssh,
             });
 
             self.report_event(event);
@@ -485,7 +492,7 @@ impl Telemetry {
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
     ) {
-        let project_names: Vec<String> = {
+        let project_type_names: Vec<String> = {
             let mut state = self.state.lock();
             state
                 .worktree_id_map
@@ -521,8 +528,8 @@ impl Telemetry {
         };
 
         // Done on purpose to avoid calling `self.state.lock()` multiple times
-        for project_name in project_names {
-            self.report_app_event(format!("open {} project", project_name));
+        for project_type_name in project_type_names {
+            self.report_app_event(format!("open {} project", project_type_name));
         }
     }
 
@@ -594,6 +601,29 @@ impl Telemetry {
         self.state.lock().is_staff
     }
 
+    fn build_request(
+        self: &Arc<Self>,
+        // We take in the JSON bytes buffer so we can reuse the existing allocation.
+        mut json_bytes: Vec<u8>,
+        event_request: EventRequestBody,
+    ) -> Result<Request<AsyncBody>> {
+        json_bytes.clear();
+        serde_json::to_writer(&mut json_bytes, &event_request)?;
+
+        let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
+
+        Ok(Request::builder()
+            .method(Method::POST)
+            .uri(
+                self.http_client
+                    .build_zed_api_url("/telemetry/events", &[])?
+                    .as_ref(),
+            )
+            .header("Content-Type", "application/json")
+            .header("x-zed-checksum", checksum)
+            .body(json_bytes.into())?)
+    }
+
     pub fn flush_events(self: &Arc<Self>) {
         let mut state = self.state.lock();
         state.first_event_date_time = None;
@@ -611,7 +641,6 @@ impl Telemetry {
                     let mut json_bytes = Vec::new();
 
                     if let Some(file) = &mut this.state.lock().log_file {
-                        let file = file.as_file_mut();
                         for event in &mut events {
                             json_bytes.clear();
                             serde_json::to_writer(&mut json_bytes, event)?;
@@ -620,10 +649,10 @@ impl Telemetry {
                         }
                     }
 
-                    {
+                    let request_body = {
                         let state = this.state.lock();
 
-                        let request_body = EventRequestBody {
+                        EventRequestBody {
                             system_id: state.system_id.as_deref().map(Into::into),
                             installation_id: state.installation_id.as_deref().map(Into::into),
                             session_id: state.session_id.clone(),
@@ -636,25 +665,11 @@ impl Telemetry {
 
                             release_channel: state.release_channel.map(Into::into),
                             events,
-                        };
-                        json_bytes.clear();
-                        serde_json::to_writer(&mut json_bytes, &request_body)?;
-                    }
+                        }
+                    };
 
-                    let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
-
-                    let request = http_client::Request::builder()
-                        .method(Method::POST)
-                        .uri(
-                            this.http_client
-                                .build_zed_api_url("/telemetry/events", &[])?
-                                .as_ref(),
-                        )
-                        .header("Content-Type", "text/plain")
-                        .header("x-zed-checksum", checksum)
-                        .body(json_bytes.into());
-
-                    let response = this.http_client.send(request?).await?;
+                    let request = this.build_request(json_bytes, request_body)?;
+                    let response = this.http_client.send(request).await?;
                     if response.status() != 200 {
                         log::error!("Failed to send events: HTTP {:?}", response.status());
                     }

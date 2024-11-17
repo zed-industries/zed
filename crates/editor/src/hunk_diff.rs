@@ -7,17 +7,19 @@ use multi_buffer::{
     MultiBufferSnapshot, ToPoint,
 };
 use std::{ops::Range, sync::Arc};
+use text::OffsetRangeExt;
 use ui::{
     prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
     ParentElement, PopoverMenu, Styled, Tooltip, ViewContext, VisualContext,
 };
 use util::RangeExt;
+use workspace::Item;
 
 use crate::{
-    editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyDiffHunk,
-    BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow,
-    DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk, RevertFile,
-    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyAllDiffHunks,
+    ApplyDiffHunk, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight,
+    DisplayRow, DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk,
+    RevertFile, RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -209,19 +211,20 @@ impl Editor {
 
                         retain
                     });
-                    for remaining_hunk in hunks_to_toggle {
-                        let remaining_hunk_point_range =
-                            Point::new(remaining_hunk.row_range.start.0, 0)
-                                ..Point::new(remaining_hunk.row_range.end.0, 0);
+                    for hunk in hunks_to_toggle {
+                        let remaining_hunk_point_range = Point::new(hunk.row_range.start.0, 0)
+                            ..Point::new(hunk.row_range.end.0, 0);
+                        let hunk_start = snapshot
+                            .buffer_snapshot
+                            .anchor_before(remaining_hunk_point_range.start);
+                        let hunk_end = snapshot
+                            .buffer_snapshot
+                            .anchor_in_excerpt(hunk_start.excerpt_id, hunk.buffer_range.end)
+                            .unwrap();
                         hunks_to_expand.push(HoveredHunk {
-                            status: hunk_status(&remaining_hunk),
-                            multi_buffer_range: snapshot
-                                .buffer_snapshot
-                                .anchor_before(remaining_hunk_point_range.start)
-                                ..snapshot
-                                    .buffer_snapshot
-                                    .anchor_after(remaining_hunk_point_range.end),
-                            diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
+                            status: hunk_status(&hunk),
+                            multi_buffer_range: hunk_start..hunk_end,
+                            diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         });
                     }
 
@@ -246,33 +249,22 @@ impl Editor {
         hunk: &HoveredHunk,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<()> {
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let buffer = self.buffer.clone();
+        let multi_buffer_snapshot = buffer.read(cx).snapshot(cx);
         let hunk_range = hunk.multi_buffer_range.clone();
-        let hunk_point_range = hunk_range.to_point(&multi_buffer_snapshot);
-
-        let buffer = self.buffer().clone();
-        let snapshot = self.snapshot(cx);
         let (diff_base_buffer, deleted_text_lines) = buffer.update(cx, |buffer, cx| {
-            let hunk = buffer_diff_hunk(&snapshot.buffer_snapshot, hunk_point_range.clone())?;
-            let mut buffer_ranges = buffer.range_to_buffer_ranges(hunk_point_range, cx);
-            if buffer_ranges.len() == 1 {
-                let (buffer, _, _) = buffer_ranges.pop()?;
-                let diff_base_buffer = diff_base_buffer
-                    .or_else(|| self.current_diff_base_buffer(&buffer, cx))
-                    .or_else(|| create_diff_base_buffer(&buffer, cx))?;
-                let buffer = buffer.read(cx);
-                let deleted_text_lines = buffer.diff_base().map(|diff_base| {
-                    let diff_start_row = diff_base
-                        .offset_to_point(hunk.diff_base_byte_range.start)
-                        .row;
-                    let diff_end_row = diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
-
-                    diff_end_row - diff_start_row
-                })?;
-                Some((diff_base_buffer, deleted_text_lines))
-            } else {
-                None
-            }
+            let buffer = buffer.buffer(hunk_range.start.buffer_id?)?;
+            let diff_base_buffer = diff_base_buffer
+                .or_else(|| self.current_diff_base_buffer(&buffer, cx))
+                .or_else(|| create_diff_base_buffer(&buffer, cx))?;
+            let deleted_text_lines = buffer.read(cx).diff_base().map(|diff_base| {
+                let diff_start_row = diff_base
+                    .offset_to_point(hunk.diff_base_byte_range.start)
+                    .row;
+                let diff_end_row = diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
+                diff_end_row - diff_start_row
+            })?;
+            Some((diff_base_buffer, deleted_text_lines))
         })?;
 
         let block_insert_index = match self.expanded_hunks.hunks.binary_search_by(|probe| {
@@ -337,7 +329,7 @@ impl Editor {
         Some(())
     }
 
-    fn apply_changes_in_range(
+    fn apply_diff_hunks_in_range(
         &mut self,
         range: Range<Anchor>,
         cx: &mut ViewContext<'_, Editor>,
@@ -350,18 +342,60 @@ impl Editor {
             .next()?;
 
         buffer.update(cx, |branch_buffer, cx| {
-            branch_buffer.merge_into_base(Some(range), cx);
+            branch_buffer.merge_into_base(vec![range], cx);
         });
+
+        if let Some(project) = self.project.clone() {
+            self.save(true, project, cx).detach_and_log_err(cx);
+        }
 
         None
     }
 
-    pub(crate) fn apply_all_changes(&self, cx: &mut ViewContext<Self>) {
+    pub(crate) fn apply_all_diff_hunks(
+        &mut self,
+        _: &ApplyAllDiffHunks,
+        cx: &mut ViewContext<Self>,
+    ) {
         let buffers = self.buffer.read(cx).all_buffers();
         for branch_buffer in buffers {
             branch_buffer.update(cx, |branch_buffer, cx| {
-                branch_buffer.merge_into_base(None, cx);
+                branch_buffer.merge_into_base(Vec::new(), cx);
             });
+        }
+
+        if let Some(project) = self.project.clone() {
+            self.save(true, project, cx).detach_and_log_err(cx);
+        }
+    }
+
+    pub(crate) fn apply_selected_diff_hunks(
+        &mut self,
+        _: &ApplyDiffHunk,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
+        let mut ranges_by_buffer = HashMap::default();
+        self.transact(cx, |editor, cx| {
+            for hunk in hunks {
+                if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
+                    ranges_by_buffer
+                        .entry(buffer.clone())
+                        .or_insert_with(Vec::new)
+                        .push(hunk.buffer_range.to_offset(buffer.read(cx)));
+                }
+            }
+
+            for (buffer, ranges) in ranges_by_buffer {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.merge_into_base(ranges, cx);
+                });
+            }
+        });
+
+        if let Some(project) = self.project.clone() {
+            self.save(true, project, cx).detach_and_log_err(cx);
         }
     }
 
@@ -387,12 +421,11 @@ impl Editor {
         };
 
         BlockProperties {
-            position: hunk.multi_buffer_range.start,
+            placement: BlockPlacement::Above(hunk.multi_buffer_range.start),
             height: 1,
             style: BlockStyle::Sticky,
-            disposition: BlockDisposition::Above,
             priority: 0,
-            render: Box::new({
+            render: Arc::new({
                 let editor = cx.view().clone();
                 let hunk = hunk.clone();
 
@@ -402,6 +435,7 @@ impl Editor {
 
                     h_flex()
                         .id(cx.block_id)
+                        .block_mouse_down()
                         .h(cx.line_height())
                         .w_full()
                         .border_t_1()
@@ -428,7 +462,7 @@ impl Editor {
                             h_flex()
                                 .px_6()
                                 .size_full()
-                                .justify_between()
+                                .justify_end()
                                 .child(
                                     h_flex()
                                         .gap_1()
@@ -558,11 +592,12 @@ impl Editor {
                                                             let hunk = hunk.clone();
                                                             move |_event, cx| {
                                                                 editor.update(cx, |editor, cx| {
-                                                                    editor.apply_changes_in_range(
-                                                                        hunk.multi_buffer_range
-                                                                            .clone(),
-                                                                        cx,
-                                                                    );
+                                                                    editor
+                                                                        .apply_diff_hunks_in_range(
+                                                                            hunk.multi_buffer_range
+                                                                                .clone(),
+                                                                            cx,
+                                                                        );
                                                                 });
                                                             }
                                                         }),
@@ -669,17 +704,17 @@ impl Editor {
         let hunk = hunk.clone();
         let height = editor_height.max(deleted_text_height);
         BlockProperties {
-            position: hunk.multi_buffer_range.start,
+            placement: BlockPlacement::Above(hunk.multi_buffer_range.start),
             height,
             style: BlockStyle::Flex,
-            disposition: BlockDisposition::Above,
             priority: 0,
-            render: Box::new(move |cx| {
+            render: Arc::new(move |cx| {
                 let width = EditorElement::diff_hunk_strip_width(cx.line_height());
                 let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
 
                 h_flex()
                     .id(cx.block_id)
+                    .block_mouse_down()
                     .bg(deleted_hunk_color)
                     .h(height as f32 * cx.line_height())
                     .w_full()
@@ -1128,21 +1163,6 @@ fn editor_with_deleted_text(
     (editor_height, editor)
 }
 
-fn buffer_diff_hunk(
-    buffer_snapshot: &MultiBufferSnapshot,
-    row_range: Range<Point>,
-) -> Option<MultiBufferDiffHunk> {
-    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(
-        MultiBufferRow(row_range.start.row)..MultiBufferRow(row_range.end.row),
-    );
-    let hunk = hunks.next()?;
-    let second_hunk = hunks.next();
-    if second_hunk.is_none() {
-        return Some(hunk);
-    }
-    None
-}
-
 impl DisplayDiffHunk {
     pub fn start_display_row(&self) -> DisplayRow {
         match self {
@@ -1209,7 +1229,10 @@ pub fn diff_hunk_to_display(
         let hunk_end_point = Point::new(hunk_end_row.0, 0);
 
         let multi_buffer_start = snapshot.buffer_snapshot.anchor_before(hunk_start_point);
-        let multi_buffer_end = snapshot.buffer_snapshot.anchor_after(hunk_end_point);
+        let multi_buffer_end = snapshot
+            .buffer_snapshot
+            .anchor_in_excerpt(multi_buffer_start.excerpt_id, hunk.buffer_range.end)
+            .unwrap();
         let end = hunk_end_point.to_display_point(snapshot).row();
 
         DisplayDiffHunk::Unfolded {

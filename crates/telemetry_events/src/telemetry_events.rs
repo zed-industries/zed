@@ -1,11 +1,10 @@
 //! See [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional information.
 
-use language::LanguageName;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, sync::Arc, time::Duration};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EventRequestBody {
     /// Identifier unique to each system Zed is installed on
     pub system_id: Option<String>,
@@ -33,7 +32,7 @@ impl EventRequestBody {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EventWrapper {
     pub signed_in: bool,
     /// Duration between this event's timestamp and the timestamp of the first event in the current batch
@@ -48,6 +47,7 @@ pub struct EventWrapper {
 pub enum AssistantKind {
     Panel,
     Inline,
+    InlineTerminal,
 }
 impl Display for AssistantKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -57,6 +57,7 @@ impl Display for AssistantKind {
             match self {
                 Self::Panel => "panel",
                 Self::Inline => "inline",
+                Self::InlineTerminal => "inline_terminal",
             }
         )
     }
@@ -91,7 +92,6 @@ impl Display for AssistantPhase {
 #[serde(tag = "type")]
 pub enum Event {
     Editor(EditorEvent),
-    Copilot(CopilotEvent), // Needed for clients sending old copilot_event types
     InlineCompletion(InlineCompletionEvent),
     Call(CallEvent),
     Assistant(AssistantEvent),
@@ -117,15 +117,9 @@ pub struct EditorEvent {
     pub copilot_enabled: bool,
     /// Whether the user has copilot enabled for the language of the file opened or saved
     pub copilot_enabled_for_language: bool,
-}
-
-/// Deprecated since Zed v0.137.0 (2024-05-29). Replaced by InlineCompletionEvent.
-// Needed for clients sending old copilot_event types
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CopilotEvent {
-    pub suggestion_id: Option<String>,
-    pub suggestion_accepted: bool,
-    pub file_extension: Option<String>,
+    /// Whether the client is opening/saving a local file or a remote file via SSH
+    #[serde(default)]
+    pub is_via_ssh: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -148,6 +142,8 @@ pub struct CallEvent {
 pub struct AssistantEvent {
     /// Unique random identifier for each assistant tab (None for inline assist)
     pub conversation_id: Option<String>,
+    /// Server-generated message ID (only supported for some providers)
+    pub message_id: Option<String>,
     /// The kind of assistant (Panel, Inline)
     pub kind: AssistantKind,
     #[serde(default)]
@@ -157,7 +153,7 @@ pub struct AssistantEvent {
     pub model_provider: String,
     pub response_latency: Option<Duration>,
     pub error_message: Option<String>,
-    pub language_name: Option<LanguageName>,
+    pub language_name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -182,6 +178,9 @@ pub struct ActionEvent {
 pub struct EditEvent {
     pub duration: i64,
     pub environment: String,
+    /// Whether the edits occurred locally or remotely via SSH
+    #[serde(default)]
+    pub is_via_ssh: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -227,13 +226,13 @@ pub struct HangReport {
     pub installation_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct LocationData {
     pub file: String,
     pub line: u32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Panic {
     /// The name of the thread that panicked
     pub thread: String,

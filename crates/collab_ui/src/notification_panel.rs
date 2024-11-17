@@ -19,7 +19,9 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
-use ui::{h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label, Tooltip};
+use ui::{
+    h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip,
+};
 use util::{ResultExt, TryFutureExt};
 use workspace::notifications::NotificationId;
 use workspace::{
@@ -588,7 +590,7 @@ impl Render for NotificationPanel {
                     .px_2()
                     .py_1()
                     // Match the height of the tab bar so they line up.
-                    .h(rems(ui::Tab::CONTAINER_HEIGHT_IN_REMS))
+                    .h(Tab::container_height(cx))
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(Label::new("Notifications"))

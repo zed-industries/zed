@@ -44,12 +44,27 @@
 ; Variables
 ;----------
 
-[(type_variable) (value_pattern)] @variable
+(value_pattern) @variable
+
+(type_variable) @variable.special
 
 ; Properties
 ;-----------
 
-[(label_name) (field_name) (instance_variable_name)] @property
+[(field_name) (instance_variable_name)] @property
+
+; Labels
+;-------
+
+[(label_name) (parameter)] @label
+
+(parameter
+    pattern: (value_pattern) @label)
+; despite the above rule, we should still label value_pattern as a variable
+; when a label name is present
+(parameter
+    (label_name)
+    pattern: (value_pattern) @variable)
 
 ; Constants
 ;----------
@@ -112,7 +127,7 @@
 ; Punctuation
 ;------------
 
-["(" ")" "[" "]" "{" "}" "[|" "|]" "[<" "[>"] @punctuation.bracket
+["(" ")" "[" "]" "{" "}" "[|" "|]" "[<" "[>" "[@@" "[@" "[%"] @punctuation.bracket
 
 (object_type ["<" ">"] @punctuation.bracket)
 
@@ -132,7 +147,7 @@
   (item_extension)
   (quoted_extension)
   (quoted_item_extension)
-  "%"
+
 ] @attribute
 
 (attribute_id) @tag

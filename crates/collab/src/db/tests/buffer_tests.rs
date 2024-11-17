@@ -121,11 +121,13 @@ async fn test_channel_buffers(db: &Arc<Database>) {
                 user_id: a_id.to_proto(),
                 peer_id: Some(rpc::proto::PeerId { id: 1, owner_id }),
                 replica_id: 0,
+                is_host: false,
             },
             rpc::proto::Collaborator {
                 user_id: b_id.to_proto(),
                 peer_id: Some(rpc::proto::PeerId { id: 2, owner_id }),
                 replica_id: 1,
+                is_host: false,
             }
         ]
     );
