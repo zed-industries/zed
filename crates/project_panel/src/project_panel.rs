@@ -53,7 +53,7 @@ use ui::{
     IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, Scrollbar, ScrollbarState,
     Tooltip,
 };
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{maybe, paths::compare_paths, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
@@ -1186,7 +1186,7 @@ impl ProjectPanel {
                 return None;
             }
             let project = self.project.read(cx);
-            let items_to_delete = self.marked_entries();
+            let items_to_delete = self.sanitized_marked_entries(cx);
 
             let mut dirty_buffers = 0;
             let file_paths = items_to_delete
@@ -1259,7 +1259,7 @@ impl ProjectPanel {
             } else {
                 None
             };
-            let next_selection = self.find_next_selection_after_deletion(cx);
+            let next_selection = self.find_next_selection_after_deletion(items_to_delete, cx);
             cx.spawn(|panel, mut cx| async move {
                 if let Some(answer) = answer {
                     if answer.await != Ok(0) {
@@ -1267,19 +1267,15 @@ impl ProjectPanel {
                     }
                 }
                 for (entry_id, _) in file_paths {
-                    if let Some(task) = panel
+                    panel
                         .update(&mut cx, |panel, cx| {
                             panel
                                 .project
                                 .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
-                        })
-                        .ok()
-                        .flatten()
-                    {
-                        task.await.ok();
-                    }
+                                .ok_or_else(|| anyhow!("no such entry"))
+                        })??
+                        .await?;
                 }
-
                 panel.update(&mut cx, |panel, cx| {
                     if let Some(next_selection) = next_selection {
                         panel.selection = Some(next_selection);
@@ -1297,73 +1293,79 @@ impl ProjectPanel {
 
     fn find_next_selection_after_deletion(
         &self,
+        items_to_delete: BTreeSet<SelectedEntry>,
         cx: &mut ViewContext<Self>,
     ) -> Option<SelectedEntry> {
-        let selection = self.selection?;
-        let (worktree_ix, _, _) = self.index_for_selection(selection)?;
-        let (worktree_id, entries, _) = &self.visible_entries[worktree_ix];
+        if items_to_delete.is_empty() {
+            return None;
+        }
+        let project = self.project.read(cx);
 
-        let mut last_marked_entry_without_marked_ancestors: Option<SelectedEntry> = None;
-        for entry in entries {
-            let current_selection = SelectedEntry {
-                worktree_id: *worktree_id,
-                entry_id: entry.id,
-            };
+        let last_worktree_id = items_to_delete.iter().map(|e| e.worktree_id).max()?;
+        let worktree = project.worktree_for_id(last_worktree_id, cx)?;
+        let worktree = worktree.read(cx);
 
-            if !self.marked_entries.contains(&current_selection)
-                && self.selection != Some(current_selection)
-            {
-                continue;
-            }
-
-            if let Some(last_entry) = &last_marked_entry_without_marked_ancestors {
-                if let Some(last_path) = self
-                    .project
-                    .read(cx)
-                    .worktree_for_id(*worktree_id, cx)
-                    .and_then(|wt| wt.read(cx).entry_for_id(last_entry.entry_id))
-                    .map(|e| &e.path)
-                {
-                    if entry.path.starts_with(last_path) {
-                        continue;
+        let last_deleted_entry = items_to_delete
+            .iter()
+            .filter(|e| e.worktree_id == last_worktree_id)
+            .max_by(|a, b| {
+                let a_entry = worktree.entry_for_id(a.entry_id);
+                let b_entry = worktree.entry_for_id(b.entry_id);
+                match (a_entry, b_entry) {
+                    (Some(a), Some(b)) => {
+                        compare_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
                     }
+                    _ => std::cmp::Ordering::Equal,
                 }
-            }
+            })
+            .copied()
+            .map(|e| worktree.entry_for_id(e.entry_id))??;
 
-            last_marked_entry_without_marked_ancestors = Some(current_selection);
+        let parent_path = last_deleted_entry.path.parent()?;
+        let parent_entry = worktree.entry_for_path(parent_path)?;
+
+        // Remove all siblings that are being deleted except the last deleted entry
+        let mut remaining_siblings: Vec<Entry> = worktree
+            .snapshot()
+            .child_entries(parent_path)
+            .filter(|sibling| {
+                sibling.id == last_deleted_entry.id
+                    || !items_to_delete.contains(&SelectedEntry {
+                        worktree_id: last_worktree_id,
+                        entry_id: sibling.id,
+                    })
+            })
+            .cloned()
+            .collect();
+
+        project::sort_worktree_entries(&mut remaining_siblings);
+        let deleted_entry_position = remaining_siblings
+            .iter()
+            .position(|sibling| sibling.id == last_deleted_entry.id)?;
+
+        // Try next sibling
+        if let Some(next_sibling) = remaining_siblings.get(deleted_entry_position + 1) {
+            return Some(SelectedEntry {
+                worktree_id: last_worktree_id,
+                entry_id: next_sibling.id,
+            });
         }
 
-        if let Some(last_entry) = last_marked_entry_without_marked_ancestors {
-            let worktree = self
-                .project
-                .read(cx)
-                .worktree_for_id(*worktree_id, cx)?
-                .read(cx);
-
-            let entry = worktree.entry_for_id(last_entry.entry_id)?;
-            let entry_ix = entries.iter().position(|e| e.id == entry.id)?;
-
-            // Use next visible entry after last_entry
-            let next_entry = entries[entry_ix + 1..]
-                .iter()
-                .find(|e| {
-                    if entry.is_dir() {
-                        // If last_entry is a directory, skip all entries inside it
-                        !e.path.starts_with(&entry.path)
-                    } else {
-                        // If last_entry is a file, take the first entry
-                        true
-                    }
-                })
-                .map(|entry| SelectedEntry {
-                    worktree_id: *worktree_id,
-                    entry_id: entry.id,
+        // Try previous sibling
+        if deleted_entry_position > 0 {
+            if let Some(prev_sibling) = remaining_siblings.get(deleted_entry_position - 1) {
+                return Some(SelectedEntry {
+                    worktree_id: last_worktree_id,
+                    entry_id: prev_sibling.id,
                 });
-
-            return next_entry;
+            }
         }
 
-        None
+        // Fall back to parent
+        Some(SelectedEntry {
+            worktree_id: last_worktree_id,
+            entry_id: parent_entry.id,
+        })
     }
 
     fn unfold_directory(&mut self, _: &UnfoldDirectory, cx: &mut ViewContext<Self>) {
@@ -1916,6 +1918,50 @@ impl ProjectPanel {
             }
         }
         None
+    }
+
+    fn sanitized_marked_entries(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
+        let marked = self.marked_entries();
+        if marked.is_empty() {
+            return BTreeSet::default();
+        }
+
+        let project = self.project.read(cx);
+        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> =
+            marked
+                .into_iter()
+                .fold(HashMap::default(), |mut map, entry| {
+                    map.entry(entry.worktree_id).or_default().push(entry);
+                    map
+                });
+
+        let mut result = BTreeSet::new();
+        for (worktree_id, entries) in entries_by_worktree {
+            if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
+                let worktree = worktree.read(cx);
+
+                let marked_paths: HashSet<Arc<Path>> = entries
+                    .iter()
+                    .filter_map(|entry| worktree.entry_for_id(entry.entry_id))
+                    .map(|entry| entry.path.clone())
+                    .collect();
+
+                for entry in entries {
+                    if let Some(entry_info) = worktree.entry_for_id(entry.entry_id) {
+                        if !entry_info
+                            .path
+                            .ancestors()
+                            .skip(1)
+                            .any(|ancestor| marked_paths.contains(ancestor))
+                        {
+                            result.insert(entry);
+                        }
+                    }
+                }
+            }
+        }
+
+        result
     }
 
     // Returns list of entries that should be affected by an operation.
