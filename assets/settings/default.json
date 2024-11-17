@@ -990,6 +990,11 @@
         "allowed": true
       }
     },
+    "Nix": {
+      "hard_tabs": false,
+      "tab_size": 2,
+      "preferred_line_length": 100
+    },
     "PHP": {
       "language_servers": ["phpactor", "!intelephense", "..."],
       "prettier": {
