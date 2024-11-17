@@ -4,7 +4,7 @@ use editor::{
         self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
     },
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset,
+    Anchor, Bias, Direction, DisplayPoint, Editor, RowExt, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext};
 use language::{CharKind, Point, Selection, SelectionGoal};
@@ -69,6 +69,8 @@ pub enum Motion {
     SentenceForward,
     StartOfParagraph,
     EndOfParagraph,
+    SectionForward,
+    SectionBackward,
     StartOfDocument,
     EndOfDocument,
     Matching,
@@ -234,6 +236,8 @@ actions!(
         SentenceBackward,
         StartOfParagraph,
         EndOfParagraph,
+        SectionForward,
+        SectionBackward,
         StartOfDocument,
         EndOfDocument,
         Matching,
@@ -316,6 +320,12 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &SentenceBackward, cx| {
         vim.motion(Motion::SentenceBackward, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &SectionForward, cx| {
+        vim.motion(Motion::SectionForward, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &SectionBackward, cx| {
+        vim.motion(Motion::SectionBackward, cx)
     });
     Vim::action(editor, cx, |vim, _: &StartOfDocument, cx| {
         vim.motion(Motion::StartOfDocument, cx)
@@ -496,6 +506,8 @@ impl Motion {
             | StartOfLineDownward
             | SentenceBackward
             | SentenceForward
+            | SectionForward
+            | SectionBackward
             | StartOfParagraph
             | EndOfParagraph
             | WindowTop
@@ -548,6 +560,8 @@ impl Motion {
             | EndOfParagraph
             | SentenceBackward
             | SentenceForward
+            | SectionForward
+            | SectionBackward
             | StartOfLineDownward
             | EndOfLineDownward
             | GoToColumn
@@ -603,6 +617,8 @@ impl Motion {
             | EndOfParagraph
             | SentenceBackward
             | SentenceForward
+            | SectionForward
+            | SectionBackward
             | GoToColumn
             | NextWordStart { .. }
             | PreviousWordStart { .. }
@@ -692,6 +708,14 @@ impl Motion {
             ),
             SentenceBackward => (sentence_backwards(map, point, times), SelectionGoal::None),
             SentenceForward => (sentence_forwards(map, point, times), SelectionGoal::None),
+            SectionForward => (
+                matching_function(map, point, Direction::Next),
+                SelectionGoal::None,
+            ),
+            SectionBackward => (
+                matching_function(map, point, Direction::Prev),
+                SelectionGoal::None,
+            ),
             StartOfParagraph => (
                 movement::start_of_paragraph(map, point, times),
                 SelectionGoal::None,
@@ -1787,6 +1811,49 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         closest_pair_destination
             .map(|destination| destination.to_display_point(map))
             .unwrap_or(display_point)
+    } else {
+        display_point
+    }
+}
+
+fn matching_function(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    direction: Direction,
+) -> DisplayPoint {
+    let display_point = map.clip_at_line_end(display_point);
+    let point = display_point.to_point(map);
+    let offset = point.to_offset(&map.buffer_snapshot);
+
+    if let Some(ranges) = map.buffer_snapshot.function_ranges(point) {
+        // Collect all function ranges in the buffer
+        let ranges: Vec<_> = ranges.collect();
+
+        if !ranges.is_empty() {
+            dbg!("ranges not empty");
+            match direction {
+                Direction::Next => {
+                    // Find the next function after current position
+                    ranges
+                        .iter()
+                        .filter(|range| range.start > offset)
+                        .min_by_key(|range| range.start - offset)
+                        .map(|range| range.start.to_display_point(map))
+                        .unwrap_or(display_point)
+                }
+                Direction::Prev => {
+                    // Find the previous function before current position
+                    ranges
+                        .iter()
+                        .filter(|range| range.start < offset)
+                        .max_by_key(|range| range.start)
+                        .map(|range| range.start.to_display_point(map))
+                        .unwrap_or(display_point)
+                }
+            }
+        } else {
+            display_point
+        }
     } else {
         display_point
     }

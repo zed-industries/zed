@@ -1032,6 +1032,29 @@ fn test_enclosing_bracket_ranges(cx: &mut AppContext) {
 }
 
 #[gpui::test]
+fn test_enclosing_function_ranges(cx: &mut AppContext) {
+    let mut assert = |selection_text, range_markers| {
+        assert_function(selection_text, range_markers, rust_lang(), cx)
+    };
+
+    dbg!("here 2");
+
+    assert(
+        indoc! {"
+            pub fn test(test_string: String) -> Option<bool> {
+                if test_string.len() ˇ> 0 {
+                    Some(true)
+                } else {
+                    None
+                }
+            }
+            "},
+        vec![indoc! {"
+        "}],
+    );
+}
+
+#[gpui::test]
 fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &mut AppContext) {
     let mut assert = |selection_text, bracket_pair_texts| {
         assert_bracket_pairs(selection_text, bracket_pair_texts, javascript_lang(), cx)
@@ -3211,6 +3234,203 @@ fn rust_lang() -> Language {
         "#,
     )
     .unwrap()
+    .with_highlights_query(
+        r##"
+        (type_identifier) @type
+        (primitive_type) @type.builtin
+        (self) @variable.special
+        (field_identifier) @property
+
+        (trait_item name: (type_identifier) @type.interface)
+        (impl_item trait: (type_identifier) @type.interface)
+        (abstract_type trait: (type_identifier) @type.interface)
+        (dynamic_type trait: (type_identifier) @type.interface)
+        (trait_bounds (type_identifier) @type.interface)
+
+        (call_expression
+          function: [
+            (identifier) @function
+            (scoped_identifier
+              name: (identifier) @function)
+            (field_expression
+              field: (field_identifier) @function.method)
+          ])
+
+        (generic_function
+          function: [
+            (identifier) @function
+            (scoped_identifier
+              name: (identifier) @function)
+            (field_expression
+              field: (field_identifier) @function.method)
+          ])
+
+        (function_item name: (identifier) @function.definition)
+        (function_signature_item name: (identifier) @function.definition)
+
+        (macro_invocation
+          macro: [
+            (identifier) @function.special
+            (scoped_identifier
+              name: (identifier) @function.special)
+          ])
+
+        (macro_definition
+          name: (identifier) @function.special.definition)
+
+        ; Identifier conventions
+
+        ; Assume uppercase names are types/enum-constructors
+        ((identifier) @type
+         (#match? @type "^[A-Z]"))
+
+        ; Assume all-caps names are constants
+        ((identifier) @constant
+         (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+
+        [
+          "("
+          ")"
+          "{"
+          "}"
+          "["
+          "]"
+        ] @punctuation.bracket
+
+        (_
+          .
+          "<" @punctuation.bracket
+          ">" @punctuation.bracket)
+
+        [
+          "."
+          ";"
+          ","
+          "::"
+        ] @punctuation.delimiter
+
+        [
+          "#"
+        ] @punctuation.special
+
+        [
+          "as"
+          "async"
+          "await"
+          "break"
+          "const"
+          "continue"
+          "default"
+          "dyn"
+          "else"
+          "enum"
+          "extern"
+          "fn"
+          "for"
+          "if"
+          "impl"
+          "in"
+          "let"
+          "loop"
+          "macro_rules!"
+          "match"
+          "mod"
+          "move"
+          "pub"
+          "ref"
+          "return"
+          "static"
+          "struct"
+          "trait"
+          "type"
+          "union"
+          "unsafe"
+          "use"
+          "where"
+          "while"
+          "yield"
+          (crate)
+          (mutable_specifier)
+          (super)
+        ] @keyword
+
+        [
+          (string_literal)
+          (raw_string_literal)
+          (char_literal)
+        ] @string
+
+        (escape_sequence) @string.escape
+
+        [
+          (integer_literal)
+          (float_literal)
+        ] @number
+
+        (boolean_literal) @constant
+
+        [
+          (line_comment)
+          (block_comment)
+        ] @comment
+
+        [
+          (line_comment (doc_comment))
+          (block_comment (doc_comment))
+        ] @comment.doc
+
+        [
+          "!="
+          "%"
+          "%="
+          "&"
+          "&="
+          "&&"
+          "*"
+          "*="
+          "+"
+          "+="
+          "-"
+          "-="
+          "->"
+          ".."
+          "..="
+          "..."
+          "/="
+          ":"
+          "<<"
+          "<<="
+          "<"
+          "<="
+          "="
+          "=="
+          "=>"
+          ">"
+          ">="
+          ">>"
+          ">>="
+          "@"
+          "^"
+          "^="
+          "|"
+          "|="
+          "||"
+          "?"
+        ] @operator
+
+        ; Avoid highlighting these as operators when used in doc comments.
+        (unary_expression "!" @operator)
+        operator: "/" @operator
+
+        (lifetime) @lifetime
+
+        (parameter (identifier) @variable.parameter)
+
+        (attribute_item) @attribute
+        (inner_attribute_item) @attribute
+        "##,
+    )
+    .unwrap()
 }
 
 fn json_lang() -> Language {
@@ -3325,6 +3545,36 @@ fn assert_bracket_pairs(
         buffer.bracket_ranges(selection_range).collect::<Vec<_>>(),
         bracket_pairs
     );
+}
+
+// Assert that the enclosing bracket ranges around the selection match the pairs indicated by the marked text in `range_markers`
+fn assert_function(
+    selection_text: &'static str,
+    function_texts: Vec<&'static str>,
+    language: Language,
+    cx: &mut AppContext,
+) {
+    let (expected_text, selection_ranges) = marked_text_ranges(selection_text, false);
+    let buffer = cx.new_model(|cx| {
+        Buffer::local(expected_text.clone(), cx).with_language(Arc::new(language), cx)
+    });
+    let buffer = buffer.update(cx, |buffer, _cx| buffer.snapshot());
+
+    let selection_range = selection_ranges[0].clone();
+
+    dbg!("here?");
+
+    let function_ranges = dbg!(buffer.function_ranges(selection_range).collect::<Vec<_>>());
+    dbg!(function_ranges);
+
+    let bracket_pairs = function_texts
+        .into_iter()
+        .map(|pair_text| {
+            let (bracket_text, ranges) = marked_text_ranges(pair_text, false);
+            assert_eq!(bracket_text, expected_text);
+            (ranges[0].clone(), ranges[1].clone())
+        })
+        .collect::<Vec<_>>();
 }
 
 fn init_settings(cx: &mut AppContext, f: fn(&mut AllLanguageSettingsContent)) {

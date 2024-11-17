@@ -32,6 +32,8 @@
       "}": "vim::EndOfParagraph",
       "(": "vim::SentenceBackward",
       ")": "vim::SentenceForward",
+      "] ]": "vim::SectionForward",
+      "[ [": "vim::SectionBackward",
       "|": "vim::GoToColumn",
       // Word motions
       "w": "vim::NextWordStart",

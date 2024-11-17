@@ -30,6 +30,8 @@
 (function_item name: (identifier) @function.definition)
 (function_signature_item name: (identifier) @function.definition)
 
+(function_item body: (block) @function.body)
+
 (macro_invocation
   macro: [
     (identifier) @function.special

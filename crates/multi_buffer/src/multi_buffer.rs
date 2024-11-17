@@ -3504,6 +3504,18 @@ impl MultiBufferSnapshot {
 
     /// Returns bracket range pairs overlapping the given `range` or returns None if the `range` is
     /// not contained in a single excerpt
+    pub fn function_ranges<T: ToOffset>(
+        &self,
+        point: T,
+    ) -> Option<impl Iterator<Item = Range<usize>> + '_> {
+        let (buffer, _) = self.point_to_buffer_offset(point)?;
+        let range = 0..buffer.len();
+
+        Some(buffer.function_ranges(range))
+    }
+
+    /// Returns bracket range pairs overlapping the given `range` or returns None if the `range` is
+    /// not contained in a single excerpt
     pub fn bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,

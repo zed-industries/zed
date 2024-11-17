@@ -32,7 +32,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::WorktreeId;
-use similar::{ChangeTag, TextDiff};
+use similar::{ChangeTag, DiffableStr, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -2795,7 +2795,7 @@ impl BufferSnapshot {
         None
     }
 
-    fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures, Vec<HighlightMap>) {
+    pub fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures, Vec<HighlightMap>) {
         let captures = self.syntax.captures(range, &self.text, |grammar| {
             grammar.highlights_query.as_ref()
         });
@@ -3346,6 +3346,47 @@ impl BufferSnapshot {
                 }
 
                 return Some((open, close));
+            }
+            None
+        })
+    }
+
+    pub fn function_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
+
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+            grammar.highlights_query.as_ref()
+        });
+        let configs = matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.highlights_query.as_ref().unwrap())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            while let Some(mat) = matches.peek() {
+                // Look for captures that indicate function definitions
+                // You'll need to adjust these capture names based on your highlighting scheme
+                let config = &configs[mat.grammar_index];
+                let function_range = mat.captures.iter().find_map(|capture| {
+                    // Get the name for this specific capture's index
+                    let capture_name = config.capture_names().get(capture.index as usize);
+                    if capture_name == Some(&"function.body") {
+                        Some(capture.node.byte_range())
+                    } else {
+                        None
+                    }
+                });
+
+                matches.advance();
+
+                if let Some(range) = function_range {
+                    return Some(range);
+                }
             }
             None
         })
