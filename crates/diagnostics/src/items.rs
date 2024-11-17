@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use editor::Editor;
 use gpui::{
-    EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
+    EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, Task, View, ViewContext,
     WeakView,
 };
 use language::Diagnostic;
@@ -14,7 +16,9 @@ pub struct DiagnosticIndicator {
     active_editor: Option<WeakView<Editor>>,
     workspace: WeakView<Workspace>,
     current_diagnostic: Option<Diagnostic>,
+    pending_diagnostic: Option<Diagnostic>,
     _observe_active_editor: Option<Subscription>,
+    _diagnostic_update_task: Option<Task<()>>,
 }
 
 impl Render for DiagnosticIndicator {
@@ -125,7 +129,9 @@ impl DiagnosticIndicator {
             active_editor: None,
             workspace: workspace.weak_handle(),
             current_diagnostic: None,
+            pending_diagnostic: None,
             _observe_active_editor: None,
+            _diagnostic_update_task: None,
         }
     }
 
@@ -148,10 +154,44 @@ impl DiagnosticIndicator {
             .filter(|entry| !entry.range.is_empty())
             .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
             .map(|entry| entry.diagnostic);
-        if new_diagnostic != self.current_diagnostic {
-            self.current_diagnostic = new_diagnostic;
-            cx.notify();
+        if new_diagnostic == self.current_diagnostic {
+            return;
         }
+
+        // if we have a diagnostic, we should update the current diagnostic immediately
+        // otherwise we should debounce the update to avoid flashing
+        if new_diagnostic.is_some() {
+            self.current_diagnostic = new_diagnostic;
+            self._diagnostic_update_task = None;
+            cx.notify();
+        } else {
+            self.pending_diagnostic = new_diagnostic;
+            self._debounced_diagnostic_update(cx);
+        }
+    }
+
+    fn _debounced_diagnostic_update(&mut self, cx: &mut ViewContext<Self>) {
+        // do not schedule another task if one is already running
+        if self._diagnostic_update_task.is_some() {
+            return;
+        }
+
+        self._diagnostic_update_task = Some(cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+
+            this.update(&mut cx, |this, cx| {
+                // check if the background update has been aborted
+                if this._diagnostic_update_task.is_none() {
+                    return;
+                }
+                this._diagnostic_update_task = None;
+                this.current_diagnostic = this.pending_diagnostic.clone();
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 }
 
