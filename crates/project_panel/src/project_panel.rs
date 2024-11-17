@@ -1302,19 +1302,19 @@ impl ProjectPanel {
         }
         let project = self.project.read(cx);
 
-        let last_worktree_id = sanitized_entries.iter().map(|e| e.worktree_id).max()?;
-        let last_worktree = project.worktree_for_id(last_worktree_id, cx)?.read(cx);
+        let worktree_id = sanitized_entries.iter().map(|e| e.worktree_id).max()?;
+        let worktree = project.worktree_for_id(worktree_id, cx)?.read(cx);
 
-        let marked_entries_in_last_worktree: Vec<&SelectedEntry> = sanitized_entries
+        let marked_entries_in_worktree: Vec<&SelectedEntry> = sanitized_entries
             .iter()
-            .filter(|e| e.worktree_id == last_worktree_id)
+            .filter(|e| e.worktree_id == worktree_id)
             .collect();
 
-        let last_marked_entry = marked_entries_in_last_worktree
+        let entry = marked_entries_in_worktree
             .iter()
             .max_by(|a, b| {
-                let a_entry = last_worktree.entry_for_id(a.entry_id);
-                let b_entry = last_worktree.entry_for_id(b.entry_id);
+                let a_entry = worktree.entry_for_id(a.entry_id);
+                let b_entry = worktree.entry_for_id(b.entry_id);
                 match (a_entry, b_entry) {
                     (Some(a), Some(b)) => {
                         compare_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
@@ -1322,45 +1322,43 @@ impl ProjectPanel {
                     _ => std::cmp::Ordering::Equal,
                 }
             })
-            .map(|e| last_worktree.entry_for_id(e.entry_id))??;
+            .map(|e| worktree.entry_for_id(e.entry_id))??;
 
-        let parent_path = last_marked_entry.path.parent()?;
-        let parent_entry = last_worktree.entry_for_path(parent_path)?;
+        let parent_path = entry.path.parent()?;
+        let parent_entry = worktree.entry_for_path(parent_path)?;
 
         // Remove all siblings that are being deleted except the last marked entry
-        let mut remaining_siblings: Vec<Entry> = last_worktree
+        let mut siblings: Vec<Entry> = worktree
             .snapshot()
             .child_entries(parent_path)
             .filter(|sibling| {
-                sibling.id == last_marked_entry.id
-                    || !marked_entries_in_last_worktree.contains(&&SelectedEntry {
-                        worktree_id: last_worktree_id,
+                sibling.id == entry.id
+                    || !marked_entries_in_worktree.contains(&&SelectedEntry {
+                        worktree_id,
                         entry_id: sibling.id,
                     })
             })
             .cloned()
             .collect();
 
-        project::sort_worktree_entries(&mut remaining_siblings);
-        let deleted_entry_position = remaining_siblings
-            .iter()
-            .position(|sibling| sibling.id == last_marked_entry.id)?;
+        project::sort_worktree_entries(&mut siblings);
+        let entry_index = siblings.iter().position(|sibling| sibling.id == entry.id)?;
 
         // Try next sibling
-        if deleted_entry_position + 1 < remaining_siblings.len() {
-            if let Some(next_sibling) = remaining_siblings.get(deleted_entry_position + 1) {
+        if entry_index + 1 < siblings.len() {
+            if let Some(next_sibling) = siblings.get(entry_index + 1) {
                 return Some(SelectedEntry {
-                    worktree_id: last_worktree_id,
+                    worktree_id,
                     entry_id: next_sibling.id,
                 });
             }
         }
 
         // Try previous sibling
-        if deleted_entry_position > 0 {
-            if let Some(prev_sibling) = remaining_siblings.get(deleted_entry_position - 1) {
+        if entry_index > 0 {
+            if let Some(prev_sibling) = siblings.get(entry_index - 1) {
                 return Some(SelectedEntry {
-                    worktree_id: last_worktree_id,
+                    worktree_id,
                     entry_id: prev_sibling.id,
                 });
             }
@@ -1368,7 +1366,7 @@ impl ProjectPanel {
 
         // Fall back to parent
         Some(SelectedEntry {
-            worktree_id: last_worktree_id,
+            worktree_id,
             entry_id: parent_entry.id,
         })
     }
@@ -6535,24 +6533,6 @@ mod tests {
         );
 
         // Test Case 2: Delete last file in directory
-        select_path(&panel, "root/dir1/file2.txt", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir1",
-                "        > subdir1",
-                "          file2.txt  <== selected",
-                "    v dir2",
-                "        > subdir2",
-                "          file3.txt",
-                "          file4.txt",
-                "      file5.txt",
-                "      file6.txt",
-            ],
-            "Initial state before deleting last file in directory"
-        );
-
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..15, cx),
@@ -6854,6 +6834,149 @@ mod tests {
             visible_entries_as_strings(&panel, 0..20, cx),
             &["v root", "    v dir2  <== selected", "          file2.txt",],
             "Only dir2 should remain after deletion"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_multiple_worktrees_deletion(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        // First worktree
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "dir1": {
+                    "file1.txt": "content 1",
+                    "file2.txt": "content 2",
+                },
+                "dir2": {
+                    "file3.txt": "content 3",
+                },
+            }),
+        )
+        .await;
+
+        // Second worktree
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "dir3": {
+                    "file4.txt": "content 4",
+                    "file5.txt": "content 5",
+                },
+                "file6.txt": "content 6",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        // Expand all directories for testing
+        toggle_expand_dir(&panel, "root1/dir1", cx);
+        toggle_expand_dir(&panel, "root1/dir2", cx);
+        toggle_expand_dir(&panel, "root2/dir3", cx);
+
+        // Test Case 1: Delete files across different worktrees
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        });
+        select_path_with_mark(&panel, "root1/dir1/file1.txt", cx);
+        select_path_with_mark(&panel, "root2/dir3/file4.txt", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v root1",
+                "    v dir1",
+                "          file1.txt  <== marked",
+                "          file2.txt",
+                "    v dir2",
+                "          file3.txt",
+                "v root2",
+                "    v dir3",
+                "          file4.txt  <== selected  <== marked",
+                "          file5.txt",
+                "      file6.txt",
+            ],
+            "Initial state with files selected from different worktrees"
+        );
+
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v root1",
+                "    v dir1",
+                "          file2.txt",
+                "    v dir2",
+                "          file3.txt",
+                "v root2",
+                "    v dir3",
+                "          file5.txt  <== selected",
+                "      file6.txt",
+            ],
+            "Should select next file in the last worktree after deletion"
+        );
+
+        // Test Case 2: Delete directories from different worktrees
+        select_path_with_mark(&panel, "root1/dir1", cx);
+        select_path_with_mark(&panel, "root2/dir3", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v root1",
+                "    v dir1  <== marked",
+                "          file2.txt",
+                "    v dir2",
+                "          file3.txt",
+                "v root2",
+                "    v dir3  <== selected  <== marked",
+                "          file5.txt",
+                "      file6.txt",
+            ],
+            "State with directories marked from different worktrees"
+        );
+
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v root1",
+                "    v dir2",
+                "          file3.txt",
+                "v root2",
+                "      file6.txt  <== selected",
+            ],
+            "Should select remaining file in last worktree after directory deletion"
+        );
+
+        // Test Case 4: Delete all remaining files except roots
+        select_path_with_mark(&panel, "root1/dir2/file3.txt", cx);
+        select_path_with_mark(&panel, "root2/file6.txt", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v root1",
+                "    v dir2",
+                "          file3.txt  <== marked",
+                "v root2",
+                "      file6.txt  <== selected  <== marked",
+            ],
+            "State with all remaining files marked"
+        );
+
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &["v root1", "    v dir2", "v root2  <== selected"],
+            "Second parent root should be selected after deleting"
         );
     }
 
