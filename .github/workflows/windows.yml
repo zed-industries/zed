@@ -22,8 +22,8 @@ jobs:
       with:
         version-sdk: 26100
 
-    - name: Visual Studio shell
-      uses: egor-tensin/vs-shell@v2
+    #- name: Visual Studio shell
+    #  uses: egor-tensin/vs-shell@v2
 
     - name: rust update
       run:
