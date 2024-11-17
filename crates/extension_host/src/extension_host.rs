@@ -345,7 +345,10 @@ impl ExtensionStore {
                 if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
                     (index_metadata, extensions_metadata)
                 {
-                    if index_metadata.mtime > extensions_metadata.mtime {
+                    if index_metadata
+                        .mtime
+                        .bad_is_greater_than(extensions_metadata.mtime)
+                    {
                         extension_index_needs_rebuild = false;
                     }
                 }
