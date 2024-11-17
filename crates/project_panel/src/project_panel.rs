@@ -1347,19 +1347,23 @@ impl ProjectPanel {
             .position(|sibling| sibling.id == last_marked_entry.id)?;
 
         // Try next sibling
-        if let Some(next_sibling) = remaining_siblings.get(deleted_entry_position + 1) {
-            return Some(SelectedEntry {
-                worktree_id: last_worktree_id,
-                entry_id: next_sibling.id,
-            });
+        if deleted_entry_position + 1 < remaining_siblings.len() {
+            if let Some(next_sibling) = remaining_siblings.get(deleted_entry_position + 1) {
+                return Some(SelectedEntry {
+                    worktree_id: last_worktree_id,
+                    entry_id: next_sibling.id,
+                });
+            }
         }
 
         // Try previous sibling
-        if let Some(prev_sibling) = remaining_siblings.get(deleted_entry_position - 1) {
-            return Some(SelectedEntry {
-                worktree_id: last_worktree_id,
-                entry_id: prev_sibling.id,
-            });
+        if deleted_entry_position > 0 {
+            if let Some(prev_sibling) = remaining_siblings.get(deleted_entry_position - 1) {
+                return Some(SelectedEntry {
+                    worktree_id: last_worktree_id,
+                    entry_id: prev_sibling.id,
+                });
+            }
         }
 
         // Fall back to parent
@@ -6555,8 +6559,8 @@ mod tests {
             &[
                 "v root",
                 "    v dir1",
-                "        > subdir1",
-                "    v dir2  <== selected",
+                "        > subdir1  <== selected",
+                "    v dir2",
                 "        > subdir2",
                 "          file3.txt",
                 "          file4.txt",
@@ -6696,7 +6700,7 @@ mod tests {
                 "          file2.txt  <== marked",
                 "      file3.txt  <== selected  <== marked",
             ],
-            "Initial state before deleting mixed files across levels"
+            "Initial state before deleting"
         );
 
         submit_deletion(&panel, cx);
@@ -6704,11 +6708,11 @@ mod tests {
             visible_entries_as_strings(&panel, 0..15, cx),
             &[
                 "v root",
-                "    v dir2",
+                "    v dir2  <== selected",
                 "        v subdir2",
-                "              d.txt  <== selected",
+                "              d.txt",
             ],
-            "Should select next available file after mixed deletion"
+            "Should select sibling directory"
         );
     }
 
