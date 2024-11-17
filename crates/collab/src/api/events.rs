@@ -1520,7 +1520,10 @@ fn for_snowflake(
                         properties["is_first_for_channel"] = json!(true);
                         "App First Opened For Release Channel".to_string()
                     }
-                    "feature upsell: toggle vim" => "Vim Mode Toggled".to_string(),
+                    "feature upsell: toggle vim" => {
+                        properties["source"] = json!("Feature Upsell");
+                        "Vim Mode Toggled".to_string()
+                    }
                     _ => e
                         .operation
                         .strip_prefix("feature upsell: viewed docs (")
@@ -1529,6 +1532,7 @@ fn for_snowflake(
                             || format!("Unknown App Event: {}", e.operation),
                             |docs_url| {
                                 properties["url"] = json!(docs_url);
+                                properties["source"] = json!("Feature Upsell");
                                 "Documentation Viewed".to_string()
                             },
                         ),
