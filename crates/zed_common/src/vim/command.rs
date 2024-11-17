@@ -93,7 +93,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             return;
         };
         workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, "'<,'>", cx);
+            crate::command_palette::CommandPalette::toggle(workspace, "'<,'>", cx);
         })
     });
 
@@ -103,7 +103,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         };
         let count = vim.take_count(cx).unwrap_or(1);
         workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(
+            crate::command_palette::CommandPalette::toggle(
                 workspace,
                 &format!(".,.+{}", count.saturating_sub(1)),
                 cx,

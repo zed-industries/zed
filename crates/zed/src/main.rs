@@ -377,7 +377,7 @@ fn main() {
 
         SystemAppearance::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
-        command_palette::init(cx);
+        zed_common::command_palette::init(cx);
         let copilot_language_server_id = app_state.languages.next_language_server_id();
         copilot::init(
             copilot_language_server_id,

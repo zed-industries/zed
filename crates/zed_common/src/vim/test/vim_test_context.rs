@@ -19,7 +19,7 @@ impl VimTestContext {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
             release_channel::init(SemanticVersion::default(), cx);
-            command_palette::init(cx);
+            crate::command_palette::init(cx);
             crate::vim::init(cx);
             search::init(cx);
         });

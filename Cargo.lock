@@ -2514,34 +2514,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "command_palette"
-version = "0.1.0"
-dependencies = [
- "client",
- "collections",
- "command_palette_hooks",
- "ctor",
- "editor",
- "env_logger 0.11.5",
- "fuzzy",
- "go_to_line",
- "gpui",
- "language",
- "menu",
- "picker",
- "postage",
- "project",
- "serde",
- "serde_json",
- "settings",
- "theme",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "command_palette_hooks"
 version = "0.1.0"
 dependencies = [
@@ -14499,7 +14471,6 @@ dependencies = [
  "cli",
  "client",
  "collections",
- "command_palette",
  "command_palette_hooks",
  "context_servers",
  "copilot",
@@ -14620,7 +14591,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "command_palette",
  "command_palette_hooks",
  "context_servers",
  "copilot",
@@ -14641,6 +14611,7 @@ dependencies = [
  "fuzzy",
  "git",
  "globset",
+ "go_to_line",
  "google_ai",
  "gpui",
  "handlebars 4.5.0",
@@ -14673,6 +14644,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "postage",
  "pretty_assertions",
  "project",
  "proto",

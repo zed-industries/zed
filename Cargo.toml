@@ -12,7 +12,6 @@ members = [
     "crates/clock",
     "crates/collab",
     "crates/collections",
-    "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/context_servers",
     "crates/copilot",
@@ -161,7 +160,6 @@ client = { path = "crates/client" }
 clock = { path = "crates/clock" }
 collab = { path = "crates/collab" }
 collections = { path = "crates/collections" }
-command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 context_servers = { path = "crates/context_servers" }
 copilot = { path = "crates/copilot" }

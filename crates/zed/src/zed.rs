@@ -3487,7 +3487,7 @@ mod tests {
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
             release_channel::init(SemanticVersion::default(), cx);
-            command_palette::init(cx);
+            zed_common::command_palette::init(cx);
             language::init(cx);
             editor::init(cx);
             zed_common::collab_ui::init(&app_state, cx);

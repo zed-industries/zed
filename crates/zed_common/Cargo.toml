@@ -47,7 +47,6 @@ chrono.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
-command_palette.workspace = true
 command_palette_hooks.workspace = true
 context_servers.workspace = true
 copilot = { workspace = true, features = ["schemars"] }
@@ -96,6 +95,7 @@ outline.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
+postage.workspace = true
 project.workspace = true
 proto.workspace = true
 regex.workspace = true
@@ -157,6 +157,7 @@ env_logger.workspace = true
 extension_host = {workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+go_to_line.workspace = true
 http_client = { workspace = true, features = ["test-support"] }
 indexed_docs.workspace = true
 indoc.workspace = true

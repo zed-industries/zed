@@ -4,8 +4,8 @@ mod vim_test_context;
 
 use std::time::Duration;
 
+use crate::command_palette::CommandPalette;
 use collections::HashMap;
-use command_palette::CommandPalette;
 use editor::{actions::DeleteLine, display_map::DisplayRow, DisplayPoint};
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
