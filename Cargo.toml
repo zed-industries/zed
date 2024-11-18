@@ -148,7 +148,6 @@ members = [
     "extensions/haskell",
     "extensions/html",
     "extensions/lua",
-    "extensions/ocaml",
     "extensions/php",
     "extensions/perplexity",
     "extensions/prisma",
