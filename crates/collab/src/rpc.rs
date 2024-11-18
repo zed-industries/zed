@@ -4031,7 +4031,10 @@ async fn get_llm_api_token(
     }
 
     let has_llm_subscription = session.has_llm_subscription(&db).await?;
-    if !has_llm_subscription {
+
+    let bypass_account_age_check =
+        has_llm_subscription || flags.iter().any(|flag| flag == "bypass-account-age-check");
+    if !bypass_account_age_check {
         let mut account_created_at = user.created_at;
         if let Some(github_created_at) = user.github_user_created_at {
             account_created_at = account_created_at.min(github_created_at);
