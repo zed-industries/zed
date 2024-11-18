@@ -6552,6 +6552,45 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_snippet_placeholder_choices(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (text, insertion_ranges) = marked_text_ranges(
+        indoc! {"
+            ˇ
+        "},
+        false,
+    );
+
+    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+
+    _ = editor.update(cx, |editor, cx| {
+        let snippet = Snippet::parse("type ${1|,i32,u32|} = $2").unwrap();
+
+        editor
+            .insert_snippet(&insertion_ranges, snippet, cx)
+            .unwrap();
+
+        fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text: &str) {
+            let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
+            assert_eq!(editor.text(cx), expected_text);
+            assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
+        }
+
+        assert(
+            editor,
+            cx,
+            indoc! {"
+            type «» =•
+            "},
+        );
+
+        assert!(editor.context_menu_visible(), "There should be a matches");
+    });
+}
+
+#[gpui::test]
 async fn test_snippets(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
