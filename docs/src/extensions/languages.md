@@ -40,6 +40,8 @@ TBD: Document `language_name/config.toml` keys
 - scope_opt_in_language_servers
 - increase_indent_pattern, decrease_indent_pattern
 - collapsed_placeholder
+- auto_indent_on_paste, auto_indent_using_last_non_empty_line
+- overrides: `[overrides.element]`, `[overrides.string]`
 -->
 
 ## Grammar
