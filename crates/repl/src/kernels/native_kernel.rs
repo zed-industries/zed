@@ -1,7 +1,6 @@
 use anyhow::{Context as _, Result};
 use futures::{
     channel::mpsc::{self, Receiver},
-    future::Shared,
     stream::{self, SelectAll, StreamExt},
     SinkExt as _,
 };
@@ -20,6 +19,8 @@ use std::{
     sync::Arc,
 };
 use uuid::Uuid;
+
+use super::RunningKernel;
 
 #[derive(Debug, Clone)]
 pub struct LocalKernelSpecification {
@@ -87,94 +88,6 @@ async fn peek_ports(ip: IpAddr) -> Result<[u16; 5]> {
     Ok(ports)
 }
 
-#[derive(Debug, Clone)]
-pub enum KernelStatus {
-    Idle,
-    Busy,
-    Starting,
-    Error,
-    ShuttingDown,
-    Shutdown,
-    Restarting,
-}
-
-impl KernelStatus {
-    pub fn is_connected(&self) -> bool {
-        match self {
-            KernelStatus::Idle | KernelStatus::Busy => true,
-            _ => false,
-        }
-    }
-}
-
-impl ToString for KernelStatus {
-    fn to_string(&self) -> String {
-        match self {
-            KernelStatus::Idle => "Idle".to_string(),
-            KernelStatus::Busy => "Busy".to_string(),
-            KernelStatus::Starting => "Starting".to_string(),
-            KernelStatus::Error => "Error".to_string(),
-            KernelStatus::ShuttingDown => "Shutting Down".to_string(),
-            KernelStatus::Shutdown => "Shutdown".to_string(),
-            KernelStatus::Restarting => "Restarting".to_string(),
-        }
-    }
-}
-
-impl From<&Kernel> for KernelStatus {
-    fn from(kernel: &Kernel) -> Self {
-        match kernel {
-            Kernel::RunningKernel(kernel) => match kernel.execution_state {
-                ExecutionState::Idle => KernelStatus::Idle,
-                ExecutionState::Busy => KernelStatus::Busy,
-            },
-            Kernel::StartingKernel(_) => KernelStatus::Starting,
-            Kernel::ErroredLaunch(_) => KernelStatus::Error,
-            Kernel::ShuttingDown => KernelStatus::ShuttingDown,
-            Kernel::Shutdown => KernelStatus::Shutdown,
-            Kernel::Restarting => KernelStatus::Restarting,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum Kernel {
-    RunningKernel(NativeRunningKernel),
-    StartingKernel(Shared<Task<()>>),
-    ErroredLaunch(String),
-    ShuttingDown,
-    Shutdown,
-    Restarting,
-}
-
-impl Kernel {
-    pub fn status(&self) -> KernelStatus {
-        self.into()
-    }
-
-    pub fn set_execution_state(&mut self, status: &ExecutionState) {
-        if let Kernel::RunningKernel(running_kernel) = self {
-            running_kernel.execution_state = status.clone();
-        }
-    }
-
-    pub fn set_kernel_info(&mut self, kernel_info: &KernelInfoReply) {
-        if let Kernel::RunningKernel(running_kernel) = self {
-            running_kernel.kernel_info = Some(kernel_info.clone());
-        }
-    }
-
-    pub fn is_shutting_down(&self) -> bool {
-        match self {
-            Kernel::Restarting | Kernel::ShuttingDown => true,
-            Kernel::RunningKernel(_)
-            | Kernel::StartingKernel(_)
-            | Kernel::ErroredLaunch(_)
-            | Kernel::Shutdown => false,
-        }
-    }
-}
-
 pub struct NativeRunningKernel {
     pub process: smol::process::Child,
     _shell_task: Task<Result<()>>,
@@ -206,17 +119,6 @@ impl NativeRunningKernel {
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Task<Result<(Self, JupyterMessageChannel)>> {
-        // let kernel_specification = match kernel_specification {
-        //     KernelSpecification::Jupyter(spec) => spec,
-        //     KernelSpecification::PythonEnv(spec) => spec,
-        //     KernelSpecification::Remote(_spec) => {
-        //         // todo!(): Implement remote kernel specification
-        //         return Task::ready(Err(anyhow::anyhow!(
-        //             "Running remote kernels is not supported"
-        //         )));
-        //     }
-        // };
-
         cx.spawn(|cx| async move {
             let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
             let ports = peek_ports(ip).await?;
@@ -347,6 +249,42 @@ impl NativeRunningKernel {
                 messages_rx,
             ))
         })
+    }
+}
+
+impl RunningKernel for NativeRunningKernel {
+    fn request_tx(&self) -> mpsc::Sender<JupyterMessage> {
+        self.request_tx.clone()
+    }
+
+    fn working_directory(&self) -> &PathBuf {
+        &self.working_directory
+    }
+
+    fn execution_state(&self) -> &ExecutionState {
+        &self.execution_state
+    }
+
+    fn set_execution_state(&mut self, state: ExecutionState) {
+        self.execution_state = state;
+    }
+
+    fn kernel_info(&self) -> Option<&KernelInfoReply> {
+        self.kernel_info.as_ref()
+    }
+
+    fn set_kernel_info(&mut self, info: KernelInfoReply) {
+        self.kernel_info = Some(info);
+    }
+
+    fn force_shutdown(&mut self) -> anyhow::Result<()> {
+        match self.process.kill() {
+            Ok(_) => Ok(()),
+            Err(error) => Err(anyhow::anyhow!(
+                "Failed to kill the kernel process: {}",
+                error
+            )),
+        }
     }
 }
 

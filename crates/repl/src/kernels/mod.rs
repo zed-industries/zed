@@ -1,7 +1,8 @@
 mod native_kernel;
-use std::{future::Future, path::PathBuf};
+use std::{fmt::Debug, future::Future, path::PathBuf};
 
-use gpui::{AppContext, Model};
+use futures::{channel::mpsc, future::Shared};
+use gpui::{AppContext, Model, Task};
 use language::LanguageName;
 pub use native_kernel::*;
 
@@ -10,7 +11,7 @@ use project::{Project, WorktreeId};
 pub use remote_kernels::*;
 
 use anyhow::Result;
-use runtimelib::JupyterKernelspec;
+use runtimelib::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
 use smol::process::Command;
 use ui::SharedString;
 
@@ -121,13 +122,100 @@ pub fn python_env_kernel_specifications(
     }
 }
 
-enum RunningKernel {
-    Native(NativeRunningKernel),
-    Remote(RemoteRunningKernel),
+pub trait RunningKernel: Send + Debug {
+    fn request_tx(&self) -> mpsc::Sender<JupyterMessage>;
+    fn working_directory(&self) -> &PathBuf;
+    fn execution_state(&self) -> &ExecutionState;
+    fn set_execution_state(&mut self, state: ExecutionState);
+    fn kernel_info(&self) -> Option<&KernelInfoReply>;
+    fn set_kernel_info(&mut self, info: KernelInfoReply);
+    fn force_shutdown(&mut self) -> anyhow::Result<()>;
 }
 
-impl RunningKernel {
-    pub fn new(&self) {
-        //
+#[derive(Debug, Clone)]
+pub enum KernelStatus {
+    Idle,
+    Busy,
+    Starting,
+    Error,
+    ShuttingDown,
+    Shutdown,
+    Restarting,
+}
+
+impl KernelStatus {
+    pub fn is_connected(&self) -> bool {
+        match self {
+            KernelStatus::Idle | KernelStatus::Busy => true,
+            _ => false,
+        }
+    }
+}
+
+impl ToString for KernelStatus {
+    fn to_string(&self) -> String {
+        match self {
+            KernelStatus::Idle => "Idle".to_string(),
+            KernelStatus::Busy => "Busy".to_string(),
+            KernelStatus::Starting => "Starting".to_string(),
+            KernelStatus::Error => "Error".to_string(),
+            KernelStatus::ShuttingDown => "Shutting Down".to_string(),
+            KernelStatus::Shutdown => "Shutdown".to_string(),
+            KernelStatus::Restarting => "Restarting".to_string(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Kernel {
+    RunningKernel(Box<dyn RunningKernel>),
+    StartingKernel(Shared<Task<()>>),
+    ErroredLaunch(String),
+    ShuttingDown,
+    Shutdown,
+    Restarting,
+}
+
+impl From<&Kernel> for KernelStatus {
+    fn from(kernel: &Kernel) -> Self {
+        match kernel {
+            Kernel::RunningKernel(kernel) => match kernel.execution_state() {
+                ExecutionState::Idle => KernelStatus::Idle,
+                ExecutionState::Busy => KernelStatus::Busy,
+            },
+            Kernel::StartingKernel(_) => KernelStatus::Starting,
+            Kernel::ErroredLaunch(_) => KernelStatus::Error,
+            Kernel::ShuttingDown => KernelStatus::ShuttingDown,
+            Kernel::Shutdown => KernelStatus::Shutdown,
+            Kernel::Restarting => KernelStatus::Restarting,
+        }
+    }
+}
+
+impl Kernel {
+    pub fn status(&self) -> KernelStatus {
+        self.into()
+    }
+
+    pub fn set_execution_state(&mut self, status: &ExecutionState) {
+        if let Kernel::RunningKernel(running_kernel) = self {
+            running_kernel.set_execution_state(status.clone());
+        }
+    }
+
+    pub fn set_kernel_info(&mut self, kernel_info: &KernelInfoReply) {
+        if let Kernel::RunningKernel(running_kernel) = self {
+            running_kernel.set_kernel_info(kernel_info.clone());
+        }
+    }
+
+    pub fn is_shutting_down(&self) -> bool {
+        match self {
+            Kernel::Restarting | Kernel::ShuttingDown => true,
+            Kernel::RunningKernel(_)
+            | Kernel::StartingKernel(_)
+            | Kernel::ErroredLaunch(_)
+            | Kernel::Shutdown => false,
+        }
     }
 }
