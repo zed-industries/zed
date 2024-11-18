@@ -5,9 +5,8 @@ use futures::{
     stream::{self, SelectAll, StreamExt},
     SinkExt as _,
 };
-use gpui::{AppContext, EntityId, Model, Task};
-use language::LanguageName;
-use project::{Fs, Project, WorktreeId};
+use gpui::{AppContext, EntityId, Task};
+use project::Fs;
 use runtimelib::{
     dirs, ConnectionInfo, ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent,
     KernelInfoReply,
@@ -16,54 +15,11 @@ use smol::{net::TcpListener, process::Command};
 use std::{
     env,
     fmt::Debug,
-    future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     sync::Arc,
 };
-use ui::SharedString;
 use uuid::Uuid;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KernelSpecification {
-    Remote(RemoteKernelSpecification),
-    Jupyter(LocalKernelSpecification),
-    PythonEnv(LocalKernelSpecification),
-}
-
-impl KernelSpecification {
-    pub fn name(&self) -> SharedString {
-        match self {
-            Self::Jupyter(spec) => spec.name.clone().into(),
-            Self::PythonEnv(spec) => spec.name.clone().into(),
-            Self::Remote(spec) => spec.name.clone().into(),
-        }
-    }
-
-    pub fn type_name(&self) -> SharedString {
-        match self {
-            Self::Jupyter(_) => "Jupyter".into(),
-            Self::PythonEnv(_) => "Python Environment".into(),
-            Self::Remote(_) => "Remote".into(),
-        }
-    }
-
-    pub fn path(&self) -> SharedString {
-        SharedString::from(match self {
-            Self::Jupyter(spec) => spec.path.to_string_lossy().to_string(),
-            Self::PythonEnv(spec) => spec.path.to_string_lossy().to_string(),
-            Self::Remote(spec) => spec.url.to_string(),
-        })
-    }
-
-    pub fn language(&self) -> SharedString {
-        SharedString::from(match self {
-            Self::Jupyter(spec) => spec.kernelspec.language.clone(),
-            Self::PythonEnv(spec) => spec.kernelspec.language.clone(),
-            Self::Remote(spec) => spec.kernelspec.language.clone(),
-        })
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct LocalKernelSpecification {
@@ -79,22 +35,6 @@ impl PartialEq for LocalKernelSpecification {
 }
 
 impl Eq for LocalKernelSpecification {}
-
-#[derive(Debug, Clone)]
-pub struct RemoteKernelSpecification {
-    pub name: String,
-    pub url: String,
-    pub token: String,
-    pub kernelspec: JupyterKernelspec,
-}
-
-impl PartialEq for RemoteKernelSpecification {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.url == other.url
-    }
-}
-
-impl Eq for RemoteKernelSpecification {}
 
 impl LocalKernelSpecification {
     #[must_use]
@@ -199,7 +139,7 @@ impl From<&Kernel> for KernelStatus {
 
 #[derive(Debug)]
 pub enum Kernel {
-    RunningKernel(RunningKernel),
+    RunningKernel(NativeRunningKernel),
     StartingKernel(Shared<Task<()>>),
     ErroredLaunch(String),
     ShuttingDown,
@@ -235,7 +175,7 @@ impl Kernel {
     }
 }
 
-pub struct RunningKernel {
+pub struct NativeRunningKernel {
     pub process: smol::process::Child,
     _shell_task: Task<Result<()>>,
     _iopub_task: Task<Result<()>>,
@@ -250,7 +190,7 @@ pub struct RunningKernel {
 
 type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 
-impl Debug for RunningKernel {
+impl Debug for NativeRunningKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunningKernel")
             .field("process", &self.process)
@@ -258,24 +198,24 @@ impl Debug for RunningKernel {
     }
 }
 
-impl RunningKernel {
+impl NativeRunningKernel {
     pub fn new(
-        kernel_specification: KernelSpecification,
+        kernel_specification: LocalKernelSpecification,
         entity_id: EntityId,
         working_directory: PathBuf,
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Task<Result<(Self, JupyterMessageChannel)>> {
-        let kernel_specification = match kernel_specification {
-            KernelSpecification::Jupyter(spec) => spec,
-            KernelSpecification::PythonEnv(spec) => spec,
-            KernelSpecification::Remote(_spec) => {
-                // todo!(): Implement remote kernel specification
-                return Task::ready(Err(anyhow::anyhow!(
-                    "Running remote kernels is not supported"
-                )));
-            }
-        };
+        // let kernel_specification = match kernel_specification {
+        //     KernelSpecification::Jupyter(spec) => spec,
+        //     KernelSpecification::PythonEnv(spec) => spec,
+        //     KernelSpecification::Remote(_spec) => {
+        //         // todo!(): Implement remote kernel specification
+        //         return Task::ready(Err(anyhow::anyhow!(
+        //             "Running remote kernels is not supported"
+        //         )));
+        //     }
+        // };
 
         cx.spawn(|cx| async move {
             let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
@@ -410,7 +350,7 @@ impl RunningKernel {
     }
 }
 
-impl Drop for RunningKernel {
+impl Drop for NativeRunningKernel {
     fn drop(&mut self) {
         std::fs::remove_file(&self.connection_path).ok();
         self.request_tx.close_channel();
@@ -465,72 +405,6 @@ async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> Result<Vec<LocalKernelS
     }
 
     Ok(valid_kernelspecs)
-}
-
-pub fn python_env_kernel_specifications(
-    project: &Model<Project>,
-    worktree_id: WorktreeId,
-    cx: &mut AppContext,
-) -> impl Future<Output = Result<Vec<KernelSpecification>>> {
-    let python_language = LanguageName::new("Python");
-    let toolchains = project
-        .read(cx)
-        .available_toolchains(worktree_id, python_language, cx);
-    let background_executor = cx.background_executor().clone();
-
-    async move {
-        let toolchains = if let Some(toolchains) = toolchains.await {
-            toolchains
-        } else {
-            return Ok(Vec::new());
-        };
-
-        let kernelspecs = toolchains.toolchains.into_iter().map(|toolchain| {
-            background_executor.spawn(async move {
-                let python_path = toolchain.path.to_string();
-
-                // Check if ipykernel is installed
-                let ipykernel_check = Command::new(&python_path)
-                    .args(&["-c", "import ipykernel"])
-                    .output()
-                    .await;
-
-                if ipykernel_check.is_ok() && ipykernel_check.unwrap().status.success() {
-                    // Create a default kernelspec for this environment
-                    let default_kernelspec = JupyterKernelspec {
-                        argv: vec![
-                            python_path.clone(),
-                            "-m".to_string(),
-                            "ipykernel_launcher".to_string(),
-                            "-f".to_string(),
-                            "{connection_file}".to_string(),
-                        ],
-                        display_name: toolchain.name.to_string(),
-                        language: "python".to_string(),
-                        interrupt_mode: None,
-                        metadata: None,
-                        env: None,
-                    };
-
-                    Some(KernelSpecification::PythonEnv(LocalKernelSpecification {
-                        name: toolchain.name.to_string(),
-                        path: PathBuf::from(&python_path),
-                        kernelspec: default_kernelspec,
-                    }))
-                } else {
-                    None
-                }
-            })
-        });
-
-        let kernel_specs = futures::future::join_all(kernelspecs)
-            .await
-            .into_iter()
-            .flatten()
-            .collect();
-
-        anyhow::Ok(kernel_specs)
-    }
 }
 
 pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKernelSpecification>> {

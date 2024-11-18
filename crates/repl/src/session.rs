@@ -1,7 +1,7 @@
 use crate::components::KernelListItem;
 use crate::setup_editor_session_actions;
 use crate::{
-    kernels::{Kernel, KernelSpecification, RunningKernel},
+    kernels::{Kernel, KernelSpecification, NativeRunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
     KernelStatus,
 };
@@ -246,8 +246,16 @@ impl Session {
             cx.entity_id().to_string(),
         );
 
-        let kernel = RunningKernel::new(
-            self.kernel_specification.clone(),
+        let kernel_specification = match self.kernel_specification.clone() {
+            KernelSpecification::Jupyter(kernel_specification) => kernel_specification,
+            KernelSpecification::PythonEnv(kernel_specification) => kernel_specification,
+            KernelSpecification::Remote(remote_kernel_specification) => {
+                todo!()
+            }
+        };
+
+        let kernel = NativeRunningKernel::new(
+            kernel_specification,
             entity_id,
             working_directory,
             self.fs.clone(),
