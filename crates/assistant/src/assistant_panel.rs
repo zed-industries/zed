@@ -3333,7 +3333,8 @@ impl ContextEditor {
 
             self.context.update(cx, |context, cx| {
                 for image in images {
-                    let Some(render_image) = image.to_image_data(cx).log_err() else {
+                    let Some(render_image) = image.to_image_data(cx.svg_renderer()).log_err()
+                    else {
                         continue;
                     };
                     let image_id = image.id();
@@ -3920,7 +3921,7 @@ impl ContextEditor {
             .child(
                 div()
                     .id("error-message")
-                    .max_h_24()
+                    .max_h_32()
                     .overflow_y_scroll()
                     .child(Label::new(error_message.clone())),
             )

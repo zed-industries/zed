@@ -727,6 +727,10 @@ impl Item for ProjectDiagnosticsEditor {
         self.excerpts.read(cx).is_dirty(cx)
     }
 
+    fn has_deleted_file(&self, cx: &AppContext) -> bool {
+        self.excerpts.read(cx).has_deleted_file(cx)
+    }
+
     fn has_conflict(&self, cx: &AppContext) -> bool {
         self.excerpts.read(cx).has_conflict(cx)
     }

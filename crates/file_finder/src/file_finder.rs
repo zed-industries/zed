@@ -14,7 +14,7 @@ use file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    actions, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, KeyContext, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render,
     Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
@@ -257,9 +257,14 @@ impl FocusableView for FileFinder {
 impl Render for FileFinder {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let key_context = self.picker.read(cx).delegate.key_context(cx);
+
+        let window_max_width: Pixels = cx.viewport_size().width;
+        let modal_choice = FileFinderSettings::get_global(cx).modal_width;
+        let width = modal_choice.calc_width(window_max_width);
+
         v_flex()
             .key_context(key_context)
-            .w(rems(34.))
+            .w(width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_select_prev))
             .on_action(cx.listener(Self::handle_open_menu))

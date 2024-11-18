@@ -1416,6 +1416,14 @@ Or to set a `socks5` proxy:
 
 `boolean` values
 
+## File Finder
+
+### Modal Width
+
+- Description: Width of the file finder modal. Can take one of a few values: `small`, `medium`, `large`, `xlarge`, and `full`.
+- Setting: `modal_width`
+- Default: `medium`
+
 ## Preferred Line Length
 
 - Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled.

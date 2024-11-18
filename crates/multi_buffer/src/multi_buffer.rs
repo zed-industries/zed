@@ -186,6 +186,7 @@ pub struct MultiBufferSnapshot {
     non_text_state_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
+    has_deleted_file: bool,
     has_conflict: bool,
     show_headers: bool,
 }
@@ -492,6 +493,10 @@ impl MultiBuffer {
 
     pub fn is_dirty(&self, cx: &AppContext) -> bool {
         self.read(cx).is_dirty()
+    }
+
+    pub fn has_deleted_file(&self, cx: &AppContext) -> bool {
+        self.read(cx).has_deleted_file()
     }
 
     pub fn has_conflict(&self, cx: &AppContext) -> bool {
@@ -1419,6 +1424,7 @@ impl MultiBuffer {
         snapshot.excerpts = Default::default();
         snapshot.trailing_excerpt_update_count += 1;
         snapshot.is_dirty = false;
+        snapshot.has_deleted_file = false;
         snapshot.has_conflict = false;
 
         self.subscriptions.publish_mut([Edit {
@@ -2003,6 +2009,7 @@ impl MultiBuffer {
         let mut excerpts_to_edit = Vec::new();
         let mut non_text_state_updated = false;
         let mut is_dirty = false;
+        let mut has_deleted_file = false;
         let mut has_conflict = false;
         let mut edited = false;
         let mut buffers = self.buffers.borrow_mut();
@@ -2028,6 +2035,7 @@ impl MultiBuffer {
             edited |= buffer_edited;
             non_text_state_updated |= buffer_non_text_state_updated;
             is_dirty |= buffer.is_dirty();
+            has_deleted_file |= buffer.file().map_or(false, |file| file.is_deleted());
             has_conflict |= buffer.has_conflict();
         }
         if edited {
@@ -2037,6 +2045,7 @@ impl MultiBuffer {
             snapshot.non_text_state_update_count += 1;
         }
         snapshot.is_dirty = is_dirty;
+        snapshot.has_deleted_file = has_deleted_file;
         snapshot.has_conflict = has_conflict;
 
         excerpts_to_edit.sort_unstable_by_key(|(locator, _, _)| *locator);
@@ -3689,6 +3698,10 @@ impl MultiBufferSnapshot {
 
     pub fn is_dirty(&self) -> bool {
         self.is_dirty
+    }
+
+    pub fn has_deleted_file(&self) -> bool {
+        self.has_deleted_file
     }
 
     pub fn has_conflict(&self) -> bool {

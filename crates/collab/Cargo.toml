@@ -24,6 +24,7 @@ async-stripe.workspace = true
 async-tungstenite.workspace = true
 aws-config = { version = "1.1.5" }
 aws-sdk-s3 = { version = "1.15.0" }
+aws-sdk-kinesis = "1.51.0"
 axum = { version = "0.6", features = ["json", "headers", "ws"] }
 axum-extra = { version = "0.4", features = ["erased-json"] }
 base64.workspace = true
