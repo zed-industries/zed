@@ -1099,15 +1099,6 @@ impl Context {
         self.patch_store.read(cx).resolve_patch(id, cx)
     }
 
-    fn patch_index_for_range(
-        &self,
-        tagged_range: &Range<text::Anchor>,
-        buffer: &text::BufferSnapshot,
-    ) -> Result<usize, usize> {
-        self.patches
-            .binary_search_by(|(range, _)| range.cmp(&tagged_range, buffer))
-    }
-
     pub fn parsed_slash_commands(&self) -> &[ParsedSlashCommand] {
         &self.parsed_slash_commands
     }
@@ -1579,31 +1570,28 @@ impl Context {
 
         // Rebuild the patches in the range.
         let new_patches = self.parse_patches(tags_start_ix, range.end, buffer, cx);
-        let new_patches = self.patch_store.update(cx, |patch_store, cx| {
-            new_patches
-                .into_iter()
-                .map(|patch| {
-                    let id;
-                    let range = patch.range.clone();
-                    if let Ok(ix) = self.patch_index_for_range(&range, buffer) {
-                        id = self.patches[ix].1;
-                        patch_store.update(id, patch, cx).ok();
-                    } else {
-                        id = patch_store.insert(patch, cx);
-                    }
-                    (range, id)
-                })
-                .collect::<Vec<_>>()
-        });
-
-        updated.extend(new_patches.iter().map(|(_, id)| *id));
-        let removed_patches = self.patches.splice(intersecting_patches_range, new_patches);
-        self.patch_store.update(cx, |patch_store, _| {
-            for (_range, id) in removed_patches {
-                if !updated.contains(&id) {
-                    patch_store.remove(id);
-                    removed.push(id);
-                }
+        self.patch_store.update(cx, |patch_store, cx| {
+            let mut removed_entries = self.patches[intersecting_patches_range.clone()]
+                .iter()
+                .cloned()
+                .collect::<HashMap<_, _>>();
+            let added_entries = new_patches.into_iter().map(|patch| {
+                let id;
+                let range = patch.range.clone();
+                if let Some(existing_id) = removed_entries.remove(&range) {
+                    id = existing_id;
+                    patch_store.update(id, patch, cx).ok();
+                } else {
+                    id = patch_store.insert(patch.clone(), cx);
+                };
+                updated.push(id);
+                (range, id)
+            });
+            self.patches
+                .splice(intersecting_patches_range, added_entries);
+            for id in removed_entries.into_values() {
+                removed.push(id);
+                patch_store.remove(id);
             }
         });
     }
