@@ -1568,6 +1568,7 @@ impl SshRemoteConnection {
         // exclude armv5,6,7 as they are 32-bit.
         let arch = if arch.starts_with("armv8")
             || arch.starts_with("armv9")
+            || arch.starts_with("arm64")
             || arch.starts_with("aarch64")
         {
             "aarch64"
