@@ -163,7 +163,7 @@ impl RenderOnce for Tab {
                     .relative()
                     .h(Tab::content_height(cx))
                     .px(DynamicSpacing::Base08.px(cx))
-                    .gap(DynamicSpacing::Base08.rems(cx))
+                    .gap(DynamicSpacing::Base16.rems(cx))
                     .text_color(text_color)
                     .child(start_slot)
                     .children(self.children)
