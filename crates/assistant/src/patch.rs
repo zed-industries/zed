@@ -24,6 +24,7 @@ pub struct PatchStore {
 struct PatchStoreEntry {
     patch: LocatedPatch,
     locate_task: Option<Task<Result<()>>>,
+    next_input: Option<AssistantPatch>,
 }
 
 pub enum PatchStoreEvent {
@@ -60,6 +61,7 @@ impl PatchStore {
                     buffers: Vec::new(),
                 },
                 locate_task: None,
+                next_input: None,
             },
         );
         self.update(id, patch, cx).unwrap();
@@ -78,26 +80,39 @@ impl PatchStore {
 
         cx.emit(PatchStoreEvent::PatchUpdated(id));
 
-        let project = self.project.clone();
-        let prev_patch = entry.patch.clone();
-        entry.locate_task = Some(cx.spawn(|this, mut cx| async move {
-            let (located_patch, patch_did_change) =
-                Self::locate_patch(patch, project, prev_patch, &mut cx).await?;
-            this.update(&mut cx, |this, cx| {
-                this.entries.insert(
-                    id,
-                    PatchStoreEntry {
-                        patch: located_patch,
-                        locate_task: None,
-                    },
-                );
-                if patch_did_change {
-                    cx.emit(PatchStoreEvent::PatchUpdated(id));
-                }
-            })
-        }));
+        if entry.locate_task.is_some() {
+            entry.next_input = Some(patch);
+        } else {
+            entry.locate_task =
+                Self::update_internal(id, patch, entry.patch.clone(), self.project.clone(), cx);
+        }
 
         Ok(())
+    }
+
+    fn update_internal(
+        id: PatchId,
+        patch: AssistantPatch,
+        prev_patch: LocatedPatch,
+        project: Model<Project>,
+        cx: &mut ModelContext<PatchStore>,
+    ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
+        Some(cx.spawn(|this, mut cx| async move {
+            let (located_patch, patch_did_change) =
+                Self::locate_patch(patch, project.clone(), prev_patch, &mut cx).await?;
+            this.update(&mut cx, |this, cx| {
+                if let Some(entry) = this.entries.get_mut(&id) {
+                    entry.patch = located_patch;
+                    entry.locate_task = None;
+                    if patch_did_change {
+                        cx.emit(PatchStoreEvent::PatchUpdated(id));
+                    }
+                    if let Some(input) = entry.next_input.take() {
+                        Self::update_internal(id, input, entry.patch.clone(), project, cx);
+                    }
+                }
+            })
+        }))
     }
 
     pub(crate) fn remove(&mut self, id: PatchId, cx: &mut ModelContext<Self>) {
