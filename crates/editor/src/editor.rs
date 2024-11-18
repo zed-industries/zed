@@ -2403,12 +2403,12 @@ impl Editor {
         self.refresh_inline_completion(false, false, cx);
     }
 
-    pub fn set_active_line_trailer_provider<T: 'static>(
+    pub fn set_active_line_trailer_provider<T>(
         &mut self,
         provider: Option<T>,
         _cx: &mut ViewContext<Self>,
     ) where
-        T: ActiveLineTrailerProvider,
+        T: ActiveLineTrailerProvider + 'static,
     {
         self.active_line_trailer_provider = provider.map(|provider| Box::new(provider) as Box<_>);
     }
