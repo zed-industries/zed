@@ -2,6 +2,7 @@ use feature_flags::ZedPro;
 
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
+use workspace::ShowConfiguration;
 
 use std::sync::Arc;
 
@@ -287,9 +288,7 @@ impl PickerDelegate for ModelPickerDelegate {
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::Start)
                         .on_click(|_, cx| {
-                            cx.dispatch_action(
-                                zed_actions::assistant::ShowConfiguration.boxed_clone(),
-                            );
+                            cx.dispatch_action(ShowConfiguration.boxed_clone());
                         }),
                 )
                 .into_any(),
