@@ -256,7 +256,7 @@ impl Session {
                 cx,
             ),
             KernelSpecification::Remote(_remote_kernel_specification) => {
-                todo!()
+                unimplemented!()
             }
         };
 
