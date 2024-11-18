@@ -1398,6 +1398,15 @@ fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([empty_range(0, "ⓐⓑⓒⓓⓔ".len())]);
         });
+
+        // moving above start of document should move selection to start of document,
+        // but the next move down should still be at the original goal_x
+        view.move_up(&MoveUp, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(0, "".len())]
+        );
+
         view.move_down(&MoveDown, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -1417,6 +1426,25 @@ fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
         );
 
         view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]
+        );
+
+        // moving past end of document should not change goal_x
+        view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(5, "".len())]
+        );
+
+        view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(5, "".len())]
+        );
+
+        view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]
