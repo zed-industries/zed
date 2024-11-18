@@ -24,7 +24,13 @@ float4 over(float4 below, float4 above);
 
 struct QuadVertexOutput {
   float4 position [[position]];
-  float4 background_color [[flat]];
+  uint background_tag;
+  float4 background_solid [[flat]];
+  float background_angle;
+  float background_stop0_percentage;
+  float4 background_stop0_color [[flat]];
+  float background_stop1_percentage;
+  float4 background_stop1_color [[flat]];
   float4 border_color [[flat]];
   uint quad_id [[flat]];
   float clip_distance [[clip_distance]][4];
@@ -32,7 +38,13 @@ struct QuadVertexOutput {
 
 struct QuadFragmentInput {
   float4 position [[position]];
-  float4 background_color [[flat]];
+  uint background_tag;
+  float4 background_solid [[flat]];
+  float background_angle;
+  float background_stop0_percentage;
+  float4 background_stop0_color [[flat]];
+  float background_stop1_percentage;
+  float4 background_stop1_color [[flat]];
   float4 border_color [[flat]];
   uint quad_id [[flat]];
 };
@@ -51,11 +63,25 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
       to_device_position(unit_vertex, quad.bounds, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
                                                  quad.content_mask.bounds);
-  float4 background_color = hsla_to_rgba(quad.background);
+  Background background = quad.background;
+  uint background_tag = background.tag;
+  float4 background_solid = hsla_to_rgba(background.solid);
+  float background_angle = background.linear_gradient.angle;
+  float background_stop0_percentage = background.linear_gradient.stops[0].percentage;
+  float4 background_stop0_color = hsla_to_rgba(background.linear_gradient.stops[0].color);
+  float background_stop1_percentage = background.linear_gradient.stops[1].percentage;
+  float4 background_stop1_color = hsla_to_rgba(background.linear_gradient.stops[1].color);
   float4 border_color = hsla_to_rgba(quad.border_color);
+
   return QuadVertexOutput{
       device_position,
-      background_color,
+      background_tag,
+      background_solid,
+      background_angle,
+      background_stop0_percentage,
+      background_stop0_color,
+      background_stop1_percentage,
+      background_stop1_color,
       border_color,
       quad_id,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
@@ -66,13 +92,44 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               [[buffer(QuadInputIndex_Quads)]]) {
   Quad quad = quads[input.quad_id];
 
+  float4 color;
+  switch (input.background_tag) {
+    case Background_Solid:
+      color = input.background_solid;
+      break;
+    case Background_LinearGradient: {
+      float2 position = input.position.xy;
+      float angle = input.background_angle;
+      float2 gradient_direction = float2(cos(angle), sin(angle));
+      gradient_direction = normalize(gradient_direction);
+
+      // Calculate the start and end points of the gradient
+      float2 start_point = {quad.bounds.origin.x, quad.bounds.origin.y};
+      float2 end_point = start_point + float2(quad.bounds.size.width * gradient_direction.x,
+                                              quad.bounds.size.height * gradient_direction.y);
+
+      // Calculate the projection of the position on the gradient direction
+      float gradient_length = dot(position - start_point, gradient_direction);
+      float total_length = length(end_point - start_point);
+
+      // Calculate the percentage along the gradient
+      float percentage = gradient_length / total_length;
+      float t = saturate(percentage);
+
+      float4 color1 = input.background_stop0_color;
+      float4 color2 = input.background_stop1_color;
+      color = mix(color1, color2, t);
+      break;
+    }
+  }
+
   // Fast path when the quad is not rounded and doesn't have any border.
   if (quad.corner_radii.top_left == 0. && quad.corner_radii.bottom_left == 0. &&
       quad.corner_radii.top_right == 0. &&
       quad.corner_radii.bottom_right == 0. && quad.border_widths.top == 0. &&
       quad.border_widths.left == 0. && quad.border_widths.right == 0. &&
       quad.border_widths.bottom == 0.) {
-    return input.background_color;
+    return color;
   }
 
   float2 half_size =
@@ -118,15 +175,12 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
     border_width = vertical_border;
   }
 
-  float4 color;
-  if (border_width == 0.) {
-    color = input.background_color;
-  } else {
+  if (border_width != 0.) {
     float inset_distance = distance + border_width;
     // Blend the border on top of the background and then linearly interpolate
     // between the two as we slide inside the background.
-    float4 blended_border = over(input.background_color, input.border_color);
-    color = mix(blended_border, input.background_color,
+    float4 blended_border = over(color, input.border_color);
+    color = mix(blended_border, color,
                 saturate(0.5 - inset_distance));
   }
 

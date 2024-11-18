@@ -548,6 +548,98 @@ impl<'de> Deserialize<'de> for Hsla {
     }
 }
 
+/// A background color, which can be either a solid color or a linear gradient.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub enum Background {
+    /// A solid color.
+    Solid(Hsla),
+    /// A linear gradient.
+    LinearGradient {
+        /// The angle of the gradient.
+        angle: f32,
+        /// The color stops of the gradient.
+        stops: [BackgroundColorStop; 2],
+    },
+}
+
+impl Eq for Background {}
+
+impl Default for Background {
+    fn default() -> Self {
+        Self::Solid(Hsla::default())
+    }
+}
+
+/// A color stop in a linear gradient.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[repr(C)]
+pub struct BackgroundColorStop {
+    /// The percentage of the gradient where the color stop is located.
+    pub percentage: f32,
+    /// The color of the color stop.
+    pub color: Hsla,
+}
+
+impl BackgroundColorStop {
+    /// Creates a new color stop.
+    pub fn new(percentage: f32, color: impl Into<Hsla>) -> Self {
+        Self {
+            percentage,
+            color: color.into(),
+        }
+    }
+
+    /// Returns a new color stop with the same color, but with a modified alpha value.
+    pub fn opacity(&self, factor: f32) -> Self {
+        Self {
+            percentage: self.percentage,
+            color: self.color.opacity(factor),
+        }
+    }
+}
+
+impl Background {
+    /// Creates a LinearGradient background color.
+    pub fn linear_gradient(angle: f32, stops: [impl Into<BackgroundColorStop>; 2]) -> Self {
+        Self::LinearGradient {
+            angle: angle.clamp(0., 360.),
+            stops: stops.map(Into::into),
+        }
+    }
+
+    /// Returns a new background color with the same hue, saturation, and lightness, but with a modified alpha value.
+    pub fn opacity(&self, factor: f32) -> Self {
+        match self {
+            Self::Solid(color) => Self::Solid(color.opacity(factor)),
+            Self::LinearGradient { angle, stops } => Self::LinearGradient {
+                angle: *angle,
+                stops: [stops[0].opacity(factor), stops[1].opacity(factor)],
+            },
+        }
+    }
+
+    /// Returns whether the background color is transparent.
+    pub fn is_transparent(&self) -> bool {
+        match self {
+            Self::Solid(color) => color.is_transparent(),
+            Self::LinearGradient { stops, .. } => stops.iter().all(|c| c.color.is_transparent()),
+        }
+    }
+}
+
+impl From<Hsla> for Background {
+    fn from(value: Hsla) -> Self {
+        Background::Solid(value)
+    }
+}
+
+impl From<Rgba> for Background {
+    fn from(value: Rgba) -> Self {
+        Background::Solid(Hsla::from(value))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

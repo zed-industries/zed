@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    black, phi, point, quad, rems, size, AbsoluteLength, Bounds, ContentMask, Corners,
+    black, phi, point, quad, rems, size, AbsoluteLength, Background, Bounds, ContentMask, Corners,
     CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
     FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
     PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
@@ -572,7 +572,15 @@ impl Style {
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.map_or(false, |color| !color.is_transparent()) {
-            let mut border_color = background_color.unwrap_or_default();
+            let mut border_color = match background_color {
+                Some(color) => match color {
+                    Background::Solid(c) => c,
+                    Background::LinearGradient { stops, .. } => {
+                        stops.first().map(|stop| stop.color).unwrap_or_default()
+                    }
+                },
+                None => Hsla::default(),
+            };
             border_color.a = 0.;
             cx.paint_quad(quad(
                 bounds,
@@ -737,12 +745,14 @@ pub struct StrikethroughStyle {
 #[derive(Clone, Debug)]
 pub enum Fill {
     /// A solid color fill.
-    Color(Hsla),
+    Color(Background),
 }
 
 impl Fill {
     /// Unwrap this fill into a solid color, if it is one.
-    pub fn color(&self) -> Option<Hsla> {
+    ///
+    /// If the fill is not a solid color, this method returns `None`.
+    pub fn color(&self) -> Option<Background> {
         match self {
             Fill::Color(color) => Some(*color),
         }
@@ -751,19 +761,25 @@ impl Fill {
 
 impl Default for Fill {
     fn default() -> Self {
-        Self::Color(Hsla::default())
+        Self::Color(Background::default())
     }
 }
 
 impl From<Hsla> for Fill {
     fn from(color: Hsla) -> Self {
-        Self::Color(color)
+        Self::Color(color.into())
     }
 }
 
 impl From<Rgba> for Fill {
     fn from(color: Rgba) -> Self {
         Self::Color(color.into())
+    }
+}
+
+impl From<Background> for Fill {
+    fn from(background: Background) -> Self {
+        Self::Color(background)
     }
 }
 

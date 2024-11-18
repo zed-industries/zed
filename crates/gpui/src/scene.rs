@@ -2,8 +2,8 @@
 #![cfg_attr(windows, allow(dead_code))]
 
 use crate::{
-    bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
-    Hsla, Pixels, Point, Radians, ScaledPixels, Size,
+    bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Background, Bounds, ContentMask,
+    Corners, Edges, Hsla, Pixels, Point, Radians, ScaledPixels, Size,
 };
 use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
@@ -456,7 +456,7 @@ pub(crate) struct Quad {
     pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
-    pub background: Hsla,
+    pub background: Background,
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
