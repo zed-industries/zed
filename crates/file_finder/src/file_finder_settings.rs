@@ -16,18 +16,6 @@ pub struct FileFinderSettingsContent {
     /// Default: true
     pub file_icons: Option<bool>,
     /// Determines how much space the file finder can take up in relation to the available window width.
-    /// There are 5 possible width values:
-    ///
-    /// 1. Small: This value is essentially a fixed width.
-    ///    "modal_width": "small"
-    /// 2. Medium:
-    ///    "modal_width": "medium"
-    /// 3. Large:
-    ///    "modal_width": "large"
-    /// 4. Extra Large:
-    ///    "modal_width": "xlarge"
-    /// 5. Fullscreen: This value removes any horizontal padding, as it consumes the whole viewport width.
-    ///    "modal_width": "full"
     ///
     /// Default: small
     pub modal_max_width: Option<FileFinderWidth>,
