@@ -196,6 +196,8 @@ impl Render for InlineCompletionButton {
                         ),
                 );
             }
+
+            InlineCompletionProvider::Zeta => div().child("Zeta"),
         }
     }
 }

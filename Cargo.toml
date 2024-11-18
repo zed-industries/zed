@@ -131,6 +131,7 @@ members = [
     "crates/worktree",
     "crates/zed",
     "crates/zed_actions",
+    "crates/zeta",
 
     #
     # Extensions
@@ -304,6 +305,7 @@ workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
+zeta = { path = "crates/zeta" }
 
 #
 # External crates

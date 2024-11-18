@@ -131,5 +131,17 @@ fn assign_inline_completion_provider(
                 editor.set_inline_completion_provider(Some(provider), cx);
             }
         }
+        language::language_settings::InlineCompletionProvider::Zeta => {
+            let zeta = zeta::Zeta::global(cx);
+            if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                if buffer.read(cx).file().is_some() {
+                    zeta.update(cx, |zeta, cx| {
+                        zeta.register_buffer(&buffer, cx);
+                    });
+                }
+            }
+            let provider = cx.new_model(|_| zeta::ZetaInlineCompletionProvider::new(zeta));
+            editor.set_inline_completion_provider(Some(provider), cx);
+        }
     }
 }
