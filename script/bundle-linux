@@ -38,27 +38,38 @@ version_info=$(rustc --version --verbose)
 host_line=$(echo "$version_info" | grep host)
 target_triple=${host_line#*: }
 musl_triple=${target_triple%-gnu}-musl
+remote_server_triple=${REMOTE_SERVER_TARGET:-"${musl_triple}"}
+rustup_installed=false
+if command -v rustup >/dev/null 2>&1; then
+    rustup_installed=true
+fi
 
 # Generate the licenses first, so they can be baked into the binaries
 script/generate-licenses
-rustup target add "$musl_triple"
+
+if "$rustup_installed"; then
+    rustup target add "$remote_server_triple"
+fi
 
 # Build binary in release mode
 export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
 cargo build --release --target "${target_triple}" --package zed --package cli
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
-cargo build --release --target "${musl_triple}" --package remote_server
+if [[ "$remote_server_triple" == "$musl_triple" ]]; then
+    export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
+fi
+cargo build --release --target "${remote_server_triple}" --package remote_server
 
 # Strip the binary of all debug symbols
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
 strip --strip-debug "${target_dir}/${target_triple}/release/zed"
 strip --strip-debug "${target_dir}/${target_triple}/release/cli"
-strip --strip-debug "${target_dir}/${musl_triple}/release/remote_server"
+strip --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
 
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
-! ldd "${target_dir}/${musl_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'
+! ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'
 
 suffix=""
 if [ "$channel" != "stable" ]; then
@@ -127,4 +138,4 @@ remove_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
 ls "${target_dir}/release" | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f "${target_dir}/release/{}" || true
 tar -czvf "${target_dir}/release/$archive" -C ${temp_dir} "zed$suffix.app"
 
-gzip --stdout --best "${target_dir}/${musl_triple}/release/remote_server" > "${target_dir}/zed-remote-server-linux-${arch}.gz"
+gzip --stdout --best "${target_dir}/${remote_server_triple}/release/remote_server" > "${target_dir}/zed-remote-server-linux-${arch}.gz"

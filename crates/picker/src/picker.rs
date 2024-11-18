@@ -3,8 +3,8 @@ use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent,
     DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListSizingBehavior, ListState,
-    MouseButton, MouseUpEvent, Render, Task, UniformListScrollHandle, View, ViewContext,
-    WindowContext,
+    MouseButton, MouseUpEvent, Render, ScrollStrategy, Task, UniformListScrollHandle, View,
+    ViewContext, WindowContext,
 };
 use head::Head;
 use serde::Deserialize;
@@ -108,7 +108,11 @@ pub trait PickerDelegate: Sized + 'static {
     fn should_dismiss(&self) -> bool {
         true
     }
-    fn confirm_completion(&self, _query: String) -> Option<String> {
+    fn confirm_completion(
+        &mut self,
+        _query: String,
+        _: &mut ViewContext<Picker<Self>>,
+    ) -> Option<String> {
         None
     }
 
@@ -370,7 +374,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn confirm_completion(&mut self, _: &ConfirmCompletion, cx: &mut ViewContext<Self>) {
-        if let Some(new_query) = self.delegate.confirm_completion(self.query(cx)) {
+        if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), cx) {
             self.set_query(new_query, cx);
         } else {
             cx.propagate()
@@ -491,7 +495,9 @@ impl<D: PickerDelegate> Picker<D> {
     fn scroll_to_item_index(&mut self, ix: usize) {
         match &mut self.element_container {
             ElementContainer::List(state) => state.scroll_to_reveal_item(ix),
-            ElementContainer::UniformList(scroll_handle) => scroll_handle.scroll_to_item(ix),
+            ElementContainer::UniformList(scroll_handle) => {
+                scroll_handle.scroll_to_item(ix, ScrollStrategy::Top)
+            }
         }
     }
 

@@ -84,7 +84,7 @@ impl RenderOnce for KeyBinding {
                         .join(" ")
                 )
             })
-            .gap(Spacing::Small.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
             .flex_none()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
                 let key_icon = self.icon_for_key(keystroke);
@@ -184,7 +184,7 @@ pub struct KeyIcon {
 impl RenderOnce for KeyIcon {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         Icon::new(self.icon)
-            .size(IconSize::Small)
+            .size(IconSize::XSmall)
             .color(Color::Muted)
     }
 }

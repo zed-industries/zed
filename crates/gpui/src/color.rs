@@ -1,7 +1,7 @@
 use anyhow::{bail, Context};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::{
-    fmt,
+    fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
 };
 
@@ -20,6 +20,17 @@ pub fn rgba(hex: u32) -> Rgba {
     let b = ((hex >> 8) & 0xFF) as f32 / 255.0;
     let a = (hex & 0xFF) as f32 / 255.0;
     Rgba { r, g, b, a }
+}
+
+/// Swap from RGBA with premultiplied alpha to BGRA
+pub(crate) fn swap_rgba_pa_to_bgra(color: &mut [u8]) {
+    color.swap(0, 2);
+    if color[3] > 0 {
+        let a = color[3] as f32 / 255.;
+        color[0] = (color[0] as f32 / a) as u8;
+        color[1] = (color[1] as f32 / a) as u8;
+        color[2] = (color[2] as f32 / a) as u8;
+    }
 }
 
 /// An RGBA color
@@ -276,6 +287,19 @@ impl Hash for Hsla {
         state.write_u32(u32::from_be_bytes(self.s.to_be_bytes()));
         state.write_u32(u32::from_be_bytes(self.l.to_be_bytes()));
         state.write_u32(u32::from_be_bytes(self.a.to_be_bytes()));
+    }
+}
+
+impl Display for Hsla {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "hsla({:.2}, {:.2}%, {:.2}%, {:.2})",
+            self.h * 360.,
+            self.s * 100.,
+            self.l * 100.,
+            self.a
+        )
     }
 }
 

@@ -138,6 +138,14 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.text_system.clone())
     }
 
+    fn keyboard_layout(&self) -> String {
+        "unknown".into()
+    }
+
+    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
+        // todo(linux)
+    }
+
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
 
@@ -676,6 +684,8 @@ impl Keystroke {
             Keysym::ISO_Left_Tab => "tab".to_owned(),
             Keysym::KP_Prior => "pageup".to_owned(),
             Keysym::KP_Next => "pagedown".to_owned(),
+            Keysym::XF86_Back => "back".to_owned(),
+            Keysym::XF86_Forward => "forward".to_owned(),
 
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),

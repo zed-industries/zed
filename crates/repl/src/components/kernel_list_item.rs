@@ -46,7 +46,7 @@ impl ParentElement for KernelListItem {
 
 impl RenderOnce for KernelListItem {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        ListItem::new(SharedString::from(self.kernel_specification.name.clone()))
+        ListItem::new(self.kernel_specification.name())
             .selectable(false)
             .start_slot(
                 h_flex()

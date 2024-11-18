@@ -1,23 +1,15 @@
 use std::sync::Arc;
 
-use assistant_slash_command::SlashCommandRegistry;
-use gpui::AnyElement;
-use gpui::DismissEvent;
-use gpui::WeakView;
-use picker::PickerEditorPosition;
-
-use ui::ListItemSpacing;
-
-use gpui::SharedString;
-use gpui::Task;
-use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem, PopoverMenu, PopoverTrigger};
+use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakView};
+use picker::{Picker, PickerDelegate, PickerEditorPosition};
+use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger};
 
 use crate::assistant_panel::ContextEditor;
+use crate::SlashCommandWorkingSet;
 
 #[derive(IntoElement)]
 pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
-    registry: Arc<SlashCommandRegistry>,
+    working_set: Arc<SlashCommandWorkingSet>,
     active_context_editor: WeakView<ContextEditor>,
     trigger: T,
 }
@@ -27,6 +19,7 @@ struct SlashCommandInfo {
     name: SharedString,
     description: SharedString,
     args: Option<SharedString>,
+    icon: IconName,
 }
 
 #[derive(Clone)]
@@ -57,12 +50,12 @@ pub(crate) struct SlashCommandDelegate {
 
 impl<T: PopoverTrigger> SlashCommandSelector<T> {
     pub(crate) fn new(
-        registry: Arc<SlashCommandRegistry>,
+        working_set: Arc<SlashCommandWorkingSet>,
         active_context_editor: WeakView<ContextEditor>,
         trigger: T,
     ) -> Self {
         SlashCommandSelector {
-            registry,
+            working_set,
             active_context_editor,
             trigger,
         }
@@ -145,16 +138,20 @@ impl PickerDelegate for SlashCommandDelegate {
         }
         ret
     }
+
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(command) = self.filtered_commands.get(self.selected_index) {
-            if let SlashCommandEntry::Info(info) = command {
-                self.active_context_editor
-                    .update(cx, |context_editor, cx| {
-                        context_editor.insert_command(&info.name, cx)
-                    })
-                    .ok();
-            } else if let SlashCommandEntry::Advert { on_confirm, .. } = command {
-                on_confirm(cx);
+            match command {
+                SlashCommandEntry::Info(info) => {
+                    self.active_context_editor
+                        .update(cx, |context_editor, cx| {
+                            context_editor.insert_command(&info.name, cx)
+                        })
+                        .ok();
+                }
+                SlashCommandEntry::Advert { on_confirm, .. } => {
+                    on_confirm(cx);
+                }
             }
             cx.emit(DismissEvent);
         }
@@ -181,43 +178,41 @@ impl PickerDelegate for SlashCommandDelegate {
                     .spacing(ListItemSpacing::Dense)
                     .selected(selected)
                     .child(
-                        h_flex()
+                        v_flex()
                             .group(format!("command-entry-label-{ix}"))
                             .w_full()
                             .min_w(px(250.))
                             .child(
-                                v_flex()
-                                    .child(
-                                        h_flex()
-                                            .child(div().font_buffer(cx).child({
-                                                let mut label = format!("/{}", info.name);
-                                                if let Some(args) =
-                                                    info.args.as_ref().filter(|_| selected)
-                                                {
-                                                    label.push_str(&args);
-                                                }
-                                                Label::new(label).size(LabelSize::Small)
-                                            }))
-                                            .children(info.args.clone().filter(|_| !selected).map(
-                                                |args| {
-                                                    div()
-                                                        .font_buffer(cx)
-                                                        .child(
-                                                            Label::new(args)
-                                                                .size(LabelSize::Small)
-                                                                .color(Color::Muted),
-                                                        )
-                                                        .visible_on_hover(format!(
-                                                            "command-entry-label-{ix}"
-                                                        ))
-                                                },
-                                            )),
-                                    )
-                                    .child(
-                                        Label::new(info.description.clone())
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    ),
+                                h_flex()
+                                    .gap_1p5()
+                                    .child(Icon::new(info.icon).size(IconSize::XSmall))
+                                    .child(div().font_buffer(cx).child({
+                                        let mut label = format!("{}", info.name);
+                                        if let Some(args) = info.args.as_ref().filter(|_| selected)
+                                        {
+                                            label.push_str(&args);
+                                        }
+                                        Label::new(label).size(LabelSize::Small)
+                                    }))
+                                    .children(info.args.clone().filter(|_| !selected).map(
+                                        |args| {
+                                            div()
+                                                .font_buffer(cx)
+                                                .child(
+                                                    Label::new(args)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .visible_on_hover(format!(
+                                                    "command-entry-label-{ix}"
+                                                ))
+                                        },
+                                    )),
+                            )
+                            .child(
+                                Label::new(info.description.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
                             ),
                     ),
             ),
@@ -235,11 +230,11 @@ impl PickerDelegate for SlashCommandDelegate {
 impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let all_models = self
-            .registry
-            .featured_command_names()
+            .working_set
+            .featured_command_names(cx)
             .into_iter()
             .filter_map(|command_name| {
-                let command = self.registry.command(&command_name)?;
+                let command = self.working_set.command(&command_name, cx)?;
                 let menu_text = SharedString::from(Arc::from(command.menu_text()));
                 let label = command.label(cx);
                 let args = label.filter_range.end.ne(&label.text.len()).then(|| {
@@ -251,24 +246,40 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                     name: command_name.into(),
                     description: menu_text,
                     args,
+                    icon: command.icon(),
                 }))
             })
             .chain([SlashCommandEntry::Advert {
                 name: "create-your-command".into(),
                 renderer: |cx| {
                     v_flex()
+                        .w_full()
                         .child(
                             h_flex()
+                                .w_full()
                                 .font_buffer(cx)
                                 .items_center()
-                                .gap_1()
-                                .child(div().font_buffer(cx).child(
-                                    Label::new("create-your-command").size(LabelSize::Small),
-                                ))
-                                .child(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall)),
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .child(Icon::new(IconName::Plus).size(IconSize::XSmall))
+                                        .child(
+                                            div().font_buffer(cx).child(
+                                                Label::new("create-your-command")
+                                                    .size(LabelSize::Small),
+                                            ),
+                                        ),
+                                )
+                                .child(
+                                    Icon::new(IconName::ArrowUpRight)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                ),
                         )
                         .child(
-                            Label::new("Learn how to create a custom command")
+                            Label::new("Create your custom command")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         )

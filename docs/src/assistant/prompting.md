@@ -4,7 +4,7 @@
 
 Prompts are an essential part of interacting with AI assistants in Zed. They help guide the AI's responses and ensure you get the most relevant and useful information.
 
-Every new context will start with the [default prompt](#default-prompt), which can be customized.
+Every new chat will start with the [default prompt](#default-prompt), which can be customized.
 
 Remember that effective prompting is an iterative process. Experiment with different prompt structures and wordings to find what works best for your specific needs and the model you're using.
 
@@ -50,7 +50,7 @@ More on prompt engineering:
 
 ## Editing the Default Prompt {#default-prompt}
 
-Zed allows you to customize the default prompt used in new context editors. Or to be more precise, it uses a series of prompts that are combined to form the default prompt.
+Zed allows you to customize the default prompt used when interacting with LLMs. Or to be more precise, it uses a series of prompts that are combined to form the default prompt.
 
 To edit prompts, select "Prompt Library" from the menu icon (three horizontal lines) in the upper right hand corner or using the `cmd-k l` keyboard shortcut.
 
@@ -69,7 +69,7 @@ You can add prompts to the default prompt by clicking the icon in the top right 
 
 _Changes to the default prompt will not affect existing contexts. You can remove the default prompt and manually re-add it with `/default` to update an existing context._
 
-Default prompts will show at the top of the prompt list, and will be included with every new context.
+Default prompts will show at the top of the prompt list, and will be included with every new chat.
 
 You can manually add the default prompt using the `/default` command.
 
@@ -137,8 +137,7 @@ Zed has the following internal prompt templates:
 
 - `content_prompt.hbs`: Used for generating content in the editor.
 - `terminal_assistant_prompt.hbs`: Used for the terminal assistant feature.
-- `edit_workflow.hbs`: Used for generating the edit workflow prompt.
-- `step_resolution.hbs`: Used for generating the step resolution prompt.
+- `suggest_edits.hbs`: Used for generating the model instructions for the XML Suggest Edits should return.
 
 At this point it is unknown if we will expand templates further to be user-creatable.
 
@@ -146,78 +145,17 @@ At this point it is unknown if we will expand templates further to be user-creat
 
 > **Note:** It is not recommended to override templates unless you know what you are doing. Editing templates will break your assistant if done incorrectly.
 
-Zed allows you to override the default prompts used for various assistant features by placing custom Handlebars (.hbs) templates in your `~/.config/zed/prompts/templates` directory.
+Zed allows you to override the default prompts used for various assistant features by placing custom Handlebars (.hbs) templates in your `~/.config/zed/prompt_overrides` directory.
 
 The following templates can be overridden:
 
-1. `content_prompt.hbs`: Used for generating content in the editor.
-   Format:
+1. [`content_prompt.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/content_prompt.hbs): Used for generating content in the editor.
 
-   ```handlebars
-   You are an AI programming assistant. Your task is to
-   {{#if is_insert}}insert{{else}}rewrite{{/if}}
-   {{content_type}}{{#if language_name}} in {{language_name}}{{/if}}
-   based on the following context and user request. Context:
-   {{#if is_truncated}}
-     [Content truncated...]
-   {{/if}}
-   {{document_content}}
-   {{#if is_truncated}}
-     [Content truncated...]
-   {{/if}}
+2. [`terminal_assistant_prompt.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/terminal_assistant_prompt.hbs): Used for the terminal assistant feature.
 
-   User request:
-   {{user_prompt}}
+3. [`suggest_edits.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/suggest_edits.hbs): Used for generating the model instructions for the XML Suggest Edits should return.
 
-   {{#if rewrite_section}}
-     Please rewrite the section enclosed in
-     <rewrite_this></rewrite_this>
-     tags.
-   {{else}}
-     Please insert your response at the
-     <insert_here></insert_here>
-     tag.
-   {{/if}}
-
-   Provide only the
-   {{content_type}}
-   content in your response, without any additional explanation.
-   ```
-
-2. `terminal_assistant_prompt.hbs`: Used for the terminal assistant feature.
-   Format:
-
-   ```handlebars
-   You are an AI assistant for a terminal emulator. Provide helpful responses to
-   user queries about terminal commands, file systems, and general computer
-   usage. System information: - Operating System:
-   {{os}}
-   - Architecture:
-   {{arch}}
-   {{#if shell}}
-     - Shell:
-     {{shell}}
-   {{/if}}
-   {{#if working_directory}}
-     - Current Working Directory:
-     {{working_directory}}
-   {{/if}}
-
-   Latest terminal output:
-   {{#each latest_output}}
-     {{this}}
-   {{/each}}
-
-   User query:
-   {{user_prompt}}
-
-   Provide a clear and concise response to the user's query, considering the
-   given system information and latest terminal output if relevant.
-   ```
-
-3. `edit_workflow.hbs`: Used for generating the edit workflow prompt.
-
-4. `step_resolution.hbs`: Used for generating the step resolution prompt.
+4. [`project_slash_command.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/project_slash_command.hbs)
 
 > **Note:** Be sure you want to override these, as you'll miss out on iteration on our built-in features. This should be primarily used when developing Zed.
 

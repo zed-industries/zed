@@ -185,6 +185,8 @@ impl Vim {
                 error!("Unexpected normal mode motion operator: {:?}", operator)
             }
         }
+        // Exit temporary normal mode (if active).
+        self.exit_temporary_normal(cx);
     }
 
     pub fn normal_object(&mut self, object: Object, cx: &mut ViewContext<Self>) {
@@ -439,9 +441,7 @@ impl Vim {
                     ))
                 }
 
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                });
+                editor.edit(edits, cx);
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(None, cx, |s| {
                     s.move_with(|map, selection| {
@@ -484,6 +484,12 @@ impl Vim {
                 }
             });
         });
+    }
+
+    fn exit_temporary_normal(&mut self, cx: &mut ViewContext<Self>) {
+        if self.temp_mode {
+            self.switch_mode(Mode::Insert, true, cx);
+        }
     }
 }
 #[cfg(test)]

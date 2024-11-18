@@ -1697,6 +1697,31 @@ fn end_of_document(
     map.clip_point(new_point.to_display_point(map), Bias::Left)
 }
 
+fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoint> {
+    let inner = crate::object::surrounding_html_tag(map, head, head..head, false)?;
+    let outer = crate::object::surrounding_html_tag(map, head, head..head, true)?;
+
+    if head > outer.start && head < inner.start {
+        let mut offset = inner.end.to_offset(map, Bias::Left);
+        for c in map.buffer_snapshot.chars_at(offset) {
+            if c == '/' || c == '\n' || c == '>' {
+                return Some(offset.to_display_point(map));
+            }
+            offset += c.len_utf8();
+        }
+    } else {
+        let mut offset = outer.start.to_offset(map, Bias::Left);
+        for c in map.buffer_snapshot.chars_at(offset) {
+            offset += c.len_utf8();
+            if c == '<' || c == '\n' {
+                return Some(offset.to_display_point(map));
+            }
+        }
+    }
+
+    return None;
+}
+
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
     let display_point = map.clip_at_line_end(display_point);
@@ -1722,10 +1747,26 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         let mut closest_distance = usize::MAX;
 
         for (open_range, close_range) in ranges {
+            if map.buffer_snapshot.chars_at(open_range.start).next() == Some('<') {
+                if offset > open_range.start && offset < close_range.start {
+                    let mut chars = map.buffer_snapshot.chars_at(close_range.start);
+                    if (Some('/'), Some('>')) == (chars.next(), chars.next()) {
+                        return display_point;
+                    }
+                    if let Some(tag) = matching_tag(map, display_point) {
+                        return tag;
+                    }
+                } else if close_range.contains(&offset) {
+                    return open_range.start.to_display_point(map);
+                } else if open_range.contains(&offset) {
+                    return (close_range.end - 1).to_display_point(map);
+                }
+            }
+
             if open_range.start >= offset && line_range.contains(&open_range.start) {
                 let distance = open_range.start - offset;
                 if distance < closest_distance {
-                    closest_pair_destination = Some(close_range.start);
+                    closest_pair_destination = Some(close_range.end - 1);
                     closest_distance = distance;
                     continue;
                 }
@@ -2075,6 +2116,56 @@ mod test {
         cx.set_shared_state("func ˇboop() {\n}").await;
         cx.simulate_shared_keystrokes("%").await;
         cx.shared_state().await.assert_eq("func boop(ˇ) {\n}");
+    }
+
+    #[gpui::test]
+    async fn test_matching_tags(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_html(cx).await;
+
+        cx.neovim.exec("set filetype=html").await;
+
+        cx.set_shared_state(indoc! {r"<bˇody></body>"}).await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<body><ˇ/body>"});
+        cx.simulate_shared_keystrokes("%").await;
+
+        // test jumping backwards
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<ˇbody></body>"});
+
+        // test self-closing tags
+        cx.set_shared_state(indoc! {r"<a><bˇr/></a>"}).await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"<a><bˇr/></a>"});
+
+        // test tag with attributes
+        cx.set_shared_state(indoc! {r"<div class='test' ˇid='main'>
+            </div>
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<div class='test' id='main'>
+            <ˇ/div>
+            "});
+
+        // test multi-line self-closing tag
+        cx.set_shared_state(indoc! {r#"<a>
+            <br
+                test = "test"
+            /ˇ>
+        </a>"#})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r#"<a>
+            ˇ<br
+                test = "test"
+            />
+        </a>"#});
     }
 
     #[gpui::test]

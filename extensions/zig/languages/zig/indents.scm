@@ -1,22 +1,17 @@
 [
-  (AsmExpr)
-  (AssignExpr)
-  (Block)
-  (BlockExpr)
-  (ContainerDecl)
-  (ErrorUnionExpr)
-  (InitList)
-  (SwitchExpr)
-  (TestDecl)
+  (block)
+  (switch_expression)
+  (initializer_list)
 ] @indent.begin
+
+(block
+  "}" @indent.end)
 
 (_ "[" "]" @end) @indent
 (_ "{" "}" @end) @indent
 (_ "(" ")" @end) @indent
 
 [
-  (line_comment)
-  (container_doc_comment)
-  (doc_comment)
-  (LINESTRING)
+  (comment)
+  (multiline_string)
 ] @indent.ignore
