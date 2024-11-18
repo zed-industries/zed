@@ -1,4 +1,5 @@
 use runtimelib::JupyterKernelspec;
+use jupyter_websocket_client::{JupyterClient, JupyterMessage};
 
 #[derive(Debug, Clone)]
 pub struct RemoteKernelSpecification {
