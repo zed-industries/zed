@@ -47,7 +47,7 @@ use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
-    pub test_live_kit_server: Arc<live_kit_client::test::TestServer>,
+    pub test_live_kit_server: Arc<live_kit_client::TestServer>,
     server: Arc<Server>,
     next_github_user_id: i32,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
@@ -89,7 +89,7 @@ impl TestServer {
             TestDb::sqlite(deterministic.clone())
         };
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
-        let live_kit_server = live_kit_client::test::TestServer::create(
+        let live_kit_server = live_kit_client::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),
             format!("devkey-{}", live_kit_server_id),
             format!("secret-{}", live_kit_server_id),
@@ -499,7 +499,7 @@ impl TestServer {
 
     pub async fn build_app_state(
         test_db: &TestDb,
-        live_kit_test_server: &live_kit_client::test::TestServer,
+        live_kit_test_server: &live_kit_client::TestServer,
         executor: Executor,
     ) -> Arc<AppState> {
         Arc::new(AppState {
