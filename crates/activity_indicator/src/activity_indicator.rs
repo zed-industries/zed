@@ -7,7 +7,7 @@ use gpui::{
     InteractiveElement as _, Model, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement, Styled, Transformation, View, ViewContext, VisualContext as _,
 };
-use language::{LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId};
+use language::{BufferContents, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId};
 use lsp::LanguageServerName;
 use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
 use smallvec::SmallVec;
@@ -86,21 +86,17 @@ impl ActivityIndicator {
 
         cx.subscribe(&this, move |_, _, event, cx| match event {
             Event::ShowError { lsp_name, error } => {
-                let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
+                let contents = BufferContents {
+                    text: format!("Language server error: {}\n\n{}", lsp_name, error),
+                    language: None,
+                    mtime: None,
+                };
+                let create_buffer =
+                    project.update(cx, |project, cx| project.create_buffer(Some(contents), cx));
                 let project = project.clone();
-                let error = error.clone();
-                let lsp_name = lsp_name.clone();
                 cx.spawn(|workspace, mut cx| async move {
                     let buffer = create_buffer.await?;
                     buffer.update(&mut cx, |buffer, cx| {
-                        buffer.edit(
-                            [(
-                                0..0,
-                                format!("Language server error: {}\n\n{}", lsp_name, error),
-                            )],
-                            None,
-                            cx,
-                        );
                         buffer.set_capability(language::Capability::ReadOnly, cx);
                     })?;
                     workspace.update(&mut cx, |workspace, cx| {

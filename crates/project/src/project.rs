@@ -46,7 +46,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
+    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferContents, BufferEvent,
     CachedLspAdapter, Capability, CodeLabel, DiagnosticEntry, Documentation, File as _, Language,
     LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
     Transaction, Unclipped,
@@ -110,6 +110,13 @@ pub use toolchain_store::ToolchainStore;
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
+
+// FIXME: use?
+pub enum NotFoundHandling {
+    Create,
+    RequireCreate,
+    RequireExistence,
+}
 
 pub trait Item {
     fn try_open(
@@ -1757,9 +1764,14 @@ impl Project {
         }
     }
 
-    pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Model<Buffer>>> {
-        self.buffer_store
-            .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx))
+    pub fn create_buffer(
+        &mut self,
+        initial_contents: Option<BufferContents>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Buffer>>> {
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.create_buffer(initial_contents, cx)
+        })
     }
 
     pub fn create_local_buffer(
@@ -1810,12 +1822,21 @@ impl Project {
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
+        self.open_buffer_with_initial_contents(path, None, cx)
+    }
+
+    pub fn open_buffer_with_initial_contents(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        initial_contents: Option<BufferContents>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Buffer>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_buffer(path.into(), cx)
+            buffer_store.open_buffer(path.into(), initial_contents, cx)
         })
     }
 
@@ -3923,7 +3944,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
         let buffer = this
-            .update(&mut cx, |this, cx| this.create_buffer(cx))?
+            .update(&mut cx, |this, cx| this.create_buffer(None, cx))?
             .await?;
         let peer_id = envelope.original_sender_id()?;
 

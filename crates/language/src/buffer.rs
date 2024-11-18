@@ -620,6 +620,14 @@ impl IndentGuide {
     }
 }
 
+// TODO: move
+pub struct BufferContents {
+    pub text: String,
+    // FIXME: use
+    pub language: Option<Arc<Language>>,
+    pub mtime: Option<SystemTime>,
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &ModelContext<Self>) -> Self {

@@ -20,7 +20,7 @@ use language::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
         split_operations,
     },
-    Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
+    Buffer, BufferContents, BufferEvent, Capability, DiskState, File as _, Language, Operation,
 };
 use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
 use smol::channel::Receiver;
@@ -33,6 +33,7 @@ trait BufferStoreImpl {
     fn open_buffer(
         &self,
         path: Arc<Path>,
+        initial_contents: Option<BufferContents>,
         worktree: Model<Worktree>,
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<Model<Buffer>>>;
@@ -50,7 +51,11 @@ trait BufferStoreImpl {
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<()>>;
 
-    fn create_buffer(&self, cx: &mut ModelContext<BufferStore>) -> Task<Result<Model<Buffer>>>;
+    fn create_buffer(
+        &self,
+        initial_contents: Option<BufferContents>,
+        cx: &mut ModelContext<BufferStore>,
+    ) -> Task<Result<Model<Buffer>>>;
 
     fn reload_buffers(
         &self,
@@ -344,6 +349,8 @@ impl BufferStoreImpl for Model<RemoteBufferStore> {
     fn open_buffer(
         &self,
         path: Arc<Path>,
+        // TODO: How to handle interaction between workspace persistence and remote dev?
+        _: Option<BufferContents>,
         worktree: Model<Worktree>,
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<Model<Buffer>>> {
@@ -373,7 +380,11 @@ impl BufferStoreImpl for Model<RemoteBufferStore> {
         })
     }
 
-    fn create_buffer(&self, cx: &mut ModelContext<BufferStore>) -> Task<Result<Model<Buffer>>> {
+    fn create_buffer(
+        &self,
+        initial_contents: Option<BufferContents>,
+        cx: &mut ModelContext<BufferStore>,
+    ) -> Task<Result<Model<Buffer>>> {
         self.update(cx, |this, cx| {
             let create = this.upstream_client.request(proto::OpenNewBuffer {
                 project_id: this.project_id,
@@ -825,13 +836,19 @@ impl BufferStoreImpl for Model<LocalBufferStore> {
     fn open_buffer(
         &self,
         path: Arc<Path>,
+        initial_contents: Option<BufferContents>,
         worktree: Model<Worktree>,
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<Model<Buffer>>> {
         let buffer_store = cx.weak_model();
         self.update(cx, |_, cx| {
             let load_buffer = worktree.update(cx, |worktree, cx| {
-                let load_file = worktree.load_file(path.as_ref(), cx);
+                let load_file = match initial_contents {
+                    None => worktree.load_file(path.as_ref(), cx),
+                    Some(initial_contents) => {
+                        worktree.restore_file(path.as_ref(), initial_contents, cx)
+                    }
+                };
                 let reservation = cx.reserve_model();
                 let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
                 cx.spawn(move |_, mut cx| async move {
@@ -901,10 +918,24 @@ impl BufferStoreImpl for Model<LocalBufferStore> {
         })
     }
 
-    fn create_buffer(&self, cx: &mut ModelContext<BufferStore>) -> Task<Result<Model<Buffer>>> {
+    fn create_buffer(
+        &self,
+        initial_contents: Option<BufferContents>,
+        cx: &mut ModelContext<BufferStore>,
+    ) -> Task<Result<Model<Buffer>>> {
+        let (text, language) = match initial_contents {
+            Some(BufferContents {
+                text,
+                language,
+                mtime: _,
+            }) => (text, language),
+            None => ("".into(), None),
+        };
+        let handle = self.clone();
         cx.spawn(|buffer_store, mut cx| async move {
             let buffer = cx.new_model(|cx| {
-                Buffer::local("", cx).with_language(language::PLAIN_TEXT.clone(), cx)
+                Buffer::local(text, cx)
+                    .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
             })?;
             buffer_store.update(&mut cx, |buffer_store, cx| {
                 buffer_store.add_buffer(buffer.clone(), cx).log_err();
@@ -1010,6 +1041,7 @@ impl BufferStore {
     pub fn open_buffer(
         &mut self,
         project_path: ProjectPath,
+        initial_contents: Option<BufferContents>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
         let existing_buffer = self.get_by_path(&project_path, cx);
@@ -1036,9 +1068,12 @@ impl BufferStore {
                 entry.insert(rx.clone());
 
                 let project_path = project_path.clone();
-                let load_buffer = self
-                    .state
-                    .open_buffer(project_path.path.clone(), worktree, cx);
+                let load_buffer = self.state.open_buffer(
+                    project_path.path.clone(),
+                    initial_contents,
+                    worktree,
+                    cx,
+                );
 
                 cx.spawn(move |this, mut cx| async move {
                     let load_result = load_buffer.await;
@@ -1062,8 +1097,12 @@ impl BufferStore {
         })
     }
 
-    pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Model<Buffer>>> {
-        self.state.create_buffer(cx)
+    pub fn create_buffer(
+        &mut self,
+        initial_contents: Option<BufferContents>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Buffer>>> {
+        self.state.create_buffer(initial_contents, cx)
     }
 
     pub fn save_buffer(
@@ -1422,7 +1461,7 @@ impl BufferStore {
                 let buffers = this.update(&mut cx, |this, cx| {
                     project_paths
                         .into_iter()
-                        .map(|project_path| this.open_buffer(project_path, cx))
+                        .map(|project_path| this.open_buffer(project_path, None, cx))
                         .collect::<Vec<_>>()
                 })?;
                 for buffer_task in buffers {

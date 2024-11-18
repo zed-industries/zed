@@ -29,7 +29,7 @@ use gpui::{
     Task,
 };
 use ignore::IgnoreStack;
-use language::DiskState;
+use language::{BufferContents, DiskState};
 use parking_lot::Mutex;
 use paths::local_settings_folder_relative_path;
 use postage::{
@@ -720,6 +720,20 @@ impl Worktree {
         }
     }
 
+    pub fn restore_file(
+        &self,
+        path: &Path,
+        initial_contents: BufferContents,
+        cx: &ModelContext<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
+        match self {
+            Worktree::Local(this) => this.restore_file(path, initial_contents, cx),
+            Worktree::Remote(_) => {
+                Task::ready(Err(anyhow!("remote worktrees can't yet restore files")))
+            }
+        }
+    }
+
     pub fn write_file(
         &self,
         path: &Path,
@@ -1353,68 +1367,97 @@ impl LocalWorktree {
         })
     }
 
+    fn restore_file(
+        &self,
+        path: &Path,
+        initial_contents: BufferContents,
+        cx: &ModelContext<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
+        self.load_or_restore_file(path, Some(initial_contents), cx)
+    }
+
     fn load_file(&self, path: &Path, cx: &ModelContext<Worktree>) -> Task<Result<LoadedFile>> {
+        self.load_or_restore_file(path, None, cx)
+    }
+
+    fn load_or_restore_file(
+        &self,
+        path: &Path,
+        initial_contents: Option<BufferContents>,
+        cx: &ModelContext<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
         let entry = self.refresh_entry(path.clone(), None, cx);
         let is_private = self.is_path_private(path.as_ref());
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
+            let (initial_text, was_present) =
+                initial_contents.map_or((None, false), |initial_contents| {
+                    (
+                        Some(initial_contents.text),
+                        initial_contents.mtime.is_some(),
+                    )
+                });
             let abs_path = abs_path?;
-            let text = fs.load(&abs_path).await?;
-            let mut index_task = None;
-            let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
-            if let Some(repo) = snapshot.repository_for_path(&path) {
-                if let Some(repo_path) = repo.relativize(&snapshot, &path).log_err() {
-                    if let Some(git_repo) = snapshot.git_repositories.get(&*repo.work_directory) {
-                        let git_repo = git_repo.repo_ptr.clone();
-                        index_task = Some(
-                            cx.background_executor()
-                                .spawn(async move { git_repo.load_index_text(&repo_path) }),
-                        );
-                    }
-                }
-            }
+            let text_future = initial_text.map_or_else(
+                || fs.load(&abs_path),
+                |text| Box::pin(std::future::ready(Ok(text))),
+            );
 
-            let diff_base = if let Some(index_task) = index_task {
-                index_task.await
-            } else {
-                None
-            };
+            let diff_base = this
+                .update(&mut cx, |this, _| this.as_local().unwrap().snapshot())
+                .map(|snapshot| {
+                    let mut index_task = Task::ready(None);
+                    if let Some(repo) = snapshot.repository_for_path(&path) {
+                        if let Some(repo_path) = repo.relativize(&snapshot, &path).log_err() {
+                            if let Some(git_repo) =
+                                snapshot.git_repositories.get(&*repo.work_directory)
+                            {
+                                let git_repo = git_repo.repo_ptr.clone();
+                                index_task = cx
+                                    .background_executor()
+                                    .spawn(async move { git_repo.load_index_text(&repo_path) });
+                            }
+                        }
+                    }
+                    index_task
+                });
 
             let worktree = this
                 .upgrade()
                 .ok_or_else(|| anyhow!("worktree was dropped"))?;
-            let file = match entry.await? {
-                Some(entry) => File::for_entry(entry, worktree),
-                None => {
-                    let metadata = fs
-                        .metadata(&abs_path)
-                        .await
-                        .with_context(|| {
-                            format!("Loading metadata for excluded file {abs_path:?}")
-                        })?
-                        .with_context(|| {
-                            format!("Excluded file {abs_path:?} got removed during loading")
-                        })?;
-                    Arc::new(File {
+            let file = match entry.await {
+                Err(e) => Err(e),
+                Ok(Some(entry)) => Ok(File::for_entry(entry, worktree)),
+                Ok(None) => {
+                    let metadata = fs.metadata(&abs_path).await.with_context(|| {
+                        format!("Loading metadata for excluded file {abs_path:?}")
+                    })?;
+                    let disk_state = match metadata {
+                        Some(metadata) => DiskState::Present {
+                            mtime: metadata.mtime,
+                        },
+                        None if was_present => DiskState::Deleted,
+                        None => DiskState::New,
+                    };
+                    Ok(Arc::new(File {
                         entry_id: None,
                         worktree,
                         path,
-                        disk_state: DiskState::Present {
-                            mtime: metadata.mtime,
-                        },
+                        disk_state,
                         is_local: true,
                         is_private,
-                    })
+                    }))
                 }
             };
 
+            // Error reporting is done at the end so that file loading errors take precedence.
             Ok(LoadedFile {
-                file,
-                text,
-                diff_base,
+                text: text_future.await?,
+                file: file?,
+                diff_base: diff_base?.await,
             })
         })
     }
@@ -1830,12 +1873,8 @@ impl LocalWorktree {
         cx.spawn(move |this, mut cx| async move {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
-            let new_entry = this.update(&mut cx, |this, _| {
-                this.entry_for_path(path)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("failed to read path after update"))
-            })??;
-            Ok(Some(new_entry))
+            let new_entry = this.update(&mut cx, |this, _| this.entry_for_path(path).cloned())?;
+            Ok(new_entry)
         })
     }
 

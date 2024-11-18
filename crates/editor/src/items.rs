@@ -16,8 +16,8 @@ use gpui::{
     VisualContext, WeakView, WindowContext,
 };
 use language::{
-    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
-    SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, BufferContents, CharKind,
+    DiskState, Point, SelectionGoal,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::AnchorRangeExt;
@@ -976,133 +976,98 @@ impl SerializableItem for Editor {
                 }
             }
             Ok(None) => {
-                return Task::ready(Err(anyhow!("No path or contents found for buffer")));
+                return Task::ready(Err(anyhow!("Missing serialized editor info in database")));
             }
             Err(error) => {
                 return Task::ready(Err(error));
             }
         };
 
-        match serialized_editor {
-            SerializedEditor {
-                abs_path: None,
-                contents: Some(contents),
-                language,
-                ..
-            } => cx.spawn(|pane, mut cx| {
-                let project = project.clone();
-                async move {
-                    let language = if let Some(language_name) = language {
-                        let language_registry =
-                            project.update(&mut cx, |project, _| project.languages().clone())?;
+        if let SerializedEditor {
+            abs_path: None,
+            contents: None,
+            ..
+        } = serialized_editor
+        {
+            return Task::ready(Err(anyhow!("No path or contents found for buffer")));
+        }
 
-                        // We don't fail here, because we'd rather not set the language if the name changed
-                        // than fail to restore the buffer.
-                        language_registry
-                            .language_for_name(&language_name)
-                            .await
-                            .ok()
-                    } else {
-                        None
-                    };
+        let SerializedEditor {
+            abs_path,
+            contents,
+            language,
+            mtime,
+        } = serialized_editor;
 
-                    // First create the empty buffer
-                    let buffer = project
-                        .update(&mut cx, |project, cx| project.create_buffer(cx))?
-                        .await?;
-
-                    // Then set the text so that the dirty bit is set correctly
-                    buffer.update(&mut cx, |buffer, cx| {
-                        if let Some(language) = language {
-                            buffer.set_language(Some(language), cx);
-                        }
-                        buffer.set_text(contents, cx);
-                    })?;
-
-                    pane.update(&mut cx, |_, cx| {
-                        cx.new_view(|cx| {
-                            let mut editor = Editor::for_buffer(buffer, Some(project), cx);
-
-                            editor.read_scroll_position_from_db(item_id, workspace_id, cx);
-                            editor
+        cx.spawn(|pane, mut cx| async move {
+            let resolved_language_future = if contents.is_none() {
+                None
+            } else {
+                project
+                    .read_with(&cx, |project, _| {
+                        language.map(|language| {
+                            project.languages().language_for_name(language.as_str())
                         })
                     })
-                }
-            }),
-            SerializedEditor {
-                abs_path: Some(abs_path),
-                contents,
+                    .ok()
+                    .flatten()
+            };
+            let resolved_language = match resolved_language_future {
+                None => None,
+                //Should open even if the language is not found, so errors are ignored.
+                Some(resolved_language_future) => resolved_language_future.await.ok(),
+            };
+
+            let initial_contents = contents.map(|text| BufferContents {
+                text,
+                language: resolved_language,
                 mtime,
-                ..
-            } => {
-                let project_item = project.update(cx, |project, cx| {
-                    let (worktree, path) = project.find_worktree(&abs_path, cx)?;
-                    let project_path = ProjectPath {
-                        worktree_id: worktree.read(cx).id(),
-                        path: path.into(),
-                    };
-                    Some(project.open_path(project_path, cx))
-                });
+            });
 
-                match project_item {
-                    Some(project_item) => {
-                        cx.spawn(|pane, mut cx| async move {
-                            let (_, project_item) = project_item.await?;
-                            let buffer = project_item.downcast::<Buffer>().map_err(|_| {
-                                anyhow!("Project item at stored path was not a buffer")
-                            })?;
-
-                            // This is a bit wasteful: we're loading the whole buffer from
-                            // disk and then overwrite the content.
-                            // But for now, it keeps the implementation of the content serialization
-                            // simple, because we don't have to persist all of the metadata that we get
-                            // by loading the file (git diff base, ...).
-                            if let Some(buffer_text) = contents {
-                                buffer.update(&mut cx, |buffer, cx| {
-                                    // If we did restore an mtime, we want to store it on the buffer
-                                    // so that the next edit will mark the buffer as dirty/conflicted.
-                                    if mtime.is_some() {
-                                        buffer.did_reload(
-                                            buffer.version(),
-                                            buffer.line_ending(),
-                                            mtime,
-                                            cx,
-                                        );
-                                    }
-                                    buffer.set_text(buffer_text, cx);
-                                })?;
-                            }
-
-                            pane.update(&mut cx, |_, cx| {
-                                cx.new_view(|cx| {
-                                    let mut editor = Editor::for_buffer(buffer, Some(project), cx);
-
-                                    editor.read_scroll_position_from_db(item_id, workspace_id, cx);
-                                    editor
-                                })
-                            })
+            let buffer = match abs_path {
+                None => {
+                    project.update(&mut cx, |project, cx| project.create_buffer(initial_contents, cx))?.await?
+                }
+                Some(abs_path) => {
+                    let project_path = project.read_with(&cx, |project, cx| {
+                        project.find_worktree(&abs_path, cx).map(|(worktree, path)| ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path: path.into(),
                         })
-                    }
-                    None => {
-                        let open_by_abs_path = workspace.update(cx, |workspace, cx| {
-                            workspace.open_abs_path(abs_path.clone(), false, cx)
-                        });
-                        cx.spawn(|_, mut cx| async move {
+                    })?;
+                    match project_path {
+                        Some(project_path) => {
+                            project.update(&mut cx, |project, cx| {
+                                project.open_buffer_with_initial_contents(
+                                    project_path,
+                                    initial_contents,
+                                    cx,
+                                )
+                            })?.await?
+                        },
+                        None => {
+                            let open_by_abs_path = workspace.update(&mut cx, |workspace, cx| {
+                                workspace.open_abs_path(abs_path.clone(), false, cx)
+                            });
                             let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
                             editor.update(&mut cx, |editor, cx| {
                                 editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                             })?;
-                            Ok(editor)
-                        })
+                            return Ok(editor)
+                        }
                     }
                 }
-            }
-            SerializedEditor {
-                abs_path: None,
-                contents: None,
-                ..
-            } => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
-        }
+            };
+
+            pane.update(&mut cx, |_, cx| {
+                cx.new_view(|cx| {
+                    let mut editor =
+                        Editor::for_buffer(buffer, Some(project), cx);
+                    editor.read_scroll_position_from_db(item_id, workspace_id, cx);
+                    editor
+                })
+            })
+        })
     }
 
     fn serialize(

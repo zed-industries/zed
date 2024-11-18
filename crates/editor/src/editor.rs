@@ -2317,7 +2317,7 @@ impl Editor {
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<View<Editor>>> {
         let project = workspace.project().clone();
-        let create = project.update(cx, |project, cx| project.create_buffer(cx));
+        let create = project.update(cx, |project, cx| project.create_buffer(None, cx));
 
         cx.spawn(|workspace, mut cx| async move {
             let buffer = create.await?;
@@ -2352,7 +2352,7 @@ impl Editor {
         cx: &mut ViewContext<Workspace>,
     ) {
         let project = workspace.project().clone();
-        let create = project.update(cx, |project, cx| project.create_buffer(cx));
+        let create = project.update(cx, |project, cx| project.create_buffer(None, cx));
 
         cx.spawn(|workspace, mut cx| async move {
             let buffer = create.await?;
