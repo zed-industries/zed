@@ -1186,12 +1186,11 @@ impl ProjectPanel {
                 return None;
             }
             let project = self.project.read(cx);
-            let items_to_delete = self.sanitized_marked_entries(cx);
+            let items_to_delete = self.disjoint_entries_for_removal(cx);
 
             let mut dirty_buffers = 0;
             let file_paths = items_to_delete
-                .clone()
-                .into_iter()
+                .iter()
                 .filter_map(|selection| {
                     let project_path = project.path_for_entry(selection.entry_id, cx)?;
                     dirty_buffers +=
@@ -1302,19 +1301,15 @@ impl ProjectPanel {
         }
 
         let project = self.project.read(cx);
-        let worktree_map: HashMap<WorktreeId, &Worktree> = sanitized_entries
+        let (worktree_id, worktree) = sanitized_entries
             .iter()
             .map(|entry| entry.worktree_id)
             .collect::<HashSet<WorktreeId>>()
             .into_iter()
             .filter_map(|id| project.worktree_for_id(id, cx).map(|w| (id, w.read(cx))))
-            .collect();
-        let (worktree_id, worktree) = worktree_map
-            .iter()
-            .max_by(|(_, a), (_, b)| a.root_name().cmp(b.root_name()))
-            .map(|(id, worktree)| (*id, *worktree))?;
+            .max_by(|(_, a), (_, b)| a.root_name().cmp(b.root_name()))?;
 
-        let marked_entries_in_worktree: Vec<&SelectedEntry> = sanitized_entries
+        let marked_entries_in_worktree: HashSet<&SelectedEntry> = sanitized_entries
             .iter()
             .filter(|e| e.worktree_id == worktree_id)
             .collect();
@@ -1354,13 +1349,11 @@ impl ProjectPanel {
         let entry_index = siblings.iter().position(|sibling| sibling.id == entry.id)?;
 
         // Try next sibling
-        if entry_index + 1 < siblings.len() {
-            if let Some(next_sibling) = siblings.get(entry_index + 1) {
-                return Some(SelectedEntry {
-                    worktree_id,
-                    entry_id: next_sibling.id,
-                });
-            }
+        if let Some(next_sibling) = siblings.get(entry_index + 1) {
+            return Some(SelectedEntry {
+                worktree_id,
+                entry_id: next_sibling.id,
+            });
         }
 
         // Try previous sibling
@@ -1932,48 +1925,61 @@ impl ProjectPanel {
         None
     }
 
-    fn sanitized_marked_entries(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
-        let marked = self.marked_entries();
-        if marked.is_empty() {
+    fn disjoint_entries_for_removal(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
+        let marked_entries = self.marked_entries();
+        if marked_entries.is_empty() {
             return BTreeSet::default();
         }
 
         let project = self.project.read(cx);
-        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> =
-            marked
-                .into_iter()
-                .fold(HashMap::default(), |mut map, entry| {
-                    map.entry(entry.worktree_id).or_default().push(entry);
-                    map
-                });
+        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = marked_entries
+            .into_iter()
+            .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
+            .fold(HashMap::default(), |mut map, entry| {
+                map.entry(entry.worktree_id).or_default().push(entry);
+                map
+            });
 
-        let mut result = BTreeSet::new();
+        let mut sanitized_entries = BTreeSet::new();
         for (worktree_id, entries) in entries_by_worktree {
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 let worktree = worktree.read(cx);
 
-                let marked_paths: HashSet<Arc<Path>> = entries
+                let mut marked_dir_paths: Vec<Arc<Path>> = entries
                     .iter()
-                    .filter_map(|entry| worktree.entry_for_id(entry.entry_id))
-                    .map(|entry| entry.path.clone())
+                    .filter_map(|entry| {
+                        worktree.entry_for_id(entry.entry_id).and_then(|entry| {
+                            if entry.is_dir() {
+                                Some(entry.path.clone())
+                            } else {
+                                None
+                            }
+                        })
+                    })
                     .collect();
+
+                marked_dir_paths.sort_by(|a, b| {
+                    b.as_ref()
+                        .components()
+                        .count()
+                        .cmp(&a.as_ref().components().count())
+                });
 
                 for entry in entries {
                     if let Some(entry_info) = worktree.entry_for_id(entry.entry_id) {
-                        if !entry_info
-                            .path
-                            .ancestors()
-                            .skip(1)
-                            .any(|ancestor| marked_paths.contains(ancestor))
-                        {
-                            result.insert(entry);
+                        let entry_path = &entry_info.path;
+                        let should_exclude = marked_dir_paths.iter().any(|dir_path| {
+                            entry_path.starts_with(dir_path) && entry_path != dir_path
+                        });
+                        if !should_exclude {
+                            sanitized_entries.insert(entry);
                         }
                     }
                 }
             }
         }
 
-        result
+        sanitized_entries
     }
 
     // Returns list of entries that should be affected by an operation.
@@ -6560,7 +6566,7 @@ mod tests {
         );
 
         // Test Case 3: Delete root level file
-        select_path(&panel, "root/file5.txt", cx);
+        select_path(&panel, "root/file6.txt", cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..15, cx),
             &[
@@ -6571,8 +6577,8 @@ mod tests {
                 "        > subdir2",
                 "          file3.txt",
                 "          file4.txt",
-                "      file5.txt  <== selected",
-                "      file6.txt",
+                "      file5.txt",
+                "      file6.txt  <== selected",
             ],
             "Initial state before deleting root level file"
         );
@@ -6588,9 +6594,9 @@ mod tests {
                 "        > subdir2",
                 "          file3.txt",
                 "          file4.txt",
-                "      file6.txt  <== selected",
+                "      file5.txt  <== selected",
             ],
-            "Should select next file at root level"
+            "Should select prev entry at root level"
         );
     }
 

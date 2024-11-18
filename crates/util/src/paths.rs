@@ -380,8 +380,8 @@ pub fn compare_paths(
 
                     num_and_remainder_a.cmp(&num_and_remainder_b).then_with(|| {
                         if a_is_file && b_is_file {
-                            let ext_a = path_a.extension().and_then(|s| s.to_str()).unwrap_or("");
-                            let ext_b = path_b.extension().and_then(|s| s.to_str()).unwrap_or("");
+                            let ext_a = path_a.extension().unwrap_or_default();
+                            let ext_b = path_b.extension().unwrap_or_default();
                             ext_a.cmp(ext_b)
                         } else {
                             cmp::Ordering::Equal
