@@ -29,8 +29,8 @@ impl Render for GradientViewer {
         let color3 = Background::linear_gradient(
             0.,
             [
-                BackgroundColorStop::new(0.0, gpui::blue()),
-                BackgroundColorStop::new(0.15, gpui::green()),
+                BackgroundColorStop::new(0.0, gpui::green()),
+                BackgroundColorStop::new(0.15, gpui::yellow()),
             ],
         );
 
