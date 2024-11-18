@@ -2891,7 +2891,7 @@ impl Context {
             request.messages.push(LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![
-                    "Generate a concise 3-7 word title for this conversation, omitting punctuation"
+                    "Generate a concise 3-7 word title for this conversation, omitting punctuation. Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`"
                         .into(),
                 ],
                 cache: false,
