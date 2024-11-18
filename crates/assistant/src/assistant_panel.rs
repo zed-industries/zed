@@ -2257,7 +2257,11 @@ impl ContextEditor {
                 }
             });
 
-            let height = path_count as u32 + 1;
+            let mut height = path_count as u32 + 1;
+            if patch.status == AssistantPatchStatus::Pending {
+                height += 1;
+            }
+
             let crease = Crease::block(
                 patch_start..patch_end,
                 height,

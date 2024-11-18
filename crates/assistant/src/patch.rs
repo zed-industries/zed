@@ -209,7 +209,9 @@ impl PatchStore {
     ) -> Result<(LocatedPatch, bool)> {
         let old_input_edits = old_located_patch.input.edits;
         let old_outputs = old_located_patch.buffers;
-        let mut equals_old_patch = true;
+        let mut equals_old_patch = old_located_patch.input.range == patch.range
+            && old_located_patch.input.title == patch.title
+            && old_located_patch.input.status == patch.status;
 
         // Convert each input edit into a located edit.
         let mut new_outputs = Vec::<LocatedPatchBuffer>::new();
