@@ -3939,17 +3939,6 @@ impl Workspace {
         None
     }
 
-    #[cfg(target_os = "windows")]
-    fn shared_screen_for_peer(
-        &self,
-        _peer_id: PeerId,
-        _pane: &View<Pane>,
-        _cx: &mut WindowContext,
-    ) -> Option<View<SharedScreen>> {
-        None
-    }
-
-    #[cfg(not(target_os = "windows"))]
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,
@@ -3968,7 +3957,7 @@ impl Workspace {
             }
         }
 
-        Some(cx.new_view(|cx| SharedScreen::new(track, peer_id, user.clone(), cx)))
+        Some(cx.new_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
     }
 
     pub fn on_window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {

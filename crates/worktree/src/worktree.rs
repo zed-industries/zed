@@ -3344,7 +3344,7 @@ impl File {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub id: ProjectEntryId,
     pub kind: EntryKind,
@@ -3376,7 +3376,7 @@ pub struct Entry {
     pub is_fifo: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
     UnloadedDir,
     PendingDir,

@@ -2,7 +2,7 @@
 name = "live_kit_client"
 version = "0.1.0"
 edition = "2021"
-description = "Logic for using LiveKit with GPUI"
+description = "Bindings to LiveKit Swift client SDK"
 publish = false
 license = "GPL-3.0-or-later"
 
@@ -19,37 +19,42 @@ name = "test_app"
 [features]
 no-webrtc = []
 test-support = [
+    "async-trait",
     "collections/test-support",
     "gpui/test-support",
+    "live_kit_server",
     "nanoid",
 ]
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
-collections.workspace = true
-cpal = "0.15"
+async-broadcast = "0.7"
+async-trait = { workspace = true, optional = true }
+collections = { workspace = true, optional = true }
 futures.workspace = true
-gpui.workspace = true
-http_2 = { package = "http", version = "0.2.1" }
-live_kit_server.workspace = true
+gpui = { workspace = true, optional = true }
+live_kit_server = { workspace = true, optional = true }
 log.workspace = true
 media.workspace = true
 nanoid = { workspace = true, optional = true}
 parking_lot.workspace = true
 postage.workspace = true
-util.workspace = true
-http_client.workspace = true
-
-[target.'cfg(not(target_os = "windows"))'.dependencies]
-livekit.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 
+[target.'cfg(all(not(target_os = "macos")))'.dependencies]
+async-trait = { workspace = true }
+collections = { workspace = true }
+gpui = { workspace = true }
+live_kit_server.workspace = true
+nanoid.workspace = true
+
 [dev-dependencies]
+async-trait.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+live_kit_server.workspace = true
 nanoid.workspace = true
 sha2.workspace = true
 simplelog.workspace = true
