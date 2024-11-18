@@ -1482,6 +1482,7 @@ struct ScrollPosition {
 struct PatchViewState {
     crease_id: CreaseId,
     multibuffer_range: Range<Anchor>,
+    height: u32,
     editor: Option<PatchEditorState>,
     update_task: Option<Task<()>>,
 }
@@ -2266,10 +2267,14 @@ impl ContextEditor {
 
             let should_refold;
             if let Some(state) = self.patches.get_mut(&patch_id) {
-                if state.multibuffer_range != (patch_start..patch_end) {
+                if state.multibuffer_range != (patch_start..patch_end) || state.height != height {
                     editor.remove_creases([state.crease_id], cx);
                     state.crease_id = editor.insert_creases([crease.clone()], cx)[0];
+                    state.height = height;
                     state.multibuffer_range = patch_start..patch_end;
+                    should_refold = snapshot.intersects_fold(patch_start.to_offset(&multibuffer));
+                } else {
+                    should_refold = false;
                 }
 
                 if state.editor.is_some() {
@@ -2289,8 +2294,6 @@ impl ContextEditor {
                         })
                     });
                 }
-
-                should_refold = snapshot.intersects_fold(patch_start.to_offset(&multibuffer));
             } else {
                 let crease_id = editor.insert_creases([crease.clone()], cx)[0];
                 self.patches.insert(
@@ -2298,6 +2301,7 @@ impl ContextEditor {
                     PatchViewState {
                         crease_id,
                         multibuffer_range: patch_start..patch_end,
+                        height,
                         editor: None,
                         update_task: None,
                     },
