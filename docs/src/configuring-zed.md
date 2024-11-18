@@ -1420,9 +1420,9 @@ Or to set a `socks5` proxy:
 
 ### Modal Width
 
-- Description: Width of the file finder modal. Can take one of a few values: `small`, `medium`, `large`, `xlarge`, and `full`.
+- Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`. If none of these values are specified, it takes a min-width size.
 - Setting: `modal_width`
-- Default: `medium`
+- Default: `null`
 
 ## Preferred Line Length
 
