@@ -101,8 +101,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       break;
     case Background_LinearGradient: {
       float2 position = input.position.xy;
-      float angle = radians(input.background_angle);
-      float2 gradient_direction = normalize(float2(cos(angle), sin(angle)));
+      float degrees = fmod(input.background_angle, 360.) * (M_PI_F / 180.);
+      float2 gradient_direction = normalize(float2(cos(degrees), sin(degrees)));
 
       // Calculate the start and end points of the gradient
       float2 start_point = {quad.bounds.origin.x, quad.bounds.origin.y};
@@ -751,8 +751,4 @@ float4 over(float4 below, float4 above) {
       (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
   result.a = alpha;
   return result;
-}
-
-float radians(float degrees) {
-  return degrees * (M_PI_F / 360.0);
 }
