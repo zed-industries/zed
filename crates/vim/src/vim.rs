@@ -586,10 +586,9 @@ impl Vim {
                 }
             }
             Mode::Replace => CursorShape::Underline,
-            Mode::HelixNormal
-            | Mode::Visual
-            | Mode::VisualLine
-            | Mode::VisualBlock => CursorShape::Block,
+            Mode::HelixNormal | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                CursorShape::Block
+            }
             Mode::Insert => CursorShape::Bar,
         }
     }
