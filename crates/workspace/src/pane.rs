@@ -287,7 +287,8 @@ pub struct Pane {
     toolbar: View<Toolbar>,
     pub(crate) workspace: WeakView<Workspace>,
     project: Model<Project>,
-    drag_split_direction: Option<SplitDirection>,
+    // TODO kb revert?
+    pub drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
     custom_drop_handle:
         Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
