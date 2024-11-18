@@ -120,3 +120,14 @@ pub fn python_env_kernel_specifications(
         anyhow::Ok(kernel_specs)
     }
 }
+
+enum RunningKernel {
+    Native(NativeRunningKernel),
+    Remote(RemoteRunningKernel),
+}
+
+impl RunningKernel {
+    pub fn new(&self) {
+        //
+    }
+}

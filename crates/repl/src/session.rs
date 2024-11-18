@@ -246,21 +246,19 @@ impl Session {
             cx.entity_id().to_string(),
         );
 
-        let kernel_specification = match self.kernel_specification.clone() {
-            KernelSpecification::Jupyter(kernel_specification) => kernel_specification,
-            KernelSpecification::PythonEnv(kernel_specification) => kernel_specification,
+        let kernel = match self.kernel_specification.clone() {
+            KernelSpecification::Jupyter(kernel_specification)
+            | KernelSpecification::PythonEnv(kernel_specification) => NativeRunningKernel::new(
+                kernel_specification,
+                entity_id,
+                working_directory,
+                self.fs.clone(),
+                cx,
+            ),
             KernelSpecification::Remote(remote_kernel_specification) => {
                 todo!()
             }
         };
-
-        let kernel = NativeRunningKernel::new(
-            kernel_specification,
-            entity_id,
-            working_directory,
-            self.fs.clone(),
-            cx,
-        );
 
         let pending_kernel = cx
             .spawn(|this, mut cx| async move {

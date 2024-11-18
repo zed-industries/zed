@@ -15,3 +15,5 @@ impl PartialEq for RemoteKernelSpecification {
 }
 
 impl Eq for RemoteKernelSpecification {}
+
+pub struct RemoteRunningKernel {}
