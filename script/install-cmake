@@ -35,7 +35,7 @@ CMAKE_VERSION="${CMAKE_VERSION:-${1:-3.30.4}}"
 
 if [ "$(whoami)" = root ]; then SUDO=; else SUDO="$(command -v sudo || command -v doas || true)"; fi
 
-if cmake --version | grep -q "$CMAKE_VERSION"; then
+if cmake --version 2>/dev/null | grep -q "$CMAKE_VERSION"; then
   echo "CMake $CMAKE_VERSION is already installed."
   exit 0
 elif [ -e /usr/local/bin/cmake ]; then
