@@ -20,7 +20,7 @@ use ui::{
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
-use zed_actions::InlineAssist;
+use zed_actions::assistant::InlineAssist;
 
 mod repl_menu;
 mod toggle_markdown_preview;

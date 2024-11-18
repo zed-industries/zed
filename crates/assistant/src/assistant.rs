@@ -69,7 +69,6 @@ actions!(
         CycleMessageRole,
         QuoteSelection,
         InsertIntoEditor,
-        ToggleFocus,
         InsertActivePrompt,
         DeployHistory,
         DeployPromptLibrary,

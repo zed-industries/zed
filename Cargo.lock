@@ -3765,6 +3765,7 @@ dependencies = [
  "url",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]

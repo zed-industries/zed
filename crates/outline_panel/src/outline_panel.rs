@@ -3875,13 +3875,13 @@ impl OutlinePanel {
                         .child({
                             let keystroke = match self.position(cx) {
                                 DockPosition::Left => {
-                                    cx.keystroke_text_for(&workspace::ToggleLeftDock)
+                                    cx.keystroke_text_for_action(&workspace::ToggleLeftDock)
                                 }
                                 DockPosition::Bottom => {
-                                    cx.keystroke_text_for(&workspace::ToggleBottomDock)
+                                    cx.keystroke_text_for_action(&workspace::ToggleBottomDock)
                                 }
                                 DockPosition::Right => {
-                                    cx.keystroke_text_for(&workspace::ToggleRightDock)
+                                    cx.keystroke_text_for_action(&workspace::ToggleRightDock)
                                 }
                             };
                             Label::new(format!("Toggle this panel with {keystroke}"))

@@ -43,9 +43,15 @@ actions!(
     ]
 );
 
-#[derive(Clone, Default, Deserialize, PartialEq)]
-pub struct InlineAssist {
-    pub prompt: Option<String>,
-}
+pub mod assistant {
+    use super::*;
 
-impl_actions!(assistant, [InlineAssist]);
+    #[derive(Clone, Default, Deserialize, PartialEq)]
+    pub struct InlineAssist {
+        pub prompt: Option<String>,
+    }
+
+    impl_actions!(assistant, [InlineAssist]);
+
+    actions!(assistant, [ShowConfiguration, ToggleFocus]);
+}

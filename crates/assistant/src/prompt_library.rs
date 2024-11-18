@@ -44,7 +44,7 @@ use ui::{
 use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::Workspace;
-use zed_actions::InlineAssist;
+use zed_actions::assistant::InlineAssist;
 
 actions!(
     prompt_library,

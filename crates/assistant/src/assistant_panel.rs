@@ -19,7 +19,7 @@ use crate::{
     InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
     MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
     ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    RequestType, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    RequestType, SavedContextMetadata, Split, ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -88,18 +88,18 @@ use workspace::{
     notifications::NotificationId,
     pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
-    DraggedSelection, Pane, Save, ShowConfiguration, Toast, ToggleZoom, ToolbarItemEvent,
-    ToolbarItemLocation, ToolbarItemView, Workspace,
+    DraggedSelection, Pane, Save, Toast, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView, Workspace,
 };
 use workspace::{searchable::SearchableItemHandle, DraggedTab};
-use zed_actions::InlineAssist;
+use zed_actions::assistant::InlineAssist;
 
 pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
-                .register_action(|workspace, _: &ToggleFocus, cx| {
+                .register_action(|workspace, _: &zed_actions::assistant::ToggleFocus, cx| {
                     let settings = AssistantSettings::get_global(cx);
                     if !settings.enabled {
                         return;
@@ -478,7 +478,10 @@ impl AssistantPanel {
                                         .action("New Chat", Box::new(NewContext))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
-                                        .action("Configure", Box::new(ShowConfiguration))
+                                        .action(
+                                            "Configure",
+                                            Box::new(zed_actions::assistant::ShowConfiguration),
+                                        )
                                         .action(zoom_label, Box::new(ToggleZoom))
                                 }))
                             }),
@@ -845,8 +848,12 @@ impl AssistantPanel {
                         .ok();
                     if let Some(answer) = answer {
                         if answer == 0 {
-                            cx.update(|cx| cx.dispatch_action(Box::new(ShowConfiguration)))
-                                .ok();
+                            cx.update(|cx| {
+                                cx.dispatch_action(Box::new(
+                                    zed_actions::assistant::ShowConfiguration,
+                                ))
+                            })
+                            .ok();
                         }
                     }
                     return Ok(());
@@ -1105,7 +1112,7 @@ impl AssistantPanel {
 
     fn show_configuration(
         workspace: &mut Workspace,
-        _: &ShowConfiguration,
+        _: &zed_actions::assistant::ShowConfiguration,
         cx: &mut ViewContext<Workspace>,
     ) {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
@@ -1355,7 +1362,9 @@ impl Render for AssistantPanel {
                 this.new_context(cx);
             }))
             .on_action(
-                cx.listener(|this, _: &ShowConfiguration, cx| this.show_configuration_tab(cx)),
+                cx.listener(|this, _: &zed_actions::assistant::ShowConfiguration, cx| {
+                    this.show_configuration_tab(cx)
+                }),
             )
             .on_action(cx.listener(AssistantPanel::deploy_history))
             .on_action(cx.listener(AssistantPanel::deploy_prompt_library))
@@ -1455,7 +1464,7 @@ impl Panel for AssistantPanel {
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(ToggleFocus)
+        Box::new(zed_actions::assistant::ToggleFocus)
     }
 }
 
@@ -3625,7 +3634,10 @@ impl ContextEditor {
                             .on_click({
                                 let focus_handle = self.focus_handle(cx).clone();
                                 move |_event, cx| {
-                                    focus_handle.dispatch_action(&ShowConfiguration, cx);
+                                    focus_handle.dispatch_action(
+                                        &zed_actions::assistant::ShowConfiguration,
+                                        cx,
+                                    );
                                 }
                             }),
                     )
