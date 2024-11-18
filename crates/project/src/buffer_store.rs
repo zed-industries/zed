@@ -902,30 +902,12 @@ impl BufferStoreImpl for Model<LocalBufferStore> {
     }
 
     fn create_buffer(&self, cx: &mut ModelContext<BufferStore>) -> Task<Result<Model<Buffer>>> {
-        let handle = self.clone();
         cx.spawn(|buffer_store, mut cx| async move {
             let buffer = cx.new_model(|cx| {
                 Buffer::local("", cx).with_language(language::PLAIN_TEXT.clone(), cx)
             })?;
             buffer_store.update(&mut cx, |buffer_store, cx| {
                 buffer_store.add_buffer(buffer.clone(), cx).log_err();
-                let buffer_id = buffer.read(cx).remote_id();
-                handle.update(cx, |this, cx| {
-                    if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                        this.local_buffer_ids_by_path.insert(
-                            ProjectPath {
-                                worktree_id: file.worktree_id(cx),
-                                path: file.path.clone(),
-                            },
-                            buffer_id,
-                        );
-
-                        if let Some(entry_id) = file.entry_id {
-                            this.local_buffer_ids_by_entry_id
-                                .insert(entry_id, buffer_id);
-                        }
-                    }
-                });
             })?;
             Ok(buffer)
         })
