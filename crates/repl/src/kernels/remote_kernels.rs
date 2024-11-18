@@ -1,5 +1,10 @@
-use runtimelib::JupyterKernelspec;
-// use jupyter_websocket_client::{};
+use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
+use gpui::AppContext;
+use runtimelib::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
+
+use super::{JupyterMessageChannel, RunningKernel};
+use jupyter_websocket_client::RemoteServer;
+use std::fmt::Debug;
 
 #[derive(Debug, Clone)]
 pub struct RemoteKernelSpecification {
@@ -17,4 +22,96 @@ impl PartialEq for RemoteKernelSpecification {
 
 impl Eq for RemoteKernelSpecification {}
 
-pub struct RemoteRunningKernel {}
+pub struct RemoteRunningKernel {
+    remote_server: RemoteServer,
+    pub working_directory: std::path::PathBuf,
+    pub request_tx: mpsc::Sender<JupyterMessage>,
+    pub execution_state: ExecutionState,
+    pub kernel_info: Option<KernelInfoReply>,
+}
+
+impl RemoteRunningKernel {
+    pub async fn new(
+        kernelspec: RemoteKernelSpecification,
+        working_directory: std::path::PathBuf,
+        request_tx: mpsc::Sender<JupyterMessage>,
+        cx: &mut AppContext,
+    ) -> anyhow::Result<(Self, JupyterMessageChannel)> {
+        let remote_server = RemoteServer {
+            base_url: kernelspec.url,
+            token: kernelspec.token,
+        };
+
+        // todo: launch a kernel to get a kernel ID
+        let kernel_id = "not-implemented";
+
+        let kernel_socket = remote_server.connect_to_kernel(kernel_id).await?;
+
+        let (mut w, mut r) = kernel_socket.split();
+
+        let (request_tx, request_rx) = mpsc::channel::<JupyterMessage>(100);
+        let (messages_tx, messages_rx) = mpsc::channel::<JupyterMessage>(100);
+
+        // let routing_task = cx.background_executor().spawn({
+        //     async move {
+        //         while let Some(message) = request_rx.next().await {
+        //             w.send(message).await;
+        //         }
+        //     }
+        // });
+        let messages_rx = r.into();
+
+        anyhow::Ok((
+            Self {
+                remote_server,
+                working_directory,
+                request_tx,
+                execution_state: ExecutionState::Idle,
+                kernel_info: None,
+            },
+            messages_rx,
+        ))
+    }
+}
+
+impl Debug for RemoteRunningKernel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteRunningKernel")
+            .field("remote_server url", &self.remote_server.base_url)
+            .field("working_directory", &self.working_directory)
+            .field("request_tx", &self.request_tx)
+            .field("execution_state", &self.execution_state)
+            .field("kernel_info", &self.kernel_info)
+            .finish()
+    }
+}
+
+impl RunningKernel for RemoteRunningKernel {
+    fn request_tx(&self) -> futures::channel::mpsc::Sender<runtimelib::JupyterMessage> {
+        self.request_tx.clone()
+    }
+
+    fn working_directory(&self) -> &std::path::PathBuf {
+        &self.working_directory
+    }
+
+    fn execution_state(&self) -> &runtimelib::ExecutionState {
+        &self.execution_state
+    }
+
+    fn set_execution_state(&mut self, state: runtimelib::ExecutionState) {
+        self.execution_state = state;
+    }
+
+    fn kernel_info(&self) -> Option<&runtimelib::KernelInfoReply> {
+        self.kernel_info.as_ref()
+    }
+
+    fn set_kernel_info(&mut self, info: runtimelib::KernelInfoReply) {
+        self.kernel_info = Some(info);
+    }
+
+    fn force_shutdown(&mut self) -> anyhow::Result<()> {
+        todo!()
+    }
+}

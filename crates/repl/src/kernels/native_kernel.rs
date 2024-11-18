@@ -20,7 +20,7 @@ use std::{
 };
 use uuid::Uuid;
 
-use super::RunningKernel;
+use super::{JupyterMessageChannel, RunningKernel};
 
 #[derive(Debug, Clone)]
 pub struct LocalKernelSpecification {
@@ -100,8 +100,6 @@ pub struct NativeRunningKernel {
     pub execution_state: ExecutionState,
     pub kernel_info: Option<KernelInfoReply>,
 }
-
-type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 
 impl Debug for NativeRunningKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

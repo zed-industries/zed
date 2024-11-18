@@ -1,7 +1,11 @@
 mod native_kernel;
 use std::{fmt::Debug, future::Future, path::PathBuf};
 
-use futures::{channel::mpsc, future::Shared};
+use futures::{
+    channel::mpsc::{self, Receiver},
+    future::Shared,
+    stream,
+};
 use gpui::{AppContext, Model, Task};
 use language::LanguageName;
 pub use native_kernel::*;
@@ -14,6 +18,8 @@ use anyhow::Result;
 use runtimelib::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
 use smol::process::Command;
 use ui::SharedString;
+
+pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KernelSpecification {
