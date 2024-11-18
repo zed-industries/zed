@@ -1,4 +1,4 @@
-use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
+use crate::{ApplyAllDiffHunks, Editor, EditorEvent, RevertFile, SemanticsProvider};
 use collections::HashSet;
 use futures::{channel::mpsc, future::join_all};
 use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription, Task, View};

@@ -17,9 +17,9 @@ use workspace::Item;
 
 use crate::{
     editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyAllDiffHunks,
-    ApplyDiffHunk, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight,
-    DisplayRow, DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk,
-    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    ApplySelectedDiffHunks, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId,
+    DiffRowHighlight, DisplayRow, DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs,
+    GoToHunk, GoToPrevHunk, RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -370,26 +370,40 @@ impl Editor {
 
     pub(crate) fn apply_selected_diff_hunks(
         &mut self,
-        _: &ApplyDiffHunk,
+        _: &ApplySelectedDiffHunks,
         cx: &mut ViewContext<Self>,
     ) {
+        dbg!("apply_selected_diff_hunks");
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
-        let mut ranges_by_buffer = HashMap::default();
-        self.transact(cx, |editor, cx| {
-            for hunk in hunks {
-                if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
-                    ranges_by_buffer
-                        .entry(buffer.clone())
-                        .or_insert_with(Vec::new)
-                        .push(hunk.buffer_range.to_offset(buffer.read(cx)));
-                }
-            }
+        let hunks = dbg!(hunks_for_selections(
+            &snapshot,
+            &self.selections.disjoint_anchors()
+        ));
 
-            for (buffer, ranges) in ranges_by_buffer {
-                buffer.update(cx, |buffer, cx| {
-                    buffer.merge_into_base(ranges, cx);
-                });
+        self.transact(cx, |editor, cx| {
+            if hunks.is_empty() {
+                // If there are no selected hunks, e.g. because we're using the keybinding with nothing selected, apply the first hunk.
+                if let Some(first_hunk) = editor.expanded_hunks.hunks.first() {
+                    editor.apply_diff_hunks_in_range(first_hunk.hunk_range.clone(), cx);
+                }
+            } else {
+                let mut ranges_by_buffer = HashMap::default();
+
+                for hunk in hunks {
+                    dbg!(&hunk);
+                    if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
+                        ranges_by_buffer
+                            .entry(buffer.clone())
+                            .or_insert_with(Vec::new)
+                            .push(hunk.buffer_range.to_offset(buffer.read(cx)));
+                    }
+                }
+
+                for (buffer, ranges) in ranges_by_buffer {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.merge_into_base(ranges, cx);
+                    });
+                }
             }
         });
 
@@ -428,6 +442,13 @@ impl Editor {
                 move |cx| {
                     let hunk_controls_menu_handle =
                         editor.read(cx).hunk_controls_menu_handle.clone();
+                    let is_first_hunk = editor
+                        .read(cx)
+                        .expanded_hunks
+                        .hunks
+                        .first()
+                        .map(|first_hunk| first_hunk.hunk_range == hunk.multi_buffer_range)
+                        .unwrap_or(false);
 
                     let focus_handle = editor.focus_handle(cx);
 
@@ -497,14 +518,9 @@ impl Editor {
                                     }),
                             )
                         })
-                        .child(
-                            Button::new("discard", "Discard")
+                        .child({
+                            let button = Button::new("discard", "Discard")
                                 .style(ButtonStyle::Tinted(TintColor::Negative))
-                                .key_binding(KeyBinding::for_action_in(
-                                    &RevertSelectedHunks,
-                                    &focus_handle,
-                                    cx,
-                                ))
                                 .on_click({
                                     let editor = editor.clone();
                                     let hunk = hunk.clone();
@@ -530,18 +546,23 @@ impl Editor {
                                             });
                                         }
                                     }
-                                }),
-                        )
+                                });
+
+                            if is_first_hunk {
+                                button.key_binding(KeyBinding::for_action_in(
+                                    &RevertSelectedHunks,
+                                    &focus_handle,
+                                    cx,
+                                ))
+                            } else {
+                                button
+                            }
+                        })
                         .when(is_branch_buffer, |this| {
-                            this.child(
-                                Button::new("apply", "Apply")
+                            this.child({
+                                let button = Button::new("apply", "Apply")
                                     .style(ButtonStyle::Tinted(TintColor::Positive))
                                     .layer(ElevationIndex::Wash)
-                                    .key_binding(KeyBinding::for_action_in(
-                                        &ApplyDiffHunk,
-                                        &focus_handle,
-                                        cx,
-                                    ))
                                     .on_click({
                                         let editor = editor.clone();
                                         let hunk = hunk.clone();
@@ -553,8 +574,18 @@ impl Editor {
                                                 );
                                             });
                                         }
-                                    }),
-                            )
+                                    });
+
+                                if is_first_hunk {
+                                    button.key_binding(KeyBinding::for_action_in(
+                                        &ApplySelectedDiffHunks,
+                                        &focus_handle,
+                                        cx,
+                                    ))
+                                } else {
+                                    button
+                                }
+                            })
                         })
                         .when(!is_branch_buffer, |div| {
                             div.child(
