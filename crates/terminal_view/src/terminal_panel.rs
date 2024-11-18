@@ -21,8 +21,8 @@ use terminal::{
     Terminal,
 };
 use ui::{
-    h_flex, ButtonCommon, Clickable, ContextMenu, IconButton, IconSize, PopoverMenu, Selectable,
-    Tooltip,
+    div, h_flex, ButtonCommon, Clickable, ContextMenu, IconButton, IconSize, PopoverMenu,
+    Selectable, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -30,7 +30,7 @@ use workspace::{
     item::SerializableItem,
     pane,
     ui::IconName,
-    DraggedTab, ItemId, NewTerminal, Pane, ToggleZoom, Workspace,
+    DraggedTab, ItemId, NewTerminal, Pane, PaneGroup, ToggleZoom, Workspace,
 };
 
 use anyhow::Result;
@@ -61,6 +61,7 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct TerminalPanel {
     pane: View<Pane>,
+    center: PaneGroup,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
@@ -85,13 +86,26 @@ impl TerminalPanel {
                 NewTerminal.boxed_clone(),
                 cx,
             );
-            pane.set_can_split(false, cx);
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
 
             let is_local = workspace.project().read(cx).is_local();
-            let workspace = workspace.weak_handle();
+            let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
+            pane.toolbar()
+                .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
+            pane
+        });
+        let subscriptions = vec![
+            cx.observe(&pane, |_, _, cx| cx.notify()),
+            cx.subscribe(&pane, Self::handle_pane_event),
+        ];
+        let center = PaneGroup::new(pane.clone());
+        // TODO kb this will not update the state of the panel
+        let closure_center = center.clone();
+        let is_local = workspace.project().read(cx).is_local();
+        let workspace_handle = workspace.weak_handle();
+        pane.update(cx, |pane, cx| {
             pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
                 if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
                     let item = if &tab.pane == cx.view() {
@@ -101,9 +115,11 @@ impl TerminalPanel {
                     };
                     if let Some(item) = item {
                         if item.downcast::<TerminalView>().is_some() {
-                            return ControlFlow::Continue(());
+                            // TODO kb how to do self.center.split() here??
+                            // return ControlFlow::Continue(());
+                            return ControlFlow::Break(());
                         } else if let Some(project_path) = item.project_path(cx) {
-                            if let Some(entry_path) = workspace
+                            if let Some(entry_path) = workspace_handle
                                 .update(cx, |workspace, cx| {
                                     workspace
                                         .project()
@@ -118,7 +134,7 @@ impl TerminalPanel {
                         }
                     }
                 } else if let Some(&entry_id) = dropped_item.downcast_ref::<ProjectEntryId>() {
-                    if let Some(entry_path) = workspace
+                    if let Some(entry_path) = workspace_handle
                         .update(cx, |workspace, cx| {
                             let project = workspace.project().read(cx);
                             project
@@ -138,21 +154,12 @@ impl TerminalPanel {
 
                 ControlFlow::Break(())
             });
-            let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
-            let breadcrumbs = cx.new_view(|_| Breadcrumbs::new());
-            pane.toolbar().update(cx, |toolbar, cx| {
-                toolbar.add_item(buffer_search_bar, cx);
-                toolbar.add_item(breadcrumbs, cx);
-            });
-            pane
         });
-        let subscriptions = vec![
-            cx.observe(&pane, |_, _, cx| cx.notify()),
-            cx.subscribe(&pane, Self::handle_pane_event),
-        ];
+
         let project = workspace.project().read(cx);
         let enabled = project.supports_terminal(cx);
         let this = Self {
+            center,
             pane,
             fs: workspace.app_state().fs.clone(),
             workspace: workspace.weak_handle(),
@@ -790,7 +797,21 @@ impl Render for TerminalPanel {
             cx,
         );
         BufferSearchBar::register(&mut registrar);
-        registrar.into_div().size_full().child(self.pane.clone())
+        let registrar = registrar.into_div();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                registrar.size_full().child(self.center.render(
+                    workspace.project(),
+                    &HashMap::default(),
+                    None,
+                    &self.pane,
+                    workspace.zoomed.as_ref(),
+                    workspace.app_state(),
+                    cx,
+                ))
+            })
+            .ok()
+            .unwrap_or_else(|| div())
     }
 }
 
