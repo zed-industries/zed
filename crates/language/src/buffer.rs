@@ -1775,11 +1775,12 @@ impl Buffer {
             return false;
         };
         match file.disk_state() {
-            DiskState::New | DiskState::Deleted => true,
+            DiskState::New => false,
             DiskState::Present { mtime } => match self.saved_mtime {
                 Some(saved_mtime) => mtime > saved_mtime && self.has_unsaved_edits(),
                 None => true,
             },
+            DiskState::Deleted => true,
         }
     }
 
