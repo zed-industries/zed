@@ -114,6 +114,6 @@ impl RunningKernel for RemoteRunningKernel {
     }
 
     fn force_shutdown(&mut self) -> anyhow::Result<()> {
-        todo!()
+        unimplemented!("force_shutdown")
     }
 }
