@@ -8,7 +8,7 @@ use crate::{
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
     AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
 };
-use crate::{ResolvedPatch, ToolWorkingSet};
+use crate::{PatchStoreEvent, ResolvedPatch, ToolWorkingSet};
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
@@ -368,10 +368,8 @@ pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
-    PatchesUpdated {
-        removed: Vec<PatchId>,
-        updated: Vec<PatchId>,
-    },
+    PatchUpdated(PatchId),
+    PatchRemoved(PatchId),
     InvokedSlashCommandChanged {
         command_id: InvokedSlashCommandId,
     },
@@ -651,6 +649,14 @@ impl Context {
         });
         let edits_since_last_slash_command_parse =
             buffer.update(cx, |buffer, _| buffer.subscribe());
+        let patch_store = cx.new_model(|_| PatchStore::new(project.clone()));
+        cx.subscribe(&patch_store, |_, _, event, cx| {
+            cx.emit(match event {
+                PatchStoreEvent::PatchUpdated(id) => ContextEvent::PatchUpdated(*id),
+                PatchStoreEvent::PatchRemoved(id) => ContextEvent::PatchRemoved(*id),
+            })
+        })
+        .detach();
         let mut this = Self {
             id,
             timestamp: clock::Lamport::new(replica_id),
@@ -675,7 +681,7 @@ impl Context {
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
-            patch_store: cx.new_model(|_| PatchStore::new(project.clone())),
+            patch_store,
             buffer,
             telemetry,
             project,
@@ -1394,8 +1400,6 @@ impl Context {
 
         let mut removed_parsed_slash_command_ranges = Vec::new();
         let mut updated_parsed_slash_commands = Vec::new();
-        let mut removed_patches = Vec::new();
-        let mut updated_patches = Vec::new();
         while let Some(mut row_range) = row_ranges.next() {
             while let Some(next_row_range) = row_ranges.peek() {
                 if row_range.end >= next_row_range.start {
@@ -1420,13 +1424,7 @@ impl Context {
                 cx,
             );
             self.invalidate_pending_slash_commands(&buffer, cx);
-            self.reparse_patches_in_range(
-                start..end,
-                &buffer,
-                &mut updated_patches,
-                &mut removed_patches,
-                cx,
-            );
+            self.reparse_patches_in_range(start..end, &buffer, cx);
         }
 
         if !updated_parsed_slash_commands.is_empty()
@@ -1435,13 +1433,6 @@ impl Context {
             cx.emit(ContextEvent::ParsedSlashCommandsUpdated {
                 removed: removed_parsed_slash_command_ranges,
                 updated: updated_parsed_slash_commands,
-            });
-        }
-
-        if !updated_patches.is_empty() || !removed_patches.is_empty() {
-            cx.emit(ContextEvent::PatchesUpdated {
-                removed: removed_patches,
-                updated: updated_patches,
             });
         }
     }
@@ -1538,8 +1529,6 @@ impl Context {
         &mut self,
         range: Range<text::Anchor>,
         buffer: &BufferSnapshot,
-        updated: &mut Vec<PatchId>,
-        removed: &mut Vec<PatchId>,
         cx: &mut ModelContext<Self>,
     ) {
         // Rebuild the XML tags in the edited range.
@@ -1584,14 +1573,12 @@ impl Context {
                 } else {
                     id = patch_store.insert(patch.clone(), cx);
                 };
-                updated.push(id);
                 (range, id)
             });
             self.patches
                 .splice(intersecting_patches_range, added_entries);
-            for id in removed_entries.into_values() {
-                removed.push(id);
-                patch_store.remove(id);
+            for (range, id) in removed_entries {
+                patch_store.remove(id, cx);
             }
         });
     }
@@ -1683,7 +1670,7 @@ impl Context {
                     if tag.kind == XmlTagKind::Patch && !tag.is_open_tag {
                         patch_tag_depth -= 1;
                         if patch_tag_depth == 0 {
-                            patch.range.end = tag.range.end;
+                            patch.range.end = tag.range.end.bias_right(buffer);
 
                             // Include the line immediately after this <patch> tag if it's empty.
                             let patch_end_offset = patch.range.end.to_offset(buffer);
@@ -2614,14 +2601,8 @@ impl Context {
         }
 
         let buffer = self.buffer.read(cx).text_snapshot();
-        let mut updated = Vec::new();
-        let mut removed = Vec::new();
         for range in ranges {
-            self.reparse_patches_in_range(range, &buffer, &mut updated, &mut removed, cx);
-        }
-
-        if !updated.is_empty() || !removed.is_empty() {
-            cx.emit(ContextEvent::PatchesUpdated { removed, updated })
+            self.reparse_patches_in_range(range, &buffer, cx);
         }
     }
 

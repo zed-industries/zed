@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::{ExcerptRange, ProposedChangesEditor};
-use gpui::{AppContext, AsyncAppContext, Model, ModelContext, SharedString, Task};
+use gpui::{AppContext, AsyncAppContext, EventEmitter, Model, ModelContext, SharedString, Task};
 use language::{AutoindentMode, Buffer};
 use project::{Project, ProjectPath};
 use rope::Rope;
@@ -26,8 +26,15 @@ struct PatchStoreEntry {
     locate_task: Option<Task<Result<()>>>,
 }
 
+pub enum PatchStoreEvent {
+    PatchUpdated(PatchId),
+    PatchRemoved(PatchId),
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct PatchId(usize);
+
+impl EventEmitter<PatchStoreEvent> for PatchStore {}
 
 impl PatchStore {
     pub fn new(project: Model<Project>) -> Self {
@@ -45,33 +52,17 @@ impl PatchStore {
     pub(crate) fn insert(&mut self, patch: AssistantPatch, cx: &mut ModelContext<Self>) -> PatchId {
         let id = PatchId(self.next_patch_id);
         self.next_patch_id += 1;
-
-        let project = self.project.clone();
-        let prev_patch = LocatedPatch {
-            buffers: Vec::new(),
-            input: patch.clone(),
-        };
-
         self.entries.insert(
             id,
             PatchStoreEntry {
-                patch: prev_patch.clone(),
-                locate_task: Some(cx.spawn(|this, mut cx| async move {
-                    let located_patch =
-                        Self::locate_patch(patch, project, prev_patch, &mut cx).await?;
-                    this.update(&mut cx, |this, _cx| {
-                        this.entries.insert(
-                            id,
-                            PatchStoreEntry {
-                                patch: located_patch,
-                                locate_task: None,
-                            },
-                        );
-                    })
-                })),
+                patch: LocatedPatch {
+                    input: patch.clone(),
+                    buffers: Vec::new(),
+                },
+                locate_task: None,
             },
         );
-
+        self.update(id, patch, cx).unwrap();
         id
     }
 
@@ -85,11 +76,13 @@ impl PatchStore {
             return Err(anyhow!("no such patch"));
         };
 
+        cx.emit(PatchStoreEvent::PatchUpdated(id));
+
         let project = self.project.clone();
         let prev_patch = entry.patch.clone();
         entry.locate_task = Some(cx.spawn(|this, mut cx| async move {
             let located_patch = Self::locate_patch(patch, project, prev_patch, &mut cx).await?;
-            this.update(&mut cx, |this, _cx| {
+            this.update(&mut cx, |this, cx| {
                 this.entries.insert(
                     id,
                     PatchStoreEntry {
@@ -97,14 +90,17 @@ impl PatchStore {
                         locate_task: None,
                     },
                 );
+                cx.emit(PatchStoreEvent::PatchUpdated(id));
             })
         }));
 
         Ok(())
     }
 
-    pub(crate) fn remove(&mut self, id: PatchId) {
-        self.entries.remove(&id);
+    pub(crate) fn remove(&mut self, id: PatchId, cx: &mut ModelContext<Self>) {
+        if self.entries.remove(&id).is_some() {
+            cx.emit(PatchStoreEvent::PatchRemoved(id));
+        }
     }
 
     pub(crate) fn resolve_patch(
