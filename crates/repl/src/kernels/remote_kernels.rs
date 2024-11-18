@@ -1,8 +1,8 @@
-use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
+use futures::{channel::mpsc, StreamExt as _};
 use gpui::AppContext;
 use runtimelib::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
 
-use super::{JupyterMessageChannel, RunningKernel};
+use super::RunningKernel;
 use jupyter_websocket_client::RemoteServer;
 use std::fmt::Debug;
 
@@ -35,8 +35,11 @@ impl RemoteRunningKernel {
         kernelspec: RemoteKernelSpecification,
         working_directory: std::path::PathBuf,
         request_tx: mpsc::Sender<JupyterMessage>,
-        cx: &mut AppContext,
-    ) -> anyhow::Result<(Self, JupyterMessageChannel)> {
+        _cx: &mut AppContext,
+    ) -> anyhow::Result<(
+        Self,
+        (), // Stream<Item=JupyterMessage>
+    )> {
         let remote_server = RemoteServer {
             base_url: kernelspec.url,
             token: kernelspec.token,
@@ -47,10 +50,9 @@ impl RemoteRunningKernel {
 
         let kernel_socket = remote_server.connect_to_kernel(kernel_id).await?;
 
-        let (mut w, mut r) = kernel_socket.split();
+        let (mut _w, mut _r) = kernel_socket.split();
 
-        let (request_tx, request_rx) = mpsc::channel::<JupyterMessage>(100);
-        let (messages_tx, messages_rx) = mpsc::channel::<JupyterMessage>(100);
+        let (_messages_tx, _messages_rx) = mpsc::channel::<JupyterMessage>(100);
 
         // let routing_task = cx.background_executor().spawn({
         //     async move {
@@ -59,7 +61,7 @@ impl RemoteRunningKernel {
         //         }
         //     }
         // });
-        let messages_rx = r.into();
+        // let messages_rx = r.into();
 
         anyhow::Ok((
             Self {
@@ -69,7 +71,7 @@ impl RemoteRunningKernel {
                 execution_state: ExecutionState::Idle,
                 kernel_info: None,
             },
-            messages_rx,
+            (),
         ))
     }
 }

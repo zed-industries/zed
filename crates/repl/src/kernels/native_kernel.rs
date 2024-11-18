@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use futures::{
-    channel::mpsc::{self, Receiver},
-    stream::{self, SelectAll, StreamExt},
+    channel::mpsc::{self},
+    stream::{SelectAll, StreamExt},
     SinkExt as _,
 };
 use gpui::{AppContext, EntityId, Task};
