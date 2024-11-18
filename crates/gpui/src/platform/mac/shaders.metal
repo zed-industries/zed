@@ -101,22 +101,21 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       break;
     case Background_LinearGradient: {
       float2 position = input.position.xy;
-      float degrees = fmod(input.background_angle, 360.) * (M_PI_F / 180.);
-      float2 gradient_direction = normalize(float2(cos(degrees), sin(degrees)));
+      float radians = fmod(input.background_angle, 360.0) * (M_PI_F / 180.0);
+      float2 direction = normalize(float2(cos(radians), sin(radians)));
 
       // Calculate the start and end points of the gradient
-      float2 start_point = {quad.bounds.origin.x, quad.bounds.origin.y};
-      float2 end_point = start_point + float2(quad.bounds.size.width * gradient_direction.x,
-                                              quad.bounds.size.height * gradient_direction.y);
+      float2 start_point = float2(quad.bounds.origin.x, quad.bounds.origin.y);
+      float2 end_point = start_point + direction * float2(quad.bounds.size.width, quad.bounds.size.height);
 
       // Calculate the projection of the position on the gradient direction
-      float gradient_length = dot(position - start_point, gradient_direction);
+      float gradient_length = dot(position - start_point, direction);
       float total_length = length(end_point - start_point);
 
       // Calculate the percentage along the gradient
       float percentage = gradient_length / total_length;
 
-      // Apply the stop percentages
+      // Apply the stop percentages, the stop is 0.0..1.0
       float stop0 = input.background_stop0_percentage;
       float stop1 = input.background_stop1_percentage;
 

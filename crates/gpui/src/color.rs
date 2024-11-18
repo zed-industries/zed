@@ -603,7 +603,7 @@ impl Background {
     /// Creates a LinearGradient background color.
     pub fn linear_gradient(angle: f32, stops: [impl Into<BackgroundColorStop>; 2]) -> Self {
         Self::LinearGradient {
-            angle: angle.clamp(-360., 360.),
+            angle,
             stops: stops.map(Into::into),
         }
     }
