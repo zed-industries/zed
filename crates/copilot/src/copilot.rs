@@ -1229,8 +1229,10 @@ mod tests {
             Some(self)
         }
 
-        fn mtime(&self) -> Option<std::time::SystemTime> {
-            unimplemented!()
+        fn disk_state(&self) -> language::DiskState {
+            language::DiskState::Present {
+                mtime: std::time::UNIX_EPOCH,
+            }
         }
 
         fn path(&self) -> &Arc<Path> {
@@ -1242,10 +1244,6 @@ mod tests {
         }
 
         fn file_name<'a>(&'a self, _: &'a AppContext) -> &'a std::ffi::OsStr {
-            unimplemented!()
-        }
-
-        fn is_deleted(&self) -> bool {
             unimplemented!()
         }
 
