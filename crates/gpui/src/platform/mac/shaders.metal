@@ -21,11 +21,13 @@ float2 erf(float2 x);
 float blur_along_x(float x, float y, float sigma, float corner,
                    float2 half_size);
 float4 over(float4 below, float4 above);
+float radians(float degrees);
 
 struct QuadVertexOutput {
   float4 position [[position]];
   uint background_tag;
   float4 background_solid [[flat]];
+  // The degrees of the angle of the linear gradient.
   float background_angle;
   float background_stop0_percentage;
   float4 background_stop0_color [[flat]];
@@ -99,9 +101,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       break;
     case Background_LinearGradient: {
       float2 position = input.position.xy;
-      float angle = input.background_angle;
-      float2 gradient_direction = float2(cos(angle), sin(angle));
-      gradient_direction = normalize(gradient_direction);
+      float angle = radians(input.background_angle);
+      float2 gradient_direction = normalize(float2(cos(angle), sin(angle)));
 
       // Calculate the start and end points of the gradient
       float2 start_point = {quad.bounds.origin.x, quad.bounds.origin.y};
@@ -114,7 +115,13 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
       // Calculate the percentage along the gradient
       float percentage = gradient_length / total_length;
-      float t = saturate(percentage);
+
+      // Apply the stop percentages
+      float stop0 = input.background_stop0_percentage;
+      float stop1 = input.background_stop1_percentage;
+
+      // Normalize the percentage between the two stops
+      float t = saturate((percentage - stop0) / (stop1 - stop0));
 
       float4 color1 = input.background_stop0_color;
       float4 color2 = input.background_stop1_color;
@@ -744,4 +751,8 @@ float4 over(float4 below, float4 above) {
       (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
   result.a = alpha;
   return result;
+}
+
+float radians(float degrees) {
+  return degrees * (M_PI_F / 360.0);
 }

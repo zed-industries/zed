@@ -12,39 +12,96 @@ impl GradientViewer {
 
 impl Render for GradientViewer {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let color1 = Background::linear_gradient(
-            0.,
-            [
-                BackgroundColorStop::new(0.5, gpui::yellow()),
-                BackgroundColorStop::new(1., gpui::red()),
-            ],
-        );
-        let color2 = Background::linear_gradient(
-            90.,
-            [
-                BackgroundColorStop::new(0.5, gpui::blue()),
-                BackgroundColorStop::new(0.8, gpui::green()),
-            ],
-        );
-        let color3 = Background::linear_gradient(
-            0.,
-            [
-                BackgroundColorStop::new(0.0, gpui::green()),
-                BackgroundColorStop::new(0.15, gpui::yellow()),
-            ],
-        );
-
         div()
             .font_family(".SystemUIFont")
             .bg(gpui::white())
             .size_full()
             .p_4()
             .flex()
+            .flex_col()
             .gap_3()
-            .child(div().size_32().rounded_lg().bg(gpui::blue()))
-            .child(div().size_32().rounded_lg().bg(color1))
-            .child(div().size_32().rounded_lg().bg(color2))
-            .child(div().size_32().rounded_lg().bg(color3))
+            .child(
+                div()
+                    .h_24()
+                    .w_full()
+                    .rounded_lg()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(gpui::blue())
+                    .text_color(gpui::white())
+                    .child("Solid Color"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .gap_3()
+                    .h_24()
+                    .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
+                        45.,
+                        [
+                            BackgroundColorStop::new(0.5, gpui::green()),
+                            BackgroundColorStop::new(1., gpui::yellow()),
+                        ],
+                    )))
+                    .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
+                        135.,
+                        [
+                            BackgroundColorStop::new(0., gpui::red()),
+                            BackgroundColorStop::new(1., gpui::yellow()),
+                        ],
+                    )))
+                    .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
+                        -135.,
+                        [
+                            BackgroundColorStop::new(0.0, gpui::black()),
+                            BackgroundColorStop::new(1., gpui::red()),
+                        ],
+                    )))
+                    .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
+                        -45.,
+                        [
+                            BackgroundColorStop::new(0.0, gpui::yellow()),
+                            BackgroundColorStop::new(0.9, gpui::green()),
+                        ],
+                    ))),
+            )
+            .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
+                90.,
+                [
+                    BackgroundColorStop::new(0., gpui::black().opacity(0.3)),
+                    BackgroundColorStop::new(1., gpui::black().opacity(0.8)),
+                ],
+            )))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .gap_3()
+                    .child(
+                        div().flex().flex_1().gap_3().child(
+                            div().flex_1().rounded_lg().bg(Background::linear_gradient(
+                                0.,
+                                [
+                                    BackgroundColorStop::new(0.5, gpui::blue()),
+                                    BackgroundColorStop::new(1., gpui::green()),
+                                ],
+                            )
+                            .opacity(0.8)),
+                        ),
+                    )
+                    .child(
+                        div().flex_1().rounded_lg().bg(Background::linear_gradient(
+                            180.,
+                            [
+                                BackgroundColorStop::new(0.25, gpui::yellow()),
+                                BackgroundColorStop::new(0.8, gpui::green()),
+                            ],
+                        )
+                        .opacity(0.8)),
+                    ),
+            )
     }
 }
 
