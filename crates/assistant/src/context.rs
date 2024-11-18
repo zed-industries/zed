@@ -369,8 +369,8 @@ pub enum ContextEvent {
     SummaryChanged,
     StreamedCompletion,
     PatchesUpdated {
-        removed: Vec<Range<language::Anchor>>,
-        updated: Vec<Range<language::Anchor>>,
+        removed: Vec<PatchId>,
+        updated: Vec<PatchId>,
     },
     InvokedSlashCommandChanged {
         command_id: InvokedSlashCommandId,
@@ -1061,7 +1061,7 @@ impl Context {
         &'a self,
         position: Point,
         cx: &'a AppContext,
-    ) -> Option<(PatchId, &'a AssistantPatch)> {
+    ) -> Option<PatchId> {
         let buffer = self.buffer.read(cx);
         let index = self
             .patches
@@ -1076,25 +1076,19 @@ impl Context {
                 }
             })
             .ok()?;
-        let id = self.patches[index].1;
-        let patch = self.patch_store.read(cx).get(id)?;
-        Some((id, patch))
+        Some(self.patches[index].1)
     }
 
-    pub fn patch_ranges(&self) -> impl Iterator<Item = Range<language::Anchor>> + '_ {
-        self.patches.iter().map(|patch| patch.0.clone())
+    pub fn patch_ids(&self) -> impl Iterator<Item = PatchId> + '_ {
+        self.patches.iter().map(|patch| patch.1)
     }
 
-    pub(crate) fn patch_for_range<'a>(
+    pub(crate) fn patch_for_id<'a>(
         &'a self,
-        range: &Range<language::Anchor>,
+        id: PatchId,
         cx: &'a AppContext,
-    ) -> Option<(PatchId, &AssistantPatch)> {
-        let buffer = self.buffer.read(cx);
-        let ix = self.patch_index_for_range(range, buffer).ok()?;
-        let id = self.patches[ix].1;
-        let patch = self.patch_store.read(cx).get(id)?;
-        Some((id, patch))
+    ) -> Option<&AssistantPatch> {
+        self.patch_store.read(cx).get(id)
     }
 
     pub(crate) fn resolve_patch(
@@ -1553,8 +1547,8 @@ impl Context {
         &mut self,
         range: Range<text::Anchor>,
         buffer: &BufferSnapshot,
-        updated: &mut Vec<Range<text::Anchor>>,
-        removed: &mut Vec<Range<text::Anchor>>,
+        updated: &mut Vec<PatchId>,
+        removed: &mut Vec<PatchId>,
         cx: &mut ModelContext<Self>,
     ) {
         // Rebuild the XML tags in the edited range.
@@ -1602,13 +1596,16 @@ impl Context {
                 .collect::<Vec<_>>()
         });
 
-        updated.extend(new_patches.iter().map(|patch| patch.0.clone()));
+        updated.extend(new_patches.iter().map(|(_, id)| *id));
         let removed_patches = self.patches.splice(intersecting_patches_range, new_patches);
-        removed.extend(
-            removed_patches
-                .map(|patch| patch.0)
-                .filter(|range| !updated.contains(&range)),
-        );
+        self.patch_store.update(cx, |patch_store, _| {
+            for (_range, id) in removed_patches {
+                if !updated.contains(&id) {
+                    patch_store.remove(id);
+                    removed.push(id);
+                }
+            }
+        });
     }
 
     fn parse_xml_tags_in_range(

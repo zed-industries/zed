@@ -26,8 +26,8 @@ struct PatchStoreEntry {
     locate_task: Option<Task<Result<()>>>,
 }
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub(crate) struct PatchId(usize);
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct PatchId(usize);
 
 impl PatchStore {
     pub fn new(project: Model<Project>) -> Self {
@@ -101,6 +101,10 @@ impl PatchStore {
         }));
 
         Ok(())
+    }
+
+    pub(crate) fn remove(&mut self, id: PatchId) {
+        self.entries.remove(&id);
     }
 
     pub(crate) fn resolve_patch(
