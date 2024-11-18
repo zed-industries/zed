@@ -15347,13 +15347,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_ocaml"
-version = "0.1.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_php"
 version = "0.2.2"
 dependencies = [
