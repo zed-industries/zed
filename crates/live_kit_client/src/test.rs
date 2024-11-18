@@ -1,29 +1,21 @@
-pub mod participant;
-pub mod publication;
-pub mod track;
-
-#[cfg(not(windows))]
-pub mod webrtc;
-
-#[cfg(not(windows))]
-use self::id::*;
-use self::{participant::*, publication::*, track::*};
+use crate::{ConnectionState, RoomUpdate, Sid};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
-use gpui::BackgroundExecutor;
+use futures::Stream;
+use gpui::{BackgroundExecutor, SurfaceSource};
 use live_kit_server::{proto, token};
-#[cfg(not(windows))]
-use livekit::options::TrackPublishOptions;
-use parking_lot::Mutex;
-use postage::{mpsc, sink::Sink};
-use std::sync::{
-    atomic::{AtomicBool, Ordering::SeqCst},
-    Arc, Weak,
-};
 
-#[cfg(not(windows))]
-pub use livekit::{id, options, ConnectionState, DisconnectReason, RoomOptions};
+use parking_lot::Mutex;
+use postage::watch;
+use std::{
+    future::Future,
+    mem,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc, Weak,
+    },
+};
 
 static SERVERS: Mutex<BTreeMap<String, Arc<TestServer>>> = Mutex::new(BTreeMap::new());
 
@@ -31,12 +23,10 @@ pub struct TestServer {
     pub url: String,
     pub api_key: String,
     pub secret_key: String,
-    #[cfg(not(target_os = "windows"))]
     rooms: Mutex<HashMap<String, TestServerRoom>>,
     executor: BackgroundExecutor,
 }
 
-#[cfg(not(target_os = "windows"))]
 impl TestServer {
     pub fn create(
         url: String,
@@ -83,8 +73,9 @@ impl TestServer {
     }
 
     pub async fn create_room(&self, room: String) -> Result<()> {
+        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
+        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
-
         let mut server_rooms = self.rooms.lock();
         if let Entry::Vacant(e) = server_rooms.entry(room.clone()) {
             e.insert(Default::default());
@@ -95,8 +86,10 @@ impl TestServer {
     }
 
     async fn delete_room(&self, room: String) -> Result<()> {
+        // TODO: clear state associated with all `Room`s.
+        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
+        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
-
         let mut server_rooms = self.rooms.lock();
         server_rooms
             .remove(&room)
@@ -104,64 +97,46 @@ impl TestServer {
         Ok(())
     }
 
-    async fn join_room(&self, token: String, client_room: Room) -> Result<ParticipantIdentity> {
+    async fn join_room(&self, token: String, client_room: Arc<Room>) -> Result<()> {
+        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
+        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
 
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
-        let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
+        let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
         let room = (*server_rooms).entry(room_name.to_string()).or_default();
 
         if let Entry::Vacant(e) = room.client_rooms.entry(identity.clone()) {
-            for server_track in &room.video_tracks {
-                let track = RemoteTrack::Video(RemoteVideoTrack {
-                    server_track: server_track.clone(),
-                    _room: client_room.downgrade(),
-                });
+            for track in &room.video_tracks {
                 client_room
                     .0
                     .lock()
                     .updates_tx
-                    .blocking_send(RoomEvent::TrackSubscribed {
-                        track: track.clone(),
-                        publication: RemoteTrackPublication {
-                            sid: server_track.sid.clone(),
-                            room: client_room.downgrade(),
-                            track,
+                    .try_broadcast(RoomUpdate::SubscribedToRemoteVideoTrack(Arc::new(
+                        RemoteVideoTrack {
+                            server_track: track.clone(),
                         },
-                        participant: RemoteParticipant {
-                            room: client_room.downgrade(),
-                            identity: server_track.publisher_id.clone(),
-                        },
-                    })
+                    )))
                     .unwrap();
             }
-            for server_track in &room.audio_tracks {
-                let track = RemoteTrack::Audio(RemoteAudioTrack {
-                    server_track: server_track.clone(),
-                    room: client_room.downgrade(),
-                });
+            for track in &room.audio_tracks {
                 client_room
                     .0
                     .lock()
                     .updates_tx
-                    .blocking_send(RoomEvent::TrackSubscribed {
-                        track: track.clone(),
-                        publication: RemoteTrackPublication {
-                            sid: server_track.sid.clone(),
-                            room: client_room.downgrade(),
-                            track,
-                        },
-                        participant: RemoteParticipant {
-                            room: client_room.downgrade(),
-                            identity: server_track.publisher_id.clone(),
-                        },
-                    })
+                    .try_broadcast(RoomUpdate::SubscribedToRemoteAudioTrack(
+                        Arc::new(RemoteAudioTrack {
+                            server_track: track.clone(),
+                            room: Arc::downgrade(&client_room),
+                        }),
+                        Arc::new(RemoteTrackPublication),
+                    ))
                     .unwrap();
             }
             e.insert(client_room);
-            Ok(identity)
+            Ok(())
         } else {
             Err(anyhow!(
                 "{:?} attempted to join room {:?} twice",
@@ -172,10 +147,11 @@ impl TestServer {
     }
 
     async fn leave_room(&self, token: String) -> Result<()> {
+        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
+        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
-
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
-        let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
+        let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
@@ -191,44 +167,10 @@ impl TestServer {
         Ok(())
     }
 
-    fn remote_participants(
-        &self,
-        token: String,
-    ) -> Result<HashMap<ParticipantIdentity, RemoteParticipant>> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
-        let local_identity = ParticipantIdentity(claims.sub.unwrap().to_string());
-        let room_name = claims.video.room.unwrap().to_string();
-
-        if let Some(server_room) = self.rooms.lock().get(&room_name) {
-            let room = server_room
-                .client_rooms
-                .get(&local_identity)
-                .unwrap()
-                .downgrade();
-            Ok(server_room
-                .client_rooms
-                .iter()
-                .filter(|(identity, _)| *identity != &local_identity)
-                .map(|(identity, _)| {
-                    (
-                        identity.clone(),
-                        RemoteParticipant {
-                            room: room.clone(),
-                            identity: identity.clone(),
-                        },
-                    )
-                })
-                .collect())
-        } else {
-            Ok(Default::default())
-        }
-    }
-
-    async fn remove_participant(
-        &self,
-        room_name: String,
-        identity: ParticipantIdentity,
-    ) -> Result<()> {
+    async fn remove_participant(&self, room_name: String, identity: String) -> Result<()> {
+        // TODO: clear state associated with the `Room`.
+        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
+        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
 
         let mut server_rooms = self.rooms.lock();
@@ -251,32 +193,25 @@ impl TestServer {
         identity: String,
         permission: proto::ParticipantPermission,
     ) -> Result<()> {
+        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
+        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
-
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&room_name)
             .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
-        room.participant_permissions
-            .insert(ParticipantIdentity(identity), permission);
+        room.participant_permissions.insert(identity, permission);
         Ok(())
     }
 
     pub async fn disconnect_client(&self, client_identity: String) {
-        let client_identity = ParticipantIdentity(client_identity);
-
+        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
+        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
-
         let mut server_rooms = self.rooms.lock();
         for room in server_rooms.values_mut() {
             if let Some(room) = room.client_rooms.remove(&client_identity) {
-                let mut room = room.0.lock();
-                room.connection_state = ConnectionState::Disconnected;
-                room.updates_tx
-                    .blocking_send(RoomEvent::Disconnected {
-                        reason: DisconnectReason::SignalClose,
-                    })
-                    .ok();
+                *room.0.lock().connection.0.borrow_mut() = ConnectionState::Disconnected;
             }
         }
     }
@@ -284,12 +219,13 @@ impl TestServer {
     async fn publish_video_track(
         &self,
         token: String,
-        _local_track: LocalVideoTrack,
-    ) -> Result<TrackSid> {
+        local_track: LocalVideoTrack,
+    ) -> Result<Sid> {
+        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
+        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
-
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
-        let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
+        let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
 
         let mut server_rooms = self.rooms.lock();
@@ -308,38 +244,26 @@ impl TestServer {
             return Err(anyhow!("user is not allowed to publish"));
         }
 
-        let sid: TrackSid = format!("TR_{}", nanoid::nanoid!(17)).try_into().unwrap();
-        let server_track = Arc::new(TestServerVideoTrack {
+        let sid = nanoid::nanoid!(17);
+        let track = Arc::new(TestServerVideoTrack {
             sid: sid.clone(),
             publisher_id: identity.clone(),
+            frames_rx: local_track.frames_rx.clone(),
         });
 
-        room.video_tracks.push(server_track.clone());
+        room.video_tracks.push(track.clone());
 
-        for (room_identity, client_room) in &room.client_rooms {
-            if *room_identity != identity {
-                let track = RemoteTrack::Video(RemoteVideoTrack {
-                    server_track: server_track.clone(),
-                    _room: client_room.downgrade(),
-                });
-                let publication = RemoteTrackPublication {
-                    sid: sid.clone(),
-                    room: client_room.downgrade(),
-                    track: track.clone(),
-                };
-                let participant = RemoteParticipant {
-                    identity: identity.clone(),
-                    room: client_room.downgrade(),
-                };
-                client_room
+        for (id, client_room) in &room.client_rooms {
+            if *id != identity {
+                let _ = client_room
                     .0
                     .lock()
                     .updates_tx
-                    .blocking_send(RoomEvent::TrackSubscribed {
-                        track,
-                        publication,
-                        participant,
-                    })
+                    .try_broadcast(RoomUpdate::SubscribedToRemoteVideoTrack(Arc::new(
+                        RemoteVideoTrack {
+                            server_track: track.clone(),
+                        },
+                    )))
                     .unwrap();
             }
         }
@@ -351,11 +275,13 @@ impl TestServer {
         &self,
         token: String,
         _local_track: &LocalAudioTrack,
-    ) -> Result<TrackSid> {
+    ) -> Result<Sid> {
+        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
+        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
 
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
-        let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
+        let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
 
         let mut server_rooms = self.rooms.lock();
@@ -374,54 +300,41 @@ impl TestServer {
             return Err(anyhow!("user is not allowed to publish"));
         }
 
-        let sid: TrackSid = format!("TR_{}", nanoid::nanoid!(17)).try_into().unwrap();
-        let server_track = Arc::new(TestServerAudioTrack {
+        let sid = nanoid::nanoid!(17);
+        let track = Arc::new(TestServerAudioTrack {
             sid: sid.clone(),
             publisher_id: identity.clone(),
             muted: AtomicBool::new(false),
         });
 
-        room.audio_tracks.push(server_track.clone());
+        let publication = Arc::new(RemoteTrackPublication);
 
-        for (room_identity, client_room) in &room.client_rooms {
-            if *room_identity != identity {
-                let track = RemoteTrack::Audio(RemoteAudioTrack {
-                    server_track: server_track.clone(),
-                    room: client_room.downgrade(),
-                });
-                let publication = RemoteTrackPublication {
-                    sid: sid.clone(),
-                    room: client_room.downgrade(),
-                    track: track.clone(),
-                };
-                let participant = RemoteParticipant {
-                    identity: identity.clone(),
-                    room: client_room.downgrade(),
-                };
-                client_room
+        room.audio_tracks.push(track.clone());
+
+        for (id, client_room) in &room.client_rooms {
+            if *id != identity {
+                let _ = client_room
                     .0
                     .lock()
                     .updates_tx
-                    .blocking_send(RoomEvent::TrackSubscribed {
-                        track,
-                        publication,
-                        participant,
-                    })
-                    .ok();
+                    .try_broadcast(RoomUpdate::SubscribedToRemoteAudioTrack(
+                        Arc::new(RemoteAudioTrack {
+                            server_track: track.clone(),
+                            room: Arc::downgrade(client_room),
+                        }),
+                        publication.clone(),
+                    ))
+                    .unwrap();
             }
         }
 
         Ok(sid)
     }
 
-    async fn unpublish_track(&self, _token: String, _track: &TrackSid) -> Result<()> {
-        Ok(())
-    }
-
-    fn set_track_muted(&self, token: &str, track_sid: &TrackSid, muted: bool) -> Result<()> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+    fn set_track_muted(&self, token: &str, track_sid: &str, muted: bool) -> Result<()> {
+        let claims = live_kit_server::token::validate(token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
-        let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
+        let identity = claims.sub.unwrap();
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&*room_name)
@@ -429,42 +342,19 @@ impl TestServer {
         if let Some(track) = room
             .audio_tracks
             .iter_mut()
-            .find(|track| track.sid == *track_sid)
+            .find(|track| track.sid == track_sid)
         {
             track.muted.store(muted, SeqCst);
             for (id, client_room) in room.client_rooms.iter() {
                 if *id != identity {
-                    let participant = Participant::Remote(RemoteParticipant {
-                        identity: identity.clone(),
-                        room: client_room.downgrade(),
-                    });
-                    let track = RemoteTrack::Audio(RemoteAudioTrack {
-                        server_track: track.clone(),
-                        room: client_room.downgrade(),
-                    });
-                    let publication = TrackPublication::Remote(RemoteTrackPublication {
-                        sid: track_sid.clone(),
-                        room: client_room.downgrade(),
-                        track,
-                    });
-
-                    let event = if muted {
-                        RoomEvent::TrackMuted {
-                            participant,
-                            publication,
-                        }
-                    } else {
-                        RoomEvent::TrackUnmuted {
-                            participant,
-                            publication,
-                        }
-                    };
-
                     client_room
                         .0
                         .lock()
                         .updates_tx
-                        .blocking_send(event)
+                        .try_broadcast(RoomUpdate::RemoteAudioTrackMuteChanged {
+                            track_id: track_sid.to_string(),
+                            muted,
+                        })
                         .unwrap();
                 }
             }
@@ -472,14 +362,14 @@ impl TestServer {
         Ok(())
     }
 
-    fn is_track_muted(&self, token: &str, track_sid: &TrackSid) -> Option<bool> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key).ok()?;
+    fn is_track_muted(&self, token: &str, track_sid: &str) -> Option<bool> {
+        let claims = live_kit_server::token::validate(token, &self.secret_key).ok()?;
         let room_name = claims.video.room.unwrap();
 
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms.get_mut(&*room_name)?;
         room.audio_tracks.iter().find_map(|track| {
-            if track.sid == *track_sid {
+            if track.sid == track_sid {
                 Some(track.muted.load(SeqCst))
             } else {
                 None
@@ -487,33 +377,33 @@ impl TestServer {
         })
     }
 
-    fn video_tracks(&self, token: String) -> Result<Vec<RemoteVideoTrack>> {
+    fn video_tracks(&self, token: String) -> Result<Vec<Arc<RemoteVideoTrack>>> {
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
-        let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
+        let identity = claims.sub.unwrap();
 
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&*room_name)
             .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
-        let client_room = room
-            .client_rooms
-            .get(&identity)
+        room.client_rooms
+            .get(identity.as_ref())
             .ok_or_else(|| anyhow!("not a participant in room"))?;
         Ok(room
             .video_tracks
             .iter()
-            .map(|track| RemoteVideoTrack {
-                server_track: track.clone(),
-                _room: client_room.downgrade(),
+            .map(|track| {
+                Arc::new(RemoteVideoTrack {
+                    server_track: track.clone(),
+                })
             })
             .collect())
     }
 
-    fn audio_tracks(&self, token: String) -> Result<Vec<RemoteAudioTrack>> {
+    fn audio_tracks(&self, token: String) -> Result<Vec<Arc<RemoteAudioTrack>>> {
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
-        let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
+        let identity = claims.sub.unwrap();
 
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
@@ -521,125 +411,49 @@ impl TestServer {
             .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
         let client_room = room
             .client_rooms
-            .get(&identity)
+            .get(identity.as_ref())
             .ok_or_else(|| anyhow!("not a participant in room"))?;
         Ok(room
             .audio_tracks
             .iter()
-            .map(|track| RemoteAudioTrack {
-                server_track: track.clone(),
-                room: client_room.downgrade(),
+            .map(|track| {
+                Arc::new(RemoteAudioTrack {
+                    server_track: track.clone(),
+                    room: Arc::downgrade(client_room),
+                })
             })
             .collect())
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct TestServerRoom {
-    client_rooms: HashMap<ParticipantIdentity, Room>,
+    client_rooms: HashMap<Sid, Arc<Room>>,
     video_tracks: Vec<Arc<TestServerVideoTrack>>,
     audio_tracks: Vec<Arc<TestServerAudioTrack>>,
-    participant_permissions: HashMap<ParticipantIdentity, proto::ParticipantPermission>,
+    participant_permissions: HashMap<Sid, proto::ParticipantPermission>,
 }
 
-#[cfg(not(target_os = "windows"))]
 #[derive(Debug)]
 struct TestServerVideoTrack {
-    sid: TrackSid,
-    publisher_id: ParticipantIdentity,
-    // frames_rx: async_broadcast::Receiver<Frame>,
+    sid: Sid,
+    publisher_id: Sid,
+    frames_rx: async_broadcast::Receiver<Frame>,
 }
 
-#[cfg(not(target_os = "windows"))]
 #[derive(Debug)]
 struct TestServerAudioTrack {
-    sid: TrackSid,
-    publisher_id: ParticipantIdentity,
+    sid: Sid,
+    publisher_id: Sid,
     muted: AtomicBool,
 }
+
+impl TestServerRoom {}
 
 pub struct TestApiClient {
     url: String,
 }
 
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub enum RoomEvent {
-    ParticipantConnected(RemoteParticipant),
-    ParticipantDisconnected(RemoteParticipant),
-    LocalTrackPublished {
-        publication: LocalTrackPublication,
-        track: LocalTrack,
-        participant: LocalParticipant,
-    },
-    LocalTrackUnpublished {
-        publication: LocalTrackPublication,
-        participant: LocalParticipant,
-    },
-    TrackSubscribed {
-        track: RemoteTrack,
-        publication: RemoteTrackPublication,
-        participant: RemoteParticipant,
-    },
-    TrackUnsubscribed {
-        track: RemoteTrack,
-        publication: RemoteTrackPublication,
-        participant: RemoteParticipant,
-    },
-    TrackSubscriptionFailed {
-        participant: RemoteParticipant,
-        error: String,
-        #[cfg(not(target_os = "windows"))]
-        track_sid: TrackSid,
-    },
-    TrackPublished {
-        publication: RemoteTrackPublication,
-        participant: RemoteParticipant,
-    },
-    TrackUnpublished {
-        publication: RemoteTrackPublication,
-        participant: RemoteParticipant,
-    },
-    TrackMuted {
-        participant: Participant,
-        publication: TrackPublication,
-    },
-    TrackUnmuted {
-        participant: Participant,
-        publication: TrackPublication,
-    },
-    RoomMetadataChanged {
-        old_metadata: String,
-        metadata: String,
-    },
-    ParticipantMetadataChanged {
-        participant: Participant,
-        old_metadata: String,
-        metadata: String,
-    },
-    ParticipantNameChanged {
-        participant: Participant,
-        old_name: String,
-        name: String,
-    },
-    ActiveSpeakersChanged {
-        speakers: Vec<Participant>,
-    },
-    #[cfg(not(target_os = "windows"))]
-    ConnectionStateChanged(ConnectionState),
-    Connected {
-        participants_with_tracks: Vec<(RemoteParticipant, Vec<RemoteTrackPublication>)>,
-    },
-    #[cfg(not(target_os = "windows"))]
-    Disconnected {
-        reason: DisconnectReason,
-    },
-    Reconnecting,
-    Reconnected,
-}
-
-#[cfg(not(target_os = "windows"))]
 #[async_trait]
 impl live_kit_server::api::Client for TestApiClient {
     fn url(&self) -> &str {
@@ -660,9 +474,7 @@ impl live_kit_server::api::Client for TestApiClient {
 
     async fn remove_participant(&self, room: String, identity: String) -> Result<()> {
         let server = TestServer::get(&self.url)?;
-        server
-            .remove_participant(room, ParticipantIdentity(identity))
-            .await?;
+        server.remove_participant(room, identity).await?;
         Ok(())
     }
 
@@ -701,125 +513,370 @@ impl live_kit_server::api::Client for TestApiClient {
 }
 
 struct RoomState {
-    url: String,
-    token: String,
-    #[cfg(not(target_os = "windows"))]
-    local_identity: ParticipantIdentity,
-    #[cfg(not(target_os = "windows"))]
-    connection_state: ConnectionState,
-    #[cfg(not(target_os = "windows"))]
-    paused_audio_tracks: HashSet<TrackSid>,
-    updates_tx: mpsc::Sender<RoomEvent>,
+    connection: (
+        watch::Sender<ConnectionState>,
+        watch::Receiver<ConnectionState>,
+    ),
+    display_sources: Vec<MacOSDisplay>,
+    paused_audio_tracks: HashSet<Sid>,
+    updates_tx: async_broadcast::Sender<RoomUpdate>,
+    updates_rx: async_broadcast::Receiver<RoomUpdate>,
 }
 
-#[derive(Clone, Debug)]
-pub struct Room(Arc<Mutex<RoomState>>);
+pub struct Room(Mutex<RoomState>);
 
-#[derive(Clone, Debug)]
-pub(crate) struct WeakRoom(Weak<Mutex<RoomState>>);
-
-#[cfg(not(target_os = "windows"))]
-impl std::fmt::Debug for RoomState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Room")
-            .field("url", &self.url)
-            .field("token", &self.token)
-            .field("local_identity", &self.local_identity)
-            .field("connection_state", &self.connection_state)
-            .field("paused_audio_tracks", &self.paused_audio_tracks)
-            .finish()
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl std::fmt::Debug for RoomState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Room")
-            .field("url", &self.url)
-            .field("token", &self.token)
-            .finish()
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
 impl Room {
-    fn downgrade(&self) -> WeakRoom {
-        WeakRoom(Arc::downgrade(&self.0))
-    }
-
-    pub fn connection_state(&self) -> ConnectionState {
-        self.0.lock().connection_state
-    }
-
-    pub fn local_participant(&self) -> LocalParticipant {
-        let identity = self.0.lock().local_identity.clone();
-        LocalParticipant {
-            identity,
-            room: self.clone(),
-        }
-    }
-
-    pub async fn connect(
-        url: &str,
-        token: &str,
-        _options: RoomOptions,
-    ) -> Result<(Self, mpsc::Receiver<RoomEvent>)> {
-        let server = TestServer::get(&url)?;
-        let (updates_tx, updates_rx) = mpsc::channel(1024);
-        let this = Self(Arc::new(Mutex::new(RoomState {
-            local_identity: ParticipantIdentity(String::new()),
-            url: url.to_string(),
-            token: token.to_string(),
-            connection_state: ConnectionState::Disconnected,
+    pub fn new() -> Arc<Self> {
+        let (updates_tx, updates_rx) = async_broadcast::broadcast(128);
+        Arc::new(Self(Mutex::new(RoomState {
+            connection: watch::channel_with(ConnectionState::Disconnected),
+            display_sources: Default::default(),
             paused_audio_tracks: Default::default(),
             updates_tx,
-        })));
-
-        let identity = server
-            .join_room(token.to_string(), this.clone())
-            .await
-            .context("room join")?;
-        {
-            let mut state = this.0.lock();
-            state.local_identity = identity;
-            state.connection_state = ConnectionState::Connected;
-        }
-
-        Ok((this, updates_rx))
+            updates_rx,
+        })))
     }
 
-    pub fn remote_participants(&self) -> HashMap<ParticipantIdentity, RemoteParticipant> {
+    pub fn status(&self) -> watch::Receiver<ConnectionState> {
+        self.0.lock().connection.1.clone()
+    }
+
+    pub fn connect(self: &Arc<Self>, url: &str, token: &str) -> impl Future<Output = Result<()>> {
+        let this = self.clone();
+        let url = url.to_string();
+        let token = token.to_string();
+        async move {
+            let server = TestServer::get(&url)?;
+            server
+                .join_room(token.clone(), this.clone())
+                .await
+                .context("room join")?;
+            *this.0.lock().connection.0.borrow_mut() = ConnectionState::Connected { url, token };
+            Ok(())
+        }
+    }
+
+    pub fn display_sources(self: &Arc<Self>) -> impl Future<Output = Result<Vec<MacOSDisplay>>> {
+        let this = self.clone();
+        async move {
+            // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                let server = this.test_server();
+                server.executor.simulate_random_delay().await;
+            }
+
+            Ok(this.0.lock().display_sources.clone())
+        }
+    }
+
+    pub fn publish_video_track(
+        self: &Arc<Self>,
+        track: LocalVideoTrack,
+    ) -> impl Future<Output = Result<LocalTrackPublication>> {
+        let this = self.clone();
+        let track = track.clone();
+        async move {
+            let sid = this
+                .test_server()
+                .publish_video_track(this.token(), track)
+                .await?;
+            Ok(LocalTrackPublication {
+                room: Arc::downgrade(&this),
+                sid,
+            })
+        }
+    }
+
+    pub fn publish_audio_track(
+        self: &Arc<Self>,
+        track: LocalAudioTrack,
+    ) -> impl Future<Output = Result<LocalTrackPublication>> {
+        let this = self.clone();
+        let track = track.clone();
+        async move {
+            let sid = this
+                .test_server()
+                .publish_audio_track(this.token(), &track)
+                .await?;
+            Ok(LocalTrackPublication {
+                room: Arc::downgrade(&this),
+                sid,
+            })
+        }
+    }
+
+    pub fn unpublish_track(&self, _publication: LocalTrackPublication) {}
+
+    pub fn remote_audio_tracks(&self, publisher_id: &str) -> Vec<Arc<RemoteAudioTrack>> {
+        if !self.is_connected() {
+            return Vec::new();
+        }
+
         self.test_server()
-            .remote_participants(self.0.lock().token.clone())
+            .audio_tracks(self.token())
             .unwrap()
+            .into_iter()
+            .filter(|track| track.publisher_id() == publisher_id)
+            .collect()
+    }
+
+    pub fn remote_audio_track_publications(
+        &self,
+        publisher_id: &str,
+    ) -> Vec<Arc<RemoteTrackPublication>> {
+        if !self.is_connected() {
+            return Vec::new();
+        }
+
+        self.test_server()
+            .audio_tracks(self.token())
+            .unwrap()
+            .into_iter()
+            .filter(|track| track.publisher_id() == publisher_id)
+            .map(|_track| Arc::new(RemoteTrackPublication {}))
+            .collect()
+    }
+
+    pub fn remote_video_tracks(&self, publisher_id: &str) -> Vec<Arc<RemoteVideoTrack>> {
+        if !self.is_connected() {
+            return Vec::new();
+        }
+
+        self.test_server()
+            .video_tracks(self.token())
+            .unwrap()
+            .into_iter()
+            .filter(|track| track.publisher_id() == publisher_id)
+            .collect()
+    }
+
+    pub fn updates(&self) -> impl Stream<Item = RoomUpdate> {
+        self.0.lock().updates_rx.clone()
+    }
+
+    pub fn set_display_sources(&self, sources: Vec<MacOSDisplay>) {
+        self.0.lock().display_sources = sources;
     }
 
     fn test_server(&self) -> Arc<TestServer> {
-        TestServer::get(&self.0.lock().url).unwrap()
+        match self.0.lock().connection.1.borrow().clone() {
+            ConnectionState::Disconnected => panic!("must be connected to call this method"),
+            ConnectionState::Connected { url, .. } => TestServer::get(&url).unwrap(),
+        }
     }
 
     fn token(&self) -> String {
-        self.0.lock().token.clone()
+        match self.0.lock().connection.1.borrow().clone() {
+            ConnectionState::Disconnected => panic!("must be connected to call this method"),
+            ConnectionState::Connected { token, .. } => token,
+        }
+    }
+
+    fn is_connected(&self) -> bool {
+        match *self.0.lock().connection.1.borrow() {
+            ConnectionState::Disconnected => false,
+            ConnectionState::Connected { .. } => true,
+        }
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-impl Drop for RoomState {
+impl Drop for Room {
     fn drop(&mut self) {
-        if self.connection_state == ConnectionState::Connected {
-            if let Ok(server) = TestServer::get(&self.url) {
+        if let ConnectionState::Connected { token, .. } = mem::replace(
+            &mut *self.0.lock().connection.0.borrow_mut(),
+            ConnectionState::Disconnected,
+        ) {
+            if let Ok(server) = TestServer::get(&token) {
                 let executor = server.executor.clone();
-                let token = self.token.clone();
                 executor
-                    .spawn(async move { server.leave_room(token).await.ok() })
+                    .spawn(async move { server.leave_room(token).await.unwrap() })
                     .detach();
             }
         }
     }
 }
 
-impl WeakRoom {
-    fn upgrade(&self) -> Option<Room> {
-        self.0.upgrade().map(Room)
+#[derive(Clone)]
+pub struct LocalTrackPublication {
+    sid: String,
+    room: Weak<Room>,
+}
+
+impl LocalTrackPublication {
+    pub fn set_mute(&self, mute: bool) -> impl Future<Output = Result<()>> {
+        let sid = self.sid.clone();
+        let room = self.room.clone();
+        async move {
+            if let Some(room) = room.upgrade() {
+                room.test_server()
+                    .set_track_muted(&room.token(), &sid, mute)
+            } else {
+                Err(anyhow!("no such room"))
+            }
+        }
+    }
+
+    pub fn is_muted(&self) -> bool {
+        if let Some(room) = self.room.upgrade() {
+            room.test_server()
+                .is_track_muted(&room.token(), &self.sid)
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    pub fn sid(&self) -> String {
+        self.sid.clone()
+    }
+}
+
+pub struct RemoteTrackPublication;
+
+impl RemoteTrackPublication {
+    pub fn set_enabled(&self, _enabled: bool) -> impl Future<Output = Result<()>> {
+        async { Ok(()) }
+    }
+
+    pub fn is_muted(&self) -> bool {
+        false
+    }
+
+    pub fn sid(&self) -> String {
+        "".to_string()
+    }
+}
+
+#[derive(Clone)]
+pub struct LocalVideoTrack {
+    frames_rx: async_broadcast::Receiver<Frame>,
+}
+
+impl LocalVideoTrack {
+    pub fn screen_share_for_display(display: &MacOSDisplay) -> Self {
+        Self {
+            frames_rx: display.frames.1.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct LocalAudioTrack;
+
+impl LocalAudioTrack {
+    pub fn create() -> Self {
+        Self
+    }
+}
+
+#[derive(Debug)]
+pub struct RemoteVideoTrack {
+    server_track: Arc<TestServerVideoTrack>,
+}
+
+impl RemoteVideoTrack {
+    pub fn sid(&self) -> &str {
+        &self.server_track.sid
+    }
+
+    pub fn publisher_id(&self) -> &str {
+        &self.server_track.publisher_id
+    }
+
+    pub fn frames(&self) -> async_broadcast::Receiver<Frame> {
+        self.server_track.frames_rx.clone()
+    }
+}
+
+#[derive(Debug)]
+pub struct RemoteAudioTrack {
+    server_track: Arc<TestServerAudioTrack>,
+    room: Weak<Room>,
+}
+
+impl RemoteAudioTrack {
+    pub fn sid(&self) -> &str {
+        &self.server_track.sid
+    }
+
+    pub fn publisher_id(&self) -> &str {
+        &self.server_track.publisher_id
+    }
+
+    pub fn start(&self) {
+        if let Some(room) = self.room.upgrade() {
+            room.0
+                .lock()
+                .paused_audio_tracks
+                .remove(&self.server_track.sid);
+        }
+    }
+
+    pub fn stop(&self) {
+        if let Some(room) = self.room.upgrade() {
+            room.0
+                .lock()
+                .paused_audio_tracks
+                .insert(self.server_track.sid.clone());
+        }
+    }
+
+    pub fn is_playing(&self) -> bool {
+        !self
+            .room
+            .upgrade()
+            .unwrap()
+            .0
+            .lock()
+            .paused_audio_tracks
+            .contains(&self.server_track.sid)
+    }
+}
+
+#[derive(Clone)]
+pub struct MacOSDisplay {
+    frames: (
+        async_broadcast::Sender<Frame>,
+        async_broadcast::Receiver<Frame>,
+    ),
+}
+
+impl Default for MacOSDisplay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MacOSDisplay {
+    pub fn new() -> Self {
+        Self {
+            frames: async_broadcast::broadcast(128),
+        }
+    }
+
+    pub fn send_frame(&self, frame: Frame) {
+        self.frames.0.try_broadcast(frame).unwrap();
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Frame {
+    pub label: String,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl Frame {
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    pub fn image(&self) -> SurfaceSource {
+        unimplemented!("you can't call this in test mode")
     }
 }

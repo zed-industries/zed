@@ -253,14 +253,11 @@ pub mod core_media {
             }
         }
 
-        pub fn image_buffer(&self) -> Option<CVImageBuffer> {
+        pub fn image_buffer(&self) -> CVImageBuffer {
             unsafe {
-                let ptr = CMSampleBufferGetImageBuffer(self.as_concrete_TypeRef());
-                if ptr.is_null() {
-                    None
-                } else {
-                    Some(CVImageBuffer::wrap_under_get_rule(ptr))
-                }
+                CVImageBuffer::wrap_under_get_rule(CMSampleBufferGetImageBuffer(
+                    self.as_concrete_TypeRef(),
+                ))
             }
         }
 
