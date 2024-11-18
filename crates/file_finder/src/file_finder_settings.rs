@@ -6,7 +6,7 @@ use settings::{Settings, SettingsSources};
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct FileFinderSettings {
     pub file_icons: bool,
-    pub modal_width: Option<FileFinderWidth>,
+    pub modal_max_width: Option<FileFinderWidth>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -15,20 +15,22 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: true
     pub file_icons: Option<bool>,
-    /// Max-width of the file finder modal. If no value is specified, the file finder takes a min-width.
+    /// Determines how much space the file finder can take up in relation to the available window width.
     /// There are 5 possible width values:
     ///
-    /// 0. Take the min-width:
-    ///    "modal_width": "null",
-    /// 1. "modal_width": "small"
-    /// 2. "modal_width": "medium"
-    /// 3. "modal_width": "large"
-    /// 4. "modal_width": "xlarge"
-    /// 5. Take the whole, fullscreen width:
+    /// 1. Small: This value is essentially a fixed width.
+    ///    "modal_width": "small"
+    /// 2. Medium:
+    ///    "modal_width": "medium"
+    /// 3. Large:
+    ///    "modal_width": "large"
+    /// 4. Extra Large:
+    ///    "modal_width": "xlarge"
+    /// 5. Fullscreen: This value removes any horizontal padding, as it consumes the whole viewport width.
     ///    "modal_width": "full"
     ///
-    /// Default: null
-    pub modal_width: Option<FileFinderWidth>,
+    /// Default: small
+    pub modal_max_width: Option<FileFinderWidth>,
 }
 
 impl Settings for FileFinderSettings {
@@ -41,9 +43,10 @@ impl Settings for FileFinderSettings {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FileFinderWidth {
+    #[default]
     Small,
     Medium,
     Large,

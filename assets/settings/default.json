@@ -581,18 +581,22 @@
   "file_finder": {
     // Whether to show file icons in the file finder.
     "file_icons": true,
-    // Max-width of the file finder modal. If no value is specified, the file finder takes a min-width.
+    // Determines how much space the file finder can take up in relation to the available window width.
     // There are 5 possible width values:
     //
-    // 0. Take the min-width:
-    //    "modal_width": "null",
-    // 1. "modal_width": "small"
-    // 2. "modal_width": "medium"
-    // 3. "modal_width": "large"
-    // 4. "modal_width": "xlarge"
-    // 5. Take the whole, fullscreen width:
+    // 1. Small: This value is essentially a fixed width.
+    //    "modal_width": "small"
+    // 2. Medium:
+    //    "modal_width": "medium"
+    // 3. Large:
+    //    "modal_width": "large"
+    // 4. Extra Large:
+    //    "modal_width": "xlarge"
+    // 5. Fullscreen: This value removes any horizontal padding, as it consumes the whole viewport width.
     //    "modal_width": "full"
-    "modal_width": null
+    //
+    // Default: small
+    "modal_max_width": "small"
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.

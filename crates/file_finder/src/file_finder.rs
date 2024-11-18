@@ -245,23 +245,20 @@ impl FileFinder {
         })
     }
 
-    pub fn modal_width(
-        width_settings: Option<FileFinderWidth>,
+    pub fn modal_max_width(
+        width_setting: Option<FileFinderWidth>,
         cx: &mut ViewContext<Self>,
     ) -> Pixels {
         let window_width = cx.viewport_size().width;
-        let min_width = Pixels(545.);
+        let small_width = Pixels(545.);
 
-        let padding_px = match width_settings {
-            None => return min_width,
-            Some(FileFinderWidth::Full) => return window_width,
-            Some(FileFinderWidth::XLarge) => Pixels(512.),
-            Some(FileFinderWidth::Large) => Pixels(768.),
-            Some(FileFinderWidth::Medium) => Pixels(1024.),
-            Some(FileFinderWidth::Small) => Pixels(1280.),
-        };
-
-        (window_width - padding_px).max(min_width)
+        match width_setting {
+            None | Some(FileFinderWidth::Small) => small_width,
+            Some(FileFinderWidth::Full) => window_width,
+            Some(FileFinderWidth::XLarge) => (window_width - Pixels(512.)).max(small_width),
+            Some(FileFinderWidth::Large) => (window_width - Pixels(768.)).max(small_width),
+            Some(FileFinderWidth::Medium) => (window_width - Pixels(1024.)).max(small_width),
+        }
     }
 }
 
@@ -278,11 +275,11 @@ impl Render for FileFinder {
         let key_context = self.picker.read(cx).delegate.key_context(cx);
 
         let file_finder_settings = FileFinderSettings::get_global(cx);
-        let modal_width = Self::modal_width(file_finder_settings.modal_width, cx);
+        let modal_max_width = Self::modal_max_width(file_finder_settings.modal_max_width, cx);
 
         v_flex()
             .key_context(key_context)
-            .w(modal_width)
+            .w(modal_max_width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_select_prev))
             .on_action(cx.listener(Self::handle_open_menu))
