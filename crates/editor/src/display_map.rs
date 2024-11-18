@@ -1058,8 +1058,11 @@ impl DisplaySnapshot {
         self.block_snapshot.block_for_id(id)
     }
 
-    pub fn intersects_fold<T: ToOffset>(&self, offset: T) -> bool {
-        self.fold_snapshot.intersects_fold(offset)
+    pub fn intersects_fold<T: ToPoint>(&self, point: T) -> bool {
+        let point = point.to_point(&self.buffer_snapshot);
+        self.block_snapshot
+            .is_line_replaced(MultiBufferRow(point.row))
+            || self.fold_snapshot.intersects_fold(point)
     }
 
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {

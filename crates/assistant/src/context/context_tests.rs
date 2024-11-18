@@ -1,11 +1,11 @@
 use super::{AssistantEdit, MessageCacheMetadata};
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
     Context, ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId,
     MessageStatus, PromptBuilder,
 };
+use crate::{PatchId, ToolWorkingSet};
 use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,
@@ -26,6 +26,7 @@ use project::Project;
 use rand::prelude::*;
 use serde_json::json;
 use settings::SettingsStore;
+use std::mem;
 use std::{
     cell::RefCell,
     env,
@@ -612,7 +613,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
+async fn test_patch_parsing(cx: &mut TestAppContext) {
     cx.update(prompt_library::init);
     let mut settings_store = cx.update(SettingsStore::test);
     cx.update(|cx| {
@@ -647,6 +648,17 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         )
     });
 
+    let events = Rc::new(RefCell::new(Vec::new()));
+    context.update(cx, |_, cx| {
+        let events = events.clone();
+        cx.subscribe(&context, move |_, _, event, _cx| match event {
+            ContextEvent::PatchUpdated(id) => events.borrow_mut().push(("updated", *id)),
+            ContextEvent::PatchRemoved(id) => events.borrow_mut().push(("removed", *id)),
+            _ => {}
+        })
+        .detach();
+    });
+
     // Insert an assistant message to simulate a response.
     let assistant_message_id = context.update(cx, |context, cx| {
         let user_message_id = context.messages(cx).next().unwrap().id;
@@ -676,8 +688,9 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         &[],
         cx,
     );
+    assert_eq!(mem::take(&mut *events.borrow_mut()), &[]);
 
-    // Partial edit step tag is added
+    // Partial patch tag is added
     edit(
         &context,
         "
@@ -713,7 +726,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         <edit>»",
         cx,
     );
-    expect_patches(
+    let patch_ids = expect_patches(
         &context,
         "
 
@@ -725,8 +738,12 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         &[&[]],
         cx,
     );
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        &[("updated", patch_ids[0])]
+    );
 
-    // The full patch is added
+    // Add one edit to the patch
     edit(
         &context,
         "
@@ -743,7 +760,62 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         <new_text>
         fn two() {}
         </new_text>
-        </edit>
+        </edit>»",
+        cx,
+    );
+    let patch_ids = expect_patches(
+        &context,
+        "
+
+        one
+        two
+
+        «<patch>
+        <edit>
+        <description>add a `two` function</description>
+        <path>src/lib.rs</path>
+        <operation>insert_after</operation>
+        <old_text>fn one</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
+        </edit>»",
+        &[&[AssistantEdit {
+            path: "src/lib.rs".into(),
+            kind: AssistantEditKind::InsertAfter {
+                old_text: "fn one".into(),
+                new_text: "fn two() {}".into(),
+                description: Some("add a `two` function".into()),
+            },
+        }]],
+        cx,
+    );
+
+    // The patch updates twice. Once immediately when the source changes,
+    // and once when it is asynchronously resolved to a location.
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        &[("updated", patch_ids[0]), ("updated", patch_ids[0])]
+    );
+
+    // The full patch is added
+    edit(
+        &context,
+        "
+
+        one
+        two
+
+        <patch>
+        <edit>
+        <description>add a `two` function</description>
+        <path>src/lib.rs</path>
+        <operation>insert_after</operation>
+        <old_text>fn one</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
+        </edit>«
         </patch>
 
         also,»",
@@ -778,6 +850,10 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             },
         }]],
         cx,
+    );
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        &[("updated", patch_ids[0])]
     );
 
     // The step is manually edited.
@@ -832,6 +908,10 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             },
         }]],
         cx,
+    );
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        &[("updated", patch_ids[0]), ("updated", patch_ids[0])]
     );
 
     // When setting the message role to User, the steps are cleared.
@@ -959,11 +1039,11 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         expected_marked_text: &str,
         expected_suggestions: &[&[AssistantEdit]],
         cx: &mut TestAppContext,
-    ) {
+    ) -> Vec<PatchId> {
         let expected_marked_text = expected_marked_text.unindent();
         let (expected_text, _) = marked_text_ranges(&expected_marked_text, false);
 
-        let (buffer_text, ranges, patches) = context.update(cx, |context, cx| {
+        let (buffer_text, ranges, patch_ids, patches) = context.update(cx, |context, cx| {
             let patch_store = context.patch_store.read(cx);
             context.buffer.read_with(cx, |buffer, _| {
                 let ranges = context
@@ -971,12 +1051,16 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
                     .iter()
                     .map(|entry| entry.0.to_offset(buffer))
                     .collect::<Vec<_>>();
-                let patches = context
+                let patch_ids = context
                     .patches
                     .iter()
-                    .map(|entry| patch_store.get(entry.1).unwrap().clone())
+                    .map(|(_, id)| *id)
                     .collect::<Vec<_>>();
-                (buffer.text(), ranges, patches)
+                let patches = patch_ids
+                    .iter()
+                    .map(|id| patch_store.get(*id).unwrap().clone())
+                    .collect::<Vec<_>>();
+                (buffer.text(), ranges, patch_ids, patches)
             })
         });
 
@@ -1001,6 +1085,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
                 .collect::<Vec<_>>(),
             expected_suggestions
         );
+        patch_ids
     }
 }
 

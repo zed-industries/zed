@@ -1562,12 +1562,12 @@ impl Context {
         self.patch_store.update(cx, |patch_store, cx| {
             let mut removed_entries = self.patches[intersecting_patches_range.clone()]
                 .iter()
-                .cloned()
+                .map(|(range, id)| (range.start, *id))
                 .collect::<HashMap<_, _>>();
             let added_entries = new_patches.into_iter().map(|patch| {
                 let id;
                 let range = patch.range.clone();
-                if let Some(existing_id) = removed_entries.remove(&range) {
+                if let Some(existing_id) = removed_entries.remove(&range.start) {
                     id = existing_id;
                     patch_store.update(id, patch, cx).ok();
                 } else {
@@ -1577,7 +1577,7 @@ impl Context {
             });
             self.patches
                 .splice(intersecting_patches_range, added_entries);
-            for (range, id) in removed_entries {
+            for id in removed_entries.into_values() {
                 patch_store.remove(id, cx);
             }
         });

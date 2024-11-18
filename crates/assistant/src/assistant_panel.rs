@@ -2266,6 +2266,12 @@ impl ContextEditor {
 
             let should_refold;
             if let Some(state) = self.patches.get_mut(&patch_id) {
+                if state.multibuffer_range != (patch_start..patch_end) {
+                    editor.remove_creases([state.crease_id], cx);
+                    state.crease_id = editor.insert_creases([crease.clone()], cx)[0];
+                    state.multibuffer_range = patch_start..patch_end;
+                }
+
                 if state.editor.is_some() {
                     let resolved_patch = self.context.read(cx).resolve_patch(patch_id, cx);
                     state.update_task = Some({
@@ -2284,8 +2290,7 @@ impl ContextEditor {
                     });
                 }
 
-                should_refold =
-                    snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
+                should_refold = snapshot.intersects_fold(patch_start.to_offset(&multibuffer));
             } else {
                 let crease_id = editor.insert_creases([crease.clone()], cx)[0];
                 self.patches.insert(

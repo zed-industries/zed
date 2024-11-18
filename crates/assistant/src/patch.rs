@@ -81,7 +81,8 @@ impl PatchStore {
         let project = self.project.clone();
         let prev_patch = entry.patch.clone();
         entry.locate_task = Some(cx.spawn(|this, mut cx| async move {
-            let located_patch = Self::locate_patch(patch, project, prev_patch, &mut cx).await?;
+            let (located_patch, patch_did_change) =
+                Self::locate_patch(patch, project, prev_patch, &mut cx).await?;
             this.update(&mut cx, |this, cx| {
                 this.entries.insert(
                     id,
@@ -90,7 +91,9 @@ impl PatchStore {
                         locate_task: None,
                     },
                 );
-                cx.emit(PatchStoreEvent::PatchUpdated(id));
+                if patch_did_change {
+                    cx.emit(PatchStoreEvent::PatchUpdated(id));
+                }
             })
         }));
 
@@ -188,9 +191,10 @@ impl PatchStore {
         project: Model<Project>,
         old_located_patch: LocatedPatch,
         cx: &mut AsyncAppContext,
-    ) -> Result<LocatedPatch> {
+    ) -> Result<(LocatedPatch, bool)> {
         let old_input_edits = old_located_patch.input.edits;
         let old_outputs = old_located_patch.buffers;
+        let mut equals_old_patch = true;
 
         // Convert each input edit into a located edit.
         let mut new_outputs = Vec::<LocatedPatchBuffer>::new();
@@ -246,6 +250,7 @@ impl PatchStore {
             let mut located_edit = if let Some(old_located_edit) = old_located_edit {
                 old_located_edit.clone()
             } else {
+                equals_old_patch = false;
                 cx.background_executor()
                     .spawn({
                         let edit = input_edit.kind.clone();
@@ -266,10 +271,21 @@ impl PatchStore {
             }
         }
 
-        Ok(LocatedPatch {
-            input: patch,
-            buffers: new_outputs,
-        })
+        equals_old_patch &=
+            old_outputs
+                .iter()
+                .zip(new_outputs.iter())
+                .all(|(old_output, new_output)| {
+                    old_output.path == new_output.path && old_output.edits == new_output.edits
+                });
+
+        Ok((
+            LocatedPatch {
+                input: patch,
+                buffers: new_outputs,
+            },
+            !equals_old_patch,
+        ))
     }
 }
 
@@ -363,7 +379,7 @@ struct LocatedPatchBuffer {
     pub edits: Vec<LocatedEdit>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct LocatedEdit {
     range: Range<usize>,
     new_text: String,
