@@ -121,7 +121,7 @@ impl ExtensionBuilder {
         );
         let output = Command::new("cargo")
             .args([
-                /*"+nightly-2024-08-24",*/ "build",
+                "build",
                 "--target",
                 RUST_TARGET,
             ])
