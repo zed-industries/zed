@@ -705,8 +705,6 @@ pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
     use super::*;
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
