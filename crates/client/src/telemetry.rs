@@ -100,7 +100,7 @@ pub fn os_name() -> String {
     {
         "macOS".to_string()
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         format!("Linux {}", gpui::guess_compositor())
     }
@@ -129,7 +129,7 @@ pub fn os_version() -> String {
             .to_string()
         }
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         use std::path::Path;
 
@@ -341,7 +341,7 @@ impl Telemetry {
         let state = self.state.lock();
         let enabled = state.settings.metrics;
         drop(state);
-        return enabled;
+        enabled
     }
 
     pub fn set_authenticated_user_info(

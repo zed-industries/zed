@@ -323,7 +323,7 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
-async-tungstenite = "0.24"
+async-tungstenite = "0.28"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
@@ -363,6 +363,7 @@ heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 hyper = "0.14"
+http = "1.1"
 ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
@@ -371,10 +372,11 @@ itertools = "0.13.0"
 jsonwebtoken = "9.3"
 libc = "0.2"
 linkify = "0.10.0"
+livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="4262308983646ab5b0e0802c3d8bc52154f99aab", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
-nbformat = "0.3.2"
+nbformat = "0.5.0"
 nix = "0.29"
 num-format = "0.4.4"
 once_cell = "1.19.0"
@@ -408,12 +410,12 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = { version = "0.16.1", default-features = false, features = [
+runtimelib = { version = "0.19.0", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-rustls = "0.20.3"
+rustls = "0.21.12"
 rustls-native-certs = "0.8.0"
 schemars = { version = "0.8", features = ["impl_json_schema"] }
 semver = "1.0"
@@ -549,6 +551,10 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
+# TODO livekit https://github.com/RustAudio/cpal/pull/891
+[patch.crates-io]
+cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
+
 [profile.dev]
 split-debuginfo = "unpacked"
 debug = "limited"
@@ -562,6 +568,46 @@ rustybuzz = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
 wasmtime-cranelift = { opt-level = 3 }
 wasmtime = { opt-level = 3 }
+# Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
+activity_indicator = { codegen-units = 1 }
+assets = { codegen-units = 1 }
+breadcrumbs = { codegen-units = 1 }
+collections = { codegen-units = 1 }
+command_palette = { codegen-units = 1 }
+command_palette_hooks = { codegen-units = 1 }
+evals = { codegen-units = 1 }
+extension_cli = { codegen-units = 1 }
+feature_flags = { codegen-units = 1 }
+file_icons = { codegen-units = 1 }
+fsevent = { codegen-units = 1 }
+image_viewer = { codegen-units = 1 }
+inline_completion_button = { codegen-units = 1 }
+install_cli = { codegen-units = 1 }
+journal = { codegen-units = 1 }
+menu = { codegen-units = 1 }
+notifications = { codegen-units = 1 }
+ollama = { codegen-units = 1 }
+outline = { codegen-units = 1 }
+paths = { codegen-units = 1 }
+prettier = { codegen-units = 1 }
+project_symbols = { codegen-units = 1 }
+refineable = { codegen-units = 1 }
+release_channel = { codegen-units = 1 }
+reqwest_client = { codegen-units = 1 }
+rich_text = { codegen-units = 1 }
+semantic_version = { codegen-units = 1 }
+session = { codegen-units = 1 }
+snippet = { codegen-units = 1 }
+snippets_ui = { codegen-units = 1 }
+sqlez_macros = { codegen-units = 1 }
+story = { codegen-units = 1 }
+supermaven_api = { codegen-units = 1 }
+telemetry_events = { codegen-units = 1 }
+theme_selector = { codegen-units = 1 }
+time_format = { codegen-units = 1 }
+ui_input = { codegen-units = 1 }
+vcs_menu = { codegen-units = 1 }
+zed_actions = { codegen-units = 1 }
 
 [profile.release]
 debug = "limited"

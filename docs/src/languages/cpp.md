@@ -55,6 +55,35 @@ You can pass any number of arguments to clangd. To see a full set of available o
 }
 ```
 
+## Formatting
+
+By default Zed will use the `clangd` language server for formatting C++ code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
+
+```yaml
+---
+BasedOnStyle: LLVM
+IndentWidth: 4
+---
+Language: Cpp
+# Force pointers to the type for C++.
+DerivePointerAlignment: false
+PointerAlignment: Left
+---
+```
+
+See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOptions.html) for a complete list of options.
+
+You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by adding `format_on_save` to your Zed settings:
+
+```json
+  "languages": {
+    "C++" {
+      "format_on_save": "on",
+      "tab_size": 2
+    }
+  }
+```
+
 ## More server configuration
 
 In the root of your project, it is generally common to create a `.clangd` file to set extra configuration.

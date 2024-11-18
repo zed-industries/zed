@@ -50,6 +50,10 @@ There are two actions that drive the workflow of using tasks: `task: spawn` and 
 `task: spawn` opens a modal with all available tasks in the current file.
 `task: rerun` reruns the most-recently spawned task. You can also rerun tasks from task modal.
 
+By default, rerunning tasks reuses the same terminal (due to the `"use_new_terminal": false` default) but waits for the previous task to finish before start (due to the `"allow_concurrent_runs": false` default).
+
+Keep `"use_new_terminal": false` and set `"allow_concurrent_runs": true` to allow cancelling previous tasks on rerun.
+
 ## Task templates
 
 Tasks can be defined:
@@ -88,6 +92,38 @@ To use a variable in a task, prefix it with a dollar sign (`$`):
 You can also use verbose syntax that allows specifying a default if a given variable is not available: `${ZED_FILE:default_value}`
 
 These environmental variables can also be used in tasks `cwd`, `args` and `label` fields.
+
+### Variable Quoting
+
+When working with paths containing spaces or other special characters, please ensure variables are properly escaped.
+
+For example, instead of this (which will fail if the path has a space):
+
+```json
+{
+  "label": "stat current file",
+  "command": "stat $ZED_FILE"
+}
+```
+
+Provide the
+
+```json
+{
+  "label": "stat current file",
+  "command": "stat",
+  "args": ["$ZED_FILE"]
+}
+```
+
+Or explicitly include escaped quotes like so:
+
+```json
+{
+  "label": "stat current file",
+  "command": "stat \"$ZED_FILE\""
+}
+```
 
 ## Oneshot tasks
 

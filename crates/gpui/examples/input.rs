@@ -580,9 +580,9 @@ impl Render for InputExample {
             .children(self.recent_keystrokes.iter().rev().map(|ks| {
                 format!(
                     "{:} {}",
-                    ks,
+                    ks.unparse(),
                     if let Some(ime_key) = ks.ime_key.as_ref() {
-                        format!("-> {}", ime_key)
+                        format!("-> {:?}", ime_key)
                     } else {
                         "".to_owned()
                     }

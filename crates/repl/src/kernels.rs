@@ -5,8 +5,9 @@ use futures::{
     stream::{self, SelectAll, StreamExt},
     SinkExt as _,
 };
-use gpui::{AppContext, EntityId, Task};
-use project::Fs;
+use gpui::{AppContext, EntityId, Model, Task};
+use language::LanguageName;
+use project::{Fs, Project, WorktreeId};
 use runtimelib::{
     dirs, ConnectionInfo, ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent,
     KernelInfoReply,
@@ -15,6 +16,7 @@ use smol::{net::TcpListener, process::Command};
 use std::{
     env,
     fmt::Debug,
+    future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     sync::Arc,
@@ -463,6 +465,72 @@ async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> Result<Vec<LocalKernelS
     }
 
     Ok(valid_kernelspecs)
+}
+
+pub fn python_env_kernel_specifications(
+    project: &Model<Project>,
+    worktree_id: WorktreeId,
+    cx: &mut AppContext,
+) -> impl Future<Output = Result<Vec<KernelSpecification>>> {
+    let python_language = LanguageName::new("Python");
+    let toolchains = project
+        .read(cx)
+        .available_toolchains(worktree_id, python_language, cx);
+    let background_executor = cx.background_executor().clone();
+
+    async move {
+        let toolchains = if let Some(toolchains) = toolchains.await {
+            toolchains
+        } else {
+            return Ok(Vec::new());
+        };
+
+        let kernelspecs = toolchains.toolchains.into_iter().map(|toolchain| {
+            background_executor.spawn(async move {
+                let python_path = toolchain.path.to_string();
+
+                // Check if ipykernel is installed
+                let ipykernel_check = Command::new(&python_path)
+                    .args(&["-c", "import ipykernel"])
+                    .output()
+                    .await;
+
+                if ipykernel_check.is_ok() && ipykernel_check.unwrap().status.success() {
+                    // Create a default kernelspec for this environment
+                    let default_kernelspec = JupyterKernelspec {
+                        argv: vec![
+                            python_path.clone(),
+                            "-m".to_string(),
+                            "ipykernel_launcher".to_string(),
+                            "-f".to_string(),
+                            "{connection_file}".to_string(),
+                        ],
+                        display_name: toolchain.name.to_string(),
+                        language: "python".to_string(),
+                        interrupt_mode: None,
+                        metadata: None,
+                        env: None,
+                    };
+
+                    Some(KernelSpecification::PythonEnv(LocalKernelSpecification {
+                        name: toolchain.name.to_string(),
+                        path: PathBuf::from(&python_path),
+                        kernelspec: default_kernelspec,
+                    }))
+                } else {
+                    None
+                }
+            })
+        });
+
+        let kernel_specs = futures::future::join_all(kernelspecs)
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
+
+        anyhow::Ok(kernel_specs)
+    }
 }
 
 pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKernelSpecification>> {

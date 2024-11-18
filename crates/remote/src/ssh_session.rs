@@ -1428,9 +1428,21 @@ impl SshRemoteConnection {
             }
         });
 
+        anyhow::ensure!(
+            which::which("nc").is_ok(),
+            "Cannot find nc, which is required to connect over ssh."
+        );
+
         // Create an askpass script that communicates back to this process.
         let askpass_script = format!(
-            "{shebang}\n{print_args} | nc -U {askpass_socket} 2> /dev/null \n",
+            "{shebang}\n{print_args} | {nc} -U {askpass_socket} 2> /dev/null \n",
+            // on macOS `brew install netcat` provides the GNU netcat implementation
+            // which does not support -U.
+            nc = if cfg!(target_os = "macos") {
+                "/usr/bin/nc"
+            } else {
+                "nc"
+            },
             askpass_socket = askpass_socket.display(),
             print_args = "printf '%s\\0' \"$@\"",
             shebang = "#!/bin/sh",
@@ -1549,14 +1561,22 @@ impl SshRemoteConnection {
         let os = match os.trim() {
             "Darwin" => "macos",
             "Linux" => "linux",
-            _ => Err(anyhow!("unknown uname os {os:?}"))?,
+            _ => Err(anyhow!(
+                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
+            ))?,
         };
-        let arch = if arch.starts_with("arm") || arch.starts_with("aarch64") {
+        // exclude armv5,6,7 as they are 32-bit.
+        let arch = if arch.starts_with("armv8")
+            || arch.starts_with("armv9")
+            || arch.starts_with("aarch64")
+        {
             "aarch64"
-        } else if arch.starts_with("x86") || arch.starts_with("i686") {
+        } else if arch.starts_with("x86") {
             "x86_64"
         } else {
-            Err(anyhow!("unknown uname architecture {arch:?}"))?
+            Err(anyhow!(
+                "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
+            ))?
         };
 
         Ok(SshPlatform { os, arch })

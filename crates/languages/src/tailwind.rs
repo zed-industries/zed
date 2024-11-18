@@ -114,31 +114,19 @@ impl LspAdapter for TailwindLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        let tailwind_user_settings = cx.update(|cx| {
+        let mut tailwind_user_settings = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
         })?;
 
-        let mut configuration = json!({
-            "tailwindCSS": {
-                "emmetCompletions": true,
-            }
-        });
-
-        if let Some(experimental) = tailwind_user_settings.get("experimental").cloned() {
-            configuration["tailwindCSS"]["experimental"] = experimental;
+        if tailwind_user_settings.get("emmetCompletions").is_none() {
+            tailwind_user_settings["emmetCompletions"] = Value::Bool(true);
         }
 
-        if let Some(class_attributes) = tailwind_user_settings.get("classAttributes").cloned() {
-            configuration["tailwindCSS"]["classAttributes"] = class_attributes;
-        }
-
-        if let Some(include_languages) = tailwind_user_settings.get("includeLanguages").cloned() {
-            configuration["tailwindCSS"]["includeLanguages"] = include_languages;
-        }
-
-        Ok(configuration)
+        Ok(json!({
+            "tailwindCSS": tailwind_user_settings,
+        }))
     }
 
     fn language_ids(&self) -> HashMap<String, String> {

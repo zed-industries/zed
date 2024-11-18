@@ -153,6 +153,7 @@ pub struct VimGlobals {
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
     pub recorded_count: Option<usize>,
+    pub recording_actions: Vec<ReplayableAction>,
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
@@ -228,9 +229,9 @@ impl VimGlobals {
                     }
                     '*' => {
                         self.registers.insert('"', content.clone());
-                        #[cfg(target_os = "linux")]
+                        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                         cx.write_to_primary(content.into());
-                        #[cfg(not(target_os = "linux"))]
+                        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
                         cx.write_to_clipboard(content.into());
                     }
                     '"' => {
@@ -299,11 +300,11 @@ impl VimGlobals {
             '_' | ':' | '.' | '#' | '=' => None,
             '+' => cx.read_from_clipboard().map(|item| item.into()),
             '*' => {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 {
                     cx.read_from_primary().map(|item| item.into())
                 }
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
                 {
                     cx.read_from_clipboard().map(|item| item.into())
                 }
@@ -339,11 +340,12 @@ impl VimGlobals {
 
     pub fn observe_action(&mut self, action: Box<dyn Action>) {
         if self.dot_recording {
-            self.recorded_actions
+            self.recording_actions
                 .push(ReplayableAction::Action(action.boxed_clone()));
 
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
+                self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -363,12 +365,13 @@ impl VimGlobals {
             return;
         }
         if self.dot_recording {
-            self.recorded_actions.push(ReplayableAction::Insertion {
+            self.recording_actions.push(ReplayableAction::Insertion {
                 text: text.clone(),
                 utf16_range_to_replace: range_to_replace.clone(),
             });
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
+                self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.stop_recording_after_next_action = false;
             }
         }

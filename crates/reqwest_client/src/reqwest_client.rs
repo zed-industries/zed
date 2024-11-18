@@ -1,9 +1,9 @@
-use std::{any::type_name, mem, pin::Pin, sync::OnceLock, task::Poll};
+use std::{any::type_name, mem, pin::Pin, sync::OnceLock, task::Poll, time::Duration};
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{AsyncRead, TryStreamExt as _};
-use http_client::{http, ReadTimeout, RedirectPolicy};
+use http_client::{http, RedirectPolicy};
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     redirect,
@@ -20,9 +20,14 @@ pub struct ReqwestClient {
 }
 
 impl ReqwestClient {
-    pub fn new() -> Self {
+    fn builder() -> reqwest::ClientBuilder {
         reqwest::Client::builder()
             .use_rustls_tls()
+            .connect_timeout(Duration::from_secs(10))
+    }
+
+    pub fn new() -> Self {
+        Self::builder()
             .build()
             .expect("Failed to initialize HTTP client")
             .into()
@@ -31,19 +36,14 @@ impl ReqwestClient {
     pub fn user_agent(agent: &str) -> anyhow::Result<Self> {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
-        let client = reqwest::Client::builder()
-            .default_headers(map)
-            .use_rustls_tls()
-            .build()?;
+        let client = Self::builder().default_headers(map).build()?;
         Ok(client.into())
     }
 
     pub fn proxy_and_user_agent(proxy: Option<http::Uri>, agent: &str) -> anyhow::Result<Self> {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
-        let mut client = reqwest::Client::builder()
-            .use_rustls_tls()
-            .default_headers(map);
+        let mut client = Self::builder().default_headers(map);
         if let Some(proxy) = proxy.clone().and_then(|proxy_uri| {
             reqwest::Proxy::all(proxy_uri.to_string())
                 .inspect_err(|e| log::error!("Failed to parse proxy URI {}: {}", proxy_uri, e))
@@ -203,9 +203,6 @@ impl http_client::HttpClient for ReqwestClient {
                 RedirectPolicy::FollowLimit(limit) => redirect::Policy::limited(*limit as usize),
                 RedirectPolicy::FollowAll => redirect::Policy::limited(100),
             });
-        }
-        if let Some(ReadTimeout(timeout)) = parts.extensions.get::<ReadTimeout>() {
-            request = request.timeout(*timeout);
         }
         let request = request.body(match body.0 {
             http_client::Inner::Empty => reqwest::Body::default(),

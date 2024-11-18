@@ -88,12 +88,19 @@ impl Render for ModeIndicator {
             return div().into_any();
         };
 
+        let vim_readable = vim.read(cx);
+        let mode = if vim_readable.temp_mode {
+            format!("(insert) {}", vim_readable.mode)
+        } else {
+            vim_readable.mode.to_string()
+        };
+
         let current_operators_description = self.current_operators_description(vim.clone(), cx);
         let pending = self
             .pending_keys
             .as_ref()
             .unwrap_or(&current_operators_description);
-        Label::new(format!("{} -- {} --", pending, vim.read(cx).mode))
+        Label::new(format!("{} -- {} --", pending, mode))
             .size(LabelSize::Small)
             .line_height_style(LineHeightStyle::UiLabel)
             .into_any_element()

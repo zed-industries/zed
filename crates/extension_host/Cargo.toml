@@ -22,6 +22,7 @@ async-tar.workspace = true
 async-trait.workspace = true
 client.workspace = true
 collections.workspace = true
+context_servers.workspace = true
 extension.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -57,3 +58,4 @@ language = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
 reqwest_client.workspace = true
+theme = { workspace = true, features = ["test-support"] }

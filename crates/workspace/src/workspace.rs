@@ -1406,6 +1406,7 @@ impl Workspace {
                                 project_entry_id,
                                 true,
                                 entry.is_preview,
+                                None,
                                 cx,
                                 build_item,
                             );
@@ -2621,7 +2622,14 @@ impl Workspace {
         cx.spawn(move |mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
             pane.update(&mut cx, |pane, cx| {
-                pane.open_item(project_entry_id, focus_item, allow_preview, cx, build_item)
+                pane.open_item(
+                    project_entry_id,
+                    focus_item,
+                    allow_preview,
+                    None,
+                    cx,
+                    build_item,
+                )
             })
         })
     }
@@ -2631,13 +2639,14 @@ impl Workspace {
         path: impl Into<ProjectPath>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-        self.split_path_preview(path, false, cx)
+        self.split_path_preview(path, false, None, cx)
     }
 
     pub fn split_path_preview(
         &mut self,
         path: impl Into<ProjectPath>,
         allow_preview: bool,
+        split_direction: Option<SplitDirection>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
@@ -2658,9 +2667,17 @@ impl Workspace {
             let (project_entry_id, build_item) = task.await?;
             this.update(&mut cx, move |this, cx| -> Option<_> {
                 let pane = pane.upgrade()?;
-                let new_pane = this.split_pane(pane, SplitDirection::Right, cx);
+                let new_pane =
+                    this.split_pane(pane, split_direction.unwrap_or(SplitDirection::Right), cx);
                 new_pane.update(cx, |new_pane, cx| {
-                    Some(new_pane.open_item(project_entry_id, true, allow_preview, cx, build_item))
+                    Some(new_pane.open_item(
+                        project_entry_id,
+                        true,
+                        allow_preview,
+                        None,
+                        cx,
+                        build_item,
+                    ))
                 })
             })
             .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
@@ -3922,6 +3939,17 @@ impl Workspace {
         None
     }
 
+    #[cfg(target_os = "windows")]
+    fn shared_screen_for_peer(
+        &self,
+        _peer_id: PeerId,
+        _pane: &View<Pane>,
+        _cx: &mut WindowContext,
+    ) -> Option<View<SharedScreen>> {
+        None
+    }
+
+    #[cfg(not(target_os = "windows"))]
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,
@@ -3940,7 +3968,7 @@ impl Workspace {
             }
         }
 
-        Some(cx.new_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
+        Some(cx.new_view(|cx| SharedScreen::new(track, peer_id, user.clone(), cx)))
     }
 
     pub fn on_window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
@@ -5868,7 +5896,7 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                     let edge = cx.try_global::<GlobalResizeEdge>();
                     if new_edge != edge.map(|edge| edge.0) {
                         cx.window_handle()
-                            .update(cx, |workspace, cx| cx.notify(workspace.entity_id()))
+                            .update(cx, |workspace, cx| cx.notify(Some(workspace.entity_id())))
                             .ok();
                     }
                 })

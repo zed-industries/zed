@@ -1,10 +1,10 @@
 use editor::Editor;
 use gpui::{
     actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
-    FontWeight, Subscription, View,
+    Subscription, View,
 };
-use std::collections::HashMap;
-use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding, ListItem, Tooltip};
+use project::Item as _;
+use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
@@ -12,7 +12,6 @@ use workspace::{item::Item, Workspace};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
-use crate::{KernelSpecification, KERNEL_DOCS_URL};
 
 actions!(
     repl,
@@ -63,16 +62,33 @@ pub fn init(cx: &mut AppContext) {
 
         cx.defer(|editor, cx| {
             let workspace = Workspace::for_window(cx);
+            let project = workspace.map(|workspace| workspace.read(cx).project().clone());
 
-            let is_local_project = workspace
-                .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+            let is_local_project = project
+                .as_ref()
+                .map(|project| project.read(cx).is_local())
                 .unwrap_or(false);
 
             if !is_local_project {
                 return;
             }
 
+            let project_path = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .and_then(|buffer| buffer.read(cx).project_path(cx));
+
             let editor_handle = cx.view().downgrade();
+
+            if let (Some(project_path), Some(project)) = (project_path, project) {
+                let store = ReplStore::global(cx);
+                store.update(cx, |store, cx| {
+                    store
+                        .refresh_python_kernelspecs(project_path.worktree_id, &project, cx)
+                        .detach_and_log_err(cx);
+                });
+            }
 
             editor
                 .register_action({
@@ -169,7 +185,10 @@ impl Render for ReplSessionsPage {
 
         let (kernel_specifications, sessions) = store.update(cx, |store, _cx| {
             (
-                store.kernel_specifications().cloned().collect::<Vec<_>>(),
+                store
+                    .pure_jupyter_kernel_specifications()
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 store.sessions().cloned().collect::<Vec<_>>(),
             )
         });
@@ -198,97 +217,18 @@ impl Render for ReplSessionsPage {
                 );
         }
 
-        let mut kernels_by_language: HashMap<SharedString, Vec<&KernelSpecification>> =
-            kernel_specifications
-                .iter()
-                .map(|spec| (spec.language(), spec))
-                .fold(HashMap::new(), |mut acc, (language, spec)| {
-                    acc.entry(language).or_default().push(spec);
-                    acc
-                });
-
-        for kernels in kernels_by_language.values_mut() {
-            kernels.sort_by_key(|a| a.name())
-        }
-
-        // Convert to a sorted Vec of tuples
-        let mut sorted_kernels: Vec<(SharedString, Vec<&KernelSpecification>)> =
-            kernels_by_language.into_iter().collect();
-        sorted_kernels.sort_by(|a, b| a.0.cmp(&b.0));
-
-        let kernels_available = v_flex()
-            .child(Label::new("Kernels available").size(LabelSize::Large))
-            .gap_2()
-            .child(
-                h_flex()
-                    .child(Label::new(
-                        "Defaults indicated with a checkmark. Learn how to change your default kernel in the ",
-                    ))
-                    .child(
-                        ButtonLike::new("configure-kernels")
-                            .style(ButtonStyle::Filled)
-                            // .size(ButtonSize::Compact)
-                            .layer(ElevationIndex::Surface)
-                            .child(Label::new("REPL documentation"))
-                            .child(Icon::new(IconName::Link))
-                            .on_click(move |_, cx| {
-                                cx.open_url(KERNEL_DOCS_URL)
-                            }),
-                    ),
-            )
-            .children(sorted_kernels.into_iter().map(|(language, specs)| {
-                let chosen_kernel = store.read(cx).kernelspec(&language, cx);
-
-                v_flex()
-                    .gap_1()
-                    .child(Label::new(language.clone()).weight(FontWeight::BOLD))
-                    .children(specs.into_iter().map(|spec| {
-                        let is_choice = if let Some(chosen_kernel) = &chosen_kernel {
-                            chosen_kernel == spec
-                        } else {
-                            false
-                        };
-
-                        let path = spec.path();
-
-                        ListItem::new(path.clone())
-                            .selectable(false)
-                            .tooltip({
-                                let path = path.clone();
-                                move |cx| Tooltip::text(path.clone(), cx)})
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(div().id(path.clone()).child(Label::new(spec.name())))
-                                    .when(is_choice, |el| {
-
-                                        let language = language.clone();
-
-                                        el.child(
-
-                                        div().id("check").tooltip(move |cx| Tooltip::text(format!("Default Kernel for {language}"), cx))
-                                            .child(Icon::new(IconName::Check)))}),
-                            )
-
-                    }))
-            }));
-
         // When there are no sessions, show the command to run code in an editor
         if sessions.is_empty() {
             let instructions = "To run code in a Jupyter kernel, select some code and use the 'repl::Run' command.";
 
-            return ReplSessionsContainer::new("No Jupyter Kernel Sessions")
-                .child(
-                    v_flex()
-                        .child(Label::new(instructions))
-                        .children(KeyBinding::for_action(&Run, cx)),
-                )
-                .child(div().pt_3().child(kernels_available));
+            return ReplSessionsContainer::new("No Jupyter Kernel Sessions").child(
+                v_flex()
+                    .child(Label::new(instructions))
+                    .children(KeyBinding::for_action(&Run, cx)),
+            );
         }
 
-        ReplSessionsContainer::new("Jupyter Kernel Sessions")
-            .children(sessions)
-            .child(kernels_available)
+        ReplSessionsContainer::new("Jupyter Kernel Sessions").children(sessions)
     }
 }
 
