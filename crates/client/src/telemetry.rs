@@ -4,7 +4,8 @@ use crate::{ChannelId, TelemetrySettings};
 use anyhow::Result;
 use clock::SystemClock;
 use collections::{HashMap, HashSet};
-use futures::Future;
+use futures::channel::mpsc;
+use futures::{Future, StreamExt};
 use gpui::{AppContext, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use once_cell::sync::Lazy;
@@ -286,6 +287,16 @@ impl Telemetry {
         session_id: String,
         cx: &AppContext,
     ) {
+        let (tx, mut rx) = mpsc::unbounded();
+
+        ::telemetry::init(tx);
+        cx.background_executor()
+            .spawn(async move {
+                while let Some(event) = rx.next().await {
+                    dbg!(&event);
+                }
+            })
+            .detach();
         let mut state = self.state.lock();
         state.system_id = system_id.map(|id| id.into());
         state.installation_id = installation_id.map(|id| id.into());

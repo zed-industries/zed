@@ -3,6 +3,7 @@
 use futures::channel::mpsc;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
+pub use serde_json;
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -276,29 +277,23 @@ pub struct PanicRequest {
 /// By convention, the name should be "Noun Verbed", e.g. "Keymap Changed"
 /// or "Project Diagnostics Opened".
 ///
+/// The properties can be any value that implements serde::Serialize.
+///
 /// ```
-/// telemetry::event!("App Opened", version = "1.0.0");
-/// telemetry::event!("File Saved", file_type = "rust", size_kb = 42);
+/// telemetry::event!("Keymap Changed", version = "1.0.0");
+/// telemetry::event!("Documentation Viewed", url, source = "Extension Upsell");
 /// ```
 #[macro_export]
 macro_rules! event {
-    ($name:expr, $($key:ident = $value:expr),* $(,)?) => {{
+    ($name:expr, $($key:ident $(= $value:expr)?),+ $(,)?) => {{
         let event = $crate::Event {
             name: $name.to_string(),
             properties: std::collections::HashMap::from([
                 $(
-                    ($key.to_string(), Box::new($value)),
-                )*
-            ]),
-        };
-        $crate::send_event(event);
-    }};
-    ($name:expr, $($key:ident),+ $(,)?) => {{
-        let event = $crate::Event {
-            name: $name.to_string(),
-            properties: std::collections::HashMap::from([
-                $(
-                    (stringify!($key), Box::new($key)),
+                    (stringify!($key).to_string(),
+                        $crate::serde_json::value::to_raw_value(&$crate::serialize_property!($key $(= $value)?))
+                            .unwrap_or_else(|_| $crate::serde_json::value::to_raw_value(&()).unwrap())
+                    ),
                 )+
             ]),
         };
@@ -306,12 +301,20 @@ macro_rules! event {
     }};
 }
 
-pub trait Property: erased_serde::Serialize + std::fmt::Debug + Send + Sync {}
-erased_serde::serialize_trait_object!(Property);
+#[macro_export]
+macro_rules! serialize_property {
+    ($key:ident) => {
+        $key
+    };
+    ($key:ident = $value:expr) => {
+        $value
+    };
+}
 
+#[derive(Debug)]
 pub struct Event {
     pub name: String,
-    pub properties: HashMap<String, Box<dyn Property>>,
+    pub properties: HashMap<String, Box<serde_json::value::RawValue>>,
 }
 
 pub fn send_event(event: Event) {

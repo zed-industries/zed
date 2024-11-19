@@ -15,4 +15,4 @@ path = "src/telemetry.rs"
 semantic_version.workspace = true
 serde.workspace = true
 futures.workspace = true
-erased-serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }

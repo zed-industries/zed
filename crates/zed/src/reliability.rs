@@ -6,6 +6,9 @@ use db::kvp::KEY_VALUE_STORE;
 use gpui::{AppContext, SemanticVersion};
 use http_client::{HttpRequestExt, Method};
 
+use ::telemetry::LocationData;
+use ::telemetry::Panic;
+use ::telemetry::PanicRequest;
 use http_client::{self, HttpClient, HttpClientWithUrl};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
@@ -19,9 +22,6 @@ use std::{
     sync::{atomic::Ordering, Arc},
 };
 use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
-use telemetry::LocationData;
-use telemetry::Panic;
-use telemetry::PanicRequest;
 use url::Url;
 use util::ResultExt;
 
@@ -90,7 +90,7 @@ pub fn init_panic_hook(
             backtrace.drain(0..=ix);
         }
 
-        let panic_data = telemetry::Panic {
+        let panic_data = ::telemetry::Panic {
             thread: thread_name.into(),
             payload,
             location_data: info.location().map(|location| LocationData {
@@ -225,13 +225,13 @@ pub fn monitor_main_thread_hangs(
 
     use parking_lot::Mutex;
 
+    use ::telemetry::{BacktraceFrame, HangReport};
     use http_client::Method;
     use std::{
         ffi::c_int,
         sync::{mpsc, OnceLock},
         time::Duration,
     };
-    use telemetry::{BacktraceFrame, HangReport};
 
     use nix::sys::pthread;
 
@@ -490,7 +490,7 @@ async fn upload_previous_panics(
 async fn upload_panic(
     http: &Arc<HttpClientWithUrl>,
     panic_report_url: &Url,
-    panic: telemetry::Panic,
+    panic: ::telemetry::Panic,
     most_recent_panic: &mut Option<(i64, String)>,
 ) -> Result<bool> {
     *most_recent_panic = Some((panic.panicked_on, panic.payload.clone()));
