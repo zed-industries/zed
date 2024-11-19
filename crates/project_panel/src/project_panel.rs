@@ -1979,26 +1979,25 @@ impl ProjectPanel {
 
     // Returns the union of the currently selected entry and all marked entries.
     fn selected_and_marked_entries(&self) -> BTreeSet<SelectedEntry> {
-        let Some(mut selection) = self.selection else {
-            return Default::default();
-        };
-
-        let mut marked_entries: BTreeSet<SelectedEntry> = self
+        let mut entries = self
             .marked_entries
             .iter()
-            .copied()
-            .map(|mut entry| {
-                entry.entry_id = self.resolve_entry(entry.entry_id);
-                entry
+            .map(|entry| SelectedEntry {
+                entry_id: self.resolve_entry(entry.entry_id),
+                worktree_id: entry.worktree_id,
             })
-            .collect();
+            .collect::<BTreeSet<_>>();
 
-        if !marked_entries.contains(&selection) {
-            selection.entry_id = self.resolve_entry(selection.entry_id);
-            marked_entries.insert(selection);
+        if let Some(selection) = self.selection {
+            if !entries.contains(&selection) {
+                entries.insert(SelectedEntry {
+                    entry_id: selection.entry_id,
+                    worktree_id: selection.worktree_id,
+                });
+            }
         }
 
-        marked_entries
+        entries
     }
 
     /// Finds the currently selected subentry for a given leaf entry id. If a given entry
@@ -2919,6 +2918,7 @@ impl ProjectPanel {
                         this.marked_entries.remove(&selection);
                     }
                 } else if kind.is_dir() {
+                    this.marked_entries.clear();
                     this.toggle_expanded(entry_id, cx);
                 } else {
                     let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
@@ -3055,7 +3055,8 @@ impl ProjectPanel {
                                                     .single_line()
                                                     .color(filename_text_color)
                                                     .when(
-                                                        is_active && index == active_index,
+                                                        index == active_index
+                                                            && (is_active || is_marked),
                                                         |this| this.underline(true),
                                                     ),
                                             );
