@@ -96,21 +96,22 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   float4 color;
   switch (input.background_tag) {
-    case Background_Solid:
-      color = input.background_solid;
-      break;
-    case Background_LinearGradient: {
-      float2 position = input.position.xy;
-      // Normalize the angle to be within the range of -360 to 360 degrees.
-      float normalized_angle = fmod(input.background_angle, 360.0);
-      if (normalized_angle < -360.0) {
-        normalized_angle += 360.0;
-      } else if (normalized_angle > 360.0) {
-        normalized_angle -= 360.0;
-      }
-      // -90 degrees to match the CSS gradient angle.
-      float radians = (normalized_angle - 90.0) * (M_PI_F / 180.0);
-      float2 direction = float2(cos(radians), sin(radians));
+      case Background_Solid:
+        color = input.background_solid;
+        break;
+      case Background_LinearGradient: {
+        float2 position = input.position.xy;
+        // Normalize the angle to be within the range of -360 to 360 degrees.
+        float normalized_angle = fmod(input.background_angle, 360.0);
+        if (normalized_angle < -360.0) {
+          normalized_angle += 360.0;
+        } else if (normalized_angle > 360.0) {
+          normalized_angle -= 360.0;
+        }
+        // -90 degrees to match the CSS gradient angle.
+        float radians = (normalized_angle - 90.0) * (M_PI_F / 180.0);
+        float2 direction = float2(cos(radians), sin(radians));
+
         float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
         float2 center = float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
         float2 position_from_center = position - center;
@@ -120,9 +121,14 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         float4 color1 = input.background_stop0_color;
         float4 color2 = input.background_stop1_color;
 
-      color = mix(color1, color2, t);
-      break;
-    }
+        // Adjust t based on background_stop0_percentage and background_stop1_percentage
+        float stop0 = input.background_stop0_percentage;
+        float stop1 = input.background_stop1_percentage;
+        t = (t - stop0) / (stop1 - stop0);
+
+        color = mix(color1, color2, t);
+        break;
+      }
   }
 
   // Fast path when the quad is not rounded and doesn't have any border.
