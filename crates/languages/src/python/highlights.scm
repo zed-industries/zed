@@ -98,6 +98,25 @@
   (parameters)?
   body: (block (expression_statement (string) @string.doc)))
 
+(module
+  (expression_statement (assignment))
+  . (expression_statement (string) @string.doc))
+
+(class_definition
+  body: (block
+    (expression_statement (assignment))
+    . (expression_statement (string) @string.doc)))
+
+(class_definition
+  body: (block
+    (function_definition
+      name: (identifier) @function.method.constructor
+      (#eq? @function.method.constructor "__init__")
+      body: (block
+        (expression_statement (assignment))
+        . (expression_statement (string) @string.doc)))))
+
+
 [
   "-"
   "-="
