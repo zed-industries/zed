@@ -559,8 +559,6 @@ pub(crate) enum BackgroundTag {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Background {
-    /// 0 is a solid color
-    /// 1 is a linear gradient.
     pub(crate) tag: BackgroundTag,
     pub(crate) solid: Hsla,
     pub(crate) angle: f32,
