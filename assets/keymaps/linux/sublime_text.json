@@ -16,6 +16,7 @@
       "ctrl-shift-l": "editor::SplitSelectionIntoLines",
       "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-d": "editor::DuplicateLineDown",
+      "alt-f3": "editor::SelectAllMatches", // find_all_under
       "f12": "editor::GoToDefinition",
       "ctrl-f12": "editor::GoToDefinitionSplit",
       "shift-f12": "editor::FindAllReferences",
@@ -26,8 +27,7 @@
       "ctrl-k ctrl-l": "editor::ConvertToLowerCase",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd",
-      "alt-f3": "search::SelectAllMatches"
+      "ctrl-delete": "editor::DeleteToNextWordEnd"
     }
   },
   {
