@@ -27,7 +27,6 @@ struct QuadVertexOutput {
   float4 position [[position]];
   uint background_tag;
   float4 background_solid [[flat]];
-  // The degrees of the angle of the linear gradient.
   float background_angle;
   float background_stop0_percentage;
   float4 background_stop0_color [[flat]];
