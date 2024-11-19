@@ -99,7 +99,7 @@
   body: (block
     (function_definition
       name: (identifier) @function.method.constructor
-      (#match? @function.method.constructor "__init__")
+      (#eq? @function.method.constructor "__init__")
       body: (block
         (expression_statement (assignment))
         . (expression_statement (string) @string.doc)))))
