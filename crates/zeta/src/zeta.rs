@@ -727,6 +727,88 @@ mod tests {
         .await;
     }
 
+    #[gpui::test]
+    async fn test_rename(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "main.rs",
+            indoc! {"
+                fn main() {
+                    let root_directory = \"/tmp\";
+                    let glob_pattern = format!(\"{}/**/*.rs\", root_directory);
+                }
+            "},
+            &indoc! {"
+                fn main() {
+                    let dir<|user_cursor_is_here|> = \"/tmp\";
+                    let glob_pattern = format!(\"{}/**/*.rs\", root_directory);
+                }
+            "},
+            indoc! {"
+                fn main() {
+                    let dir = \"/tmp\";
+                    let glob_pattern = format!(\"{}/**/*.rs\", dir);
+                }
+            "},
+            vec!["Ensure that the Actual test output does not contain the `root_directory` variable anymore and that it has been renamed into dir everywhere"],
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_replace(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "main.rs",
+            indoc! {"
+                fn main() {
+                    let glob_pattern = format!(\"{}/**/*.rs\", \"/tmp\");
+                }
+            "},
+            &indoc! {"
+                fn main() {
+                    let dir = \"/tmp\";<|user_cursor_is_here|>
+                    let glob_pattern = format!(\"{}/**/*.rs\", \"/tmp\");
+                }
+            "},
+            indoc! {"
+                fn main() {
+                    let dir = \"/tmp\";
+                    let glob_pattern = format!(\"{}/**/*.rs\", dir);
+                }
+            "},
+            vec!["Ensure that the Actual test output replaced the string `\"/tmp\"` with the variable `dir` in the call to `format!`"],
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_extract(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "main.rs",
+            indoc! {"
+                fn main() {
+                    let glob_pattern = format!(\"{}/**/*.rs\", \"/tmp\");
+                }
+            "},
+            &indoc! {"
+                fn main() {
+                    let dir = \"<|user_cursor_is_here|>
+                    let glob_pattern = format!(\"{}/**/*.rs\", \"/tmp\");
+                }
+            "},
+            indoc! {"
+                fn main() {
+                    let dir = \"/tmp\";
+                    let glob_pattern = format!(\"{}/**/*.rs\", dir);
+                }
+            "},
+            vec!["Ensure that the Actual test output assigns the string `\"/tmp\"` to the variable `dir``"],
+            cx,
+        )
+        .await;
+    }
+
     async fn assert_open_edit_complete(
         filename: &str,
         initial: &str,
