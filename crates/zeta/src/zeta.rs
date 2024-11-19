@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
 use http_client::HttpClient;
-use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset};
+use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset, ToPoint};
 use std::{borrow::Cow, cmp, fmt::Write, mem, ops::Range, path::Path, sync::Arc};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -20,6 +20,9 @@ impl Global for ZetaGlobal {}
 
 pub struct Zeta {
     http_client: Arc<dyn HttpClient>,
+    api_url: Arc<str>,
+    api_key: Arc<str>,
+    model: Arc<str>,
     events: BTreeMap<EventId, Event>,
     event_ids_by_inline_completion_id: HashMap<InlineCompletionId, EventId>,
     next_inline_completion_id: InlineCompletionId,
@@ -39,15 +42,41 @@ impl Zeta {
         cx.try_global::<ZetaGlobal>()
             .map(|global| global.0.clone())
             .unwrap_or_else(|| {
-                let model = cx.new_model(|cx| Self::new(cx.http_client()));
+                let model = cx.new_model(|cx| Self::production(cx));
                 cx.set_global(ZetaGlobal(model.clone()));
                 model
             })
     }
 
-    pub fn new(http_client: Arc<dyn HttpClient>) -> Self {
+    pub fn production(cx: &mut ModelContext<Self>) -> Self {
+        let fireworks_api_url = std::env::var("FIREWORKS_API_URL")
+            .unwrap_or_else(|_| "https://api.fireworks.ai/inference/v1".to_string())
+            .into();
+        let fireworks_api_key = std::env::var("FIREWORKS_API_KEY")
+            .expect("FIREWORKS_API_KEY must be set")
+            .into();
+        let fireworks_model = std::env::var("FIREWORKS_MODEL")
+            .unwrap_or_else(|_| "accounts/fireworks/models/qwen2p5-coder-32b-instruct".to_string())
+            .into();
+        Self::new(
+            fireworks_api_url,
+            fireworks_api_key,
+            fireworks_model,
+            cx.http_client(),
+        )
+    }
+
+    fn new(
+        api_url: Arc<str>,
+        api_key: Arc<str>,
+        model: Arc<str>,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Self {
         Self {
             http_client,
+            api_url,
+            api_key,
+            model,
             events: BTreeMap::new(),
             event_ids_by_inline_completion_id: HashMap::default(),
             next_inline_completion_id: InlineCompletionId(0),
@@ -147,16 +176,9 @@ impl Zeta {
     pub fn request_inline_completion(
         &mut self,
         buffer: &Model<Buffer>,
-        position: usize,
+        position: language::Anchor,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
-        let fireworks_api_url = std::env::var("FIREWORKS_API_URL")
-            .unwrap_or_else(|_| "https://api.fireworks.ai/inference/v1".to_string());
-        let fireworks_api_key =
-            std::env::var("FIREWORKS_API_KEY").expect("FIREWORKS_API_KEY must be set");
-        let fireworks_model = std::env::var("FIREWORKS_MODEL")
-            .unwrap_or_else(|_| "accounts/fireworks/models/qwen2p5-coder-32b-instruct".to_string());
-
         let snapshot = self.report_changes_for_buffer(buffer, cx);
 
         let id = self.next_inline_completion_id;
@@ -167,40 +189,23 @@ impl Zeta {
             position,
         });
 
-        let mut prompt = include_str!("./prompt.md").to_string();
-        prompt.push_str("\n\n");
+        let mut prompt = include_str!("./prompt_prefix.md").to_string();
+        for event in self.events.values() {}
 
-        writeln!(
-            prompt,
-            "The user wants to edit a file in this region:\n```{}",
-            snapshot
-                .file()
-                .map_or(Cow::Borrowed("untitled"), |f| f.path().to_string_lossy())
-        )
-        .unwrap();
-        for chunk in snapshot.as_rope().chunks() {
-            prompt.push_str(chunk);
-        }
-        prompt.push_str("\n\n");
+        let messages = [open_ai::RequestMessage::User {
+            content: include_str!("./prompt_prefix.md").to_string(),
+        }]
+        .into_iter()
+        .chain(self.events.values().map(|event| event.into()))
+        .chain([open_ai::RequestMessage::User {
+            content: include_str!("./prompt_suffix.md").to_string(),
+        }])
+        .collect::<Vec<_>>();
 
-        writeln!(prompt, "Suggest the next edit.").unwrap();
-        writeln!(prompt, "You should suggest only one edit.").unwrap();
-        writeln!(prompt, "Don't explain the edit, just suggest it.").unwrap();
-        writeln!(
-            prompt,
-            "If there are no more useful edits, reply with <|DONE|>."
-        )
-        .unwrap();
-
-        let mut messages = self
-            .events
-            .values()
-            .map(|event| event.into())
-            .collect::<Vec<_>>();
-        messages.push(open_ai::RequestMessage::User { content: prompt });
-
+        let api_url = self.api_url.clone();
+        let api_key = self.api_key.clone();
         let request = open_ai::Request {
-            model: fireworks_model.into(),
+            model: self.model.to_string(),
             messages,
             stream: false,
             max_tokens: None,
@@ -212,13 +217,9 @@ impl Zeta {
         let http_client = self.http_client.clone();
 
         cx.spawn(|this, mut cx| async move {
-            let mut response = open_ai::complete(
-                http_client.as_ref(),
-                &fireworks_api_url,
-                &fireworks_api_key,
-                request,
-            )
-            .await?;
+            log::debug!("requesting completion: {:?}", request);
+            let mut response =
+                open_ai::complete(http_client.as_ref(), &api_url, &api_key, request).await?;
             let choice = response.choices.pop().context("invalid response")?;
             let content = match choice.message {
                 open_ai::RequestMessage::Assistant { content, .. } => {
@@ -232,8 +233,6 @@ impl Zeta {
             const ORIGINAL_MARKER: &str = "<<<<<<< ORIGINAL\n";
             const SEPARATOR_MARKER: &str = "\n=======\n";
             const UPDATED_MARKER: &str = "\n>>>>>>> UPDATED";
-
-            println!("Completion:\n{content}");
 
             if let (Some(orig_start), Some(sep), Some(upd_end)) = (
                 content.find(ORIGINAL_MARKER),
@@ -404,7 +403,7 @@ enum Event {
     RequestInlineCompletion {
         id: InlineCompletionId,
         snapshot: BufferSnapshot,
-        position: usize,
+        position: Anchor,
     },
     InlineCompletion {
         id: InlineCompletionId,
@@ -417,75 +416,42 @@ enum Event {
     },
 }
 
-impl From<&Event> for open_ai::RequestMessage {
-    fn from(event: &Event) -> open_ai::RequestMessage {
-        match event {
+impl Event {
+    fn to_prompt(&self) -> String {
+        match self {
+            Event::Open { path } => format!("User opened file: {:?}", path),
+            Event::Save { path } => format!("User saved file: {:?}", path),
+            Event::Rename { old_path, new_path } => format!(
+                "User renamed file: {:?} -> {:?}",
+                old_path.as_deref().unwrap_or(Path::new("untitled")),
+                new_path.as_deref().unwrap_or(Path::new("untitled"))
+            ),
+            Event::Close { path } => format!("User closed file: {:?}", path),
             Event::Edit {
                 path,
                 old_text,
                 new_text,
             } => {
-                open_ai::RequestMessage::User {
-                    content: format!(
-                    "User edit at path ```{}\n<<<<<<< ORIGINAL\n{}\n=======\n{}\n>>>>>>> UPDATED",
-                    path.display(), old_text, new_text
-                ),
-                }
+                format!("User edited file: {:?}\n\nOld text:\n```\n{}\n```\n\nNew text:\n```\n{}\n```\n", path, old_text, new_text)
             }
-            Event::Open { path } => open_ai::RequestMessage::User {
-                content: format!("Opening file: {}", path.display()),
-            },
-            Event::Save { path } => open_ai::RequestMessage::User {
-                content: format!("Saving file: {}", path.display()),
-            },
-            Event::Rename { old_path, new_path } => open_ai::RequestMessage::User {
-                content: format!(
-                    "File renamed from {} to {}",
-                    old_path
-                        .as_ref()
-                        .map_or(Cow::Borrowed("untitled"), |p| p.to_string_lossy()),
-                    new_path
-                        .as_ref()
-                        .map_or(Cow::Borrowed("untitled"), |p| p.to_string_lossy())
-                ),
-            },
-            Event::Close { path } => open_ai::RequestMessage::User {
-                content: format!("Closing file: {}", path.display()),
-            },
             Event::RequestInlineCompletion {
-                snapshot, position, ..
-            } => open_ai::RequestMessage::User {
-                content: format!(
-                    "Request completion at position {}: {}",
-                    position,
-                    snapshot.text()
-                ),
-            },
+                id,
+                snapshot,
+                position,
+            } => {
+                todo!()
+            }
             Event::InlineCompletion {
+                id,
                 old_text,
                 new_text,
                 accepted,
-                ..
             } => {
-                let acceptance = accepted
-                    .map(|a| {
-                        let action = if a { "accepted" } else { "rejected" };
-                        format!(". User {}", action)
-                    })
-                    .unwrap_or_default();
-
-                open_ai::RequestMessage::Assistant {
-                    content: Some(format!(
-                        "Completion response{}.\n<<<<<<< ORIGINAL\n{}\n=======\n{}\n>>>>>>> UPDATED",
-                        acceptance, old_text, new_text
-                    )),
-                    tool_calls: vec![],
-                }
+                todo!()
             }
-            Event::NoInlineCompletion { .. } => open_ai::RequestMessage::Assistant {
-                content: Some("<|DONE|>".to_string()),
-                tool_calls: vec![],
-            },
+            Event::NoInlineCompletion { id } => {
+                todo!()
+            }
         }
     }
 }
@@ -493,6 +459,7 @@ impl From<&Event> for open_ai::RequestMessage {
 pub struct ZetaInlineCompletionProvider {
     zeta: Model<Zeta>,
     current_completion: Option<InlineCompletion>,
+    pending_refresh: Task<()>,
 }
 
 impl ZetaInlineCompletionProvider {
@@ -500,6 +467,7 @@ impl ZetaInlineCompletionProvider {
         Self {
             zeta,
             current_completion: None,
+            pending_refresh: Task::ready(()),
         }
     }
 }
@@ -521,23 +489,21 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
     fn refresh(
         &mut self,
         buffer: Model<Buffer>,
-        cursor_position: language::Anchor,
+        position: language::Anchor,
         _debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        let position = cursor_position.to_offset(&buffer.read(cx).snapshot());
         let completion = self.zeta.update(cx, |zeta, cx| {
             zeta.request_inline_completion(&buffer, position, cx)
         });
-        cx.spawn(|this, mut cx| async move {
+        self.pending_refresh = cx.spawn(|this, mut cx| async move {
             let completion = completion.await.ok().and_then(|r| r);
             this.update(&mut cx, |this, cx| {
                 this.current_completion = completion;
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
+        });
     }
 
     fn cycle(
@@ -547,7 +513,7 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
         _direction: editor::Direction,
         _cx: &mut ModelContext<Self>,
     ) {
-        // Zeta doesn't support cycling through multiple completions
+        // todo!()
     }
 
     fn accept(&mut self, cx: &mut ModelContext<Self>) {
@@ -564,9 +530,8 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(completion) = self.current_completion.take() {
-            self.zeta.update(cx, |zeta, cx| {
-                zeta.reject_inline_completion(completion, cx)
-            });
+            self.zeta
+                .update(cx, |zeta, cx| zeta.reject_inline_completion(completion, cx));
         }
     }
 
@@ -591,56 +556,275 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use indoc::indoc;
     use reqwest_client::ReqwestClient;
 
     #[gpui::test]
-    async fn test_integration(cx: &mut TestAppContext) {
+    async fn test_quicksort_1(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "quicksort.rs",
+            indoc! {"
+                use std::cmp::Ord;
+
+                pub fn quicksort<T: Ord>(arr: &mut [T]) {
+                    let len = arr.len();
+                    if len <= 1 {
+                        return;
+                    }
+
+                    let pivot_index = partition(arr);
+                }
+            "},
+            indoc! {"
+                use std::cmp::Ord;
+
+                pub fn quicksort<T: Ord>(arr: &mut [T]) {
+                    let len = arr.len();
+                    if len <= 1 {
+                        return;
+                    }
+
+                    let pivot_index = partition(arr);
+<|cursor|>
+                }
+            "},
+            indoc! {"
+                use std::cmp::Ord;
+
+                pub fn quicksort<T: Ord>(arr: &mut [T]) {
+                    let len = arr.len();
+                    if len <= 1 {
+                        return;
+                    }
+
+                    let pivot_index = partition(arr);
+                    quicksort(&mut arr[0..pivot_index]);
+                    quicksort(&mut arr[pivot_index + 1..]);
+                }
+            "},
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_quicksort_2(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "quicksort.rs",
+            indoc! {"
+                use std::cmp::Ord;
+
+                pub fn quicksort<T: Ord>(arr: &mut [T]) {
+                    let len = arr.len();
+                    if len <= 1 {
+                        return;
+                    }
+
+                    let p
+            "},
+            indoc! {"
+                use std::cmp::Ord;
+
+                pub fn quicksort<T: Ord>(arr: &mut [T]) {
+                    let len = arr.len();
+                    if len <= 1 {
+                        return;
+                    }
+
+                    let pi<|cursor|>
+            "},
+            indoc! {"
+                use std::cmp::Ord;
+
+                pub fn quicksort<T: Ord>(arr: &mut [T]) {
+                    let len = arr.len();
+                    if len <= 1 {
+                        return;
+                    }
+
+                    let pivot = arr[len / 2];
+                }
+            "},
+            cx,
+        )
+        .await;
+    }
+
+    async fn assert_open_edit_complete(
+        filename: &str,
+        initial: &str,
+        edited: &str,
+        expected: &str,
+        cx: &mut TestAppContext,
+    ) {
+        const CURSOR_MARKER: &'static str = "<|cursor|>";
+
         cx.executor().allow_parking();
+        let zeta = zeta(cx);
 
-        let http_client = ReqwestClient::new();
-        let zeta = cx.new_model(|_| Zeta::new(Arc::new(http_client)));
+        let buffer = open_buffer(filename, initial, &zeta, cx);
+        let cursor_start = edited
+            .find(CURSOR_MARKER)
+            .expect(&format!("{CURSOR_MARKER} not found"));
+        let edited = edited.replace(CURSOR_MARKER, "");
+        edit(&buffer, &edited, cx);
+        autocomplete(&buffer, cursor_start, &zeta, cx).await;
+        let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
 
-        let buffer = cx.new_model(|cx| language::Buffer::local("", cx));
+        let (api_url, api_key, http_client, request) = zeta.read_with(cx, |zeta, _cx| {
+            (
+                zeta.api_url.clone(),
+                zeta.api_key.clone(),
+                zeta.http_client.clone(),
+                open_ai::Request {
+                    model: zeta.model.to_string(),
+                    messages: vec![
+                        open_ai::RequestMessage::System {
+                            content: include_str!("./eval_prompt.md").into(),
+                        },
+                        open_ai::RequestMessage::User {
+                            content: format!(
+                                "## Test\n\nNow score the following pair. Reply with a single number.\nActual: ```\n{}\n```\nExpected:\n```\n{}\n```",
+                                autocompleted, expected
+                            ),
+                        },
+                    ],
+                    stream: false,
+                    max_tokens: None,
+                    stop: Vec::new(),
+                    temperature: 1.,
+                    tool_choice: None,
+                    tools: Vec::new(),
+                },
+            )
+        });
+        let response = open_ai::complete(http_client.as_ref(), &api_url, &api_key, request)
+            .await
+            .unwrap();
+        let choice = response.choices.first().unwrap();
+        let open_ai::RequestMessage::Assistant {
+            content: Some(content),
+            ..
+        } = &choice.message
+        else {
+            panic!("unexpected response: {:?}", choice.message);
+        };
+
+        log::info!("received score from LLM: {}", content);
+
+        let score = content
+            .parse::<f64>()
+            .with_context(|| format!("failed to parse response into a f64: {:?}", content))
+            .unwrap();
+        assert!(
+            score >= 0.8,
+            "score was {}\nactual:\n{}\nexpected:\n{}",
+            score,
+            autocompleted,
+            expected
+        );
+    }
+
+    fn zeta(cx: &mut TestAppContext) -> Model<Zeta> {
+        cx.new_model(|_| {
+            Zeta::new(
+                "http://localhost:11434/v1".into(),
+                "".into(),
+                "qwen2.5-coder:32b".into(),
+                Arc::new(ReqwestClient::new()),
+            )
+        })
+    }
+
+    fn edit(buffer: &Model<Buffer>, text: &str, cx: &mut TestAppContext) {
+        let diff = cx
+            .executor()
+            .block(buffer.update(cx, |buffer, cx| buffer.diff(text.to_string(), cx)));
+        buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx));
+    }
+
+    async fn autocomplete(
+        buffer: &Model<Buffer>,
+        position: usize,
+        zeta: &Model<Zeta>,
+        cx: &mut TestAppContext,
+    ) {
+        let position = buffer.read_with(cx, |buffer, _| buffer.anchor_after(position));
+        let completion = zeta
+            .update(cx, |zeta, cx| {
+                zeta.request_inline_completion(buffer, position, cx)
+            })
+            .await
+            .unwrap();
+        if let Some(completion) = completion {
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(completion.range, completion.new_text)], None, cx);
+            });
+        }
+    }
+
+    fn open_buffer(
+        path: impl AsRef<Path>,
+        text: &str,
+        zeta: &Model<Zeta>,
+        cx: &mut TestAppContext,
+    ) -> Model<Buffer> {
+        let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.file_updated(Arc::new(TestFile(path.as_ref().into())), cx)
+        });
         zeta.update(cx, |zeta, cx| zeta.register_buffer(&buffer, cx));
+        buffer
+    }
 
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "fn main() {\n")], None, cx);
-        });
+    struct TestFile(Arc<Path>);
 
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(12..12, "    let a = 42;\n")], None, cx);
-        });
+    impl language::File for TestFile {
+        fn as_local(&self) -> Option<&dyn language::LocalFile> {
+            None
+        }
 
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(28..28, "    let b = 1;\n")], None, cx);
-        });
+        fn mtime(&self) -> Option<std::time::SystemTime> {
+            None
+        }
 
-        let completion = zeta
-            .update(cx, |zeta, cx| {
-                zeta.request_inline_completion(&buffer, 5, cx)
-            })
-            .await
-            .unwrap()
-            .unwrap();
+        fn path(&self) -> &Arc<Path> {
+            &self.0
+        }
 
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(
-                [(completion.range.clone(), completion.new_text.clone())],
-                None,
-                cx,
-            );
-        });
-        zeta.update(cx, |zeta, cx| {
-            zeta.accept_inline_completion(&completion, cx)
-        });
-        println!("Text:\n{}", buffer.read_with(cx, |buffer, _| buffer.text()));
+        fn full_path(&self, _cx: &AppContext) -> std::path::PathBuf {
+            self.0.to_path_buf()
+        }
 
-        let completion = zeta
-            .update(cx, |zeta, cx| {
-                zeta.request_inline_completion(&buffer, 5, cx)
-            })
-            .await
-            .unwrap();
-        dbg!(&completion);
+        fn file_name<'a>(&'a self, _cx: &'a AppContext) -> &'a std::ffi::OsStr {
+            self.0.file_name().unwrap()
+        }
+
+        fn worktree_id(&self, _cx: &AppContext) -> worktree::WorktreeId {
+            unimplemented!()
+        }
+
+        fn is_deleted(&self) -> bool {
+            false
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn to_proto(&self, _cx: &AppContext) -> rpc::proto::File {
+            unimplemented!()
+        }
+
+        fn is_private(&self) -> bool {
+            unimplemented!()
+        }
+    }
+
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
     }
 }

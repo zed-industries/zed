@@ -16166,13 +16166,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "ctor",
  "editor",
+ "env_logger 0.11.5",
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "indoc",
  "language",
+ "log",
  "open_ai",
  "reqwest_client",
+ "rpc",
+ "similar",
+ "worktree",
 ]
 
 [[package]]

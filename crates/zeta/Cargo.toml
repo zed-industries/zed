@@ -20,11 +20,18 @@ futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 language.workspace = true
+log.workspace = true
 open_ai.workspace = true
 
 [dev-dependencies]
-reqwest_client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
+ctor.workspace = true
+env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
+reqwest_client = { workspace = true, features = ["test-support"] }
+rpc = { workspace = true, features = ["test-support"] }
+similar.workspace = true
+worktree = { workspace = true, features = ["test-support"] }
