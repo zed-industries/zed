@@ -2,7 +2,6 @@ mod event_coalescer;
 
 use crate::{ChannelId, TelemetrySettings};
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use collections::{HashMap, HashSet};
 use futures::Future;
@@ -15,6 +14,7 @@ use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::Write;
+use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
@@ -46,7 +46,7 @@ struct TelemetryState {
     flush_events_task: Option<Task<()>>,
     log_file: Option<File>,
     is_staff: Option<bool>,
-    first_event_date_time: Option<DateTime<Utc>>,
+    first_event_date_time: Option<Instant>,
     event_coalescer: EventCoalescer,
     max_queue_size: usize,
     worktree_id_map: WorktreeIdMap,
@@ -469,7 +469,10 @@ impl Telemetry {
 
         if let Some((start, end, environment)) = period_data {
             let event = Event::Edit(EditEvent {
-                duration: end.timestamp_millis() - start.timestamp_millis(),
+                duration: end
+                    .saturating_duration_since(start)
+                    .min(Duration::from_secs(60 * 60 * 24))
+                    .as_millis() as i64,
                 environment: environment.to_string(),
                 is_via_ssh,
             });
@@ -567,9 +570,10 @@ impl Telemetry {
         let date_time = self.clock.utc_now();
 
         let milliseconds_since_first_event = match state.first_event_date_time {
-            Some(first_event_date_time) => {
-                date_time.timestamp_millis() - first_event_date_time.timestamp_millis()
-            }
+            Some(first_event_date_time) => date_time
+                .saturating_duration_since(first_event_date_time)
+                .min(Duration::from_secs(60 * 60 * 24))
+                .as_millis() as i64,
             None => {
                 state.first_event_date_time = Some(date_time);
                 0
@@ -702,7 +706,6 @@ pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
@@ -710,9 +713,7 @@ mod tests {
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
         init_test(cx);
-        let clock = Arc::new(FakeSystemClock::new(
-            Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),
-        ));
+        let clock = Arc::new(FakeSystemClock::new());
         let http = FakeHttpClient::with_200_response();
         let system_id = Some("system_id".to_string());
         let installation_id = Some("installation_id".to_string());
@@ -743,7 +744,7 @@ mod tests {
                 Some(first_date_time)
             );
 
-            clock.advance(chrono::Duration::milliseconds(100));
+            clock.advance(Duration::from_millis(100));
 
             let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
@@ -759,7 +760,7 @@ mod tests {
                 Some(first_date_time)
             );
 
-            clock.advance(chrono::Duration::milliseconds(100));
+            clock.advance(Duration::from_millis(100));
 
             let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
@@ -775,7 +776,7 @@ mod tests {
                 Some(first_date_time)
             );
 
-            clock.advance(chrono::Duration::milliseconds(100));
+            clock.advance(Duration::from_millis(100));
 
             // Adding a 4th event should cause a flush
             let event = telemetry.report_app_event(operation.clone());
@@ -796,9 +797,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
-        let clock = Arc::new(FakeSystemClock::new(
-            Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),
-        ));
+        let clock = Arc::new(FakeSystemClock::new());
         let http = FakeHttpClient::with_200_response();
         let system_id = Some("system_id".to_string());
         let installation_id = Some("installation_id".to_string());

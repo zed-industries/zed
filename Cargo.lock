@@ -2473,7 +2473,6 @@ dependencies = [
 name = "clock"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "parking_lot",
  "serde",
  "smallvec",
