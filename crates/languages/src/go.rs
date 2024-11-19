@@ -138,7 +138,7 @@ impl super::LspAdapter for GoLspAdapter {
 
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
-        
+
         let install_output = util::command::new_smol_command("go")
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
