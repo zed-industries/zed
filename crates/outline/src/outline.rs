@@ -17,7 +17,7 @@ use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use theme::{color_alpha, ActiveTheme, ThemeSettings};
+use theme::{ActiveTheme, ThemeSettings};
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
@@ -297,7 +297,7 @@ pub fn render_item<T>(
     cx: &AppContext,
 ) -> StyledText {
     let highlight_style = HighlightStyle {
-        background_color: Some(color_alpha(cx.theme().colors().text_accent, 0.3)),
+        background_color: Some(cx.theme().colors().text_accent.opacity(0.3)),
         ..Default::default()
     };
     let custom_highlights = match_ranges
