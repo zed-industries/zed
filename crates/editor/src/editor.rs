@@ -1036,7 +1036,12 @@ impl CompletionsMenu {
         let match_candidates = completions
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.text.clone()))
+            .map(|(id, completion)| {
+                StringMatchCandidate::new(
+                    id,
+                    completion.label.text[completion.label.filter_range.clone()].into(),
+                )
+            })
             .collect();
 
         Self {
