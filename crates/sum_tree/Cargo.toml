@@ -14,7 +14,7 @@ doctest = false
 
 [dependencies]
 arrayvec = "0.7.1"
-rayon = "1.8"
+rayon.workspace = true
 log.workspace = true
 
 [dev-dependencies]

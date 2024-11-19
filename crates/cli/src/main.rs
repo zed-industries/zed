@@ -1,4 +1,7 @@
-#![cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
+#![cfg_attr(
+    any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+    allow(dead_code)
+)]
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -88,7 +91,7 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 
 fn main() -> Result<()> {
     // Exit flatpak sandbox if needed
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         flatpak::try_restart_to_host();
         flatpak::ld_extra_libs();
@@ -106,7 +109,7 @@ fn main() -> Result<()> {
     }
     let args = Args::parse();
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let args = flatpak::set_bin_if_no_escape(args);
 
     let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
@@ -151,6 +154,12 @@ fn main() -> Result<()> {
         }
     }
 
+    if let Some(_) = args.dev_server_token {
+        return Err(anyhow::anyhow!(
+            "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
+        ))?;
+    }
+
     let sender: JoinHandle<anyhow::Result<()>> = thread::spawn({
         let exit_status = exit_status.clone();
         move || {
@@ -162,7 +171,6 @@ fn main() -> Result<()> {
                 urls,
                 wait: args.wait,
                 open_new_workspace,
-                dev_server_token: args.dev_server_token,
                 env,
             })?;
 
@@ -215,7 +223,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod linux {
     use std::{
         env,
@@ -339,7 +347,7 @@ mod linux {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod flatpak {
     use std::ffi::OsString;
     use std::path::PathBuf;

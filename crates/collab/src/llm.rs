@@ -267,7 +267,6 @@ async fn perform_completion(
                 anthropic::ANTHROPIC_API_URL,
                 api_key,
                 request,
-                None,
             )
             .await
             .map_err(|err| match err {
@@ -357,7 +356,6 @@ async fn perform_completion(
                 open_ai::OPEN_AI_API_URL,
                 api_key,
                 serde_json::from_str(params.provider_request.get())?,
-                None,
             )
             .await?;
 
@@ -390,7 +388,6 @@ async fn perform_completion(
                 google_ai::API_URL,
                 api_key,
                 serde_json::from_str(params.provider_request.get())?,
-                None,
             )
             .await?;
 
@@ -435,7 +432,7 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
 
 /// The maximum monthly spending an individual user can reach on the free tier
 /// before they have to pay.
-pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(5);
+pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(10);
 
 /// The default value to use for maximum spend per month if the user did not
 /// explicitly set a maximum spend.
@@ -443,15 +440,16 @@ pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(5);
 /// Used to prevent surprise bills.
 pub const DEFAULT_MAX_MONTHLY_SPEND: Cents = Cents::from_dollars(10);
 
-/// The maximum lifetime spending an individual user can reach before being cut off.
-const LIFETIME_SPENDING_LIMIT: Cents = Cents::from_dollars(1_000);
-
 async fn check_usage_limit(
     state: &Arc<LlmState>,
     provider: LanguageModelProvider,
     model_name: &str,
     claims: &LlmTokenClaims,
 ) -> Result<()> {
+    if claims.is_staff {
+        return Ok(());
+    }
+
     let model = state.db.model(provider, model_name)?;
     let usage = state
         .db
@@ -462,37 +460,28 @@ async fn check_usage_limit(
             Utc::now(),
         )
         .await?;
+    let free_tier = claims.free_tier_monthly_spending_limit();
 
-    if state.config.is_llm_billing_enabled() {
-        if usage.spending_this_month >= FREE_TIER_MONTHLY_SPENDING_LIMIT {
-            if !claims.has_llm_subscription {
-                return Err(Error::http(
-                    StatusCode::PAYMENT_REQUIRED,
-                    "Maximum spending limit reached for this month.".to_string(),
-                ));
-            }
-
-            if usage.spending_this_month >= Cents(claims.max_monthly_spend_in_cents) {
-                return Err(Error::Http(
-                    StatusCode::FORBIDDEN,
-                    "Maximum spending limit reached for this month.".to_string(),
-                    [(
-                        HeaderName::from_static(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME),
-                        HeaderValue::from_static("true"),
-                    )]
-                    .into_iter()
-                    .collect(),
-                ));
-            }
+    if usage.spending_this_month >= free_tier {
+        if !claims.has_llm_subscription {
+            return Err(Error::http(
+                StatusCode::PAYMENT_REQUIRED,
+                "Maximum spending limit reached for this month.".to_string(),
+            ));
         }
-    }
 
-    // TODO: Remove this once we've rolled out monthly spending limits.
-    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT {
-        return Err(Error::http(
-            StatusCode::FORBIDDEN,
-            "Maximum spending limit reached.".to_string(),
-        ));
+        if (usage.spending_this_month - free_tier) >= Cents(claims.max_monthly_spend_in_cents) {
+            return Err(Error::Http(
+                StatusCode::FORBIDDEN,
+                "Maximum spending limit reached for this month.".to_string(),
+                [(
+                    HeaderName::from_static(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME),
+                    HeaderValue::from_static("true"),
+                )]
+                .into_iter()
+                .collect(),
+            ));
+        }
     }
 
     let active_users = state.get_active_user_count(provider, model_name).await?;
@@ -525,11 +514,6 @@ async fn check_usage_limit(
     ];
 
     for (used, limit, usage_measure) in checks {
-        // Temporarily bypass rate-limiting for staff members.
-        if claims.is_staff {
-            continue;
-        }
-
         if used > limit {
             let resource = match usage_measure {
                 UsageMeasure::RequestsPerMinute => "requests_per_minute",
@@ -636,7 +620,6 @@ where
 impl<S> Drop for TokenCountingStream<S> {
     fn drop(&mut self) {
         let state = self.state.clone();
-        let is_llm_billing_enabled = state.config.is_llm_billing_enabled();
         let claims = self.claims.clone();
         let provider = self.provider;
         let model = std::mem::take(&mut self.model);
@@ -650,15 +633,9 @@ impl<S> Drop for TokenCountingStream<S> {
                     provider,
                     &model,
                     tokens,
-                    // We're passing `false` here if LLM billing is not enabled
-                    // so that we don't write any records to the
-                    // `billing_events` table until we're ready to bill users.
-                    if is_llm_billing_enabled {
-                        claims.has_llm_subscription
-                    } else {
-                        false
-                    },
+                    claims.has_llm_subscription,
                     Cents(claims.max_monthly_spend_in_cents),
+                    claims.free_tier_monthly_spending_limit(),
                     Utc::now(),
                 )
                 .await

@@ -104,7 +104,19 @@ impl ErrorExt for anyhow::Error {
         if let Some(rpc_error) = self.downcast_ref::<RpcError>() {
             rpc_error.to_proto()
         } else {
-            ErrorCode::Internal.message(format!("{}", self)).to_proto()
+            ErrorCode::Internal
+                .message(
+                    format!("{self:#}")
+                        .lines()
+                        .fold(String::new(), |mut message, line| {
+                            if !message.is_empty() {
+                                message.push(' ');
+                            }
+                            message.push_str(line);
+                            message
+                        }),
+                )
+                .to_proto()
         }
     }
 

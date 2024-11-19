@@ -384,13 +384,6 @@ impl PickerDelegate for TasksModalDelegate {
                 .start_slot::<Icon>(icon)
                 .end_slot::<AnyElement>(history_run_icon)
                 .spacing(ListItemSpacing::Sparse)
-                // .map(|this| {
-                //     if Some(ix) <= self.divider_index {
-                //         this.start_slot(Icon::new(IconName::HistoryRerun).size(IconSize::Small))
-                //     } else {
-                //         this.start_slot(v_flex().flex_none().size(IconSize::Small.rems()))
-                //     }
-                // })
                 .when_some(tooltip_label, |list_item, item_label| {
                     list_item.tooltip(move |_| item_label.clone())
                 })
@@ -432,7 +425,11 @@ impl PickerDelegate for TasksModalDelegate {
         )
     }
 
-    fn confirm_completion(&self, _: String) -> Option<String> {
+    fn confirm_completion(
+        &mut self,
+        _: String,
+        _: &mut ViewContext<Picker<Self>>,
+    ) -> Option<String> {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;

@@ -1,7 +1,6 @@
+use crate::handle_open_request;
 use crate::restorable_workspace_locations;
-use crate::{handle_open_request, init_headless, init_ui};
 use anyhow::{anyhow, Context, Result};
-use assistant::PromptBuilder;
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
 use client::parse_zed_link;
@@ -16,16 +15,18 @@ use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
 use language::{Bias, Point};
+use recent_projects::{open_ssh_project, SshSettings};
 use remote::SshConnectionOptions;
-use std::path::Path;
+use settings::Settings;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
-use std::{process, thread};
 use util::paths::PathWithPosition;
 use util::ResultExt;
 use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::item::ItemHandle;
-use workspace::{AppState, OpenOptions, Workspace};
+use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -46,8 +47,11 @@ impl OpenRequest {
                 this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
                 this.parse_file_path(file)
+            } else if let Some(file) = url.strip_prefix("zed://ssh") {
+                let ssh_url = "ssh:/".to_string() + file;
+                this.parse_ssh_file_path(&ssh_url, cx)?
             } else if url.starts_with("ssh://") {
-                this.parse_ssh_file_path(&url)?
+                this.parse_ssh_file_path(&url, cx)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
                 this.parse_request_path(request_path).log_err();
             } else {
@@ -64,30 +68,31 @@ impl OpenRequest {
         }
     }
 
-    fn parse_ssh_file_path(&mut self, file: &str) -> Result<()> {
+    fn parse_ssh_file_path(&mut self, file: &str, cx: &AppContext) -> Result<()> {
         let url = url::Url::parse(file)?;
         let host = url
             .host()
             .ok_or_else(|| anyhow!("missing host in ssh url: {}", file))?
             .to_string();
         let username = Some(url.username().to_string()).filter(|s| !s.is_empty());
-        let password = url.password().map(|s| s.to_string());
         let port = url.port();
         if !self.open_paths.is_empty() {
             return Err(anyhow!("cannot open both local and ssh paths"));
         }
-        let connection = SshConnectionOptions {
-            username,
-            password,
-            host,
+        let mut connection_options = SshSettings::get_global(cx).connection_options_for(
+            host.clone(),
             port,
-        };
+            username.clone(),
+        );
+        if let Some(password) = url.password() {
+            connection_options.password = Some(password.to_string());
+        }
         if let Some(ssh_connection) = &self.ssh_connection {
-            if *ssh_connection != connection {
+            if *ssh_connection != connection_options {
                 return Err(anyhow!("cannot open multiple ssh connections"));
             }
         }
-        self.ssh_connection = Some(connection);
+        self.ssh_connection = Some(connection_options);
         self.parse_file_path(url.path());
         Ok(())
     }
@@ -139,7 +144,7 @@ impl OpenListener {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::unix::net::UnixDatagram;
@@ -248,7 +253,6 @@ pub async fn open_paths_with_positions(
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     app_state: Arc<AppState>,
-    prompt_builder: Arc<PromptBuilder>,
     mut cx: AsyncAppContext,
 ) {
     if let Some(request) = requests.next().await {
@@ -258,48 +262,13 @@ pub async fn handle_cli_connection(
                 paths,
                 wait,
                 open_new_workspace,
-                dev_server_token,
                 env,
             } => {
-                if let Some(dev_server_token) = dev_server_token {
-                    match cx
-                        .update(|cx| {
-                            init_headless(client::DevServerToken(dev_server_token), app_state, cx)
-                        })
-                        .unwrap()
-                        .await
-                    {
-                        Ok(_) => {
-                            responses
-                                .send(CliResponse::Stdout {
-                                    message: format!("zed (pid {}) connected!", process::id()),
-                                })
-                                .log_err();
-                            responses.send(CliResponse::Exit { status: 0 }).log_err();
-                        }
-                        Err(error) => {
-                            responses
-                                .send(CliResponse::Stderr {
-                                    message: format!("{error}"),
-                                })
-                                .log_err();
-                            responses.send(CliResponse::Exit { status: 1 }).log_err();
-                            cx.update(|cx| cx.quit()).log_err();
-                        }
-                    }
-                    return;
-                }
-
                 if !urls.is_empty() {
                     cx.update(|cx| {
                         match OpenRequest::parse(urls, cx) {
                             Ok(open_request) => {
-                                handle_open_request(
-                                    open_request,
-                                    app_state.clone(),
-                                    prompt_builder.clone(),
-                                    cx,
-                                );
+                                handle_open_request(open_request, app_state.clone(), cx);
                                 responses.send(CliResponse::Exit { status: 0 }).log_err();
                             }
                             Err(e) => {
@@ -313,19 +282,6 @@ pub async fn handle_cli_connection(
                         };
                     })
                     .log_err();
-                    return;
-                }
-
-                if let Err(e) = cx
-                    .update(|cx| init_ui(app_state.clone(), prompt_builder.clone(), cx))
-                    .and_then(|r| r)
-                {
-                    responses
-                        .send(CliResponse::Stderr {
-                            message: format!("{e}"),
-                        })
-                        .log_err();
-                    responses.send(CliResponse::Exit { status: 1 }).log_err();
                     return;
                 }
 
@@ -356,33 +312,21 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
-    let grouped_paths = if paths.is_empty() {
+    let grouped_locations = if paths.is_empty() {
         // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
         if open_new_workspace == Some(true) {
             Vec::new()
         } else {
             let locations = restorable_workspace_locations(cx, &app_state).await;
-            locations
-                .into_iter()
-                .flat_map(|locations| {
-                    locations
-                        .into_iter()
-                        .map(|location| {
-                            location
-                                .paths()
-                                .iter()
-                                .map(|path| path.to_string_lossy().to_string())
-                                .collect()
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect()
+            locations.unwrap_or_default()
         }
     } else {
-        vec![paths]
+        vec![SerializedWorkspaceLocation::from_local_paths(
+            paths.into_iter().map(PathBuf::from),
+        )]
     };
 
-    if grouped_paths.is_empty() {
+    if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
         if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
             cx.update(|cx| show_welcome_view(app_state, cx).detach())
@@ -406,20 +350,55 @@ async fn open_workspaces(
         // If there are paths to open, open a workspace for each grouping of paths
         let mut errored = false;
 
-        for workspace_paths in grouped_paths {
-            let workspace_failed_to_open = open_workspace(
-                workspace_paths,
-                open_new_workspace,
-                wait,
-                responses,
-                env.as_ref(),
-                &app_state,
-                cx,
-            )
-            .await;
+        for location in grouped_locations {
+            match location {
+                SerializedWorkspaceLocation::Local(workspace_paths, _) => {
+                    let workspace_paths = workspace_paths
+                        .paths()
+                        .iter()
+                        .map(|path| path.to_string_lossy().to_string())
+                        .collect();
 
-            if workspace_failed_to_open {
-                errored = true
+                    let workspace_failed_to_open = open_local_workspace(
+                        workspace_paths,
+                        open_new_workspace,
+                        wait,
+                        responses,
+                        env.as_ref(),
+                        &app_state,
+                        cx,
+                    )
+                    .await;
+
+                    if workspace_failed_to_open {
+                        errored = true
+                    }
+                }
+                SerializedWorkspaceLocation::Ssh(ssh) => {
+                    let app_state = app_state.clone();
+                    let connection_options = cx.update(|cx| {
+                        SshSettings::get_global(cx)
+                            .connection_options_for(ssh.host, ssh.port, ssh.user)
+                    });
+                    if let Ok(connection_options) = connection_options {
+                        cx.spawn(|mut cx| async move {
+                            open_ssh_project(
+                                connection_options,
+                                ssh.paths.into_iter().map(PathBuf::from).collect(),
+                                app_state,
+                                OpenOptions::default(),
+                                &mut cx,
+                            )
+                            .await
+                            .log_err();
+                        })
+                        .detach();
+                        // We don't set `errored` here if `open_ssh_project` fails, because for ssh projects, the
+                        // error is displayed in the window.
+                    } else {
+                        errored = false;
+                    }
+                }
             }
         }
 
@@ -431,7 +410,7 @@ async fn open_workspaces(
     Ok(())
 }
 
-async fn open_workspace(
+async fn open_local_workspace(
     workspace_paths: Vec<String>,
     open_new_workspace: Option<bool>,
     wait: bool,
@@ -563,7 +542,7 @@ mod tests {
     use serde_json::json;
     use workspace::{AppState, Workspace};
 
-    use crate::zed::{open_listener::open_workspace, tests::init_test};
+    use crate::zed::{open_listener::open_local_workspace, tests::init_test};
 
     #[gpui::test]
     async fn test_open_workspace_with_directory(cx: &mut TestAppContext) {
@@ -678,7 +657,7 @@ mod tests {
 
         let errored = cx
             .spawn(|mut cx| async move {
-                open_workspace(
+                open_local_workspace(
                     workspace_paths,
                     open_new_workspace,
                     false,

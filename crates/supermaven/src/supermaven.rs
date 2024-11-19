@@ -147,6 +147,14 @@ impl Supermaven {
                     updates_tx,
                 },
             );
+            // ensure the states map is max 1000 elements
+            if agent.states.len() > 1000 {
+                // state id is monotonic so it's sufficient to remove the first element
+                agent
+                    .states
+                    .remove(&agent.states.keys().next().unwrap().clone());
+            }
+
             let _ = agent
                 .outgoing_tx
                 .unbounded_send(OutboundMessage::StateUpdate(StateUpdateMessage {
@@ -217,11 +225,11 @@ fn find_relevant_completion<'a>(
         };
 
         let current_cursor_offset = cursor_position.to_offset(buffer);
-        let original_cursor_offset = state.prefix_offset;
-        if current_cursor_offset < original_cursor_offset {
+        if current_cursor_offset < state.prefix_offset {
             continue;
         }
 
+        let original_cursor_offset = buffer.clip_offset(state.prefix_offset, text::Bias::Left);
         let text_inserted_since_completion_request =
             buffer.text_for_range(original_cursor_offset..current_cursor_offset);
         let mut trimmed_completion = state_completion;

@@ -26,14 +26,14 @@ use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, AnyWindowHandle, Bounds, Decorations, GPUSpecs, Globals, Modifiers, Output, Pixels,
-    PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, ScaledPixels, Size, Tiling,
-    WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowParams,
+    PlatformDisplay, PlatformInput, Point, PromptLevel, RequestFrameOptions, ResizeEdge,
+    ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams,
 };
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
-    request_frame: Option<Box<dyn FnMut()>>,
+    request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     input: Option<Box<dyn FnMut(crate::PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
@@ -323,7 +323,7 @@ impl WaylandWindowStatePtr {
 
         let mut cb = self.callbacks.borrow_mut();
         if let Some(fun) = cb.request_frame.as_mut() {
-            fun();
+            fun(Default::default());
         }
     }
 
@@ -902,7 +902,7 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().fullscreen
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 

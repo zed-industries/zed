@@ -1,9 +1,9 @@
-use std::{any::type_name, mem, pin::Pin, sync::OnceLock, task::Poll};
+use std::{any::type_name, mem, pin::Pin, sync::OnceLock, task::Poll, time::Duration};
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{AsyncRead, TryStreamExt as _};
-use http_client::{http, ReadTimeout, RedirectPolicy};
+use http_client::{http, RedirectPolicy};
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     redirect,
@@ -20,9 +20,14 @@ pub struct ReqwestClient {
 }
 
 impl ReqwestClient {
-    pub fn new() -> Self {
+    fn builder() -> reqwest::ClientBuilder {
         reqwest::Client::builder()
             .use_rustls_tls()
+            .connect_timeout(Duration::from_secs(10))
+    }
+
+    pub fn new() -> Self {
+        Self::builder()
             .build()
             .expect("Failed to initialize HTTP client")
             .into()
@@ -31,21 +36,20 @@ impl ReqwestClient {
     pub fn user_agent(agent: &str) -> anyhow::Result<Self> {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
-        let client = reqwest::Client::builder()
-            .default_headers(map)
-            .use_rustls_tls()
-            .build()?;
+        let client = Self::builder().default_headers(map).build()?;
         Ok(client.into())
     }
 
     pub fn proxy_and_user_agent(proxy: Option<http::Uri>, agent: &str) -> anyhow::Result<Self> {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
-        let mut client = reqwest::Client::builder()
-            .use_rustls_tls()
-            .default_headers(map);
-        if let Some(proxy) = proxy.clone() {
-            client = client.proxy(reqwest::Proxy::all(proxy.to_string())?);
+        let mut client = Self::builder().default_headers(map);
+        if let Some(proxy) = proxy.clone().and_then(|proxy_uri| {
+            reqwest::Proxy::all(proxy_uri.to_string())
+                .inspect_err(|e| log::error!("Failed to parse proxy URI {}: {}", proxy_uri, e))
+                .ok()
+        }) {
+            client = client.proxy(proxy);
         }
         let client = client.build()?;
         let mut client: ReqwestClient = client.into();
@@ -57,7 +61,7 @@ impl ReqwestClient {
 impl From<reqwest::Client> for ReqwestClient {
     fn from(client: reqwest::Client) -> Self {
         let handle = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
-            log::info!("no tokio runtime found, creating one for Reqwest...");
+            log::debug!("no tokio runtime found, creating one for Reqwest...");
             let runtime = RUNTIME.get_or_init(|| {
                 tokio::runtime::Builder::new_multi_thread()
                     // Since we now have two executors, let's try to keep our footprint small
@@ -200,9 +204,6 @@ impl http_client::HttpClient for ReqwestClient {
                 RedirectPolicy::FollowAll => redirect::Policy::limited(100),
             });
         }
-        if let Some(ReadTimeout(timeout)) = parts.extensions.get::<ReadTimeout>() {
-            request = request.timeout(*timeout);
-        }
         let request = request.body(match body.0 {
             http_client::Inner::Empty => reqwest::Body::default(),
             http_client::Inner::Bytes(cursor) => cursor.into_inner().into(),
@@ -230,5 +231,49 @@ impl http_client::HttpClient for ReqwestClient {
             builder.body(body).map_err(|e| anyhow!(e))
         }
         .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use http_client::{http, HttpClient};
+
+    use crate::ReqwestClient;
+
+    #[test]
+    fn test_proxy_uri() {
+        let client = ReqwestClient::new();
+        assert_eq!(client.proxy(), None);
+
+        let proxy = http::Uri::from_static("http://localhost:10809");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+
+        let proxy = http::Uri::from_static("https://localhost:10809");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+
+        let proxy = http::Uri::from_static("socks4://localhost:10808");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+
+        let proxy = http::Uri::from_static("socks4a://localhost:10808");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+
+        let proxy = http::Uri::from_static("socks5://localhost:10808");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+
+        let proxy = http::Uri::from_static("socks5h://localhost:10808");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy.clone()), "test").unwrap();
+        assert_eq!(client.proxy(), Some(&proxy));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_invalid_proxy_uri() {
+        let proxy = http::Uri::from_static("file:///etc/hosts");
+        ReqwestClient::proxy_and_user_agent(Some(proxy), "test").unwrap();
     }
 }

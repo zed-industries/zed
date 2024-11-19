@@ -204,7 +204,11 @@ impl Object {
             Object::Parentheses => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
             }
-            Object::Tag => surrounding_html_tag(map, selection, around),
+            Object::Tag => {
+                let head = selection.head();
+                let range = selection.range();
+                surrounding_html_tag(map, head, range, around)
+            }
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -262,9 +266,10 @@ fn in_word(
     Some(start..end)
 }
 
-fn surrounding_html_tag(
+pub fn surrounding_html_tag(
     map: &DisplaySnapshot,
-    selection: Selection<DisplayPoint>,
+    head: DisplayPoint,
+    range: Range<DisplayPoint>,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
     fn read_tag(chars: impl Iterator<Item = char>) -> String {
@@ -286,7 +291,7 @@ fn surrounding_html_tag(
     }
 
     let snapshot = &map.buffer_snapshot;
-    let offset = selection.head().to_offset(map, Bias::Left);
+    let offset = head.to_offset(map, Bias::Left);
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
     let offset = excerpt.map_offset_to_buffer(offset);
@@ -307,14 +312,14 @@ fn surrounding_html_tag(
                 let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
                 let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));
                 // It needs to be handled differently according to the selection length
-                let is_valid = if selection.end.to_offset(map, Bias::Left)
-                    - selection.start.to_offset(map, Bias::Left)
+                let is_valid = if range.end.to_offset(map, Bias::Left)
+                    - range.start.to_offset(map, Bias::Left)
                     <= 1
                 {
                     offset <= last_child.end_byte()
                 } else {
-                    selection.start.to_offset(map, Bias::Left) >= first_child.start_byte()
-                        && selection.end.to_offset(map, Bias::Left) <= last_child.start_byte() + 1
+                    range.start.to_offset(map, Bias::Left) >= first_child.start_byte()
+                        && range.end.to_offset(map, Bias::Left) <= last_child.start_byte() + 1
                 };
                 if open_tag.is_some() && open_tag == close_tag && is_valid {
                     let range = if around {
@@ -738,11 +743,11 @@ fn paragraph(
             let paragraph_start_row = paragraph_start.row();
             if paragraph_start_row.0 != 0 {
                 let previous_paragraph_last_line_start =
-                    Point::new(paragraph_start_row.0 - 1, 0).to_display_point(map);
+                    DisplayPoint::new(paragraph_start_row - 1, 0);
                 paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
             }
         } else {
-            let next_paragraph_start = Point::new(paragraph_end_row.0 + 1, 0).to_display_point(map);
+            let next_paragraph_start = DisplayPoint::new(paragraph_end_row + 1, 0);
             paragraph_end = end_of_paragraph(map, next_paragraph_start);
         }
     }
@@ -1402,7 +1407,7 @@ mod test {
 
         // Generic arguments
         cx.set_state("fn boop<A: ˇDebug, B>() {}", Mode::Normal);
-        cx.simulate_keystrokes("v i a");
+        cx.simulate_keystrokes("v i g");
         cx.assert_state("fn boop<«A: Debugˇ», B>() {}", Mode::Visual);
 
         // Function arguments
@@ -1410,11 +1415,11 @@ mod test {
             "fn boop(ˇarg_a: (Tuple, Of, Types), arg_b: String) {}",
             Mode::Normal,
         );
-        cx.simulate_keystrokes("d a a");
+        cx.simulate_keystrokes("d a g");
         cx.assert_state("fn boop(ˇarg_b: String) {}", Mode::Normal);
 
         cx.set_state("std::namespace::test(\"strinˇg\", a.b.c())", Mode::Normal);
-        cx.simulate_keystrokes("v a a");
+        cx.simulate_keystrokes("v a g");
         cx.assert_state("std::namespace::test(«\"string\", ˇ»a.b.c())", Mode::Visual);
 
         // Tuple, vec, and array arguments
@@ -1422,34 +1427,34 @@ mod test {
             "fn boop(arg_a: (Tuple, Ofˇ, Types), arg_b: String) {}",
             Mode::Normal,
         );
-        cx.simulate_keystrokes("c i a");
+        cx.simulate_keystrokes("c i g");
         cx.assert_state(
             "fn boop(arg_a: (Tuple, ˇ, Types), arg_b: String) {}",
             Mode::Insert,
         );
 
         cx.set_state("let a = (test::call(), 'p', my_macro!{ˇ});", Mode::Normal);
-        cx.simulate_keystrokes("c a a");
+        cx.simulate_keystrokes("c a g");
         cx.assert_state("let a = (test::call(), 'p'ˇ);", Mode::Insert);
 
         cx.set_state("let a = [test::call(ˇ), 300];", Mode::Normal);
-        cx.simulate_keystrokes("c i a");
+        cx.simulate_keystrokes("c i g");
         cx.assert_state("let a = [ˇ, 300];", Mode::Insert);
 
         cx.set_state(
             "let a = vec![Vec::new(), vecˇ![test::call(), 300]];",
             Mode::Normal,
         );
-        cx.simulate_keystrokes("c a a");
+        cx.simulate_keystrokes("c a g");
         cx.assert_state("let a = vec![Vec::new()ˇ];", Mode::Insert);
 
         // Cursor immediately before / after brackets
         cx.set_state("let a = [test::call(first_arg)ˇ]", Mode::Normal);
-        cx.simulate_keystrokes("v i a");
+        cx.simulate_keystrokes("v i g");
         cx.assert_state("let a = [«test::call(first_arg)ˇ»]", Mode::Visual);
 
         cx.set_state("let a = [test::callˇ(first_arg)]", Mode::Normal);
-        cx.simulate_keystrokes("v i a");
+        cx.simulate_keystrokes("v i g");
         cx.assert_state("let a = [«test::call(first_arg)ˇ»]", Mode::Visual);
     }
 

@@ -1,5 +1,6 @@
 mod editable_setting_control;
 mod json_schema;
+mod key_equivalents;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
@@ -11,6 +12,7 @@ use util::asset_str;
 
 pub use editable_setting_control::*;
 pub use json_schema::*;
+pub use key_equivalents::*;
 pub use keymap_file::KeymapFile;
 pub use settings_file::*;
 pub use settings_store::{
@@ -88,7 +90,11 @@ pub fn initial_user_settings_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_user_settings.json")
 }
 
-pub fn initial_local_settings_content() -> Cow<'static, str> {
+pub fn initial_server_settings_content() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("settings/initial_server_settings.json")
+}
+
+pub fn initial_project_settings_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_local_settings.json")
 }
 

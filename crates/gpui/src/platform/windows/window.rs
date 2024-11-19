@@ -52,12 +52,13 @@ pub struct WindowsWindowState {
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
-    initial_placement: Option<WINDOWPLACEMENT>,
+    initial_placement: Option<WindowOpenStatus>,
     hwnd: HWND,
 }
 
 pub(crate) struct WindowsWindowStatePtr {
     hwnd: HWND,
+    this: Weak<Self>,
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
@@ -222,9 +223,10 @@ impl WindowsWindowStatePtr {
             context.display,
         )?);
 
-        Ok(Rc::new(Self {
-            state,
+        Ok(Rc::new_cyclic(|this| Self {
             hwnd,
+            this: this.clone(),
+            state,
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
@@ -235,18 +237,93 @@ impl WindowsWindowStatePtr {
         }))
     }
 
+    fn toggle_fullscreen(&self) {
+        let Some(state_ptr) = self.this.upgrade() else {
+            log::error!("Unable to toggle fullscreen: window has been dropped");
+            return;
+        };
+        self.executor
+            .spawn(async move {
+                let mut lock = state_ptr.state.borrow_mut();
+                let StyleAndBounds {
+                    style,
+                    x,
+                    y,
+                    cx,
+                    cy,
+                } = if let Some(state) = lock.fullscreen.take() {
+                    state
+                } else {
+                    let (window_bounds, _) = lock.calculate_window_bounds();
+                    lock.fullscreen_restore_bounds = window_bounds;
+                    let style =
+                        WINDOW_STYLE(unsafe { get_window_long(state_ptr.hwnd, GWL_STYLE) } as _);
+                    let mut rc = RECT::default();
+                    unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
+                    let _ = lock.fullscreen.insert(StyleAndBounds {
+                        style,
+                        x: rc.left,
+                        y: rc.top,
+                        cx: rc.right - rc.left,
+                        cy: rc.bottom - rc.top,
+                    });
+                    let style = style
+                        & !(WS_THICKFRAME
+                            | WS_SYSMENU
+                            | WS_MAXIMIZEBOX
+                            | WS_MINIMIZEBOX
+                            | WS_CAPTION);
+                    let physical_bounds = lock.display.physical_bounds();
+                    StyleAndBounds {
+                        style,
+                        x: physical_bounds.left().0,
+                        y: physical_bounds.top().0,
+                        cx: physical_bounds.size.width.0,
+                        cy: physical_bounds.size.height.0,
+                    }
+                };
+                drop(lock);
+                unsafe { set_window_long(state_ptr.hwnd, GWL_STYLE, style.0 as isize) };
+                unsafe {
+                    SetWindowPos(
+                        state_ptr.hwnd,
+                        HWND::default(),
+                        x,
+                        y,
+                        cx,
+                        cy,
+                        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
+                    )
+                }
+                .log_err();
+            })
+            .detach();
+    }
+
     fn set_window_placement(&self) -> Result<()> {
-        let Some(placement) = self.state.borrow_mut().initial_placement.take() else {
+        let Some(open_status) = self.state.borrow_mut().initial_placement.take() else {
             return Ok(());
         };
-        unsafe { SetWindowPlacement(self.hwnd, &placement)? };
+        match open_status.state {
+            WindowOpenState::Maximized => unsafe {
+                SetWindowPlacement(self.hwnd, &open_status.placement)?;
+                ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
+            },
+            WindowOpenState::Fullscreen => {
+                unsafe { SetWindowPlacement(self.hwnd, &open_status.placement)? };
+                self.toggle_fullscreen();
+            }
+            WindowOpenState::Windowed => unsafe {
+                SetWindowPlacement(self.hwnd, &open_status.placement)?;
+            },
+        }
         Ok(())
     }
 }
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
-    pub(crate) request_frame: Option<Box<dyn FnMut()>>,
+    pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     pub(crate) input: Option<Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>>,
     pub(crate) active_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
@@ -361,7 +438,10 @@ impl WindowsWindow {
         if params.show {
             unsafe { SetWindowPlacement(hwnd, &placement)? };
         } else {
-            state_ptr.state.borrow_mut().initial_placement = Some(placement);
+            state_ptr.state.borrow_mut().initial_placement = Some(WindowOpenStatus {
+                placement,
+                state: WindowOpenState::Windowed,
+            });
         }
 
         Ok(Self(state_ptr))
@@ -567,11 +647,47 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-        self.0
-            .state
-            .borrow_mut()
+        let mut window_state = self.0.state.borrow_mut();
+        window_state
             .renderer
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+        let mut version = unsafe { std::mem::zeroed() };
+        let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+        if status.is_ok() {
+            if background_appearance == WindowBackgroundAppearance::Blurred {
+                if version.dwBuildNumber >= 17763 {
+                    set_window_composition_attribute(window_state.hwnd, Some((0, 0, 0, 10)), 4);
+                }
+            } else {
+                if version.dwBuildNumber >= 17763 {
+                    set_window_composition_attribute(window_state.hwnd, None, 0);
+                }
+            }
+            //Transparent effect might cause some flickering and performance issues due `WS_EX_COMPOSITED` is enabled
+            //if `WS_EX_COMPOSITED` is removed the window instance won't initiate
+            if background_appearance == WindowBackgroundAppearance::Transparent {
+                unsafe {
+                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(
+                        window_state.hwnd,
+                        GWL_EXSTYLE,
+                        current_style | WS_EX_LAYERED.0 as i32 | WS_EX_COMPOSITED.0 as i32,
+                    );
+                    SetLayeredWindowAttributes(window_state.hwnd, COLORREF(0), 225, LWA_ALPHA)
+                        .inspect_err(|e| log::error!("Unable to set window to transparent: {e}"))
+                        .ok();
+                };
+            } else {
+                unsafe {
+                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(
+                        window_state.hwnd,
+                        GWL_EXSTYLE,
+                        current_style & !WS_EX_LAYERED.0 as i32 & !WS_EX_COMPOSITED.0 as i32,
+                    );
+                }
+            }
+        }
     }
 
     fn minimize(&self) {
@@ -579,75 +695,28 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn zoom(&self) {
-        unsafe { ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err() };
+        unsafe {
+            if IsWindowVisible(self.0.hwnd).as_bool() {
+                ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
+            } else if let Some(status) = self.0.state.borrow_mut().initial_placement.as_mut() {
+                status.state = WindowOpenState::Maximized;
+            }
+        }
     }
 
     fn toggle_fullscreen(&self) {
-        let state_ptr = self.0.clone();
-        self.0
-            .executor
-            .spawn(async move {
-                let mut lock = state_ptr.state.borrow_mut();
-                let StyleAndBounds {
-                    style,
-                    x,
-                    y,
-                    cx,
-                    cy,
-                } = if let Some(state) = lock.fullscreen.take() {
-                    state
-                } else {
-                    let (window_bounds, _) = lock.calculate_window_bounds();
-                    lock.fullscreen_restore_bounds = window_bounds;
-                    let style =
-                        WINDOW_STYLE(unsafe { get_window_long(state_ptr.hwnd, GWL_STYLE) } as _);
-                    let mut rc = RECT::default();
-                    unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
-                    let _ = lock.fullscreen.insert(StyleAndBounds {
-                        style,
-                        x: rc.left,
-                        y: rc.top,
-                        cx: rc.right - rc.left,
-                        cy: rc.bottom - rc.top,
-                    });
-                    let style = style
-                        & !(WS_THICKFRAME
-                            | WS_SYSMENU
-                            | WS_MAXIMIZEBOX
-                            | WS_MINIMIZEBOX
-                            | WS_CAPTION);
-                    let physical_bounds = lock.display.physical_bounds();
-                    StyleAndBounds {
-                        style,
-                        x: physical_bounds.left().0,
-                        y: physical_bounds.top().0,
-                        cx: physical_bounds.size.width.0,
-                        cy: physical_bounds.size.height.0,
-                    }
-                };
-                drop(lock);
-                unsafe { set_window_long(state_ptr.hwnd, GWL_STYLE, style.0 as isize) };
-                unsafe {
-                    SetWindowPos(
-                        state_ptr.hwnd,
-                        HWND::default(),
-                        x,
-                        y,
-                        cx,
-                        cy,
-                        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
-                    )
-                }
-                .log_err();
-            })
-            .detach();
+        if unsafe { IsWindowVisible(self.0.hwnd).as_bool() } {
+            self.0.toggle_fullscreen();
+        } else if let Some(status) = self.0.state.borrow_mut().initial_placement.as_mut() {
+            status.state = WindowOpenState::Fullscreen;
+        }
     }
 
     fn is_fullscreen(&self) -> bool {
         self.0.state.borrow().is_fullscreen()
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.0.state.borrow_mut().callbacks.request_frame = Some(callback);
     }
 
@@ -899,6 +968,23 @@ struct StyleAndBounds {
     cy: i32,
 }
 
+#[repr(C)]
+struct WINDOWCOMPOSITIONATTRIBDATA {
+    attrib: u32,
+    pv_data: *mut std::ffi::c_void,
+    cb_data: usize,
+}
+
+#[repr(C)]
+struct AccentPolicy {
+    accent_state: u32,
+    accent_flags: u32,
+    gradient_color: u32,
+    animation_id: u32,
+}
+
+type Color = (u8, u8, u8, u8);
+
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct WindowBorderOffset {
     width_offset: i32,
@@ -923,6 +1009,17 @@ impl WindowBorderOffset {
             (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
         Ok(())
     }
+}
+
+struct WindowOpenStatus {
+    placement: WINDOWPLACEMENT,
+    state: WindowOpenState,
+}
+
+enum WindowOpenState {
+    Maximized,
+    Fullscreen,
+    Windowed,
 }
 
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
@@ -1090,6 +1187,44 @@ fn retrieve_window_placement(
     let bounds = bounds.to_device_pixels(scale_factor);
     placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
     Ok(placement)
+}
+
+fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32) {
+    unsafe {
+        type SetWindowCompositionAttributeType =
+            unsafe extern "system" fn(HWND, *mut WINDOWCOMPOSITIONATTRIBDATA) -> BOOL;
+        let module_name = PCSTR::from_raw("user32.dll\0".as_ptr());
+        let user32 = GetModuleHandleA(module_name);
+        if user32.is_ok() {
+            let func_name = PCSTR::from_raw("SetWindowCompositionAttribute\0".as_ptr());
+            let set_window_composition_attribute: SetWindowCompositionAttributeType =
+                std::mem::transmute(GetProcAddress(user32.unwrap(), func_name));
+            let mut color = color.unwrap_or_default();
+            let is_acrylic = state == 4;
+            if is_acrylic && color.3 == 0 {
+                color.3 = 1;
+            }
+            let accent = AccentPolicy {
+                accent_state: state,
+                accent_flags: if is_acrylic { 0 } else { 2 },
+                gradient_color: (color.0 as u32)
+                    | ((color.1 as u32) << 8)
+                    | ((color.2 as u32) << 16)
+                    | (color.3 as u32) << 24,
+                animation_id: 0,
+            };
+            let mut data = WINDOWCOMPOSITIONATTRIBDATA {
+                attrib: 0x13,
+                pv_data: &accent as *const _ as *mut _,
+                cb_data: std::mem::size_of::<AccentPolicy>(),
+            };
+            let _ = set_window_composition_attribute(hwnd, &mut data as *mut _ as _);
+        } else {
+            let _ = user32
+                .inspect_err(|e| log::error!("Error getting module: {e}"))
+                .ok();
+        }
+    }
 }
 
 mod windows_renderer {

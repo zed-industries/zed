@@ -57,7 +57,7 @@ impl<T: AsRef<Path>> PathExt for T {
     ///   does not have the user's home directory prefix, or if we are not on
     ///   Linux or macOS, the original path is returned unchanged.
     fn compact(&self) -> PathBuf {
-        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) || cfg!(target_os = "macos") {
             match self.as_ref().strip_prefix(home_dir().as_path()) {
                 Ok(relative_path) => {
                     let mut shortened_path = PathBuf::new();
@@ -434,6 +434,38 @@ mod tests {
     }
 
     #[test]
+    fn compare_paths_case_semi_sensitive() {
+        let mut paths = vec![
+            (Path::new("test_DIRS"), false),
+            (Path::new("test_DIRS/foo_1"), true),
+            (Path::new("test_DIRS/foo_2"), true),
+            (Path::new("test_DIRS/bar"), true),
+            (Path::new("test_DIRS/BAR"), true),
+            (Path::new("test_dirs"), false),
+            (Path::new("test_dirs/foo_1"), true),
+            (Path::new("test_dirs/foo_2"), true),
+            (Path::new("test_dirs/bar"), true),
+            (Path::new("test_dirs/BAR"), true),
+        ];
+        paths.sort_by(|&a, &b| compare_paths(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (Path::new("test_dirs"), false),
+                (Path::new("test_dirs/bar"), true),
+                (Path::new("test_dirs/BAR"), true),
+                (Path::new("test_dirs/foo_1"), true),
+                (Path::new("test_dirs/foo_2"), true),
+                (Path::new("test_DIRS"), false),
+                (Path::new("test_DIRS/bar"), true),
+                (Path::new("test_DIRS/BAR"), true),
+                (Path::new("test_DIRS/foo_1"), true),
+                (Path::new("test_DIRS/foo_2"), true),
+            ]
+        );
+    }
+
+    #[test]
     fn path_with_position_parse_posix_path() {
         // Test POSIX filename edge cases
         // Read more at https://en.wikipedia.org/wiki/Filename
@@ -667,7 +699,7 @@ mod tests {
         ]
         .iter()
         .collect();
-        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) || cfg!(target_os = "macos") {
             assert_eq!(path.compact().to_str(), Some("~/some_file.txt"));
         } else {
             assert_eq!(path.compact().to_str(), path.to_str());

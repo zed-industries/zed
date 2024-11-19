@@ -16,12 +16,12 @@ pub struct Model {
     pub mtime_seconds: i64,
     pub mtime_nanos: i32,
     pub git_status: Option<i64>,
-    pub is_symlink: bool,
     pub is_ignored: bool,
     pub is_external: bool,
     pub is_deleted: bool,
     pub scan_id: i64,
     pub is_fifo: bool,
+    pub canonical_path: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

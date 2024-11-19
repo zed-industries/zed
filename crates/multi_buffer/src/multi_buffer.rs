@@ -10,9 +10,9 @@ use itertools::Itertools;
 use language::{
     language_settings::{language_settings, LanguageSettings},
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, Chunk, CursorShape, DiagnosticEntry, File, IndentGuide, IndentSize, Language,
-    LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
-    TextDimension, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _,
+    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentGuide, IndentSize,
+    Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16,
+    Selection, TextDimension, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _,
     TransactionId, Unclipped,
 };
 use smallvec::SmallVec;
@@ -94,6 +94,7 @@ pub enum Event {
         transaction_id: TransactionId,
     },
     Reloaded,
+    ReloadNeeded,
     DiffBaseChanged,
     DiffUpdated {
         buffer: Model<Buffer>,
@@ -124,7 +125,7 @@ pub struct MultiBufferDiffHunk {
 
 pub type MultiBufferPoint = Point;
 
-#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq, serde::Deserialize)]
+#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq, Hash, serde::Deserialize)]
 #[serde(transparent)]
 pub struct MultiBufferRow(pub u32);
 
@@ -185,10 +186,12 @@ pub struct MultiBufferSnapshot {
     non_text_state_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
+    has_deleted_file: bool,
     has_conflict: bool,
     show_headers: bool,
 }
 
+#[derive(Clone)]
 pub struct ExcerptInfo {
     pub id: ExcerptId,
     pub buffer: BufferSnapshot,
@@ -201,6 +204,7 @@ impl std::fmt::Debug for ExcerptInfo {
         f.debug_struct(type_name::<Self>())
             .field("id", &self.id)
             .field("buffer_id", &self.buffer_id)
+            .field("path", &self.buffer.file().map(|f| f.path()))
             .field("range", &self.range)
             .finish()
     }
@@ -489,6 +493,10 @@ impl MultiBuffer {
 
     pub fn is_dirty(&self, cx: &AppContext) -> bool {
         self.read(cx).is_dirty()
+    }
+
+    pub fn has_deleted_file(&self, cx: &AppContext) -> bool {
+        self.read(cx).has_deleted_file()
     }
 
     pub fn has_conflict(&self, cx: &AppContext) -> bool {
@@ -1416,6 +1424,7 @@ impl MultiBuffer {
         snapshot.excerpts = Default::default();
         snapshot.trailing_excerpt_update_count += 1;
         snapshot.is_dirty = false;
+        snapshot.has_deleted_file = false;
         snapshot.has_conflict = false;
 
         self.subscriptions.publish_mut([Edit {
@@ -1733,6 +1742,7 @@ impl MultiBuffer {
             language::BufferEvent::Saved => Event::Saved,
             language::BufferEvent::FileHandleChanged => Event::FileHandleChanged,
             language::BufferEvent::Reloaded => Event::Reloaded,
+            language::BufferEvent::ReloadNeeded => Event::ReloadNeeded,
             language::BufferEvent::DiffBaseChanged => Event::DiffBaseChanged,
             language::BufferEvent::DiffUpdated => Event::DiffUpdated { buffer },
             language::BufferEvent::LanguageChanged => {
@@ -1746,7 +1756,6 @@ impl MultiBuffer {
                 self.capability = buffer.read(cx).capability();
                 Event::CapabilityChanged
             }
-
             //
             language::BufferEvent::Operation { .. } => return,
         });
@@ -1776,7 +1785,7 @@ impl MultiBuffer {
         &self,
         point: T,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
+    ) -> Cow<'a, LanguageSettings> {
         let mut language = None;
         let mut file = None;
         if let Some((buffer, offset, _)) = self.point_to_buffer_offset(point, cx) {
@@ -1784,7 +1793,7 @@ impl MultiBuffer {
             language = buffer.language_at(offset);
             file = buffer.file();
         }
-        language_settings(language.as_ref(), file, cx)
+        language_settings(language.map(|l| l.name()), file, cx)
     }
 
     pub fn for_each_buffer(&self, mut f: impl FnMut(&Model<Buffer>)) {
@@ -2000,6 +2009,7 @@ impl MultiBuffer {
         let mut excerpts_to_edit = Vec::new();
         let mut non_text_state_updated = false;
         let mut is_dirty = false;
+        let mut has_deleted_file = false;
         let mut has_conflict = false;
         let mut edited = false;
         let mut buffers = self.buffers.borrow_mut();
@@ -2025,6 +2035,9 @@ impl MultiBuffer {
             edited |= buffer_edited;
             non_text_state_updated |= buffer_non_text_state_updated;
             is_dirty |= buffer.is_dirty();
+            has_deleted_file |= buffer
+                .file()
+                .map_or(false, |file| file.disk_state() == DiskState::Deleted);
             has_conflict |= buffer.has_conflict();
         }
         if edited {
@@ -2034,6 +2047,7 @@ impl MultiBuffer {
             snapshot.non_text_state_update_count += 1;
         }
         snapshot.is_dirty = is_dirty;
+        snapshot.has_deleted_file = has_deleted_file;
         snapshot.has_conflict = has_conflict;
 
         excerpts_to_edit.sort_unstable_by_key(|(locator, _, _)| *locator);
@@ -2859,6 +2873,30 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn indent_and_comment_for_line(&self, row: MultiBufferRow, cx: &AppContext) -> String {
+        let mut indent = self.indent_size_for_line(row).chars().collect::<String>();
+
+        if self.settings_at(0, cx).extend_comment_on_newline {
+            if let Some(language_scope) = self.language_scope_at(Point::new(row.0, 0)) {
+                let delimiters = language_scope.line_comment_prefixes();
+                for delimiter in delimiters {
+                    if *self
+                        .chars_at(Point::new(row.0, indent.len() as u32))
+                        .take(delimiter.chars().count())
+                        .collect::<String>()
+                        .as_str()
+                        == **delimiter
+                    {
+                        indent.push_str(&delimiter);
+                        break;
+                    }
+                }
+            }
+        }
+
+        indent
+    }
+
     pub fn prev_non_blank_row(&self, mut row: MultiBufferRow) -> Option<MultiBufferRow> {
         while row.0 > 0 {
             row.0 -= 1;
@@ -3054,6 +3092,58 @@ impl MultiBufferSnapshot {
         }
 
         summaries
+    }
+
+    pub fn dimensions_from_points<'a, D>(
+        &'a self,
+        points: impl 'a + IntoIterator<Item = Point>,
+    ) -> impl 'a + Iterator<Item = D>
+    where
+        D: TextDimension,
+    {
+        let mut cursor = self.excerpts.cursor::<TextSummary>(&());
+        let mut memoized_source_start: Option<Point> = None;
+        let mut points = points.into_iter();
+        std::iter::from_fn(move || {
+            let point = points.next()?;
+
+            // Clear the memoized source start if the point is in a different excerpt than previous.
+            if memoized_source_start.map_or(false, |_| point >= cursor.end(&()).lines) {
+                memoized_source_start = None;
+            }
+
+            // Now determine where the excerpt containing the point starts in its source buffer.
+            // We'll use this value to calculate overshoot next.
+            let source_start = if let Some(source_start) = memoized_source_start {
+                source_start
+            } else {
+                cursor.seek_forward(&point, Bias::Right, &());
+                if let Some(excerpt) = cursor.item() {
+                    let source_start = excerpt.range.context.start.to_point(&excerpt.buffer);
+                    memoized_source_start = Some(source_start);
+                    source_start
+                } else {
+                    return Some(D::from_text_summary(cursor.start()));
+                }
+            };
+
+            // First, assume the output dimension is at least the start of the excerpt containing the point
+            let mut output = D::from_text_summary(cursor.start());
+
+            // If the point lands within its excerpt, calculate and add the overshoot in dimension D.
+            if let Some(excerpt) = cursor.item() {
+                let overshoot = point - cursor.start().lines;
+                if !overshoot.is_zero() {
+                    let end_in_excerpt = source_start + overshoot;
+                    output.add_assign(
+                        &excerpt
+                            .buffer
+                            .text_summary_for_range::<D, _>(source_start..end_in_excerpt),
+                    );
+                }
+            }
+            Some(output)
+        })
     }
 
     pub fn refresh_anchors<'a, I>(&'a self, anchors: I) -> Vec<(usize, Anchor, bool)>
@@ -3578,14 +3668,14 @@ impl MultiBufferSnapshot {
         &'a self,
         point: T,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
+    ) -> Cow<'a, LanguageSettings> {
         let mut language = None;
         let mut file = None;
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
             language = buffer.language_at(offset);
             file = buffer.file();
         }
-        language_settings(language, file, cx)
+        language_settings(language.map(|l| l.name()), file, cx)
     }
 
     pub fn language_scope_at<T: ToOffset>(&self, point: T) -> Option<LanguageScope> {
@@ -3610,6 +3700,10 @@ impl MultiBufferSnapshot {
 
     pub fn is_dirty(&self) -> bool {
         self.is_dirty
+    }
+
+    pub fn has_deleted_file(&self) -> bool {
+        self.has_deleted_file
     }
 
     pub fn has_conflict(&self) -> bool {
@@ -4676,6 +4770,12 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for usize {
 impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for usize {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
         Ord::cmp(self, &cursor_location.text.len)
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, TextSummary> for Point {
+    fn cmp(&self, cursor_location: &TextSummary, _: &()) -> cmp::Ordering {
+        Ord::cmp(self, &cursor_location.lines)
     }
 }
 
@@ -6397,11 +6497,21 @@ mod tests {
     fn test_history(cx: &mut AppContext) {
         let test_settings = SettingsStore::test(cx);
         cx.set_global(test_settings);
-
-        let buffer_1 = cx.new_model(|cx| Buffer::local("1234", cx));
-        let buffer_2 = cx.new_model(|cx| Buffer::local("5678", cx));
+        let group_interval: Duration = Duration::from_millis(1);
+        let buffer_1 = cx.new_model(|cx| {
+            let mut buf = Buffer::local("1234", cx);
+            buf.set_group_interval(group_interval);
+            buf
+        });
+        let buffer_2 = cx.new_model(|cx| {
+            let mut buf = Buffer::local("5678", cx);
+            buf.set_group_interval(group_interval);
+            buf
+        });
         let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
-        let group_interval = multibuffer.read(cx).history.group_interval;
+        multibuffer.update(cx, |this, _| {
+            this.history.group_interval = group_interval;
+        });
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts(
                 buffer_1.clone(),
