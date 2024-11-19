@@ -1470,9 +1470,10 @@ impl ProjectPanel {
         let selection = self.find_entry(
             true,
             |entry| {
-                entry
-                    .git_status
-                    .is_some_and(|status| matches!(status, GitFileStatus::Modified))
+                entry.is_file()
+                    && entry
+                        .git_status
+                        .is_some_and(|status| matches!(status, GitFileStatus::Modified))
             },
             cx,
         );
@@ -1490,9 +1491,10 @@ impl ProjectPanel {
         let selection = self.find_entry(
             false,
             |entry| {
-                entry
-                    .git_status
-                    .is_some_and(|status| matches!(status, GitFileStatus::Modified))
+                entry.is_file()
+                    && entry
+                        .git_status
+                        .is_some_and(|status| matches!(status, GitFileStatus::Modified))
             },
             cx,
         );
