@@ -483,20 +483,7 @@ pub async fn post_events(
                         checksum_matched,
                     ))
             }
-            Event::Cpu(event) => to_upload.cpu_events.push(CpuEventRow::from_event(
-                event.clone(),
-                wrapper,
-                &request_body,
-                first_event_at,
-                checksum_matched,
-            )),
-            Event::Memory(event) => to_upload.memory_events.push(MemoryEventRow::from_event(
-                event.clone(),
-                wrapper,
-                &request_body,
-                first_event_at,
-                checksum_matched,
-            )),
+            Event::Cpu(_) | Event::Memory(_) => continue,
             Event::App(event) => to_upload.app_events.push(AppEventRow::from_event(
                 event.clone(),
                 wrapper,
@@ -947,6 +934,7 @@ pub struct CpuEventRow {
 }
 
 impl CpuEventRow {
+    #[allow(unused)]
     fn from_event(
         event: CpuEvent,
         wrapper: &EventWrapper,
@@ -1001,6 +989,7 @@ pub struct MemoryEventRow {
 }
 
 impl MemoryEventRow {
+    #[allow(unused)]
     fn from_event(
         event: MemoryEvent,
         wrapper: &EventWrapper,
@@ -1393,7 +1382,7 @@ fn for_snowflake(
     body: EventRequestBody,
     first_event_at: chrono::DateTime<chrono::Utc>,
 ) -> impl Iterator<Item = SnowflakeRow> {
-    body.events.into_iter().map(move |event| {
+    body.events.into_iter().flat_map(move |event| {
         let timestamp =
             first_event_at + Duration::milliseconds(event.milliseconds_since_first_event);
         let (event_type, mut event_properties) = match &event.event {
@@ -1450,14 +1439,7 @@ fn for_snowflake(
                 },
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::Cpu(e) => (
-                "System CPU Sampled".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
-            Event::Memory(e) => (
-                "System Memory Sampled".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
+            Event::Cpu(_) | Event::Memory(_) => return None,
             Event::App(e) => {
                 let mut properties = json!({});
                 let event_type = match e.operation.trim() {
@@ -1577,7 +1559,7 @@ fn for_snowflake(
             "is_staff": body.is_staff,
         }));
 
-        SnowflakeRow {
+        Some(SnowflakeRow {
             time: timestamp,
             user_id: body.metrics_id.clone(),
             device_id: body.system_id.clone(),
@@ -1585,7 +1567,7 @@ fn for_snowflake(
             event_properties,
             user_properties,
             insert_id: Some(Uuid::new_v4().to_string()),
-        }
+        })
     })
 }
 
