@@ -1990,7 +1990,7 @@ impl ProjectPanel {
         if let Some(selection) = self.selection {
             if !entries.contains(&selection) {
                 entries.insert(SelectedEntry {
-                    entry_id: selection.entry_id,
+                    entry_id: self.resolve_entry(selection.entry_id),
                     worktree_id: selection.worktree_id,
                 });
             }
