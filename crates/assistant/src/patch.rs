@@ -64,6 +64,7 @@ impl PatchStore {
                 next_input: None,
             },
         );
+        cx.emit(PatchStoreEvent::PatchUpdated(id));
         self.update(id, patch, cx).unwrap();
         id
     }
@@ -77,8 +78,6 @@ impl PatchStore {
         let Some(entry) = self.entries.get_mut(&id) else {
             return Err(anyhow!("no such patch"));
         };
-
-        cx.emit(PatchStoreEvent::PatchUpdated(id));
 
         if entry.locate_task.is_some() {
             entry.next_input = Some(patch);

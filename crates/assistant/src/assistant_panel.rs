@@ -2301,7 +2301,7 @@ impl ContextEditor {
             } else {
                 let crease_id = editor.insert_creases([crease.clone()], cx)[0];
                 self.patches.insert(
-                    patch_id.clone(),
+                    patch_id,
                     PatchViewState {
                         crease_id,
                         multibuffer_range: patch_start..patch_end,

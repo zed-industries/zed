@@ -790,12 +790,9 @@ async fn test_patch_parsing(cx: &mut TestAppContext) {
         }]],
         cx,
     );
-
-    // The patch updates twice. Once immediately when the source changes,
-    // and once when it is asynchronously resolved to a location.
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
-        &[("updated", patch_ids[0]), ("updated", patch_ids[0])]
+        &[("updated", patch_ids[0])]
     );
 
     // The full patch is added
@@ -911,7 +908,7 @@ async fn test_patch_parsing(cx: &mut TestAppContext) {
     );
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
-        &[("updated", patch_ids[0]), ("updated", patch_ids[0])]
+        &[("updated", patch_ids[0])]
     );
 
     // When setting the message role to User, the steps are cleared.
@@ -941,6 +938,10 @@ async fn test_patch_parsing(cx: &mut TestAppContext) {
         also,",
         &[],
         cx,
+    );
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        &[("removed", patch_ids[0])]
     );
 
     // When setting the message role back to Assistant, the steps are reparsed.
