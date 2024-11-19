@@ -1,6 +1,8 @@
 use futures::{channel::mpsc, StreamExt as _};
 use gpui::AppContext;
-use runtimelib::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
+use jupyter_protocol::{ExecutionState, JupyterMessage, KernelInfoReply};
+// todo(kyle): figure out if this needs to be different
+use runtimelib::JupyterKernelspec;
 
 use super::RunningKernel;
 use jupyter_websocket_client::RemoteServer;
@@ -79,6 +81,7 @@ impl RemoteRunningKernel {
 impl Debug for RemoteRunningKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RemoteRunningKernel")
+            // custom debug that keeps tokens out of logs
             .field("remote_server url", &self.remote_server.base_url)
             .field("working_directory", &self.working_directory)
             .field("request_tx", &self.request_tx)

@@ -5,11 +5,9 @@ use futures::{
     SinkExt as _,
 };
 use gpui::{AppContext, EntityId, Task};
+use jupyter_protocol::{JupyterMessage, JupyterMessageContent, KernelInfoReply};
 use project::Fs;
-use runtimelib::{
-    dirs, ConnectionInfo, ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent,
-    KernelInfoReply,
-};
+use runtimelib::{dirs, ConnectionInfo, ExecutionState, JupyterKernelspec};
 use smol::{net::TcpListener, process::Command};
 use std::{
     env,
@@ -155,15 +153,13 @@ impl NativeRunningKernel {
 
             let session_id = Uuid::new_v4().to_string();
 
-            let mut iopub_socket = connection_info
-                .create_client_iopub_connection("", &session_id)
-                .await?;
-            let mut shell_socket = connection_info
-                .create_client_shell_connection(&session_id)
-                .await?;
-            let mut control_socket = connection_info
-                .create_client_control_connection(&session_id)
-                .await?;
+            let mut iopub_socket =
+                runtimelib::create_client_iopub_connection(&connection_info, "", &session_id)
+                    .await?;
+            let mut shell_socket =
+                runtimelib::create_client_shell_connection(&connection_info, &session_id).await?;
+            let mut control_socket =
+                runtimelib::create_client_control_connection(&connection_info, &session_id).await?;
 
             let (mut iopub, iosub) = futures::channel::mpsc::channel(100);
 

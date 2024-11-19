@@ -9898,6 +9898,7 @@ dependencies = [
  "http_client",
  "image",
  "indoc",
+ "jupyter-protocol",
  "jupyter-websocket-client",
  "language",
  "languages",
@@ -10225,9 +10226,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "0.19.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe23ba9967355bbb1be2fb9a8e51bd239ffdf9c791fad5a9b765122ee2bde2e4"
+checksum = "2db079f82c110e25c3202d20c7cd29dcbfa93d96de7c5bb8bb6f294f477567cf"
 dependencies = [
  "anyhow",
  "async-dispatcher",
@@ -10239,8 +10240,8 @@ dependencies = [
  "dirs 5.0.1",
  "futures 0.3.31",
  "glob",
- "jupyter-serde 0.4.0",
- "rand 0.8.5",
+ "jupyter-protocol",
+ "jupyter-serde 0.5.0",
  "ring",
  "serde",
  "serde_json",
