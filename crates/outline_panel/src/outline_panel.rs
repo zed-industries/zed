@@ -2178,8 +2178,10 @@ impl OutlinePanel {
                 .background_executor()
                 .spawn(async move {
                     let mut processed_external_buffers = HashSet::default();
-                    let mut new_worktree_entries =
-                        HashMap::<WorktreeId, (worktree::Snapshot, HashSet<Entry>)>::default();
+                    let mut new_worktree_entries = HashMap::<
+                        WorktreeId,
+                        (worktree::Snapshot, HashMap<ProjectEntryId, Entry>),
+                    >::default();
                     let mut worktree_excerpts = HashMap::<
                         WorktreeId,
                         HashMap<ProjectEntryId, (BufferId, Vec<ExcerptId>)>,
@@ -2213,7 +2215,7 @@ impl OutlinePanel {
                                         entry.path.as_ref(),
                                     );
 
-                                    let mut entries_to_add = HashSet::default();
+                                    let mut entries_to_add = HashMap::default();
                                     worktree_excerpts
                                         .entry(worktree_id)
                                         .or_default()
@@ -2238,7 +2240,9 @@ impl OutlinePanel {
                                             }
                                         }
 
-                                        let new_entry_added = entries_to_add.insert(current_entry);
+                                        let new_entry_added = entries_to_add
+                                            .insert(current_entry.id, current_entry)
+                                            .is_none();
                                         if new_entry_added && traversal.back_to_parent() {
                                             if let Some(parent_entry) = traversal.entry() {
                                                 current_entry = parent_entry.clone();
@@ -2249,7 +2253,7 @@ impl OutlinePanel {
                                     }
                                     new_worktree_entries
                                         .entry(worktree_id)
-                                        .or_insert_with(|| (worktree.clone(), HashSet::default()))
+                                        .or_insert_with(|| (worktree.clone(), HashMap::default()))
                                         .1
                                         .extend(entries_to_add);
                                 }
@@ -2276,7 +2280,7 @@ impl OutlinePanel {
                     let worktree_entries = new_worktree_entries
                         .into_iter()
                         .map(|(worktree_id, (worktree_snapshot, entries))| {
-                            let mut entries = entries.into_iter().collect::<Vec<_>>();
+                            let mut entries = entries.into_values().collect::<Vec<_>>();
                             // For a proper git status propagation, we have to keep the entries sorted lexicographically.
                             entries.sort_by(|a, b| a.path.as_ref().cmp(b.path.as_ref()));
                             worktree_snapshot.propagate_git_statuses(&mut entries);
@@ -3871,13 +3875,13 @@ impl OutlinePanel {
                         .child({
                             let keystroke = match self.position(cx) {
                                 DockPosition::Left => {
-                                    cx.keystroke_text_for(&workspace::ToggleLeftDock)
+                                    cx.keystroke_text_for_action(&workspace::ToggleLeftDock)
                                 }
                                 DockPosition::Bottom => {
-                                    cx.keystroke_text_for(&workspace::ToggleBottomDock)
+                                    cx.keystroke_text_for_action(&workspace::ToggleBottomDock)
                                 }
                                 DockPosition::Right => {
-                                    cx.keystroke_text_for(&workspace::ToggleRightDock)
+                                    cx.keystroke_text_for_action(&workspace::ToggleRightDock)
                                 }
                             };
                             Label::new(format!("Toggle this panel with {keystroke}"))

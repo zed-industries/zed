@@ -279,7 +279,7 @@ pub struct EditorSettingsContent {
 
     /// Whether to show the signature help pop-up after completions or bracket pairs inserted.
     ///
-    /// Default: true
+    /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
 
     /// Jupyter REPL settings.

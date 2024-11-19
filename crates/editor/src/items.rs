@@ -16,7 +16,8 @@ use gpui::{
     VisualContext, WeakView, WindowContext,
 };
 use language::{
-    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, Point, SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
+    SelectionGoal,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::AnchorRangeExt;
@@ -635,12 +636,21 @@ impl Item for Editor {
             Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
         });
 
+        // Whether the file was saved in the past but is now deleted.
+        let was_deleted: bool = self
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).file())
+            .map_or(false, |file| file.disk_state() == DiskState::Deleted);
+
         h_flex()
             .gap_2()
             .child(
                 Label::new(self.title(cx).to_string())
                     .color(label_color)
-                    .italic(params.preview),
+                    .italic(params.preview)
+                    .strikethrough(was_deleted),
             )
             .when_some(description, |this, description| {
                 this.child(
@@ -698,6 +708,10 @@ impl Item for Editor {
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
         self.buffer().read(cx).read(cx).is_dirty()
+    }
+
+    fn has_deleted_file(&self, cx: &AppContext) -> bool {
+        self.buffer().read(cx).read(cx).has_deleted_file()
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {

@@ -353,7 +353,6 @@ jobs:
           files: |
             target/zed-remote-server-linux-x86_64.gz
             target/release/zed-linux-x86_64.tar.gz
-          body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -400,6 +399,21 @@ jobs:
           files: |
             target/zed-remote-server-linux-aarch64.gz
             target/release/zed-linux-aarch64.tar.gz
-          body: ""
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  auto-publish-release:
+    timeout-minutes: 60
+    name: Create a Linux bundle
+    runs-on:
+      - self-hosted
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre') }}
+    needs: [bundle-mac, bundle-linux-aarch64, bundle-linux]
+    steps:
+      - name: Upload app bundle to release
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        with:
+          draft: false
+          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

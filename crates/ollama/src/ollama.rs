@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http_client::{http, AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
+use http_client::{http, AsyncBody, HttpClient, Method, Request as HttpRequest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{value::RawValue, Value};
@@ -262,17 +262,12 @@ pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
     request: ChatRequest,
-    low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
-    let mut request_builder = http::Request::builder()
+    let request_builder = http::Request::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json");
-
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.read_timeout(low_speed_timeout);
-    }
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
@@ -281,7 +276,7 @@ pub async fn stream_chat_completion(
 
         Ok(reader
             .lines()
-            .filter_map(|line| async move {
+            .filter_map(move |line| async move {
                 match line {
                     Ok(line) => {
                         Some(serde_json::from_str(&line).context("Unable to parse chat response"))

@@ -69,6 +69,10 @@ impl SlashCommand for DefaultSlashCommand {
                 text.push('\n');
             }
 
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+
             Ok(SlashCommandOutput {
                 sections: vec![SlashCommandOutputSection {
                     range: 0..text.len(),

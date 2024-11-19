@@ -402,7 +402,7 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
             status: session.kernel.status(),
             ..fill_fields()
         },
-        Kernel::RunningKernel(kernel) => match &kernel.execution_state {
+        Kernel::RunningKernel(kernel) => match &kernel.execution_state() {
             ExecutionState::Idle => ReplMenuState {
                 tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
                 indicator: Some(Indicator::dot().color(Color::Success)),
