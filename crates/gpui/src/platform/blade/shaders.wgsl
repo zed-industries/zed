@@ -271,6 +271,9 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     }
 
     let quad = b_quads[input.quad_id];
+    let half_size = quad.bounds.size / 2.0;
+    let center = quad.bounds.origin + half_size;
+    let center_to_point = input.position.xy - center;
 
     var background_color = vec4<f32>(0.0);
     if (input.background_tag == 0u) {
@@ -285,15 +288,12 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         let stop1_percentage = input.background_stop1_percentage;
 
         // Get the t value for the linear gradient with the color stop percentages.
-        let half_size = vec2<f32>(quad.bounds.size.x / 2.0, quad.bounds.size.y / 2.0);
-        let center = vec2<f32>(quad.bounds.origin.x + half_size.x, quad.bounds.origin.y + half_size.y);;
-        let position_from_center = position - center;
-        var t = dot(position_from_center, direction) / length(direction);
+        var t = dot(center_to_point, direction) / length(direction);
         // Check the direct to determine the use x or y
         if (abs(direction.x) > abs(direction.y)) {
-            t = (t + half_size.x) / (2 * half_size.x);
+            t = (t + half_size.x) / quad.bounds.size.x;
         } else {
-            t = (t + half_size.y) / (2 * half_size.y);
+            t = (t + half_size.y) / quad.bounds.size.y;
         }
 
         // Adjust t based on the stop percentages
@@ -315,12 +315,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         return blend_color(background_color, 1.0);
     }
 
-    let half_size = quad.bounds.size / 2.0;
-    let center = quad.bounds.origin + half_size;
-    let center_to_point = input.position.xy - center;
-
     let corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
-
     let rounded_edge_to_point = abs(center_to_point) - half_size + corner_radius;
     let distance =
       length(max(vec2<f32>(0.0), rounded_edge_to_point)) +

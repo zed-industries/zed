@@ -92,6 +92,9 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               constant Quad *quads
                               [[buffer(QuadInputIndex_Quads)]]) {
   Quad quad = quads[input.quad_id];
+  float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
+  float2 center = float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
+  float2 center_to_point = input.position.xy - center;
 
   float4 color;
   switch (input.background_tag) {
@@ -108,15 +111,12 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         float stop1_percentage = input.background_stop1_percentage;
 
         // Get the t value for the linear gradient with the color stop percentages.
-        float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
-        float2 center = float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
-        float2 position_from_center = position - center;
-        float t = dot(position_from_center, direction) / length(direction);
+        float t = dot(center_to_point, direction) / length(direction);
         // Check the direct to determine the use x or y
         if (abs(direction.x) > abs(direction.y)) {
-           t = (t + half_size.x) / (2. * half_size.x);
+           t = (t + half_size.x) / quad.bounds.size.width;
         } else {
-           t = (t + half_size.y) / (2. * half_size.y);
+           t = (t + half_size.y) / quad.bounds.size.height;
         }
 
         // Adjust t based on the stop percentages
@@ -140,11 +140,6 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
     return color;
   }
 
-  float2 half_size =
-      float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
-  float2 center =
-      float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
-  float2 center_to_point = input.position.xy - center;
   float corner_radius;
   if (center_to_point.x < 0.) {
     if (center_to_point.y < 0.) {
