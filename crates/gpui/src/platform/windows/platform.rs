@@ -28,11 +28,12 @@ use windows::{
     UI::ViewManagement::UISettings,
 };
 
-use crate::*;
+use crate::{platform::blade::BladeContext, *};
 
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
+    gpu_context: BladeContext,
     // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
@@ -94,12 +95,14 @@ impl WindowsPlatform {
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
+        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
         let validation_number = rand::random::<usize>();
 
         Self {
             state,
             raw_window_handles,
+            gpu_context,
             icon,
             main_receiver,
             dispatch_event,
@@ -344,7 +347,12 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
+        let window = WindowsWindow::new(
+            handle,
+            options,
+            self.generate_creation_info(),
+            &self.gpu_context,
+        )?;
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
 
