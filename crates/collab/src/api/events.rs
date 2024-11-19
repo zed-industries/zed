@@ -445,6 +445,7 @@ pub async fn post_events(
 
     for wrapper in &request_body.events {
         match &wrapper.event {
+            EventBody::Event(_) => continue,
             EventBody::Editor(event) => to_upload.editor_events.push(EditorEventRow::from_event(
                 event.clone(),
                 wrapper,
@@ -483,7 +484,7 @@ pub async fn post_events(
                         checksum_matched,
                     ))
             }
-            Event::Cpu(_) | Event::Memory(_) => continue,
+            EventBody::Cpu(_) | EventBody::Memory(_) => continue,
             EventBody::App(event) => to_upload.app_events.push(AppEventRow::from_event(
                 event.clone(),
                 wrapper,
@@ -1397,6 +1398,7 @@ fn for_snowflake(
                 },
                 serde_json::to_value(e).unwrap(),
             ),
+            EventBody::Event(e) => (e.name.clone(), serde_json::to_value(&e.properties).unwrap()),
             EventBody::InlineCompletion(e) => (
                 format!(
                     "Inline Completion {}",
@@ -1442,8 +1444,8 @@ fn for_snowflake(
                 },
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::Cpu(_) | Event::Memory(_) => return None,
-            Event::App(e) => {
+            EventBody::Cpu(_) | EventBody::Memory(_) => return None,
+            EventBody::App(e) => {
                 let mut properties = json!({});
                 let event_type = match e.operation.trim() {
                     "extensions: install extension" => "Extension Installed".to_string(),
@@ -1577,7 +1579,7 @@ fn for_snowflake(
     })
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SnowflakeRow {
     pub time: chrono::DateTime<chrono::Utc>,
     pub user_id: Option<String>,

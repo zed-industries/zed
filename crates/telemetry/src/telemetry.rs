@@ -95,9 +95,10 @@ impl Display for AssistantPhase {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum EventBody {
+    Event(Event),
     Editor(EditorEvent),
     InlineCompletion(InlineCompletionEvent),
     Call(CallEvent),
@@ -291,8 +292,8 @@ macro_rules! event {
             properties: std::collections::HashMap::from([
                 $(
                     (stringify!($key).to_string(),
-                        $crate::serde_json::value::to_raw_value(&$crate::serialize_property!($key $(= $value)?))
-                            .unwrap_or_else(|_| $crate::serde_json::value::to_raw_value(&()).unwrap())
+                        $crate::serde_json::value::to_value(&$crate::serialize_property!($key $(= $value)?))
+                            .unwrap_or_else(|_| $crate::serde_json::to_value(&()).unwrap())
                     ),
                 )+
             ]),
@@ -311,10 +312,10 @@ macro_rules! serialize_property {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Event {
     pub name: String,
-    pub properties: HashMap<String, Box<serde_json::value::RawValue>>,
+    pub properties: HashMap<String, serde_json::Value>,
 }
 
 pub fn send_event(event: Event) {

@@ -18,9 +18,8 @@ use std::io::Write;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry::{
-    ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, EventBody,
-    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent,
-    SettingEvent,
+    ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, EditorEvent, EventBody,
+    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, ReplEvent, SettingEvent,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
@@ -289,20 +288,27 @@ impl Telemetry {
     ) {
         let (tx, mut rx) = mpsc::unbounded();
 
-        ::telemetry::init(tx);
-        cx.background_executor()
-            .spawn(async move {
-                while let Some(event) = rx.next().await {
-                    dbg!(&event);
-                }
-            })
-            .detach();
         let mut state = self.state.lock();
         state.system_id = system_id.map(|id| id.into());
         state.installation_id = installation_id.map(|id| id.into());
         state.session_id = Some(session_id);
         state.app_version = release_channel::AppVersion::global(cx).to_string();
         state.os_name = os_name();
+        drop(state);
+
+        let this = Arc::downgrade(&self);
+
+        ::telemetry::init(tx);
+        cx.background_executor()
+            .spawn(async move {
+                while let Some(event) = rx.next().await {
+                    let Some(this) = this.upgrade() else {
+                        break;
+                    };
+                    this.report_event(EventBody::Event(event));
+                }
+            })
+            .detach();
     }
 
     pub fn metrics_enabled(self: &Arc<Self>) -> bool {
