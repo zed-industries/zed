@@ -1737,7 +1737,6 @@ impl ProjectPanel {
                 })
                 .collect::<Vec<_>>()
         };
-        println!("abs_file_paths: {:?}", abs_file_paths);
         if !abs_file_paths.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(abs_file_paths.join("\n")));
         }
