@@ -120,7 +120,12 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         float2 center = float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
         float2 position_from_center = position - center;
         float t = dot(position_from_center, direction) / length(direction);
-        t = (t + half_size.x) / (2. * half_size.x);
+        // Check the direct to determine the use x or y
+        if (abs(direction.x) > abs(direction.y)) {
+           t = (t + half_size.x) / (2. * half_size.x);
+        } else {
+           t = (t + half_size.y) / (2. * half_size.y);
+        }
 
         // Adjust t based on the stop percentages
         t = (t - stop1_percentage) / (stop2_percentage - stop1_percentage);
