@@ -296,6 +296,11 @@ jobs:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
           path: target/x86_64-apple-darwin/release/Zed-x86_64.dmg
 
+      - name: More DEBUG ing
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        run: |
+          cat target/release-notes.md
+
       - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         name: Upload app bundle to release
         if: ${{ env.RELEASE_CHANNEL == 'preview' || env.RELEASE_CHANNEL == 'stable' }}
@@ -355,7 +360,6 @@ jobs:
           files: |
             target/zed-remote-server-linux-x86_64.gz
             target/release/zed-linux-x86_64.tar.gz
-          body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -402,6 +406,5 @@ jobs:
           files: |
             target/zed-remote-server-linux-aarch64.gz
             target/release/zed-linux-aarch64.tar.gz
-          body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
