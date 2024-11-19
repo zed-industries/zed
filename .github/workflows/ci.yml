@@ -259,10 +259,8 @@ jobs:
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           mkdir -p target/
-          echo "$RELEASE_VERSION" "$RELEASE_CHANNEL"
           # Ignore any errors that occur while drafting release notes to not fail the build.
-          script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md
-          cat target/release-notes.md
+          script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true
 
       - name: Generate license file
         run: script/generate-licenses
