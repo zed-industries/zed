@@ -433,7 +433,7 @@ dependencies = [
  "smallvec",
  "smol",
  "strum 0.25.0",
- "telemetry_events",
+ "telemetry",
  "terminal",
  "terminal_view",
  "text",
@@ -2456,7 +2456,7 @@ dependencies = [
  "settings",
  "sha2",
  "smol",
- "telemetry_events",
+ "telemetry",
  "text",
  "thiserror 1.0.69",
  "time",
@@ -2637,7 +2637,7 @@ dependencies = [
  "strum 0.25.0",
  "subtle",
  "supermaven_api",
- "telemetry_events",
+ "telemetry",
  "text",
  "theme",
  "thiserror 1.0.69",
@@ -6536,7 +6536,7 @@ dependencies = [
  "settings",
  "smol",
  "strum 0.25.0",
- "telemetry_events",
+ "telemetry",
  "text",
  "theme",
  "thiserror 1.0.69",
@@ -9849,7 +9849,7 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "sysinfo",
- "telemetry_events",
+ "telemetry",
  "toml 0.8.19",
  "util",
  "worktree",
@@ -12166,7 +12166,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "telemetry_events"
+name = "telemetry"
 version = "0.1.0"
 dependencies = [
  "semantic_version",
@@ -15514,7 +15514,7 @@ dependencies = [
  "tab_switcher",
  "task",
  "tasks_ui",
- "telemetry_events",
+ "telemetry",
  "terminal_view",
  "theme",
  "theme_selector",

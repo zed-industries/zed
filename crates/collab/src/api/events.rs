@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
-use telemetry_events::{
+use telemetry::{
     ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event,
     EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, Panic,
     ReplEvent, SettingEvent,
@@ -240,7 +240,7 @@ pub async fn post_hang(
             .ok();
     }
 
-    let report: telemetry_events::HangReport = serde_json::from_slice(&body).map_err(|err| {
+    let report: telemetry::HangReport = serde_json::from_slice(&body).map_err(|err| {
         log::error!("can't parse report json: {err}");
         Error::Internal(anyhow!(err))
     })?;
@@ -283,7 +283,7 @@ pub async fn post_panic(
         ))?;
     }
 
-    let report: telemetry_events::PanicRequest = serde_json::from_slice(&body)
+    let report: telemetry::PanicRequest = serde_json::from_slice(&body)
         .map_err(|_| Error::http(StatusCode::BAD_REQUEST, "invalid json".into()))?;
     let panic = report.panic;
 
@@ -400,7 +400,7 @@ pub async fn post_events(
 
     let checksum_matched = checksum == expected;
 
-    let request_body: telemetry_events::EventRequestBody =
+    let request_body: telemetry::EventRequestBody =
         serde_json::from_slice(&body).map_err(|err| {
             log::error!("can't parse event json: {err}");
             Error::Internal(anyhow!(err))
@@ -1429,12 +1429,12 @@ fn for_snowflake(
             }
             Event::Assistant(e) => (
                 match e.phase {
-                    telemetry_events::AssistantPhase::Response => "Assistant Responded".to_string(),
-                    telemetry_events::AssistantPhase::Invoked => "Assistant Invoked".to_string(),
-                    telemetry_events::AssistantPhase::Accepted => {
+                    telemetry::AssistantPhase::Response => "Assistant Responded".to_string(),
+                    telemetry::AssistantPhase::Invoked => "Assistant Invoked".to_string(),
+                    telemetry::AssistantPhase::Accepted => {
                         "Assistant Response Accepted".to_string()
                     }
-                    telemetry_events::AssistantPhase::Rejected => {
+                    telemetry::AssistantPhase::Rejected => {
                         "Assistant Response Rejected".to_string()
                     }
                 },

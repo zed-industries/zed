@@ -19,9 +19,9 @@ use std::{
     sync::{atomic::Ordering, Arc},
 };
 use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
-use telemetry_events::LocationData;
-use telemetry_events::Panic;
-use telemetry_events::PanicRequest;
+use telemetry::LocationData;
+use telemetry::Panic;
+use telemetry::PanicRequest;
 use url::Url;
 use util::ResultExt;
 
@@ -90,7 +90,7 @@ pub fn init_panic_hook(
             backtrace.drain(0..=ix);
         }
 
-        let panic_data = telemetry_events::Panic {
+        let panic_data = telemetry::Panic {
             thread: thread_name.into(),
             payload,
             location_data: info.location().map(|location| LocationData {
@@ -231,7 +231,7 @@ pub fn monitor_main_thread_hangs(
         sync::{mpsc, OnceLock},
         time::Duration,
     };
-    use telemetry_events::{BacktraceFrame, HangReport};
+    use telemetry::{BacktraceFrame, HangReport};
 
     use nix::sys::pthread;
 
@@ -490,7 +490,7 @@ async fn upload_previous_panics(
 async fn upload_panic(
     http: &Arc<HttpClientWithUrl>,
     panic_report_url: &Url,
-    panic: telemetry_events::Panic,
+    panic: telemetry::Panic,
     most_recent_panic: &mut Option<(i64, String)>,
 ) -> Result<bool> {
     *most_recent_panic = Some((panic.panicked_on, panic.payload.clone()));

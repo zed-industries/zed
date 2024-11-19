@@ -50,7 +50,7 @@ use url::Url;
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
-pub use telemetry_events::Event;
+pub use telemetry::Event;
 pub use user::*;
 
 static ZED_SERVER_URL: LazyLock<Option<String>> =

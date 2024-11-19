@@ -49,7 +49,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;

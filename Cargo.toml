@@ -109,7 +109,7 @@ members = [
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
-    "crates/telemetry_events",
+    "crates/telemetry",
     "crates/terminal",
     "crates/terminal_view",
     "crates/text",
@@ -282,7 +282,7 @@ supermaven_api = { path = "crates/supermaven_api" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
-telemetry_events = { path = "crates/telemetry_events" }
+telemetry = { path = "crates/telemetry" }
 terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
@@ -597,7 +597,7 @@ snippets_ui = { codegen-units = 1 }
 sqlez_macros = { codegen-units = 1 }
 story = { codegen-units = 1 }
 supermaven_api = { codegen-units = 1 }
-telemetry_events = { codegen-units = 1 }
+telemetry = { codegen-units = 1 }
 theme_selector = { codegen-units = 1 }
 time_format = { codegen-units = 1 }
 ui_input = { codegen-units = 1 }

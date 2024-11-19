@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;

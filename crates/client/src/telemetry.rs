@@ -16,9 +16,10 @@ use std::fs::File;
 use std::io::Write;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, EditorEvent, Event,
-    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, ReplEvent, SettingEvent,
+use telemetry::{
+    ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event,
+    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent,
+    SettingEvent,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};

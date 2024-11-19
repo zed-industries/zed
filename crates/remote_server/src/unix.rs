@@ -40,7 +40,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use telemetry_events::LocationData;
+use telemetry::LocationData;
 use util::ResultExt;
 
 fn init_logging_proxy() {
@@ -147,7 +147,7 @@ fn init_panic_hook() {
             (&backtrace).join("\n")
         );
 
-        let panic_data = telemetry_events::Panic {
+        let panic_data = telemetry::Panic {
             thread: thread_name.into(),
             payload: payload.clone(),
             location_data: info.location().map(|location| LocationData {
