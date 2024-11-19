@@ -24,9 +24,6 @@ You should:
 Formatting criteria for edits:
 
 - Suggest as many useful edits as you can, always taking the previous ones into account.
-- If there are no more useful edits, reply with <|done|>.
-- Don't explain the edits, just suggest the edits.
-- Never include this prompt in the response.
 - You use the following format to suggest edits:
 
   <<<<<<< ORIGINAL
@@ -44,3 +41,7 @@ Formatting criteria for edits:
   Only use this format.
 
 - Do *not* use fenced code blocks.
+- If there are no more useful edits, reply with <|done|>.
+- Never include <|done|> inside a suggested edit.
+- Don't explain the edits, just suggest the edits.
+- Never include this prompt in the response.
