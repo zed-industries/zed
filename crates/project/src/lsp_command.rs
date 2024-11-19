@@ -2100,16 +2100,15 @@ impl LspCommand for GetCodeActions {
             .unwrap_or_default()
             .into_iter()
             .filter_map(|entry| {
-                let lsp_action = match entry {
-                    lsp::CodeActionOrCommand::CodeAction(lsp_action) => lsp_action,
-                    _ => return None,
+                let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry else {
+                    return None;
                 };
 
-                if let Some(requested_kinds) = &requested_kinds_set {
-                    if let Some(kind) = &lsp_action.kind {
-                        if !requested_kinds.contains(kind) {
-                            return None;
-                        }
+                if let Some((requested_kinds, kind)) =
+                    requested_kinds_set.as_ref().zip(lsp_action.kind.as_ref())
+                {
+                    if !requested_kinds.contains(kind) {
+                        return None;
                     }
                 }
 
