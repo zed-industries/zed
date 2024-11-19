@@ -19,7 +19,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
 use telemetry::{
-    ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event,
+    ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, EventBody,
     EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, Panic,
     ReplEvent, SettingEvent,
 };
@@ -445,7 +445,7 @@ pub async fn post_events(
 
     for wrapper in &request_body.events {
         match &wrapper.event {
-            Event::Editor(event) => to_upload.editor_events.push(EditorEventRow::from_event(
+            EventBody::Editor(event) => to_upload.editor_events.push(EditorEventRow::from_event(
                 event.clone(),
                 wrapper,
                 &request_body,
@@ -453,7 +453,7 @@ pub async fn post_events(
                 country_code.clone(),
                 checksum_matched,
             )),
-            Event::InlineCompletion(event) => {
+            EventBody::InlineCompletion(event) => {
                 to_upload
                     .inline_completion_events
                     .push(InlineCompletionEventRow::from_event(
@@ -465,14 +465,14 @@ pub async fn post_events(
                         checksum_matched,
                     ))
             }
-            Event::Call(event) => to_upload.call_events.push(CallEventRow::from_event(
+            EventBody::Call(event) => to_upload.call_events.push(CallEventRow::from_event(
                 event.clone(),
                 wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
             )),
-            Event::Assistant(event) => {
+            EventBody::Assistant(event) => {
                 to_upload
                     .assistant_events
                     .push(AssistantEventRow::from_event(
@@ -484,35 +484,37 @@ pub async fn post_events(
                     ))
             }
             Event::Cpu(_) | Event::Memory(_) => continue,
-            Event::App(event) => to_upload.app_events.push(AppEventRow::from_event(
+            EventBody::App(event) => to_upload.app_events.push(AppEventRow::from_event(
                 event.clone(),
                 wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
             )),
-            Event::Setting(event) => to_upload.setting_events.push(SettingEventRow::from_event(
+            EventBody::Setting(event) => {
+                to_upload.setting_events.push(SettingEventRow::from_event(
+                    event.clone(),
+                    wrapper,
+                    &request_body,
+                    first_event_at,
+                    checksum_matched,
+                ))
+            }
+            EventBody::Edit(event) => to_upload.edit_events.push(EditEventRow::from_event(
                 event.clone(),
                 wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
             )),
-            Event::Edit(event) => to_upload.edit_events.push(EditEventRow::from_event(
+            EventBody::Action(event) => to_upload.action_events.push(ActionEventRow::from_event(
                 event.clone(),
                 wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
             )),
-            Event::Action(event) => to_upload.action_events.push(ActionEventRow::from_event(
-                event.clone(),
-                wrapper,
-                &request_body,
-                first_event_at,
-                checksum_matched,
-            )),
-            Event::Extension(event) => {
+            EventBody::Extension(event) => {
                 let metadata = app
                     .db
                     .get_extension_version(&event.extension_id, &event.version)
@@ -528,7 +530,7 @@ pub async fn post_events(
                         checksum_matched,
                     ))
             }
-            Event::Repl(event) => to_upload.repl_events.push(ReplEventRow::from_event(
+            EventBody::Repl(event) => to_upload.repl_events.push(ReplEventRow::from_event(
                 event.clone(),
                 wrapper,
                 &request_body,
@@ -1387,7 +1389,7 @@ fn for_snowflake(
         let timestamp =
             first_event_at + Duration::milliseconds(event.milliseconds_since_first_event);
         let (event_type, mut event_properties) = match &event.event {
-            Event::Editor(e) => (
+            EventBody::Editor(e) => (
                 match e.operation.as_str() {
                     "open" => "Editor Opened".to_string(),
                     "save" => "Editor Saved".to_string(),
@@ -1395,7 +1397,7 @@ fn for_snowflake(
                 },
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::InlineCompletion(e) => (
+            EventBody::InlineCompletion(e) => (
                 format!(
                     "Inline Completion {}",
                     if e.suggestion_accepted {
@@ -1406,7 +1408,7 @@ fn for_snowflake(
                 ),
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::Call(e) => {
+            EventBody::Call(e) => {
                 let event_type = match e.operation.trim() {
                     "unshare project" => "Project Unshared".to_string(),
                     "open channel notes" => "Channel Notes Opened".to_string(),
@@ -1427,7 +1429,7 @@ fn for_snowflake(
 
                 (event_type, serde_json::to_value(e).unwrap())
             }
-            Event::Assistant(e) => (
+            EventBody::Assistant(e) => (
                 match e.phase {
                     telemetry::AssistantPhase::Response => "Assistant Responded".to_string(),
                     telemetry::AssistantPhase::Invoked => "Assistant Invoked".to_string(),
@@ -1522,23 +1524,23 @@ fn for_snowflake(
                 };
                 (event_type, properties)
             }
-            Event::Setting(e) => (
+            EventBody::Setting(e) => (
                 "Settings Changed".to_string(),
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::Extension(e) => (
+            EventBody::Extension(e) => (
                 "Extension Loaded".to_string(),
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::Edit(e) => (
+            EventBody::Edit(e) => (
                 "Editor Edited".to_string(),
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::Action(e) => (
+            EventBody::Action(e) => (
                 "Action Invoked".to_string(),
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::Repl(e) => (
+            EventBody::Repl(e) => (
                 "Kernel Status Changed".to_string(),
                 serde_json::to_value(e).unwrap(),
             ),

@@ -14,3 +14,5 @@ path = "src/telemetry.rs"
 [dependencies]
 semantic_version.workspace = true
 serde.workspace = true
+futures.workspace = true
+erased-serde.workspace = true

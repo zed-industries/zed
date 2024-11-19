@@ -49,8 +49,8 @@ use thiserror::Error;
 use url::Url;
 use util::{ResultExt, TryFutureExt};
 
+pub use ::telemetry::EventBody;
 pub use rpc::*;
-pub use telemetry::Event;
 pub use user::*;
 
 static ZED_SERVER_URL: LazyLock<Option<String>> =

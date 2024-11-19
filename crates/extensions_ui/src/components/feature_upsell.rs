@@ -70,9 +70,11 @@ impl RenderOnce for FeatureUpsell {
                                 let telemetry = self.telemetry.clone();
                                 let docs_url = docs_url.clone();
                                 move |_event, cx| {
-                                    telemetry.report_app_event(format!(
-                                        "feature upsell: viewed docs ({docs_url})"
-                                    ));
+                                    telemetry::event!(
+                                        "Documentation Viewed",
+                                        source = "Feature Upsell".to_string(),
+                                        url = docs_url.clone()
+                                    );
                                     cx.open_url(&docs_url)
                                 }
                             }),

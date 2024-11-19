@@ -1,8 +1,14 @@
 //! See [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional information.
 
+use futures::channel::mpsc;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EventRequestBody {
@@ -39,7 +45,7 @@ pub struct EventWrapper {
     pub milliseconds_since_first_event: i64,
     /// The event itself
     #[serde(flatten)]
-    pub event: Event,
+    pub event: EventBody,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -90,7 +96,7 @@ impl Display for AssistantPhase {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum Event {
+pub enum EventBody {
     Editor(EditorEvent),
     InlineCompletion(InlineCompletionEvent),
     Call(CallEvent),
@@ -265,3 +271,58 @@ pub struct Panic {
 pub struct PanicRequest {
     pub panic: Panic,
 }
+/// Macro to create telemetry events and send them to the telemetry queue.
+///
+/// By convention, the name should be "Noun Verbed", e.g. "Keymap Changed"
+/// or "Project Diagnostics Opened".
+///
+/// ```
+/// telemetry::event!("App Opened", version = "1.0.0");
+/// telemetry::event!("File Saved", file_type = "rust", size_kb = 42);
+/// ```
+#[macro_export]
+macro_rules! event {
+    ($name:expr, $($key:ident = $value:expr),* $(,)?) => {{
+        let event = $crate::Event {
+            name: $name.to_string(),
+            properties: std::collections::HashMap::from([
+                $(
+                    ($key.to_string(), Box::new($value)),
+                )*
+            ]),
+        };
+        $crate::send_event(event);
+    }};
+    ($name:expr, $($key:ident),+ $(,)?) => {{
+        let event = $crate::Event {
+            name: $name.to_string(),
+            properties: std::collections::HashMap::from([
+                $(
+                    (stringify!($key), Box::new($key)),
+                )+
+            ]),
+        };
+        $crate::send_event(event);
+    }};
+}
+
+pub trait Property: erased_serde::Serialize + std::fmt::Debug + Send + Sync {}
+erased_serde::serialize_trait_object!(Property);
+
+pub struct Event {
+    pub name: String,
+    pub properties: HashMap<String, Box<dyn Property>>,
+}
+
+pub fn send_event(event: Event) {
+    if let Some(queue) = TELEMETRY_QUEUE.get() {
+        queue.unbounded_send(event).ok();
+        return;
+    }
+}
+
+pub fn init(tx: mpsc::UnboundedSender<Event>) {
+    TELEMETRY_QUEUE.set(tx).ok();
+}
+
+static TELEMETRY_QUEUE: OnceLock<mpsc::UnboundedSender<Event>> = OnceLock::new();

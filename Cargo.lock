@@ -12169,6 +12169,8 @@ dependencies = [
 name = "telemetry"
 version = "0.1.0"
 dependencies = [
+ "erased-serde",
+ "futures 0.3.31",
  "semantic_version",
  "serde",
 ]
