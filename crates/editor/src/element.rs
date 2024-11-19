@@ -1158,6 +1158,7 @@ impl EditorElement {
         rows_per_page: f32,
         cx: &mut WindowContext,
     ) -> Option<MinimapLayout> {
+        // TODO: draw text (huge task, getting guidance)
         // TODO: minimap_settings: display_mode (visible, minimal, hidden)
         // TODO: dragging / other mouse interactions
         

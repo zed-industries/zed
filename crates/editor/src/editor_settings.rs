@@ -98,7 +98,7 @@ pub struct Toolbar {
 }
 
 // TODO: minimap settings
-// how do migrations work?
+// how do migrations work when new settings are added?
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Scrollbar {
