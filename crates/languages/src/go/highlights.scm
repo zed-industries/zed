@@ -19,6 +19,10 @@
 (method_declaration
   name: (field_identifier) @function.method)
 
+(interface_type
+  (method_elem
+    name: (field_identifier) @interface.method))
+
 [
   "("
   ")"
