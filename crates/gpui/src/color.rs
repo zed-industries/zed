@@ -559,7 +559,7 @@ pub enum Background {
         /// The angle of the gradient.
         angle: f32,
         /// The color stops of the gradient.
-        stops: [BackgroundColorStop; 2],
+        stops: [LinearColorStop; 2],
     },
 }
 
@@ -571,25 +571,47 @@ impl Default for Background {
     }
 }
 
-/// A color stop in a linear gradient.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-#[repr(C)]
-pub struct BackgroundColorStop {
-    /// The percentage of the gradient, in the range 0.0 to 1.0.
-    pub percentage: f32,
-    /// The color of the color stop.
-    pub color: Hsla,
+/// Creates a LinearGradient background color.
+///
+/// The gradient line's angle of direction. A value of `0.` is equivalent to to top; increasing values rotate clockwise from there.
+///
+/// The `angle` is in degrees value in the range 0.0 to 360.0.
+///
+/// https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient
+pub fn linear_gradient(
+    angle: f32,
+    from: impl Into<LinearColorStop>,
+    to: impl Into<LinearColorStop>,
+) -> Background {
+    Background::LinearGradient {
+        angle,
+        stops: [from.into(), to.into()],
+    }
 }
 
-impl BackgroundColorStop {
-    /// Creates a new color stop.
-    pub fn new(color: impl Into<Hsla>, percentage: f32) -> Self {
-        Self {
-            percentage,
-            color: color.into(),
-        }
-    }
+/// A color stop in a linear gradient.
+///
+/// https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[repr(C)]
+pub struct LinearColorStop {
+    /// The color of the color stop.
+    pub color: Hsla,
+    /// The percentage of the gradient, in the range 0.0 to 1.0.
+    pub percentage: f32,
+}
 
+/// Creates a new linear color stop.
+///
+/// The percentage of the gradient, in the range 0.0 to 1.0.
+pub fn linear_color_stop(color: impl Into<Hsla>, percentage: f32) -> LinearColorStop {
+    LinearColorStop {
+        color: color.into(),
+        percentage,
+    }
+}
+
+impl LinearColorStop {
     /// Returns a new color stop with the same color, but with a modified alpha value.
     pub fn opacity(&self, factor: f32) -> Self {
         Self {
@@ -600,14 +622,6 @@ impl BackgroundColorStop {
 }
 
 impl Background {
-    /// Creates a LinearGradient background color.
-    pub fn linear_gradient(angle: f32, stops: [impl Into<BackgroundColorStop>; 2]) -> Self {
-        Self::LinearGradient {
-            angle,
-            stops: stops.map(Into::into),
-        }
-    }
-
     /// Returns a new background color with the same hue, saturation, and lightness, but with a modified alpha value.
     pub fn opacity(&self, factor: f32) -> Self {
         match self {

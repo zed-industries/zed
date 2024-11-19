@@ -1,5 +1,5 @@
 use gpui::{
-    div, prelude::*, App, AppContext, Background, BackgroundColorStop, Render, ViewContext,
+    div, linear_color_stop, linear_gradient, prelude::*, App, AppContext, Render, ViewContext,
     WindowOptions,
 };
 struct GradientViewer {}
@@ -32,8 +32,7 @@ impl Render for GradientViewer {
                     .gap_3()
                     .child(
                         div()
-                            .h_24()
-                            .w_full()
+                            .size_full()
                             .rounded_xl()
                             .flex()
                             .items_center()
@@ -44,8 +43,7 @@ impl Render for GradientViewer {
                     )
                     .child(
                         div()
-                            .h_24()
-                            .w_full()
+                            .size_full()
                             .rounded_xl()
                             .flex()
                             .items_center()
@@ -61,33 +59,25 @@ impl Render for GradientViewer {
                     .flex_1()
                     .gap_3()
                     .h_24()
-                    .child(div().flex_1().rounded_xl().bg(Background::linear_gradient(
+                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
                         45.,
-                        [
-                            BackgroundColorStop::new(red, 0.),
-                            BackgroundColorStop::new(blue, 1.),
-                        ],
+                        linear_color_stop(red, 0.),
+                        linear_color_stop(blue, 1.),
                     )))
-                    .child(div().flex_1().rounded_xl().bg(Background::linear_gradient(
+                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
                         135.,
-                        [
-                            BackgroundColorStop::new(red, 0.),
-                            BackgroundColorStop::new(blue, 1.),
-                        ],
+                        linear_color_stop(red, 0.),
+                        linear_color_stop(blue, 1.),
                     )))
-                    .child(div().flex_1().rounded_xl().bg(Background::linear_gradient(
+                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
                         225.,
-                        [
-                            BackgroundColorStop::new(red, 0.),
-                            BackgroundColorStop::new(blue, 1.),
-                        ],
+                        linear_color_stop(red, 0.),
+                        linear_color_stop(blue, 1.),
                     )))
-                    .child(div().flex_1().rounded_xl().bg(Background::linear_gradient(
+                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
                         315.,
-                        [
-                            BackgroundColorStop::new(red, 0.),
-                            BackgroundColorStop::new(blue, 1.),
-                        ],
+                        linear_color_stop(red, 0.),
+                        linear_color_stop(blue, 1.),
                     ))),
             )
             .child(
@@ -96,41 +86,31 @@ impl Render for GradientViewer {
                     .flex_1()
                     .gap_3()
                     .h_24()
-                    .child(div().flex_1().rounded_xl().bg(Background::linear_gradient(
+                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
                         0.,
-                        [
-                            BackgroundColorStop::new(red, 0.),
-                            BackgroundColorStop::new(blue, 1.),
-                        ],
+                        linear_color_stop(red, 0.),
+                        linear_color_stop(blue, 1.),
                     )))
-                    .child(div().flex_1().rounded_xl().bg(Background::linear_gradient(
+                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
                         90.,
-                        [
-                            BackgroundColorStop::new(red, 0.),
-                            BackgroundColorStop::new(blue, 1.),
-                        ],
+                        linear_color_stop(red, 0.),
+                        linear_color_stop(blue, 1.),
                     )))
-                    .child(div().flex_1().rounded_xl().bg(Background::linear_gradient(
+                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
                         180.,
-                        [
-                            BackgroundColorStop::new(red, 0.),
-                            BackgroundColorStop::new(blue, 1.),
-                        ],
+                        linear_color_stop(red, 0.),
+                        linear_color_stop(blue, 1.),
                     )))
-                    .child(div().flex_1().rounded_xl().bg(Background::linear_gradient(
+                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
                         360.,
-                        [
-                            BackgroundColorStop::new(red, 0.),
-                            BackgroundColorStop::new(blue, 1.),
-                        ],
+                        linear_color_stop(red, 0.),
+                        linear_color_stop(blue, 1.),
                     ))),
             )
-            .child(div().flex_1().rounded_xl().bg(Background::linear_gradient(
+            .child(div().flex_1().rounded_xl().bg(linear_gradient(
                 180.,
-                [
-                    BackgroundColorStop::new(gpui::black(), 0.2),
-                    BackgroundColorStop::new(gpui::white(), 1.),
-                ],
+                linear_color_stop(gpui::black(), 0.2),
+                linear_color_stop(gpui::white(), 1.),
             )))
             .child(
                 div()
@@ -142,20 +122,16 @@ impl Render for GradientViewer {
                             .flex()
                             .flex_1()
                             .gap_3()
-                            .child(div().flex_1().rounded_xl().bg(Background::linear_gradient(
+                            .child(div().flex_1().rounded_xl().bg(linear_gradient(
                                 90.,
-                                [
-                                    BackgroundColorStop::new(blue, 0.5),
-                                    BackgroundColorStop::new(green, 0.5),
-                                ],
+                                linear_color_stop(blue, 0.5),
+                                linear_color_stop(green, 0.5),
                             ))),
                     )
-                    .child(div().flex_1().rounded_xl().bg(Background::linear_gradient(
+                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
                         180.,
-                        [
-                            BackgroundColorStop::new(red, 0.25),
-                            BackgroundColorStop::new(yellow, 0.8),
-                        ],
+                        linear_color_stop(red, 0.25),
+                        linear_color_stop(yellow, 0.8),
                     ))),
             )
     }
