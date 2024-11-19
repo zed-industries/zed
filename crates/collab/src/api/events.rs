@@ -1561,6 +1561,9 @@ fn for_snowflake(
 
         let user_properties = Some(serde_json::json!({
             "is_staff": body.is_staff,
+            "Country": country_code.clone(),
+            "OS": format!("{} {}", body.os_name, body.os_version.clone().unwrap_or_default()),
+            "Version": body.app_version.clone(),
         }));
 
         Some(SnowflakeRow {
