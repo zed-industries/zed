@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
 use gpui::{AppContext, Task};
+use language::language_settings::language_settings;
 use language::LanguageName;
 use language::LanguageToolchainStore;
 use language::Toolchain;
@@ -21,6 +22,7 @@ use serde_json::{json, Value};
 use smol::{lock::OnceCell, process::Command};
 use std::cmp::Ordering;
 
+use std::str::FromStr;
 use std::sync::Mutex;
 use std::{
     any::Any,
@@ -30,7 +32,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::ResultExt;
+use util::{maybe, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
 const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
@@ -38,6 +40,18 @@ const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
 enum TestRunner {
     UNITTEST,
     PYTEST,
+}
+
+impl FromStr for TestRunner {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "unittest" => Ok(Self::UNITTEST),
+            "pytest" => Ok(Self::PYTEST),
+            _ => Err(()),
+        }
+    }
 }
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -284,11 +298,24 @@ impl ContextProvider for PythonContextProvider {
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::AppContext,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_runner = TestRunner::PYTEST; // TODO: Get this from settings.
+        let test_target = {
+            const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
+            let test_runner = language_settings(
+                Some(LanguageName::new("Python")),
+                location.buffer.read(cx).file(),
+                cx,
+            )
+            .tasks
+            .variables
+            .get(TEST_RUNNER_VARIABLE)
+            .and_then(|val| TestRunner::from_str(val).ok())
+            .unwrap_or(TestRunner::PYTEST);
 
-        let test_target = match test_runner {
-            TestRunner::UNITTEST => self.build_unittest_target(variables),
-            TestRunner::PYTEST => self.build_pytest_target(variables),
+            let runner = match test_runner {
+                TestRunner::UNITTEST => self.build_unittest_target(variables),
+                TestRunner::PYTEST => self.build_pytest_target(variables),
+            };
+            runner
         };
 
         let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
@@ -436,7 +463,7 @@ impl PythonContextProvider {
     ) -> Result<(VariableName, String)> {
         let file_path = variables
             .get(&VariableName::RelativeFile)
-            .expect("No file path given");
+            .ok_or(|| anyhow!("No file path given"))?;
 
         let pytest_class_name =
             variables.get(&VariableName::Custom(Cow::Borrowed("_pytest_class_name")));
