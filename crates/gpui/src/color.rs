@@ -635,7 +635,7 @@ impl LinearColorStop {
 impl Background {
     /// Returns a new background color with the same hue, saturation, and lightness, but with a modified alpha value.
     pub fn opacity(&self, factor: f32) -> Self {
-        let mut background = self.clone();
+        let mut new = *self;
         background.solid = background.solid.opacity(factor);
         background.colors = [
             self.colors[0].opacity(factor),
