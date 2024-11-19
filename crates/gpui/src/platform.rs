@@ -27,11 +27,11 @@ mod test;
 mod windows;
 
 use crate::{
-    point, Action, AnyWindowHandle, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
-    GPUSpecs, GlyphId, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
-    SharedString, Size, SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
+    point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
+    ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, SvgRenderer,
+    SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
 };
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
@@ -339,6 +339,11 @@ impl Tiling {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+pub(crate) struct RequestFrameOptions {
+    pub(crate) require_presentation: bool,
+}
+
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
@@ -367,7 +372,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn zoom(&self);
     fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;
-    fn on_request_frame(&self, callback: Box<dyn FnMut()>);
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
@@ -683,6 +688,11 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[allow(dead_code)]
+    fn apple_press_and_hold_enabled(&mut self) -> bool {
+        self.handler.apple_press_and_hold_enabled()
+    }
+
     pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut WindowContext) {
         self.handler.replace_text_in_range(None, input, cx);
     }
@@ -780,6 +790,15 @@ pub trait InputHandler: 'static {
         range_utf16: Range<usize>,
         cx: &mut WindowContext,
     ) -> Option<Bounds<Pixels>>;
+
+    /// Allows a given input context to opt into getting raw key repeats instead of
+    /// sending these to the platform.
+    /// TODO: Ideally we should be able to set ApplePressAndHoldEnabled in NSUserDefaults
+    /// (which is how iTerm does it) but it doesn't seem to work for me.
+    #[allow(dead_code)]
+    fn apple_press_and_hold_enabled(&mut self) -> bool {
+        true
+    }
 }
 
 /// The variables that can be configured when creating a new window
@@ -1245,11 +1264,13 @@ impl Image {
 
     /// Use the GPUI `use_asset` API to make this image renderable
     pub fn use_render_image(self: Arc<Self>, cx: &mut WindowContext) -> Option<Arc<RenderImage>> {
-        ImageSource::Image(self).use_data(cx)
+        ImageSource::Image(self)
+            .use_data(cx)
+            .and_then(|result| result.ok())
     }
 
     /// Convert the clipboard image to an `ImageData` object.
-    pub fn to_image_data(&self, cx: &AppContext) -> Result<Arc<RenderImage>> {
+    pub fn to_image_data(&self, svg_renderer: SvgRenderer) -> Result<Arc<RenderImage>> {
         fn frames_for_image(
             bytes: &[u8],
             format: image::ImageFormat,
@@ -1286,10 +1307,7 @@ impl Image {
             ImageFormat::Bmp => frames_for_image(&self.bytes, image::ImageFormat::Bmp)?,
             ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Svg => {
-                // TODO: Fix this
-                let pixmap = cx
-                    .svg_renderer()
-                    .render_pixmap(&self.bytes, SvgSize::ScaleFactor(1.0))?;
+                let pixmap = svg_renderer.render_pixmap(&self.bytes, SvgSize::ScaleFactor(1.0))?;
 
                 let buffer =
                     image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())

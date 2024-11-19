@@ -25,6 +25,13 @@ use util::TryFutureExt;
 const JSON_RPC_VERSION: &str = "2.0";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
+// Standard JSON-RPC error codes
+pub const PARSE_ERROR: i32 = -32700;
+pub const INVALID_REQUEST: i32 = -32600;
+pub const METHOD_NOT_FOUND: i32 = -32601;
+pub const INVALID_PARAMS: i32 = -32602;
+pub const INTERNAL_ERROR: i32 = -32603;
+
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncAppContext)>;
 
@@ -53,7 +60,7 @@ pub struct Client {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct ContextServerId(pub String);
+pub struct ContextServerId(pub Arc<str>);
 
 fn is_null_value<T: Serialize>(value: &T) -> bool {
     if let Ok(Value::Null) = serde_json::to_value(value) {

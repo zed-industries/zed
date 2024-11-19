@@ -1,7 +1,7 @@
 use crate::components::KernelListItem;
 use crate::setup_editor_session_actions;
 use crate::{
-    kernels::{Kernel, KernelSpecification, RunningKernel},
+    kernels::{Kernel, KernelSpecification, NativeRunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
     KernelStatus,
 };
@@ -121,7 +121,7 @@ impl EditorBlock {
         execution_view: View<ExecutionView>,
         on_close: CloseBlockFn,
     ) -> RenderBlock {
-        let render = move |cx: &mut BlockContext| {
+        Arc::new(move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
             let text_style = crate::outputs::plain::text_style(cx);
 
@@ -163,6 +163,7 @@ impl EditorBlock {
 
             div()
                 .id(cx.block_id)
+                .block_mouse_down()
                 .flex()
                 .items_start()
                 .min_h(text_line_height)
@@ -186,9 +187,7 @@ impl EditorBlock {
                         .child(execution_view),
                 )
                 .into_any_element()
-        };
-
-        Box::new(render)
+        })
     }
 }
 
@@ -247,13 +246,19 @@ impl Session {
             cx.entity_id().to_string(),
         );
 
-        let kernel = RunningKernel::new(
-            self.kernel_specification.clone(),
-            entity_id,
-            working_directory,
-            self.fs.clone(),
-            cx,
-        );
+        let kernel = match self.kernel_specification.clone() {
+            KernelSpecification::Jupyter(kernel_specification)
+            | KernelSpecification::PythonEnv(kernel_specification) => NativeRunningKernel::new(
+                kernel_specification,
+                entity_id,
+                working_directory,
+                self.fs.clone(),
+                cx,
+            ),
+            KernelSpecification::Remote(_remote_kernel_specification) => {
+                unimplemented!()
+            }
+        };
 
         let pending_kernel = cx
             .spawn(|this, mut cx| async move {
@@ -292,7 +297,7 @@ impl Session {
                             .detach();
 
                             let status = kernel.process.status();
-                            session.kernel(Kernel::RunningKernel(kernel), cx);
+                            session.kernel(Kernel::RunningKernel(Box::new(kernel)), cx);
 
                             let process_status_task = cx.spawn(|session, mut cx| async move {
                                 let error_message = match status.await {
@@ -417,7 +422,7 @@ impl Session {
 
     fn send(&mut self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
         if let Kernel::RunningKernel(kernel) = &mut self.kernel {
-            kernel.request_tx.try_send(message).ok();
+            kernel.request_tx().try_send(message).ok();
         }
 
         anyhow::Ok(())
@@ -632,7 +637,7 @@ impl Session {
 
         match kernel {
             Kernel::RunningKernel(mut kernel) => {
-                let mut request_tx = kernel.request_tx.clone();
+                let mut request_tx = kernel.request_tx().clone();
 
                 cx.spawn(|this, mut cx| async move {
                     let message: JupyterMessage = ShutdownRequest { restart: false }.into();
@@ -647,7 +652,7 @@ impl Session {
                     })
                     .ok();
 
-                    kernel.process.kill().ok();
+                    kernel.force_shutdown().ok();
 
                     this.update(&mut cx, |session, cx| {
                         session.clear_outputs(cx);
@@ -675,7 +680,7 @@ impl Session {
                 // Do nothing if already restarting
             }
             Kernel::RunningKernel(mut kernel) => {
-                let mut request_tx = kernel.request_tx.clone();
+                let mut request_tx = kernel.request_tx().clone();
 
                 cx.spawn(|this, mut cx| async move {
                     // Send shutdown request with restart flag
@@ -693,7 +698,7 @@ impl Session {
                     cx.background_executor().timer(Duration::from_secs(1)).await;
 
                     // Force kill the kernel if it hasn't shut down
-                    kernel.process.kill().ok();
+                    kernel.force_shutdown().ok();
 
                     // Start a new kernel
                     this.update(&mut cx, |session, cx| {
@@ -728,7 +733,7 @@ impl Render for Session {
         let (status_text, interrupt_button) = match &self.kernel {
             Kernel::RunningKernel(kernel) => (
                 kernel
-                    .kernel_info
+                    .kernel_info()
                     .as_ref()
                     .map(|info| info.language_info.name.clone()),
                 Some(
@@ -748,7 +753,7 @@ impl Render for Session {
 
         KernelListItem::new(self.kernel_specification.clone())
             .status_color(match &self.kernel {
-                Kernel::RunningKernel(kernel) => match kernel.execution_state {
+                Kernel::RunningKernel(kernel) => match kernel.execution_state() {
                     ExecutionState::Idle => Color::Success,
                     ExecutionState::Busy => Color::Modified,
                 },

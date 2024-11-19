@@ -605,7 +605,7 @@ impl Render for Dock {
             let create_resize_handle = || {
                 let handle = div()
                     .id("resize-handle")
-                    .on_drag(DraggedDock(position), |dock, cx| {
+                    .on_drag(DraggedDock(position), |dock, _, cx| {
                         cx.stop_propagation();
                         cx.new_view(|_| dock.clone())
                     })

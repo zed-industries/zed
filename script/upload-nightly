@@ -19,12 +19,12 @@ if [[ -n "${1:-}" ]]; then
         target="$1"
     else
         echo "Error: Target '$1' is not allowed"
-        echo "Usage: $0 [${allowed_targets[@]}]"
+        echo "Usage: $0 [${allowed_targets[*]}]"
         exit 1
     fi
 else
 echo "Error: Target is not specified"
-echo "Usage: $0 [${allowed_targets[@]}]"
+echo "Usage: $0 [${allowed_targets[*]}]"
 exit 1
 fi
 echo "Uploading nightly for target: $target"

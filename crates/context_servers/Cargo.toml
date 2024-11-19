@@ -13,7 +13,6 @@ path = "src/context_servers.rs"
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 futures.workspace = true
@@ -21,6 +20,7 @@ gpui.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
+project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

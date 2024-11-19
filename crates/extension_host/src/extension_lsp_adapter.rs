@@ -1,14 +1,12 @@
-use crate::wasm_host::{
-    wit::{self, LanguageServerConfig},
-    WasmExtension, WasmHost,
-};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
+use extension::{Extension, WorktreeDelegate};
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
 use language::{
-    CodeLabel, HighlightId, Language, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    CodeLabel, HighlightId, Language, LanguageName, LanguageToolchainStore, LspAdapter,
+    LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
@@ -16,19 +14,46 @@ use serde_json::Value;
 use std::ops::Range;
 use std::{any::Any, path::PathBuf, pin::Pin, sync::Arc};
 use util::{maybe, ResultExt};
-use wasmtime_wasi::WasiView as _;
+
+/// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
+pub struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
+
+#[async_trait]
+impl WorktreeDelegate for WorktreeDelegateAdapter {
+    fn id(&self) -> u64 {
+        self.0.worktree_id().to_proto()
+    }
+
+    fn root_path(&self) -> String {
+        self.0.worktree_root_path().to_string_lossy().to_string()
+    }
+
+    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+        self.0.read_text_file(path).await
+    }
+
+    async fn which(&self, binary_name: String) -> Option<String> {
+        self.0
+            .which(binary_name.as_ref())
+            .await
+            .map(|path| path.to_string_lossy().to_string())
+    }
+
+    async fn shell_env(&self) -> Vec<(String, String)> {
+        self.0.shell_env().await.into_iter().collect()
+    }
+}
 
 pub struct ExtensionLspAdapter {
-    pub(crate) extension: WasmExtension,
+    pub(crate) extension: Arc<dyn Extension>,
     pub(crate) language_server_id: LanguageServerName,
-    pub(crate) config: LanguageServerConfig,
-    pub(crate) host: Arc<WasmHost>,
+    pub(crate) language_name: LanguageName,
 }
 
 #[async_trait(?Send)]
 impl LspAdapter for ExtensionLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(self.config.name.clone().into())
+        self.language_server_id.clone()
     }
 
     fn get_language_server_command<'a>(
@@ -39,32 +64,17 @@ impl LspAdapter for ExtensionLspAdapter {
         _: &'a mut AsyncAppContext,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move {
+            let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
             let command = self
                 .extension
-                .call({
-                    let this = self.clone();
-                    |extension, store| {
-                        async move {
-                            let resource = store.data_mut().table().push(delegate)?;
-                            let command = extension
-                                .call_language_server_command(
-                                    store,
-                                    &this.language_server_id,
-                                    &this.config,
-                                    resource,
-                                )
-                                .await?
-                                .map_err(|e| anyhow!("{}", e))?;
-                            anyhow::Ok(command)
-                        }
-                        .boxed()
-                    }
-                })
+                .language_server_command(
+                    self.language_server_id.clone(),
+                    self.language_name.clone(),
+                    delegate,
+                )
                 .await?;
 
-            let path = self
-                .host
-                .path_from_extension(&self.extension.manifest.id, command.command.as_ref());
+            let path = self.extension.path_from_extension(command.command.as_ref());
 
             // TODO: This should now be done via the `zed::make_file_executable` function in
             // Zed extension API, but we're leaving these existing usages in place temporarily
@@ -73,8 +83,8 @@ impl LspAdapter for ExtensionLspAdapter {
             // We can remove once the following extension versions no longer see any use:
             // - toml@0.0.2
             // - zig@0.0.1
-            if ["toml", "zig"].contains(&self.extension.manifest.id.as_ref())
-                && path.starts_with(&self.host.work_dir)
+            if ["toml", "zig"].contains(&self.extension.manifest().id.as_ref())
+                && path.starts_with(&self.extension.work_dir())
             {
                 #[cfg(not(windows))]
                 {
@@ -122,7 +132,7 @@ impl LspAdapter for ExtensionLspAdapter {
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         let code_action_kinds = self
             .extension
-            .manifest
+            .manifest()
             .language_servers
             .get(&self.language_server_id)
             .and_then(|server| server.code_action_kinds.clone());
@@ -143,14 +153,14 @@ impl LspAdapter for ExtensionLspAdapter {
         //
         // We can remove once the following extension versions no longer see any use:
         // - php@0.0.1
-        if self.extension.manifest.id.as_ref() == "php" {
+        if self.extension.manifest().id.as_ref() == "php" {
             return HashMap::from_iter([("PHP".into(), "php".into())]);
         }
 
         self.extension
-            .manifest
+            .manifest()
             .language_servers
-            .get(&LanguageServerName(self.config.name.clone().into()))
+            .get(&self.language_server_id)
             .map(|server| server.language_ids.clone())
             .unwrap_or_default()
     }
@@ -159,28 +169,14 @@ impl LspAdapter for ExtensionLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let delegate = delegate.clone();
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options = self
             .extension
-            .call({
-                let this = self.clone();
-                |extension, store| {
-                    async move {
-                        let resource = store.data_mut().table().push(delegate)?;
-                        let options = extension
-                            .call_language_server_initialization_options(
-                                store,
-                                &this.language_server_id,
-                                &this.config,
-                                resource,
-                            )
-                            .await?
-                            .map_err(|e| anyhow!("{}", e))?;
-                        anyhow::Ok(options)
-                    }
-                    .boxed()
-                }
-            })
+            .language_server_initialization_options(
+                self.language_server_id.clone(),
+                self.language_name.clone(),
+                delegate,
+            )
             .await?;
         Ok(if let Some(json_options) = json_options {
             serde_json::from_str(&json_options).with_context(|| {
@@ -197,31 +193,14 @@ impl LspAdapter for ExtensionLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        let delegate = delegate.clone();
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options: Option<String> = self
             .extension
-            .call({
-                let this = self.clone();
-                |extension, store| {
-                    async move {
-                        let resource = store.data_mut().table().push(delegate)?;
-                        let options = extension
-                            .call_language_server_workspace_configuration(
-                                store,
-                                &this.language_server_id,
-                                resource,
-                            )
-                            .await?
-                            .map_err(|e| anyhow!("{}", e))?;
-                        anyhow::Ok(options)
-                    }
-                    .boxed()
-                }
-            })
+            .language_server_workspace_configuration(self.language_server_id.clone(), delegate)
             .await?;
         Ok(if let Some(json_options) = json_options {
             serde_json::from_str(&json_options).with_context(|| {
-                format!("failed to parse initialization_options from extension: {json_options}")
+                format!("failed to parse workspace_configuration from extension: {json_options}")
             })?
         } else {
             serde_json::json!({})
@@ -235,30 +214,16 @@ impl LspAdapter for ExtensionLspAdapter {
     ) -> Result<Vec<Option<CodeLabel>>> {
         let completions = completions
             .iter()
-            .map(|completion| wit::Completion::from(completion.clone()))
+            .cloned()
+            .map(lsp_completion_to_extension)
             .collect::<Vec<_>>();
 
         let labels = self
             .extension
-            .call({
-                let this = self.clone();
-                |extension, store| {
-                    async move {
-                        extension
-                            .call_labels_for_completions(
-                                store,
-                                &this.language_server_id,
-                                completions,
-                            )
-                            .await?
-                            .map_err(|e| anyhow!("{}", e))
-                    }
-                    .boxed()
-                }
-            })
+            .labels_for_completions(self.language_server_id.clone(), completions)
             .await?;
 
-        Ok(labels_from_wit(labels, language))
+        Ok(labels_from_extension(labels, language))
     }
 
     async fn labels_for_symbols(
@@ -269,34 +234,29 @@ impl LspAdapter for ExtensionLspAdapter {
         let symbols = symbols
             .iter()
             .cloned()
-            .map(|(name, kind)| wit::Symbol {
+            .map(|(name, kind)| extension::Symbol {
                 name,
-                kind: kind.into(),
+                kind: lsp_symbol_kind_to_extension(kind),
             })
             .collect::<Vec<_>>();
 
         let labels = self
             .extension
-            .call({
-                let this = self.clone();
-                |extension, store| {
-                    async move {
-                        extension
-                            .call_labels_for_symbols(store, &this.language_server_id, symbols)
-                            .await?
-                            .map_err(|e| anyhow!("{}", e))
-                    }
-                    .boxed()
-                }
-            })
+            .labels_for_symbols(self.language_server_id.clone(), symbols)
             .await?;
 
-        Ok(labels_from_wit(labels, language))
+        Ok(labels_from_extension(
+            labels
+                .into_iter()
+                .map(|label| label.map(Into::into))
+                .collect(),
+            language,
+        ))
     }
 }
 
-fn labels_from_wit(
-    labels: Vec<Option<wit::CodeLabel>>,
+fn labels_from_extension(
+    labels: Vec<Option<extension::CodeLabel>>,
     language: &Arc<Language>,
 ) -> Vec<Option<CodeLabel>> {
     labels
@@ -314,7 +274,7 @@ fn labels_from_wit(
 }
 
 fn build_code_label(
-    label: &wit::CodeLabel,
+    label: &extension::CodeLabel,
     parsed_runs: &[(Range<usize>, HighlightId)],
     language: &Arc<Language>,
 ) -> Option<CodeLabel> {
@@ -323,8 +283,7 @@ fn build_code_label(
 
     for span in &label.spans {
         match span {
-            wit::CodeLabelSpan::CodeRange(range) => {
-                let range = Range::from(*range);
+            extension::CodeLabelSpan::CodeRange(range) => {
                 let code_span = &label.code.get(range.clone())?;
                 let mut input_ix = range.start;
                 let mut output_ix = text.len();
@@ -350,7 +309,7 @@ fn build_code_label(
 
                 text.push_str(code_span);
             }
-            wit::CodeLabelSpan::Literal(span) => {
+            extension::CodeLabelSpan::Literal(span) => {
                 let highlight_id = language
                     .grammar()
                     .zip(span.highlight_name.as_ref())
@@ -365,7 +324,7 @@ fn build_code_label(
         }
     }
 
-    let filter_range = Range::from(label.filter_range);
+    let filter_range = label.filter_range.clone();
     text.get(filter_range.clone())?;
     Some(CodeLabel {
         text,
@@ -374,109 +333,101 @@ fn build_code_label(
     })
 }
 
-impl From<wit::Range> for Range<usize> {
-    fn from(range: wit::Range) -> Self {
-        let start = range.start as usize;
-        let end = range.end as usize;
-        start..end
+fn lsp_completion_to_extension(value: lsp::CompletionItem) -> extension::Completion {
+    extension::Completion {
+        label: value.label,
+        label_details: value
+            .label_details
+            .map(lsp_completion_item_label_details_to_extension),
+        detail: value.detail,
+        kind: value.kind.map(lsp_completion_item_kind_to_extension),
+        insert_text_format: value
+            .insert_text_format
+            .map(lsp_insert_text_format_to_extension),
     }
 }
 
-impl From<lsp::CompletionItem> for wit::Completion {
-    fn from(value: lsp::CompletionItem) -> Self {
-        Self {
-            label: value.label,
-            label_details: value.label_details.map(Into::into),
-            detail: value.detail,
-            kind: value.kind.map(Into::into),
-            insert_text_format: value.insert_text_format.map(Into::into),
-        }
+fn lsp_completion_item_label_details_to_extension(
+    value: lsp::CompletionItemLabelDetails,
+) -> extension::CompletionLabelDetails {
+    extension::CompletionLabelDetails {
+        detail: value.detail,
+        description: value.description,
     }
 }
 
-impl From<lsp::CompletionItemLabelDetails> for wit::CompletionLabelDetails {
-    fn from(value: lsp::CompletionItemLabelDetails) -> Self {
-        Self {
-            detail: value.detail,
-            description: value.description,
-        }
+fn lsp_completion_item_kind_to_extension(
+    value: lsp::CompletionItemKind,
+) -> extension::CompletionKind {
+    match value {
+        lsp::CompletionItemKind::TEXT => extension::CompletionKind::Text,
+        lsp::CompletionItemKind::METHOD => extension::CompletionKind::Method,
+        lsp::CompletionItemKind::FUNCTION => extension::CompletionKind::Function,
+        lsp::CompletionItemKind::CONSTRUCTOR => extension::CompletionKind::Constructor,
+        lsp::CompletionItemKind::FIELD => extension::CompletionKind::Field,
+        lsp::CompletionItemKind::VARIABLE => extension::CompletionKind::Variable,
+        lsp::CompletionItemKind::CLASS => extension::CompletionKind::Class,
+        lsp::CompletionItemKind::INTERFACE => extension::CompletionKind::Interface,
+        lsp::CompletionItemKind::MODULE => extension::CompletionKind::Module,
+        lsp::CompletionItemKind::PROPERTY => extension::CompletionKind::Property,
+        lsp::CompletionItemKind::UNIT => extension::CompletionKind::Unit,
+        lsp::CompletionItemKind::VALUE => extension::CompletionKind::Value,
+        lsp::CompletionItemKind::ENUM => extension::CompletionKind::Enum,
+        lsp::CompletionItemKind::KEYWORD => extension::CompletionKind::Keyword,
+        lsp::CompletionItemKind::SNIPPET => extension::CompletionKind::Snippet,
+        lsp::CompletionItemKind::COLOR => extension::CompletionKind::Color,
+        lsp::CompletionItemKind::FILE => extension::CompletionKind::File,
+        lsp::CompletionItemKind::REFERENCE => extension::CompletionKind::Reference,
+        lsp::CompletionItemKind::FOLDER => extension::CompletionKind::Folder,
+        lsp::CompletionItemKind::ENUM_MEMBER => extension::CompletionKind::EnumMember,
+        lsp::CompletionItemKind::CONSTANT => extension::CompletionKind::Constant,
+        lsp::CompletionItemKind::STRUCT => extension::CompletionKind::Struct,
+        lsp::CompletionItemKind::EVENT => extension::CompletionKind::Event,
+        lsp::CompletionItemKind::OPERATOR => extension::CompletionKind::Operator,
+        lsp::CompletionItemKind::TYPE_PARAMETER => extension::CompletionKind::TypeParameter,
+        _ => extension::CompletionKind::Other(extract_int(value)),
     }
 }
 
-impl From<lsp::CompletionItemKind> for wit::CompletionKind {
-    fn from(value: lsp::CompletionItemKind) -> Self {
-        match value {
-            lsp::CompletionItemKind::TEXT => Self::Text,
-            lsp::CompletionItemKind::METHOD => Self::Method,
-            lsp::CompletionItemKind::FUNCTION => Self::Function,
-            lsp::CompletionItemKind::CONSTRUCTOR => Self::Constructor,
-            lsp::CompletionItemKind::FIELD => Self::Field,
-            lsp::CompletionItemKind::VARIABLE => Self::Variable,
-            lsp::CompletionItemKind::CLASS => Self::Class,
-            lsp::CompletionItemKind::INTERFACE => Self::Interface,
-            lsp::CompletionItemKind::MODULE => Self::Module,
-            lsp::CompletionItemKind::PROPERTY => Self::Property,
-            lsp::CompletionItemKind::UNIT => Self::Unit,
-            lsp::CompletionItemKind::VALUE => Self::Value,
-            lsp::CompletionItemKind::ENUM => Self::Enum,
-            lsp::CompletionItemKind::KEYWORD => Self::Keyword,
-            lsp::CompletionItemKind::SNIPPET => Self::Snippet,
-            lsp::CompletionItemKind::COLOR => Self::Color,
-            lsp::CompletionItemKind::FILE => Self::File,
-            lsp::CompletionItemKind::REFERENCE => Self::Reference,
-            lsp::CompletionItemKind::FOLDER => Self::Folder,
-            lsp::CompletionItemKind::ENUM_MEMBER => Self::EnumMember,
-            lsp::CompletionItemKind::CONSTANT => Self::Constant,
-            lsp::CompletionItemKind::STRUCT => Self::Struct,
-            lsp::CompletionItemKind::EVENT => Self::Event,
-            lsp::CompletionItemKind::OPERATOR => Self::Operator,
-            lsp::CompletionItemKind::TYPE_PARAMETER => Self::TypeParameter,
-            _ => Self::Other(extract_int(value)),
-        }
+fn lsp_insert_text_format_to_extension(
+    value: lsp::InsertTextFormat,
+) -> extension::InsertTextFormat {
+    match value {
+        lsp::InsertTextFormat::PLAIN_TEXT => extension::InsertTextFormat::PlainText,
+        lsp::InsertTextFormat::SNIPPET => extension::InsertTextFormat::Snippet,
+        _ => extension::InsertTextFormat::Other(extract_int(value)),
     }
 }
 
-impl From<lsp::InsertTextFormat> for wit::InsertTextFormat {
-    fn from(value: lsp::InsertTextFormat) -> Self {
-        match value {
-            lsp::InsertTextFormat::PLAIN_TEXT => Self::PlainText,
-            lsp::InsertTextFormat::SNIPPET => Self::Snippet,
-            _ => Self::Other(extract_int(value)),
-        }
-    }
-}
-
-impl From<lsp::SymbolKind> for wit::SymbolKind {
-    fn from(value: lsp::SymbolKind) -> Self {
-        match value {
-            lsp::SymbolKind::FILE => Self::File,
-            lsp::SymbolKind::MODULE => Self::Module,
-            lsp::SymbolKind::NAMESPACE => Self::Namespace,
-            lsp::SymbolKind::PACKAGE => Self::Package,
-            lsp::SymbolKind::CLASS => Self::Class,
-            lsp::SymbolKind::METHOD => Self::Method,
-            lsp::SymbolKind::PROPERTY => Self::Property,
-            lsp::SymbolKind::FIELD => Self::Field,
-            lsp::SymbolKind::CONSTRUCTOR => Self::Constructor,
-            lsp::SymbolKind::ENUM => Self::Enum,
-            lsp::SymbolKind::INTERFACE => Self::Interface,
-            lsp::SymbolKind::FUNCTION => Self::Function,
-            lsp::SymbolKind::VARIABLE => Self::Variable,
-            lsp::SymbolKind::CONSTANT => Self::Constant,
-            lsp::SymbolKind::STRING => Self::String,
-            lsp::SymbolKind::NUMBER => Self::Number,
-            lsp::SymbolKind::BOOLEAN => Self::Boolean,
-            lsp::SymbolKind::ARRAY => Self::Array,
-            lsp::SymbolKind::OBJECT => Self::Object,
-            lsp::SymbolKind::KEY => Self::Key,
-            lsp::SymbolKind::NULL => Self::Null,
-            lsp::SymbolKind::ENUM_MEMBER => Self::EnumMember,
-            lsp::SymbolKind::STRUCT => Self::Struct,
-            lsp::SymbolKind::EVENT => Self::Event,
-            lsp::SymbolKind::OPERATOR => Self::Operator,
-            lsp::SymbolKind::TYPE_PARAMETER => Self::TypeParameter,
-            _ => Self::Other(extract_int(value)),
-        }
+fn lsp_symbol_kind_to_extension(value: lsp::SymbolKind) -> extension::SymbolKind {
+    match value {
+        lsp::SymbolKind::FILE => extension::SymbolKind::File,
+        lsp::SymbolKind::MODULE => extension::SymbolKind::Module,
+        lsp::SymbolKind::NAMESPACE => extension::SymbolKind::Namespace,
+        lsp::SymbolKind::PACKAGE => extension::SymbolKind::Package,
+        lsp::SymbolKind::CLASS => extension::SymbolKind::Class,
+        lsp::SymbolKind::METHOD => extension::SymbolKind::Method,
+        lsp::SymbolKind::PROPERTY => extension::SymbolKind::Property,
+        lsp::SymbolKind::FIELD => extension::SymbolKind::Field,
+        lsp::SymbolKind::CONSTRUCTOR => extension::SymbolKind::Constructor,
+        lsp::SymbolKind::ENUM => extension::SymbolKind::Enum,
+        lsp::SymbolKind::INTERFACE => extension::SymbolKind::Interface,
+        lsp::SymbolKind::FUNCTION => extension::SymbolKind::Function,
+        lsp::SymbolKind::VARIABLE => extension::SymbolKind::Variable,
+        lsp::SymbolKind::CONSTANT => extension::SymbolKind::Constant,
+        lsp::SymbolKind::STRING => extension::SymbolKind::String,
+        lsp::SymbolKind::NUMBER => extension::SymbolKind::Number,
+        lsp::SymbolKind::BOOLEAN => extension::SymbolKind::Boolean,
+        lsp::SymbolKind::ARRAY => extension::SymbolKind::Array,
+        lsp::SymbolKind::OBJECT => extension::SymbolKind::Object,
+        lsp::SymbolKind::KEY => extension::SymbolKind::Key,
+        lsp::SymbolKind::NULL => extension::SymbolKind::Null,
+        lsp::SymbolKind::ENUM_MEMBER => extension::SymbolKind::EnumMember,
+        lsp::SymbolKind::STRUCT => extension::SymbolKind::Struct,
+        lsp::SymbolKind::EVENT => extension::SymbolKind::Event,
+        lsp::SymbolKind::OPERATOR => extension::SymbolKind::Operator,
+        lsp::SymbolKind::TYPE_PARAMETER => extension::SymbolKind::TypeParameter,
+        _ => extension::SymbolKind::Other(extract_int(value)),
     }
 }
 
@@ -503,21 +454,14 @@ fn test_build_code_label() {
         .collect::<Vec<_>>();
 
     let label = build_code_label(
-        &wit::CodeLabel {
+        &extension::CodeLabel {
             spans: vec![
-                wit::CodeLabelSpan::CodeRange(wit::Range {
-                    start: code.find("pqrs").unwrap() as u32,
-                    end: code.len() as u32,
-                }),
-                wit::CodeLabelSpan::CodeRange(wit::Range {
-                    start: code.find(": fn").unwrap() as u32,
-                    end: code.find(" = ").unwrap() as u32,
-                }),
+                extension::CodeLabelSpan::CodeRange(code.find("pqrs").unwrap()..code.len()),
+                extension::CodeLabelSpan::CodeRange(
+                    code.find(": fn").unwrap()..code.find(" = ").unwrap(),
+                ),
             ],
-            filter_range: wit::Range {
-                start: 0,
-                end: "pqrs.tuv".len() as u32,
-            },
+            filter_range: 0.."pqrs.tuv".len(),
             code,
         },
         &code_runs,
@@ -555,21 +499,14 @@ fn test_build_code_label_with_invalid_ranges() {
     // A span uses a code range that is invalid because it starts inside of
     // a multi-byte character.
     let label = build_code_label(
-        &wit::CodeLabel {
+        &extension::CodeLabel {
             spans: vec![
-                wit::CodeLabelSpan::CodeRange(wit::Range {
-                    start: code.find('B').unwrap() as u32,
-                    end: code.find(" = ").unwrap() as u32,
-                }),
-                wit::CodeLabelSpan::CodeRange(wit::Range {
-                    start: code.find('🏀').unwrap() as u32 + 1,
-                    end: code.len() as u32,
-                }),
+                extension::CodeLabelSpan::CodeRange(
+                    code.find('B').unwrap()..code.find(" = ").unwrap(),
+                ),
+                extension::CodeLabelSpan::CodeRange((code.find('🏀').unwrap() + 1)..code.len()),
             ],
-            filter_range: wit::Range {
-                start: 0,
-                end: "B".len() as u32,
-            },
+            filter_range: 0.."B".len(),
             code,
         },
         &code_runs,
@@ -579,12 +516,14 @@ fn test_build_code_label_with_invalid_ranges() {
 
     // Filter range extends beyond actual text
     let label = build_code_label(
-        &wit::CodeLabel {
-            spans: vec![wit::CodeLabelSpan::Literal(wit::CodeLabelSpanLiteral {
-                text: "abc".into(),
-                highlight_name: Some("type".into()),
-            })],
-            filter_range: wit::Range { start: 0, end: 5 },
+        &extension::CodeLabel {
+            spans: vec![extension::CodeLabelSpan::Literal(
+                extension::CodeLabelSpanLiteral {
+                    text: "abc".into(),
+                    highlight_name: Some("type".into()),
+                },
+            )],
+            filter_range: 0..5,
             code: String::new(),
         },
         &code_runs,

@@ -23,7 +23,7 @@ use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
     prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label, PopoverMenu,
-    TabBar, Tooltip,
+    Tab, TabBar, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -939,7 +939,7 @@ impl Render for ChatPanel {
                     TabBar::new("chat_header").child(
                         h_flex()
                             .w_full()
-                            .h(rems(ui::Tab::CONTAINER_HEIGHT_IN_REMS))
+                            .h(Tab::container_height(cx))
                             .px_2()
                             .child(Label::new(
                                 self.active_chat

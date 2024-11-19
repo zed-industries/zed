@@ -4,9 +4,9 @@ use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
     px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
     Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptLevel, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
-    WindowParams, X11ClientStatePtr,
+    PlatformWindow, Point, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
+    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowKind, WindowParams, X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
@@ -227,7 +227,7 @@ struct RawWindow {
 
 #[derive(Default)]
 pub struct Callbacks {
-    request_frame: Option<Box<dyn FnMut()>>,
+    request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     hovered_status_change: Option<Box<dyn FnMut(bool)>>,
@@ -830,10 +830,10 @@ impl X11WindowStatePtr {
         }
     }
 
-    pub fn refresh(&self) {
+    pub fn refresh(&self, request_frame_options: RequestFrameOptions) {
         let mut cb = self.callbacks.borrow_mut();
         if let Some(ref mut fun) = cb.request_frame {
-            fun();
+            fun(request_frame_options);
         }
     }
 
@@ -1204,7 +1204,7 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().fullscreen
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 

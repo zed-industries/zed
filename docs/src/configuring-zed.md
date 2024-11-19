@@ -857,6 +857,8 @@ While other options may be changed at a runtime and should be placed under `sett
 
 3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like prettier support receiving the file path via a command line argument which can then used to impact formatting decisions.
 
+WARNING: `{buffer_path}` should not be used to direct your formatter to read from a filename. Your formatter should only read from standard input and should not read or write files directly.
+
 ```json
   "formatter": {
     "external": {
@@ -1445,6 +1447,14 @@ Or to set a `socks5` proxy:
 **Options**
 
 `boolean` values
+
+## File Finder
+
+### Modal Max Width
+
+- Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
+- Setting: `max_modal_width`
+- Default: `small`
 
 ## Preferred Line Length
 
@@ -2349,15 +2359,18 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Default:
 
 ```json
-"assistant": {
-  "enabled": true,
-  "button": true,
-  "dock": "right",
-  "default_width": 640,
-  "default_height": 320,
-  "provider": "openai",
-  "version": "1",
-},
+{
+  "assistant": {
+    "enabled": true,
+    "button": true,
+    "dock": "right",
+    "default_width": 640,
+    "default_height": 320,
+    "provider": "openai",
+    "version": "1",
+    "show_hints": true
+  }
+}
 ```
 
 ## Outline Panel

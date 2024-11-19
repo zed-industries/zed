@@ -1570,3 +1570,36 @@ async fn test_sentence_forwards(cx: &mut gpui::TestAppContext) {
 
     cx.set_shared_state("helˇlo.\n\n\nworld.").await;
 }
+
+#[gpui::test]
+async fn test_ctrl_o_visual(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("helloˇ world.").await;
+    cx.simulate_shared_keystrokes("i ctrl-o v b r l").await;
+    cx.shared_state().await.assert_eq("ˇllllllworld.");
+    cx.simulate_shared_keystrokes("ctrl-o v f w d").await;
+    cx.shared_state().await.assert_eq("ˇorld.");
+}
+
+#[gpui::test]
+async fn test_ctrl_o_position(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("helˇlo world.").await;
+    cx.simulate_shared_keystrokes("i ctrl-o d i w").await;
+    cx.shared_state().await.assert_eq("ˇ world.");
+    cx.simulate_shared_keystrokes("ctrl-o p").await;
+    cx.shared_state().await.assert_eq(" helloˇworld.");
+}
+
+#[gpui::test]
+async fn test_ctrl_o_dot(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("heˇllo world.").await;
+    cx.simulate_shared_keystrokes("x i ctrl-o .").await;
+    cx.shared_state().await.assert_eq("heˇo world.");
+    cx.simulate_shared_keystrokes("l l escape .").await;
+    cx.shared_state().await.assert_eq("hellˇllo world.");
+}

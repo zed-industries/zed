@@ -5540,16 +5540,9 @@ impl LspStore {
                 binary.arguments = arguments.into_iter().map(Into::into).collect();
             }
 
-            // If we do have a project environment (either by spawning a shell in in the project directory
-            // or by getting it from the CLI) and the language server command itself
-            // doesn't have an environment, then we use the project environment.
-            if binary.env.is_none() {
-                log::info!(
-                    "using project environment for language server {:?}",
-                    adapter.name()
-                );
-                binary.env = Some(delegate.shell_env().await);
-            }
+            let mut shell_env = delegate.shell_env().await;
+            shell_env.extend(binary.env.unwrap_or_default());
+            binary.env = Some(shell_env);
             Ok(binary)
         })
     }

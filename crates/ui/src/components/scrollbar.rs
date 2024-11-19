@@ -228,7 +228,9 @@ impl Element for Scrollbar {
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             let colors = cx.theme().colors();
-            let thumb_background = colors.scrollbar_thumb_background;
+            let thumb_background = colors
+                .surface_background
+                .blend(colors.scrollbar_thumb_background);
             let is_vertical = self.kind == ScrollbarAxis::Vertical;
             let extra_padding = px(5.0);
             let padded_bounds = if is_vertical {
@@ -368,7 +370,7 @@ impl Element for Scrollbar {
                         };
 
                         if let Some(id) = state.parent_id {
-                            cx.notify(id);
+                            cx.notify(Some(id));
                         }
                     }
                 } else {
@@ -380,7 +382,7 @@ impl Element for Scrollbar {
                 if phase.bubble() {
                     state.drag.take();
                     if let Some(id) = state.parent_id {
-                        cx.notify(id);
+                        cx.notify(Some(id));
                     }
                 }
             });

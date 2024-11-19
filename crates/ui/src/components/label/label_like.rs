@@ -157,16 +157,6 @@ impl RenderOnce for LabelLike {
         }
 
         self.base
-            .when(self.strikethrough, |this| {
-                this.relative().child(
-                    div()
-                        .absolute()
-                        .top_1_2()
-                        .w_full()
-                        .h_px()
-                        .bg(Color::Hidden.color(cx)),
-                )
-            })
             .map(|this| match self.size {
                 LabelSize::Large => this.text_ui_lg(cx),
                 LabelSize::Default => this.text_ui(cx),
@@ -187,6 +177,7 @@ impl RenderOnce for LabelLike {
                 });
                 this
             })
+            .when(self.strikethrough, |this| this.line_through())
             .text_color(color)
             .font_weight(self.weight.unwrap_or(settings.ui_font.weight))
             .children(self.children)

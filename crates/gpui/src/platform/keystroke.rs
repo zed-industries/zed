@@ -34,6 +34,7 @@ impl Keystroke {
         {
             let ime_modifiers = Modifiers {
                 control: self.modifiers.control,
+                platform: self.modifiers.platform,
                 ..Default::default()
             };
 
@@ -124,6 +125,9 @@ impl Keystroke {
     /// Produces a representation of this key that Parse can understand.
     pub fn unparse(&self) -> String {
         let mut str = String::new();
+        if self.modifiers.function {
+            str.push_str("fn-");
+        }
         if self.modifiers.control {
             str.push_str("ctrl-");
         }
@@ -218,6 +222,8 @@ fn is_printable_key(key: &str) -> bool {
             | "insert"
             | "home"
             | "end"
+            | "back"
+            | "forward"
             | "escape"
     )
 }

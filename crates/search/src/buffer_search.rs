@@ -657,6 +657,7 @@ impl BufferSearchBar {
             return true;
         }
 
+        cx.propagate();
         false
     }
 
