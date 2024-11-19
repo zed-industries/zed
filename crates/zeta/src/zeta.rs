@@ -624,7 +624,7 @@ mod tests {
                     let pivot_index = partition(arr);
                 }
             "},
-            &indoc! {"
+            indoc! {"
                 use std::cmp::Ord;
 
                 pub fn quicksort<T: Ord>(arr: &mut [T]) {
@@ -708,7 +708,7 @@ mod tests {
                 fn main() {
                 }
             "},
-            &indoc! {"
+            indoc! {"
                 fn main() {
                     thread::sleep(Duration::from_secs(1));<|user_cursor_is_here|>
                 }
@@ -737,7 +737,7 @@ mod tests {
                     let glob_pattern = format!(\"{}/**/*.rs\", root_directory);
                 }
             "},
-            &indoc! {"
+            indoc! {"
                 fn main() {
                     let dir<|user_cursor_is_here|> = \"/tmp\";
                     let glob_pattern = format!(\"{}/**/*.rs\", root_directory);
@@ -764,7 +764,7 @@ mod tests {
                     let glob_pattern = format!(\"{}/**/*.rs\", \"/tmp\");
                 }
             "},
-            &indoc! {"
+            indoc! {"
                 fn main() {
                     let dir = \"/tmp\";<|user_cursor_is_here|>
                     let glob_pattern = format!(\"{}/**/*.rs\", \"/tmp\");
@@ -791,7 +791,7 @@ mod tests {
                     let glob_pattern = format!(\"{}/**/*.rs\", \"/tmp\");
                 }
             "},
-            &indoc! {"
+            indoc! {"
                 fn main() {
                     let dir = \"<|user_cursor_is_here|>
                     let glob_pattern = format!(\"{}/**/*.rs\", \"/tmp\");
