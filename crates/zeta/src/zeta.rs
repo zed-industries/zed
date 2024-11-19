@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
 use http_client::HttpClient;
-use language::{Anchor, Buffer, BufferSnapshot, Point, ToPoint};
+use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset, ToPoint};
 use std::{borrow::Cow, cmp, fmt::Write, mem, ops::Range, path::Path, sync::Arc};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -586,18 +586,48 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
 
     fn active_completion_text<'a>(
         &'a self,
-        _buffer: &Model<Buffer>,
-        _cursor_position: language::Anchor,
-        _cx: &'a AppContext,
+        buffer: &Model<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &'a AppContext,
     ) -> Option<editor::CompletionProposal> {
-        // todo!("make this better")
-        self.current_completion
-            .as_ref()
-            .map(|completion| editor::CompletionProposal {
-                inlays: vec![],
-                text: language::Rope::from(completion.new_text.as_ref()),
-                delete_range: Some(completion.range.clone()),
-            })
+        let completion = self.current_completion.as_ref()?;
+
+        let snapshot = buffer.read(cx).snapshot();
+        let old_text = snapshot
+            .text_for_range(completion.range.clone())
+            .collect::<String>();
+
+        let diff = similar::TextDiff::from_words(old_text.as_str(), completion.new_text.as_ref());
+        dbg!(old_text.as_str(), completion.new_text.as_ref(), diff);
+
+        let mut inlays = Vec::new();
+        let mut ix = completion.range.start.to_offset(&snapshot);
+        let mut insert_ix = None;
+
+        for change in diff.iter_all_changes() {
+            match change.tag() {
+                similar::ChangeTag::Equal => {
+                    ix += change.value().len();
+                }
+                similar::ChangeTag::Delete => {
+                    ix += change.value().len();
+                }
+                similar::ChangeTag::Insert => {
+                    insert_index.replace(ix);
+                    inlays.push(editor::InlayProposal::Suggestion(
+                        snapshot.anchor_after(ix),
+                        dbg!(language::Rope::from(change.value())),
+                    ));
+                }
+            }
+        }
+
+        println!("text={:?}", &completion.new_text);
+        Some(editor::CompletionProposal {
+            inlays,
+            text: language::Rope::from(completion.new_text.as_ref()),
+            delete_range: Some(completion.range.clone()),
+        })
     }
 }
 
