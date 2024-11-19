@@ -5,21 +5,15 @@ use crate::markdown_elements::{
     ParsedMarkdownTableRow,
 };
 use gpui::{
-    div, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
-    ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length, Modifiers,
-    ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
+    div, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element, ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length, Modifiers, ParentElement, Resource, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext
 };
 use settings::Settings;
 use std::{
-    ops::{Mul, Range},
-    sync::Arc,
-    vec,
+    ops::{Mul, Range}, path::Path, sync::Arc, vec
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, relative, v_flex, Checkbox, Clickable, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, LinkPreview, Selection, StatefulInteractiveElement, StyledExt, Tooltip,
-    VisibleOnHover,
+    h_flex, relative, v_flex, Checkbox, Clickable, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, LinkPreview, Selection, StatefulInteractiveElement, StyledExt, StyledImage, Tooltip, VisibleOnHover
 };
 use workspace::Workspace;
 
@@ -508,32 +502,35 @@ fn render_markdown_text(
                         link,
                         source_range,
                         url,
-                    } => (link, source_range, ImageSource::Uri(url.clone().into())),
+                    } => (link, source_range, Resource::Uri(url.clone().into())),
                     Image::Path {
                         link,
                         source_range,
                         path,
                         ..
-                    } => (link, source_range, ImageSource::File(path.clone().into())),
+                    } => {
+                    let image_path = Path::new(path.to_str().unwrap());
+                        (link, source_range, Resource::Path(Arc::from(image_path)))
+                    },
                 };
                 let element_id = cx.next_id(source_range);
 
                 match link {
                     None => {
-                        let element = div().child(img(image_source)).id(element_id).into_any();
+                        let element = div().child(gpui::img(ImageSource::Resource(image_source))).id(element_id).into_any();
                         any_element.push(element);
                     }
                     Some(link) => {
                         let link_click = link.clone();
                         let link_tooltip = link.clone();
                         let image_element = div()
-                            .child(img(image_source))
+                            .child(gpui::img(ImageSource::Resource(image_source)).with_fallback(|| fallback_image_text("x".to_string()).into_any_element()))
                             .id(element_id)
                             .tooltip(move |cx| LinkPreview::new(&link_tooltip.to_string(), cx))
                             .on_click({
                                 let workspace = cx.workspace.clone();
                                 move |_event, window_cx| match &link_click {
-                                    Link::Web { url } => window_cx.open_url(url),
+                                    Link::Web { url } => window_cx.open_url(&url),
                                     Link::Path {
                                         display_path: _,
                                         path,
@@ -561,4 +558,20 @@ fn render_markdown_text(
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
     let rule = div().w_full().h(px(2.)).bg(cx.border_color);
     div().pt_3().pb_3().child(rule).into_any()
+}
+
+
+fn fallback_image_text(x: String) -> AnyElement {
+    println!("{:?}", x);
+    div().size_full().flex_none().p_0p5().child(
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_sm()
+            .text_sm()
+            .border_1()
+            .child("?"),
+    ).into_any_element()
 }
