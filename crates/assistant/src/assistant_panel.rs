@@ -2050,30 +2050,6 @@ impl ContextEditor {
             ContextEvent::SlashCommandOutputSectionAdded { section } => {
                 self.insert_slash_command_output_sections([section.clone()], false, cx);
             }
-            ContextEvent::SlashCommandFinished {
-                output_range: _output_range,
-                run_commands_in_ranges,
-            } => {
-                for range in run_commands_in_ranges {
-                    let commands = self.context.update(cx, |context, cx| {
-                        context.reparse(cx);
-                        context
-                            .pending_commands_for_range(range.clone(), cx)
-                            .to_vec()
-                    });
-
-                    for command in commands {
-                        self.run_command(
-                            command.source_range,
-                            &command.name,
-                            &command.arguments,
-                            false,
-                            self.workspace.clone(),
-                            cx,
-                        );
-                    }
-                }
-            }
             ContextEvent::UsePendingTools => {
                 let pending_tool_uses = self
                     .context
@@ -2152,6 +2128,37 @@ impl ContextEditor {
         command_id: InvokedSlashCommandId,
         cx: &mut ViewContext<Self>,
     ) {
+        if let Some(invoked_slash_command) =
+            self.context.read(cx).invoked_slash_command(&command_id)
+        {
+            if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
+                let run_commands_in_ranges = invoked_slash_command
+                    .run_commands_in_ranges
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for range in run_commands_in_ranges {
+                    let commands = self.context.update(cx, |context, cx| {
+                        context.reparse(cx);
+                        context
+                            .pending_commands_for_range(range.clone(), cx)
+                            .to_vec()
+                    });
+
+                    for command in commands {
+                        self.run_command(
+                            command.source_range,
+                            &command.name,
+                            &command.arguments,
+                            false,
+                            self.workspace.clone(),
+                            cx,
+                        );
+                    }
+                }
+            }
+        }
+
         self.editor.update(cx, |editor, cx| {
             if let Some(invoked_slash_command) =
                 self.context.read(cx).invoked_slash_command(&command_id)
