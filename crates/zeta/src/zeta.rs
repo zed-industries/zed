@@ -693,12 +693,8 @@ mod tests {
                     }
 
                     let pivot = partition(arr);
-                }
             "},
-            vec![
-                "Ensure that the pivot assignment is completed",
-                "Ensure that the quicksort function's closing curly brace gets inserted",
-            ],
+            vec!["Ensure that the 'pivot' assignment statement is valid"],
             cx,
         )
         .await;
