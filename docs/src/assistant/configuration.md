@@ -200,17 +200,27 @@ You must provide the model's Context Window in the `max_tokens` parameter, this 
 {
   "assistant": {
     "enabled": true,
+    "show_hints": true,
+    "button": true,
+    "dock": "right"
+    "default_width": 480,
     "default_model": {
       "provider": "zed.dev",
       "model": "claude-3-5-sonnet"
     },
     "version": "2",
-    "button": true,
-    "default_width": 480,
-    "dock": "right"
   }
 }
 ```
+
+| key            | type    | default | description                                                                           |
+| -------------- | ------- | ------- | ------------------------------------------------------------------------------------- |
+| enabled        | boolean | true    | Setting this to `false` will completely disable the assistant                         |
+| show_hints     | boolean | true    | Whether to to show hints in the editor explaining how to use assistant                |
+| button         | boolean | true    | Show the assistant icon in the status bar                                             |
+| dock           | string  | "right" | The default dock position for the assistant panel. Can be ["left", "right", "bottom"] |
+| default_height | string  | null    | The pixel height of the assistant panel when docked to the bottom                     |
+| default_width  | string  | null    | The pixel width of the assistant panel when docked to the left or right               |
 
 #### Custom endpoints {#custom-endpoint}
 
@@ -271,13 +281,3 @@ will generate two outputs for every assist. One with Claude 3.5 Sonnet, and one 
   }
 }
 ```
-
-#### Common Panel Settings
-
-| key            | type    | default | description                                                                           |
-| -------------- | ------- | ------- | ------------------------------------------------------------------------------------- |
-| enabled        | boolean | true    | Setting this to `false` will completely disable the assistant                         |
-| button         | boolean | true    | Show the assistant icon in the status bar                                             |
-| dock           | string  | "right" | The default dock position for the assistant panel. Can be ["left", "right", "bottom"] |
-| default_height | string  | null    | The pixel height of the assistant panel when docked to the bottom                     |
-| default_width  | string  | null    | The pixel width of the assistant panel when docked to the left or right               |
