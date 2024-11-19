@@ -730,7 +730,7 @@ mod tests {
                         },
                         open_ai::RequestMessage::User {
                             content: format!(
-                                "## Test\n\nNow score the following pair. Reply with a single number.\nActual: ```\n{}\n```\nExpected:\n```\n{}\n```",
+                                "## Test\n\nNow score the following pair. Reply with a single number.\nActual:\n```\n{}\n```\nExpected:\n```\n{}\n```",
                                 autocompleted, expected
                             ),
                         },
