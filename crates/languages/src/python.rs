@@ -32,7 +32,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{maybe, ResultExt};
+use util::ResultExt;
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
 const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
@@ -299,17 +299,7 @@ impl ContextProvider for PythonContextProvider {
         cx: &mut gpui::AppContext,
     ) -> Task<Result<task::TaskVariables>> {
         let test_target = {
-            const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
-            let test_runner = language_settings(
-                Some(LanguageName::new("Python")),
-                location.buffer.read(cx).file(),
-                cx,
-            )
-            .tasks
-            .variables
-            .get(TEST_RUNNER_VARIABLE)
-            .and_then(|val| TestRunner::from_str(val).ok())
-            .unwrap_or(TestRunner::PYTEST);
+            let test_runner = selected_test_runner(location.buffer.read(cx).file(), cx);
 
             let runner = match test_runner {
                 TestRunner::UNITTEST => self.build_unittest_target(variables),
@@ -335,10 +325,10 @@ impl ContextProvider for PythonContextProvider {
 
     fn associated_tasks(
         &self,
-        _: Option<Arc<dyn language::File>>,
-        _cx: &AppContext,
+        file: Option<Arc<dyn language::File>>,
+        cx: &AppContext,
     ) -> Option<TaskTemplates> {
-        let test_runner = TestRunner::PYTEST; // TODO: Get this from settings. (How?)
+        let test_runner = selected_test_runner(file.as_ref(), cx);
 
         let mut tasks = vec![
             // Execute a selection
@@ -424,6 +414,16 @@ impl ContextProvider for PythonContextProvider {
     }
 }
 
+fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &AppContext) -> TestRunner {
+    const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
+    language_settings(Some(LanguageName::new("Python")), location, cx)
+        .tasks
+        .variables
+        .get(TEST_RUNNER_VARIABLE)
+        .and_then(|val| TestRunner::from_str(val).ok())
+        .unwrap_or(TestRunner::PYTEST)
+}
+
 impl PythonContextProvider {
     fn build_unittest_target(
         &self,
@@ -463,7 +463,7 @@ impl PythonContextProvider {
     ) -> Result<(VariableName, String)> {
         let file_path = variables
             .get(&VariableName::RelativeFile)
-            .ok_or(|| anyhow!("No file path given"))?;
+            .ok_or_else(|| anyhow!("No file path given"))?;
 
         let pytest_class_name =
             variables.get(&VariableName::Custom(Cow::Borrowed("_pytest_class_name")));
