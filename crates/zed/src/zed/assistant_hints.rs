@@ -36,7 +36,7 @@ pub fn init(cx: &mut AppContext) {
                                 .borrow_mut()
                                 .insert(editor.downgrade(), cx.window_handle());
 
-                            let show_hints = AssistantSettings::get_global(cx).show_hints;
+                            let show_hints = should_show_hints(cx);
                             editor.update(cx, |editor, cx| {
                                 assign_active_line_trailer_provider(editor, show_hints, cx)
                             })
@@ -52,7 +52,7 @@ pub fn init(cx: &mut AppContext) {
 
     let mut show_hints = AssistantSettings::get_global(cx).show_hints;
     cx.observe_global::<SettingsStore>(move |cx| {
-        let new_show_hints = AssistantSettings::get_global(cx).show_hints;
+        let new_show_hints = should_show_hints(cx);
         if new_show_hints != show_hints {
             show_hints = new_show_hints;
             for (editor, window) in editors.borrow().iter() {
@@ -107,4 +107,9 @@ fn assign_active_line_trailer_provider(
 ) {
     let provider = show_hints.then_some(AssistantHintsProvider);
     editor.set_active_line_trailer_provider(provider, cx);
+}
+
+fn should_show_hints(cx: &AppContext) -> bool {
+    let assistant_settings = AssistantSettings::get_global(cx);
+    assistant_settings.enabled && assistant_settings.show_hints
 }

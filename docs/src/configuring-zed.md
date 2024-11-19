@@ -2327,15 +2327,18 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Default:
 
 ```json
-"assistant": {
-  "enabled": true,
-  "button": true,
-  "dock": "right",
-  "default_width": 640,
-  "default_height": 320,
-  "provider": "openai",
-  "version": "1",
-},
+{
+  "assistant": {
+    "enabled": true,
+    "button": true,
+    "dock": "right",
+    "default_width": 640,
+    "default_height": 320,
+    "provider": "openai",
+    "version": "1",
+    "show_hints": true
+  }
+}
 ```
 
 ## Outline Panel
