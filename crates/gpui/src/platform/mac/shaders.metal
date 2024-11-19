@@ -112,19 +112,22 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         float radians = (normalized_angle - 90.0) * (M_PI_F / 180.0);
         float2 direction = float2(cos(radians), sin(radians));
 
+        float stop1_percentage = input.background_stop0_percentage;
+        float stop2_percentage = input.background_stop1_percentage;
+
+        // Get the t value for the linear gradient with the color stop percentages.
         float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
         float2 center = float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
         float2 position_from_center = position - center;
         float t = dot(position_from_center, direction) / length(direction);
         t = (t + half_size.x) / (2. * half_size.x);
 
+        // Adjust t based on the stop percentages
+        t = (t - stop1_percentage) / (stop2_percentage - stop1_percentage);
+        t = clamp(t, 0.0, 1.0);
+
         float4 color1 = input.background_stop0_color;
         float4 color2 = input.background_stop1_color;
-
-        // Adjust t based on background_stop0_percentage and background_stop1_percentage
-        float stop0 = input.background_stop0_percentage;
-        float stop1 = input.background_stop1_percentage;
-        t = (t - stop0) / (stop1 - stop0);
 
         color = mix(color1, color2, t);
         break;

@@ -575,7 +575,7 @@ impl Default for Background {
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[repr(C)]
 pub struct BackgroundColorStop {
-    /// The percentage of the gradient where the color stop is located.
+    /// The percentage of the gradient, in the range 0.0 to 1.0.
     pub percentage: f32,
     /// The color of the color stop.
     pub color: Hsla,
@@ -583,7 +583,7 @@ pub struct BackgroundColorStop {
 
 impl BackgroundColorStop {
     /// Creates a new color stop.
-    pub fn new(percentage: f32, color: impl Into<Hsla>) -> Self {
+    pub fn new(color: impl Into<Hsla>, percentage: f32) -> Self {
         Self {
             percentage,
             color: color.into(),
