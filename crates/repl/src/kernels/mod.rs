@@ -16,7 +16,6 @@ pub use remote_kernels::*;
 
 use anyhow::Result;
 use runtimelib::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
-use smol::process::Command;
 use ui::SharedString;
 
 pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
@@ -85,7 +84,7 @@ pub fn python_env_kernel_specifications(
                 let python_path = toolchain.path.to_string();
 
                 // Check if ipykernel is installed
-                let ipykernel_check = Command::new(&python_path)
+                let ipykernel_check = util::command::new_smol_command(&python_path)
                     .args(&["-c", "import ipykernel"])
                     .output()
                     .await;

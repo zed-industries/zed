@@ -18,7 +18,7 @@ use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::{json, Value};
-use smol::{lock::OnceCell, process::Command};
+use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
 use std::sync::Mutex;
@@ -570,7 +570,7 @@ impl PyLspAdapter {
         let mut path = PathBuf::from(work_dir.as_ref());
         path.push("pylsp-venv");
         if !path.exists() {
-            Command::new(python_path)
+            util::command::new_smol_command(python_path)
                 .arg("-m")
                 .arg("venv")
                 .arg("pylsp-venv")
@@ -651,7 +651,7 @@ impl LspAdapter for PyLspAdapter {
         let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
         let pip_path = venv.join("bin").join("pip3");
         ensure!(
-            Command::new(pip_path.as_path())
+            util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server")
                 .output()
@@ -661,7 +661,7 @@ impl LspAdapter for PyLspAdapter {
             "python-lsp-server installation failed"
         );
         ensure!(
-            Command::new(pip_path.as_path())
+            util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server[all]")
                 .output()
@@ -671,7 +671,7 @@ impl LspAdapter for PyLspAdapter {
             "python-lsp-server[all] installation failed"
         );
         ensure!(
-            Command::new(pip_path)
+            util::command::new_smol_command(pip_path)
                 .arg("install")
                 .arg("pylsp-mypy")
                 .output()

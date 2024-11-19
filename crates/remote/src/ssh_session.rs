@@ -1224,7 +1224,7 @@ trait RemoteConnection: Send + Sync {
 
 struct SshRemoteConnection {
     socket: SshSocket,
-    master_process: Mutex<Option<process::Child>>,
+    master_process: Mutex<Option<Child>>,
     remote_binary_path: Option<PathBuf>,
     _temp_dir: TempDir,
 }
@@ -1258,7 +1258,7 @@ impl RemoteConnection for SshRemoteConnection {
         dest_path: PathBuf,
         cx: &AppContext,
     ) -> Task<Result<()>> {
-        let mut command = process::Command::new("scp");
+        let mut command = util::command::new_smol_command("scp");
         let output = self
             .socket
             .ssh_options(&mut command)
