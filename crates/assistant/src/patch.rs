@@ -103,12 +103,14 @@ impl PatchStore {
             this.update(&mut cx, |this, cx| {
                 if let Some(entry) = this.entries.get_mut(&id) {
                     entry.patch = located_patch;
-                    entry.locate_task = None;
                     if patch_did_change {
                         cx.emit(PatchStoreEvent::PatchUpdated(id));
                     }
                     if let Some(input) = entry.next_input.take() {
-                        Self::update_internal(id, input, entry.patch.clone(), project, cx);
+                        entry.locate_task =
+                            Self::update_internal(id, input, entry.patch.clone(), project, cx);
+                    } else {
+                        entry.locate_task = None;
                     }
                 }
             })
