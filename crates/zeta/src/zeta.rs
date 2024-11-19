@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
 use http_client::HttpClient;
-use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset, ToPoint};
+use language::{Anchor, Buffer, BufferSnapshot, Point, ToPoint};
 use std::{borrow::Cow, cmp, fmt::Write, mem, ops::Range, path::Path, sync::Arc};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -190,23 +190,19 @@ impl Zeta {
         });
 
         let mut prompt = include_str!("./prompt_prefix.md").to_string();
-        for event in self.events.values() {}
-
-        let messages = [open_ai::RequestMessage::User {
-            content: include_str!("./prompt_prefix.md").to_string(),
-        }]
-        .into_iter()
-        .chain(self.events.values().map(|event| event.into()))
-        .chain([open_ai::RequestMessage::User {
-            content: include_str!("./prompt_suffix.md").to_string(),
-        }])
-        .collect::<Vec<_>>();
+        for event in self.events.values() {
+            prompt.push_str(&event.to_prompt());
+            prompt.push('\n');
+            prompt.push('\n');
+        }
+        prompt.push_str(include_str!("./prompt_suffix.md"));
+        log::debug!("requesting completion: {}", prompt);
 
         let api_url = self.api_url.clone();
         let api_key = self.api_key.clone();
         let request = open_ai::Request {
             model: self.model.to_string(),
-            messages,
+            messages: vec![open_ai::RequestMessage::User { content: prompt }],
             stream: false,
             max_tokens: None,
             stop: Vec::new(),
@@ -217,11 +213,10 @@ impl Zeta {
         let http_client = self.http_client.clone();
 
         cx.spawn(|this, mut cx| async move {
-            log::debug!("requesting completion: {:?}", request);
             let mut response =
                 open_ai::complete(http_client.as_ref(), &api_url, &api_key, request).await?;
             let choice = response.choices.pop().context("invalid response")?;
-            let content = match choice.message {
+            let mut content = match choice.message {
                 open_ai::RequestMessage::Assistant { content, .. } => {
                     content.context("empty response from the assistant")?
                 }
@@ -229,10 +224,10 @@ impl Zeta {
                 open_ai::RequestMessage::System { content } => content,
                 open_ai::RequestMessage::Tool { .. } => return Err(anyhow!("unexpected tool use")),
             };
+            log::debug!("completion response: {}", content);
 
-            const ORIGINAL_MARKER: &str = "<<<<<<< ORIGINAL\n";
-            const SEPARATOR_MARKER: &str = "\n=======\n";
-            const UPDATED_MARKER: &str = "\n>>>>>>> UPDATED";
+            content = content.replace(CURSOR_MARKER, "");
+            log::debug!("sanitized completion response: {}", content);
 
             if let (Some(orig_start), Some(sep), Some(upd_end)) = (
                 content.find(ORIGINAL_MARKER),
@@ -376,6 +371,11 @@ impl Zeta {
     }
 }
 
+const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
+const ORIGINAL_MARKER: &str = "<<<<<<< ORIGINAL\n";
+const SEPARATOR_MARKER: &str = "\n=======\n";
+const UPDATED_MARKER: &str = "\n>>>>>>> UPDATED";
+
 struct RegisteredBuffer {
     snapshot: BufferSnapshot,
     _subscriptions: [gpui::Subscription; 2],
@@ -432,28 +432,76 @@ impl Event {
                 old_text,
                 new_text,
             } => {
-                format!("User edited file: {:?}\n\nOld text:\n```\n{}\n```\n\nNew text:\n```\n{}\n```\n", path, old_text, new_text)
+                format!(
+                    "User edited file: {:?}\n\n{}",
+                    path,
+                    format_edit(old_text, new_text)
+                )
             }
             Event::RequestInlineCompletion {
-                id,
-                snapshot,
-                position,
+                snapshot, position, ..
             } => {
-                todo!()
+                let position = position.to_point(snapshot);
+
+                let start = Point::new(position.row.saturating_sub(50), 0);
+                let end = cmp::min(Point::new(position.row + 50, 0), snapshot.max_point());
+
+                let mut content = String::new();
+                writeln!(
+                    content,
+                    "User requested an edit suggestion in the following excerpt of a file:"
+                )
+                .unwrap();
+                writeln!(
+                    content,
+                    "```{}",
+                    snapshot
+                        .file()
+                        .map_or(Cow::Borrowed("untitled"), |file| file
+                            .path()
+                            .to_string_lossy())
+                )
+                .unwrap();
+
+                for chunk in snapshot.text_for_range(start..position) {
+                    content.push_str(chunk);
+                }
+                content.push_str(CURSOR_MARKER);
+                for chunk in snapshot.text_for_range(position..end) {
+                    content.push_str(chunk);
+                }
+                content.push_str("\n```");
+                content
             }
             Event::InlineCompletion {
-                id,
                 old_text,
                 new_text,
                 accepted,
+                ..
             } => {
-                todo!()
+                let acceptance = accepted
+                    .map(|a| {
+                        let action = if a { "accepted" } else { "rejected" };
+                        format!(". User {}", action)
+                    })
+                    .unwrap_or_default();
+
+                format!(
+                    "Completion response{}.\n{}",
+                    acceptance,
+                    format_edit(old_text, new_text)
+                )
             }
-            Event::NoInlineCompletion { id } => {
-                todo!()
-            }
+            Event::NoInlineCompletion { .. } => "<|DONE|>".into(),
         }
     }
+}
+
+fn format_edit(old_text: &str, new_text: &str) -> String {
+    format!(
+        "{}{}{}{}{}",
+        ORIGINAL_MARKER, old_text, SEPARATOR_MARKER, new_text, UPDATED_MARKER
+    )
 }
 
 pub struct ZetaInlineCompletionProvider {
@@ -575,7 +623,7 @@ mod tests {
                     let pivot_index = partition(arr);
                 }
             "},
-            indoc! {"
+            &indoc! {"
                 use std::cmp::Ord;
 
                 pub fn quicksort<T: Ord>(arr: &mut [T]) {
@@ -585,7 +633,7 @@ mod tests {
                     }
 
                     let pivot_index = partition(arr);
-<|cursor|>
+<|user_cursor_is_here|>
                 }
             "},
             indoc! {"
@@ -631,7 +679,7 @@ mod tests {
                         return;
                     }
 
-                    let pi<|cursor|>
+                    let pivot = par<|user_cursor_is_here|>
             "},
             indoc! {"
                 use std::cmp::Ord;
@@ -642,7 +690,7 @@ mod tests {
                         return;
                     }
 
-                    let pivot = arr[len / 2];
+                    let pivot = partition(arr);
                 }
             "},
             cx,
@@ -657,8 +705,6 @@ mod tests {
         expected: &str,
         cx: &mut TestAppContext,
     ) {
-        const CURSOR_MARKER: &'static str = "<|cursor|>";
-
         cx.executor().allow_parking();
         let zeta = zeta(cx);
 
@@ -730,7 +776,7 @@ mod tests {
             Zeta::new(
                 "http://localhost:11434/v1".into(),
                 "".into(),
-                "qwen2.5-coder:32b".into(),
+                "qwen2.5-coder:32b-instruct-q4_K_M".into(),
                 Arc::new(ReqwestClient::new()),
             )
         })
