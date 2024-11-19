@@ -6,25 +6,16 @@ use std::{
     rc::Rc,
 };
 
-struct ArenaElement {
+struct ArenaElementHeader {
+    next_element: *mut u8,
     value: *mut u8,
     drop: unsafe fn(*mut u8),
-}
-
-impl Drop for ArenaElement {
-    #[inline(always)]
-    fn drop(&mut self) {
-        unsafe {
-            (self.drop)(self.value);
-        }
-    }
 }
 
 pub struct Arena {
     start: *mut u8,
     end: *mut u8,
-    offset: *mut u8,
-    elements: Vec<ArenaElement>,
+    next_write: *mut u8,
     valid: Rc<Cell<bool>>,
 }
 
@@ -37,15 +28,14 @@ impl Arena {
             Self {
                 start,
                 end,
-                offset: start,
-                elements: Vec::new(),
+                next_write: start,
                 valid: Rc::new(Cell::new(true)),
             }
         }
     }
 
     pub fn len(&self) -> usize {
-        self.offset as usize - self.start as usize
+        self.next_write as usize - self.start as usize
     }
 
     pub fn capacity(&self) -> usize {
@@ -55,45 +45,58 @@ impl Arena {
     pub fn clear(&mut self) {
         self.valid.set(false);
         self.valid = Rc::new(Cell::new(true));
-        self.elements.clear();
-        self.offset = self.start;
+        unsafe {
+            let mut offset = self.start;
+            while offset < self.next_write {
+                let (header_ptr, _) = get_allocation_ptrs::<ArenaElementHeader>(offset);
+                let ArenaElementHeader {
+                    next_element,
+                    value,
+                    drop,
+                } = ptr::read(header_ptr);
+                (drop)(value);
+                offset = next_element;
+            }
+        }
+        self.next_write = self.start;
     }
 
     #[inline(always)]
     pub fn alloc<T>(&mut self, f: impl FnOnce() -> T) -> ArenaBox<T> {
-        #[inline(always)]
-        unsafe fn inner_writer<T, F>(ptr: *mut T, f: F)
-        where
-            F: FnOnce() -> T,
-        {
-            ptr::write(ptr, f());
-        }
-
         unsafe fn drop<T>(ptr: *mut u8) {
-            std::ptr::drop_in_place(ptr.cast::<T>());
+            ptr::drop_in_place(ptr.cast::<T>());
         }
 
         unsafe {
-            let layout = alloc::Layout::new::<T>();
-            let offset = self.offset.add(self.offset.align_offset(layout.align()));
-            let next_offset = offset.add(layout.size());
-            assert!(next_offset <= self.end, "not enough space in Arena");
+            let (header_ptr, offset) = get_allocation_ptrs::<ArenaElementHeader>(self.next_write);
+            let (value_ptr, offset) = get_allocation_ptrs::<T>(offset);
+            assert!(offset <= self.end, "not enough space in Arena");
+            self.next_write = offset;
 
-            let result = ArenaBox {
-                ptr: offset.cast(),
+            ptr::write(
+                header_ptr,
+                ArenaElementHeader {
+                    next_element: self.next_write,
+                    value: value_ptr.cast(),
+                    drop: drop::<T>,
+                },
+            );
+            ptr::write(value_ptr, f());
+
+            ArenaBox {
+                ptr: value_ptr,
                 valid: self.valid.clone(),
-            };
-
-            inner_writer(result.ptr, f);
-            self.elements.push(ArenaElement {
-                value: offset,
-                drop: drop::<T>,
-            });
-            self.offset = next_offset;
-
-            result
+            }
         }
     }
+}
+
+#[inline(always)]
+unsafe fn get_allocation_ptrs<T>(offset: *mut u8) -> (*mut T, *mut u8) {
+    let data_layout = alloc::Layout::new::<T>();
+    let offset = offset.add(offset.align_offset(data_layout.align()));
+    let data_ptr = offset.cast::<T>();
+    (data_ptr, offset.add(data_layout.size()))
 }
 
 impl Drop for Arena {
@@ -241,7 +244,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "attempted to dereference an ArenaRef after its Arena was cleared")]
     fn test_arena_use_after_clear() {
-        let mut arena = Arena::new(16);
+        let mut arena = Arena::new(256);
         let value = arena.alloc(|| 1u64);
 
         arena.clear();
