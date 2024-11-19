@@ -198,8 +198,10 @@ impl LivekitWindow {
                 let output = self.remote_participant(participant);
                 match track {
                     RemoteTrack::Audio(track) => {
-                        output.audio_output_stream =
-                            Some((publication.clone(), play_remote_audio_track(&track, cx)));
+                        output.audio_output_stream = Some((
+                            publication.clone(),
+                            play_remote_audio_track(&track, cx.background_executor()),
+                        ));
                     }
                     RemoteTrack::Video(track) => {
                         output.screen_share_output_view = Some((
@@ -269,7 +271,7 @@ impl LivekitWindow {
         } else {
             let participant = self.room.local_participant();
             cx.spawn(|this, mut cx| async move {
-                let (track, stream) = cx.update(|cx| capture_local_audio_track(cx))??;
+                let (track, stream) = capture_local_audio_track(cx.background_executor()).await?;
                 let publication = participant
                     .publish_track(
                         LocalTrack::Audio(track),
