@@ -278,13 +278,13 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     } else if (input.background_tag == 1u) {
         // Linear gradient background.
         let position = input.position.xy;
+        // Normalize the angle to be within the range of -360 to 360 degrees.
         var normalized_angle = input.background_angle % 360.0;
         if (normalized_angle < -360.0) {
             normalized_angle += 360.0;
         } else if (normalized_angle > 360.0) {
             normalized_angle -= 360.0;
         }
-
         // -90 degrees to match the CSS gradient angle.
         let radians = (normalized_angle - 90.0) * M_PI_F / 180.0;
         let direction = vec2<f32>(cos(radians), sin(radians));
@@ -312,7 +312,6 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
         background_color = mix(color0, color1, t);
     }
-
 
     // Fast path when the quad is not rounded and doesn't have any border.
     if (quad.corner_radii.top_left == 0.0 && quad.corner_radii.bottom_left == 0.0 &&
