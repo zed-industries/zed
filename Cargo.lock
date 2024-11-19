@@ -6395,9 +6395,9 @@ dependencies = [
 
 [[package]]
 name = "jupyter-websocket-client"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d74bf7bb8fea38d70cdf2f45903f27f0559bb7fe9139a88b08dfd65fecdb8242"
+checksum = "8d315d037789a652084877b0919615e937d2f2e877b01aa4ba8fcc1ab07cb58b"
 dependencies = [
  "anyhow",
  "async-trait",

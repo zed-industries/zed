@@ -368,7 +368,7 @@ indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "2"
 itertools = "0.13.0"
 jsonwebtoken = "9.3"
-jupyter-websocket-client = { version = "0.4.0" }
+jupyter-websocket-client = { version = "0.4.1" }
 libc = "0.2"
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
