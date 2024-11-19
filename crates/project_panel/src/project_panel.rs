@@ -189,6 +189,8 @@ actions!(
         SelectParent,
         SelectNextGitEntry,
         SelectPrevGitEntry,
+        SelectNextDiagnostic,
+        SelectPrevDiagnostic,
     ]
 );
 
@@ -1410,6 +1412,58 @@ impl ProjectPanel {
                 entry_id: entry.id,
             })
         })
+    }
+
+    fn select_prev_diagnostic(&mut self, _: &SelectPrevDiagnostic, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, _)) = self.selected_sub_entry(cx) {
+            let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
+
+            let selection = self.find_entry(
+                true,
+                |entry| {
+                    entry.is_file()
+                        && self
+                            .diagnostics
+                            .get(&(worktree_id, entry.path.to_path_buf()))
+                            .is_some()
+                },
+                cx,
+            );
+
+            if let Some(selection) = selection {
+                self.selection = Some(selection);
+                self.expand_entry(selection.worktree_id, selection.entry_id, cx);
+                self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
+                self.autoscroll(cx);
+                cx.notify();
+            }
+        }
+    }
+
+    fn select_next_diagnostic(&mut self, _: &SelectNextDiagnostic, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, _)) = self.selected_sub_entry(cx) {
+            let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
+
+            let selection = self.find_entry(
+                false,
+                |entry| {
+                    entry.is_file()
+                        && self
+                            .diagnostics
+                            .get(&(worktree_id, entry.path.to_path_buf()))
+                            .is_some()
+                },
+                cx,
+            );
+
+            if let Some(selection) = selection {
+                self.selection = Some(selection);
+                self.expand_entry(selection.worktree_id, selection.entry_id, cx);
+                self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
+                self.autoscroll(cx);
+                cx.notify();
+            }
+        }
     }
 
     fn select_prev_git_entry(&mut self, _: &SelectPrevGitEntry, cx: &mut ViewContext<Self>) {
@@ -3393,6 +3447,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::select_parent))
                 .on_action(cx.listener(Self::select_next_git_entry))
                 .on_action(cx.listener(Self::select_prev_git_entry))
+                .on_action(cx.listener(Self::select_next_diagnostic))
+                .on_action(cx.listener(Self::select_prev_diagnostic))
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
