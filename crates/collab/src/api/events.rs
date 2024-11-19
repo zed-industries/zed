@@ -418,7 +418,7 @@ pub async fn post_events(
     if let Some(kinesis_client) = app.kinesis_client.clone() {
         if let Some(stream) = app.config.kinesis_stream.clone() {
             let mut request = kinesis_client.put_records().stream_name(stream);
-            for row in for_snowflake(request_body.clone(), first_event_at) {
+            for row in for_snowflake(request_body.clone(), first_event_at, country_code.clone()) {
                 if let Some(data) = serde_json::to_vec(&row).log_err() {
                     request = request.records(
                         aws_sdk_kinesis::types::PutRecordsRequestEntry::builder()
@@ -1392,6 +1392,7 @@ pub fn calculate_json_checksum(app: Arc<AppState>, json: &impl AsRef<[u8]>) -> O
 fn for_snowflake(
     body: EventRequestBody,
     first_event_at: chrono::DateTime<chrono::Utc>,
+    country_code: Option<String>,
 ) -> impl Iterator<Item = SnowflakeRow> {
     body.events.into_iter().map(move |event| {
         let timestamp =
