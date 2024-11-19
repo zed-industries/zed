@@ -100,15 +100,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         break;
       case 1: {
         float2 position = input.position.xy;
-        // Normalize the angle to be within the range of -360 to 360 degrees.
-        float normalized_angle = fmod(input.background_angle, 360.0);
-        if (normalized_angle < -360.0) {
-          normalized_angle += 360.0;
-        } else if (normalized_angle > 360.0) {
-          normalized_angle -= 360.0;
-        }
         // -90 degrees to match the CSS gradient angle.
-        float radians = (normalized_angle - 90.0) * (M_PI_F / 180.0);
+        float radians = (fmod(input.background_angle, 360.0) - 90.0) * (M_PI_F / 180.0);
         float2 direction = float2(cos(radians), sin(radians));
 
         float stop0_percentage = input.background_stop0_percentage;
