@@ -381,10 +381,6 @@ pub enum ContextEvent {
     SlashCommandOutputSectionAdded {
         section: SlashCommandOutputSection<language::Anchor>,
     },
-    SlashCommandFinished {
-        output_range: Range<language::Anchor>,
-        run_commands_in_ranges: Vec<Range<language::Anchor>>,
-    },
     UsePendingTools,
     ToolFinished {
         tool_use_id: Arc<str>,
