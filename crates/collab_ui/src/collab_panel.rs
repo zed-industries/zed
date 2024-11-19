@@ -2521,7 +2521,7 @@ impl CollabPanel {
             .flex()
             .w_full()
             .when(!channel.is_root_channel(), |el| {
-                el.on_drag(channel.clone(), move |channel, cx| {
+                el.on_drag(channel.clone(), move |channel, _, cx| {
                     cx.new_view(|_| DraggedChannelView {
                         channel: channel.clone(),
                         width,

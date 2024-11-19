@@ -14,38 +14,47 @@
 //! The module also includes initialization logic to set up the context server system
 //! and react to changes in settings.
 
-use collections::{HashMap, HashSet};
-use command_palette_hooks::CommandPaletteFilter;
-use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task};
-use log;
-use parking_lot::RwLock;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsStore};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::CONTEXT_SERVERS_NAMESPACE;
+use anyhow::{bail, Result};
+use collections::HashMap;
+use command_palette_hooks::CommandPaletteFilter;
+use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, Subscription, Task, WeakModel};
+use log;
+use parking_lot::RwLock;
+use project::Project;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsSources, SettingsStore};
+use util::ResultExt as _;
+
 use crate::{
     client::{self, Client},
-    types,
+    types, ContextServerFactoryRegistry, CONTEXT_SERVERS_NAMESPACE,
 };
 
 #[derive(Deserialize, Serialize, Default, Clone, PartialEq, Eq, JsonSchema, Debug)]
 pub struct ContextServerSettings {
-    pub servers: Vec<ServerConfig>,
+    #[serde(default)]
+    pub context_servers: HashMap<Arc<str>, ServerConfig>,
+}
+
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug, Default)]
+pub struct ServerConfig {
+    pub command: Option<ServerCommand>,
+    pub settings: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
-pub struct ServerConfig {
-    pub id: String,
-    pub executable: String,
+pub struct ServerCommand {
+    pub path: String,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
 }
 
 impl Settings for ContextServerSettings {
-    const KEY: Option<&'static str> = Some("experimental.context_servers");
+    const KEY: Option<&'static str> = None;
 
     type FileContent = Self;
 
@@ -58,28 +67,43 @@ impl Settings for ContextServerSettings {
 }
 
 pub struct ContextServer {
-    pub id: String,
-    pub config: ServerConfig,
+    pub id: Arc<str>,
+    pub config: Arc<ServerConfig>,
     pub client: RwLock<Option<Arc<crate::protocol::InitializedContextServerProtocol>>>,
 }
 
 impl ContextServer {
-    fn new(config: ServerConfig) -> Self {
+    pub fn new(id: Arc<str>, config: Arc<ServerConfig>) -> Self {
         Self {
-            id: config.id.clone(),
+            id,
             config,
             client: RwLock::new(None),
         }
     }
 
-    async fn start(&self, cx: &AsyncAppContext) -> anyhow::Result<()> {
-        log::info!("starting context server {}", self.config.id,);
+    pub fn id(&self) -> Arc<str> {
+        self.id.clone()
+    }
+
+    pub fn config(&self) -> Arc<ServerConfig> {
+        self.config.clone()
+    }
+
+    pub fn client(&self) -> Option<Arc<crate::protocol::InitializedContextServerProtocol>> {
+        self.client.read().clone()
+    }
+
+    pub async fn start(self: Arc<Self>, cx: &AsyncAppContext) -> Result<()> {
+        log::info!("starting context server {}", self.id);
+        let Some(command) = &self.config.command else {
+            bail!("no command specified for server {}", self.id);
+        };
         let client = Client::new(
-            client::ContextServerId(self.config.id.clone()),
+            client::ContextServerId(self.id.clone()),
             client::ModelContextServerBinary {
-                executable: Path::new(&self.config.executable).to_path_buf(),
-                args: self.config.args.clone(),
-                env: self.config.env.clone(),
+                executable: Path::new(&command.path).to_path_buf(),
+                args: command.args.clone(),
+                env: command.env.clone(),
             },
             cx.clone(),
         )?;
@@ -93,7 +117,7 @@ impl ContextServer {
 
         log::debug!(
             "context server {} initialized: {:?}",
-            self.config.id,
+            self.id,
             initialized_protocol.initialize,
         );
 
@@ -101,7 +125,7 @@ impl ContextServer {
         Ok(())
     }
 
-    async fn stop(&self) -> anyhow::Result<()> {
+    pub fn stop(&self) -> Result<()> {
         let mut client = self.client.write();
         if let Some(protocol) = client.take() {
             drop(protocol);
@@ -110,107 +134,96 @@ impl ContextServer {
     }
 }
 
-/// A Context server manager manages the starting and stopping
-/// of all servers. To obtain a server to interact with, a crate
-/// must go through the `GlobalContextServerManager` which holds
-/// a model to the ContextServerManager.
 pub struct ContextServerManager {
-    servers: HashMap<String, Arc<ContextServer>>,
-    pending_servers: HashSet<String>,
+    servers: HashMap<Arc<str>, Arc<ContextServer>>,
+    project: Model<Project>,
+    registry: Model<ContextServerFactoryRegistry>,
+    update_servers_task: Option<Task<Result<()>>>,
+    needs_server_update: bool,
+    _subscriptions: Vec<Subscription>,
 }
 
 pub enum Event {
-    ServerStarted { server_id: String },
-    ServerStopped { server_id: String },
+    ServerStarted { server_id: Arc<str> },
+    ServerStopped { server_id: Arc<str> },
 }
 
-impl Global for ContextServerManager {}
 impl EventEmitter<Event> for ContextServerManager {}
 
-impl Default for ContextServerManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ContextServerManager {
-    pub fn new() -> Self {
-        Self {
-            servers: HashMap::default(),
-            pending_servers: HashSet::default(),
-        }
-    }
-    pub fn global(cx: &AppContext) -> Model<Self> {
-        cx.global::<GlobalContextServerManager>().0.clone()
-    }
-
-    pub fn add_server(
-        &mut self,
-        config: ServerConfig,
+    pub fn new(
+        registry: Model<ContextServerFactoryRegistry>,
+        project: Model<Project>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<anyhow::Result<()>> {
-        let server_id = config.id.clone();
-
-        if self.servers.contains_key(&server_id) || self.pending_servers.contains(&server_id) {
-            return Task::ready(Ok(()));
-        }
-
-        let task = {
-            let server_id = server_id.clone();
-            cx.spawn(|this, mut cx| async move {
-                let server = Arc::new(ContextServer::new(config));
-                server.start(&cx).await?;
-                this.update(&mut cx, |this, cx| {
-                    this.servers.insert(server_id.clone(), server);
-                    this.pending_servers.remove(&server_id);
-                    cx.emit(Event::ServerStarted {
-                        server_id: server_id.clone(),
-                    });
-                })?;
-                Ok(())
-            })
+    ) -> Self {
+        let mut this = Self {
+            _subscriptions: vec![
+                cx.observe(&registry, |this, _registry, cx| {
+                    this.available_context_servers_changed(cx);
+                }),
+                cx.observe_global::<SettingsStore>(|this, cx| {
+                    this.available_context_servers_changed(cx);
+                }),
+            ],
+            project,
+            registry,
+            needs_server_update: false,
+            servers: HashMap::default(),
+            update_servers_task: None,
         };
+        this.available_context_servers_changed(cx);
+        this
+    }
 
-        self.pending_servers.insert(server_id);
-        task
+    fn available_context_servers_changed(&mut self, cx: &mut ModelContext<Self>) {
+        if self.update_servers_task.is_some() {
+            self.needs_server_update = true;
+        } else {
+            self.update_servers_task = Some(cx.spawn(|this, mut cx| async move {
+                this.update(&mut cx, |this, _| {
+                    this.needs_server_update = false;
+                })?;
+
+                Self::maintain_servers(this.clone(), cx.clone()).await?;
+
+                this.update(&mut cx, |this, cx| {
+                    let has_any_context_servers = !this.servers().is_empty();
+                    if has_any_context_servers {
+                        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                            filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
+                        });
+                    }
+
+                    this.update_servers_task.take();
+                    if this.needs_server_update {
+                        this.available_context_servers_changed(cx);
+                    }
+                })?;
+
+                Ok(())
+            }));
+        }
     }
 
     pub fn get_server(&self, id: &str) -> Option<Arc<ContextServer>> {
-        self.servers.get(id).cloned()
-    }
-
-    pub fn remove_server(
-        &mut self,
-        id: &str,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<anyhow::Result<()>> {
-        let id = id.to_string();
-        cx.spawn(|this, mut cx| async move {
-            if let Some(server) = this.update(&mut cx, |this, _cx| this.servers.remove(&id))? {
-                server.stop().await?;
-            }
-            this.update(&mut cx, |this, cx| {
-                this.pending_servers.remove(&id);
-                cx.emit(Event::ServerStopped {
-                    server_id: id.clone(),
-                })
-            })?;
-            Ok(())
-        })
+        self.servers
+            .get(id)
+            .filter(|server| server.client().is_some())
+            .cloned()
     }
 
     pub fn restart_server(
         &mut self,
-        id: &str,
+        id: &Arc<str>,
         cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        let id = id.to_string();
+        let id = id.clone();
         cx.spawn(|this, mut cx| async move {
             if let Some(server) = this.update(&mut cx, |this, _cx| this.servers.remove(&id))? {
-                server.stop().await?;
-                let config = server.config.clone();
-                let new_server = Arc::new(ContextServer::new(config));
-                new_server.start(&cx).await?;
+                server.stop()?;
+                let config = server.config();
+                let new_server = Arc::new(ContextServer::new(id.clone(), config));
+                new_server.clone().start(&cx).await?;
                 this.update(&mut cx, |this, cx| {
                     this.servers.insert(id.clone(), new_server);
                     cx.emit(Event::ServerStopped {
@@ -226,78 +239,82 @@ impl ContextServerManager {
     }
 
     pub fn servers(&self) -> Vec<Arc<ContextServer>> {
-        self.servers.values().cloned().collect()
+        self.servers
+            .values()
+            .filter(|server| server.client().is_some())
+            .cloned()
+            .collect()
     }
 
-    pub fn model(cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|_cx| ContextServerManager::new())
-    }
-}
+    async fn maintain_servers(this: WeakModel<Self>, mut cx: AsyncAppContext) -> Result<()> {
+        let mut desired_servers = HashMap::default();
 
-pub struct GlobalContextServerManager(Model<ContextServerManager>);
-impl Global for GlobalContextServerManager {}
-
-impl GlobalContextServerManager {
-    fn register(cx: &mut AppContext) {
-        let model = ContextServerManager::model(cx);
-        cx.set_global(Self(model));
-    }
-}
-
-pub fn init(cx: &mut AppContext) {
-    ContextServerSettings::register(cx);
-    GlobalContextServerManager::register(cx);
-
-    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-        filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
-    });
-
-    cx.observe_global::<SettingsStore>(|cx| {
-        let manager = ContextServerManager::global(cx);
-        cx.update_model(&manager, |manager, cx| {
-            let settings = ContextServerSettings::get_global(cx);
-            let current_servers = manager
-                .servers()
-                .into_iter()
-                .map(|server| (server.id.clone(), server.config.clone()))
-                .collect::<HashMap<_, _>>();
-
-            let new_servers = settings
-                .servers
-                .iter()
-                .map(|config| (config.id.clone(), config.clone()))
-                .collect::<HashMap<_, _>>();
-
-            let servers_to_add = new_servers
-                .values()
-                .filter(|config| !current_servers.contains_key(&config.id))
-                .cloned()
-                .collect::<Vec<_>>();
-
-            let servers_to_remove = current_servers
-                .keys()
-                .filter(|id| !new_servers.contains_key(*id))
-                .cloned()
-                .collect::<Vec<_>>();
-
-            log::trace!("servers_to_add={:?}", servers_to_add);
-            for config in servers_to_add {
-                manager.add_server(config, cx).detach_and_log_err(cx);
-            }
-
-            for id in servers_to_remove {
-                manager.remove_server(&id, cx).detach_and_log_err(cx);
-            }
-
-            let has_any_context_servers = !manager.servers().is_empty();
-            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                if has_any_context_servers {
-                    filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
-                } else {
-                    filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
+        let (registry, project) = this.update(&mut cx, |this, cx| {
+            let location = this.project.read(cx).worktrees(cx).next().map(|worktree| {
+                settings::SettingsLocation {
+                    worktree_id: worktree.read(cx).id(),
+                    path: Path::new(""),
                 }
             });
-        })
-    })
-    .detach();
+            let settings = ContextServerSettings::get(location, cx);
+            desired_servers = settings.context_servers.clone();
+
+            (this.registry.clone(), this.project.clone())
+        })?;
+
+        for (id, factory) in
+            registry.read_with(&cx, |registry, _| registry.context_server_factories())?
+        {
+            let config = desired_servers.entry(id).or_default();
+            if config.command.is_none() {
+                if let Some(extension_command) = factory(project.clone(), &cx).await.log_err() {
+                    config.command = Some(extension_command);
+                }
+            }
+        }
+
+        let mut servers_to_start = HashMap::default();
+        let mut servers_to_stop = HashMap::default();
+
+        this.update(&mut cx, |this, _cx| {
+            this.servers.retain(|id, server| {
+                if desired_servers.contains_key(id) {
+                    true
+                } else {
+                    servers_to_stop.insert(id.clone(), server.clone());
+                    false
+                }
+            });
+
+            for (id, config) in desired_servers {
+                let existing_config = this.servers.get(&id).map(|server| server.config());
+                if existing_config.as_deref() != Some(&config) {
+                    let config = Arc::new(config);
+                    let server = Arc::new(ContextServer::new(id.clone(), config));
+                    servers_to_start.insert(id.clone(), server.clone());
+                    let old_server = this.servers.insert(id.clone(), server);
+                    if let Some(old_server) = old_server {
+                        servers_to_stop.insert(id, old_server);
+                    }
+                }
+            }
+        })?;
+
+        for (id, server) in servers_to_stop {
+            server.stop().log_err();
+            this.update(&mut cx, |_, cx| {
+                cx.emit(Event::ServerStopped { server_id: id })
+            })?;
+        }
+
+        for (id, server) in servers_to_start {
+            if server.start(&cx).await.log_err().is_some() {
+                this.update(&mut cx, |_, cx| {
+                    cx.emit(Event::ServerStarted { server_id: id })
+                })?;
+            }
+        }
+
+        Ok(())
+    }
 }

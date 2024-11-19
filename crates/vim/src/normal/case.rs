@@ -28,6 +28,7 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
+            editor.set_clip_at_line_ends(false, cx);
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 let mut selection_starts: HashMap<_, _> = Default::default();
@@ -52,6 +53,7 @@ impl Vim {
                     });
                 });
             });
+            editor.set_clip_at_line_ends(true, cx);
         });
     }
 
@@ -161,15 +163,12 @@ impl Vim {
             editor.transact(cx, |editor, cx| {
                 for range in ranges.into_iter().rev() {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    editor.buffer().update(cx, |buffer, cx| {
-                        let text = snapshot
-                            .text_for_range(range.start..range.end)
-                            .flat_map(|s| s.chars())
-                            .flat_map(transform)
-                            .collect::<String>();
-
-                        buffer.edit([(range, text)], None, cx)
-                    })
+                    let text = snapshot
+                        .text_for_range(range.start..range.end)
+                        .flat_map(|s| s.chars())
+                        .flat_map(transform)
+                        .collect::<String>();
+                    editor.edit([(range, text)], cx)
                 }
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges(cursor_positions)
@@ -225,17 +224,17 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         // works in visual mode
         cx.set_shared_state("a😀C«dÉ1*fˇ»\n").await;
-        cx.simulate_shared_keystrokes("U").await;
+        cx.simulate_shared_keystrokes("shift-u").await;
         cx.shared_state().await.assert_eq("a😀CˇDÉ1*F\n");
 
         // works with line selections
         cx.set_shared_state("abˇC\n").await;
-        cx.simulate_shared_keystrokes("shift-v U").await;
+        cx.simulate_shared_keystrokes("shift-v shift-u").await;
         cx.shared_state().await.assert_eq("ˇABC\n");
 
         // works in visual block mode
         cx.set_shared_state("ˇaa\nbb\ncc").await;
-        cx.simulate_shared_keystrokes("ctrl-v j U").await;
+        cx.simulate_shared_keystrokes("ctrl-v j shift-u").await;
         cx.shared_state().await.assert_eq("ˇAa\nBb\ncc");
     }
 
@@ -261,7 +260,7 @@ mod test {
     #[gpui::test]
     async fn test_change_case_motion(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        // works in visual mode
+
         cx.set_shared_state("ˇabc def").await;
         cx.simulate_shared_keystrokes("g shift-u w").await;
         cx.shared_state().await.assert_eq("ˇABC def");
@@ -281,5 +280,8 @@ mod test {
 
         cx.simulate_shared_keystrokes(".").await;
         cx.shared_state().await.assert_eq("ˇabc def");
+
+        cx.simulate_shared_keystrokes("g shift-u $").await;
+        cx.shared_state().await.assert_eq("ˇABC DEF");
     }
 }

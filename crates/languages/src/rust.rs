@@ -1,18 +1,18 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{io::BufReader, StreamExt};
-use gpui::{AppContext, AsyncAppContext};
+use gpui::{AppContext, AsyncAppContext, Task};
+use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::LanguageServerBinary;
+use lsp::{LanguageServerBinary, LanguageServerName};
 use regex::Regex;
-use smol::fs::{self, File};
+use smol::fs::{self};
 use std::{
     any::Any,
     borrow::Cow,
-    env::consts,
     path::{Path, PathBuf},
     sync::Arc,
     sync::LazyLock,
@@ -24,8 +24,48 @@ use crate::language_settings::language_settings;
 
 pub struct RustLspAdapter;
 
+#[cfg(target_os = "macos")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const ARCH_SERVER_NAME: &str = "apple-darwin";
+}
+
+#[cfg(target_os = "linux")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
+}
+
+#[cfg(target_os = "freebsd")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const ARCH_SERVER_NAME: &str = "unknown-freebsd";
+}
+
+#[cfg(target_os = "windows")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
+    const ARCH_SERVER_NAME: &str = "pc-windows-msvc";
+}
+
 impl RustLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
+
+    fn build_asset_name() -> String {
+        let extension = match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz => "tar.gz",
+            AssetKind::Gz => "gz",
+            AssetKind::Zip => "zip",
+        };
+
+        format!(
+            "{}-{}-{}.{}",
+            Self::SERVER_NAME,
+            std::env::consts::ARCH,
+            Self::ARCH_SERVER_NAME,
+            extension
+        )
+    }
 }
 
 #[async_trait(?Send)]
@@ -79,13 +119,8 @@ impl LspAdapter for RustLspAdapter {
             delegate.http_client(),
         )
         .await?;
-        let os = match consts::OS {
-            "macos" => "apple-darwin",
-            "linux" => "unknown-linux-gnu",
-            "windows" => "pc-windows-msvc",
-            other => bail!("Running on unsupported os: {other}"),
-        };
-        let asset_name = format!("rust-analyzer-{}-{os}.gz", consts::ARCH);
+        let asset_name = Self::build_asset_name();
+
         let asset = release
             .assets
             .iter()
@@ -105,31 +140,68 @@ impl LspAdapter for RustLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
+        let server_path = match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
+            AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+        };
 
-        if fs::metadata(&destination_path).await.is_err() {
+        if fs::metadata(&server_path).await.is_err() {
+            remove_matching(&container_dir, |entry| entry != destination_path).await;
+
             let mut response = delegate
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let mut file = File::create(&destination_path).await?;
-            futures::io::copy(decompressed_bytes, &mut file).await?;
+                .with_context(|| format!("downloading release from {}", version.url))?;
+            match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz => {
+                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let archive = async_tar::Archive::new(decompressed_bytes);
+                    archive.unpack(&destination_path).await.with_context(|| {
+                        format!("extracting {} to {:?}", version.url, destination_path)
+                    })?;
+                }
+                AssetKind::Gz => {
+                    let mut decompressed_bytes =
+                        GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let mut file =
+                        fs::File::create(&destination_path).await.with_context(|| {
+                            format!(
+                                "creating a file {:?} for a download from {}",
+                                destination_path, version.url,
+                            )
+                        })?;
+                    futures::io::copy(&mut decompressed_bytes, &mut file)
+                        .await
+                        .with_context(|| {
+                            format!("extracting {} to {:?}", version.url, destination_path)
+                        })?;
+                }
+                AssetKind::Zip => {
+                    node_runtime::extract_zip(
+                        &destination_path,
+                        BufReader::new(response.body_mut()),
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("unzipping {} to {:?}", version.url, destination_path)
+                    })?;
+                }
+            };
+
             // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(
-                    &destination_path,
+                    &server_path,
                     <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
                 )
                 .await?;
             }
-
-            remove_matching(&container_dir, |entry| entry != destination_path).await;
         }
 
         Ok(LanguageServerBinary {
-            path: destination_path,
+            path: server_path,
             env: None,
             arguments: Default::default(),
         })
@@ -380,9 +452,10 @@ impl ContextProvider for RustContextProvider {
         &self,
         task_variables: &TaskVariables,
         location: &Location,
-        project_env: Option<&HashMap<String, String>>,
+        project_env: Option<HashMap<String, String>>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::AppContext,
-    ) -> Result<TaskVariables> {
+    ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
             .buffer
             .read(cx)
@@ -396,27 +469,27 @@ impl ContextProvider for RustContextProvider {
             .is_some();
 
         if is_main_function {
-            if let Some((package_name, bin_name)) = local_abs_path
-                .and_then(|path| package_name_and_bin_name_from_abs_path(path, project_env))
-            {
-                return Ok(TaskVariables::from_iter([
+            if let Some((package_name, bin_name)) = local_abs_path.and_then(|path| {
+                package_name_and_bin_name_from_abs_path(path, project_env.as_ref())
+            }) {
+                return Task::ready(Ok(TaskVariables::from_iter([
                     (RUST_PACKAGE_TASK_VARIABLE.clone(), package_name),
                     (RUST_BIN_NAME_TASK_VARIABLE.clone(), bin_name),
-                ]));
+                ])));
             }
         }
 
         if let Some(package_name) = local_abs_path
             .and_then(|local_abs_path| local_abs_path.parent())
-            .and_then(|path| human_readable_package_name(path, project_env))
+            .and_then(|path| human_readable_package_name(path, project_env.as_ref()))
         {
-            return Ok(TaskVariables::from_iter([(
+            return Task::ready(Ok(TaskVariables::from_iter([(
                 RUST_PACKAGE_TASK_VARIABLE.clone(),
                 package_name,
-            )]));
+            )])));
         }
 
-        Ok(TaskVariables::default())
+        Task::ready(Ok(TaskVariables::default()))
     }
 
     fn associated_tasks(

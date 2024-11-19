@@ -1,10 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
     actions, rems, AnyElement, AppContext, AsyncAppContext, DismissEvent, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WindowContext,
+    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
@@ -95,7 +96,7 @@ impl BranchEntry {
 pub struct BranchListDelegate {
     matches: Vec<BranchEntry>,
     all_branches: Vec<Branch>,
-    workspace: View<Workspace>,
+    workspace: WeakView<Workspace>,
     selected_index: usize,
     last_query: String,
     /// Max length of branch name before we truncate it and add a trailing `...`.
@@ -122,7 +123,7 @@ impl BranchListDelegate {
 
         Ok(Self {
             matches: vec![],
-            workspace,
+            workspace: workspace.downgrade(),
             all_branches,
             selected_index: 0,
             last_query: Default::default(),
@@ -235,8 +236,13 @@ impl PickerDelegate for BranchListDelegate {
             let branch = branch.clone();
             |picker, mut cx| async move {
                 let branch_change_task = picker.update(&mut cx, |this, cx| {
-                    let project = this.delegate.workspace.read(cx).project().read(cx);
+                    let workspace = this
+                        .delegate
+                        .workspace
+                        .upgrade()
+                        .ok_or_else(|| anyhow!("workspace was dropped"))?;
 
+                    let project = workspace.read(cx).project().read(cx);
                     let branch_to_checkout = match branch {
                         BranchEntry::Branch(branch) => branch.string,
                         BranchEntry::NewBranch { name: branch_name } => branch_name,

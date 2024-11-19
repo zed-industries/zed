@@ -24,9 +24,9 @@ use futures::{
     join, SinkExt, Stream, StreamExt,
 };
 use gpui::{
-    anchored, deferred, point, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle,
-    FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
+    anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
+    FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -53,7 +53,9 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
-use ui::{prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
+use ui::{
+    prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, Tooltip,
+};
 use util::{RangeExt, ResultExt};
 use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
 
@@ -84,7 +86,7 @@ pub struct InlineAssistant {
     confirmed_assists: HashMap<InlineAssistId, Model<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
-    telemetry: Option<Arc<Telemetry>>,
+    telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
 }
 
@@ -105,7 +107,7 @@ impl InlineAssistant {
             confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
-            telemetry: Some(telemetry),
+            telemetry,
             fs,
         }
     }
@@ -241,19 +243,17 @@ impl InlineAssistant {
             codegen_ranges.push(start..end);
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                if let Some(telemetry) = self.telemetry.as_ref() {
-                    telemetry.report_assistant_event(AssistantEvent {
-                        conversation_id: None,
-                        kind: AssistantKind::Inline,
-                        phase: AssistantPhase::Invoked,
-                        message_id: None,
-                        model: model.telemetry_id(),
-                        model_provider: model.provider_id().to_string(),
-                        response_latency: None,
-                        error_message: None,
-                        language_name: buffer.language().map(|language| language.name().to_proto()),
-                    });
-                }
+                self.telemetry.report_assistant_event(AssistantEvent {
+                    conversation_id: None,
+                    kind: AssistantKind::Inline,
+                    phase: AssistantPhase::Invoked,
+                    message_id: None,
+                    model: model.telemetry_id(),
+                    model_provider: model.provider_id().to_string(),
+                    response_latency: None,
+                    error_message: None,
+                    language_name: buffer.language().map(|language| language.name().to_proto()),
+                });
             }
         }
 
@@ -460,7 +460,7 @@ impl InlineAssistant {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Below(range.end),
                 height: 0,
-                render: Box::new(|cx| {
+                render: Arc::new(|cx| {
                     v_flex()
                         .h_full()
                         .w_full()
@@ -816,7 +816,7 @@ impl InlineAssistant {
                         error_message: None,
                         language_name: language_name.map(|name| name.to_proto()),
                     },
-                    self.telemetry.clone(),
+                    Some(self.telemetry.clone()),
                     cx.http_client(),
                     model.api_key(cx),
                     cx.background_executor(),
@@ -1197,8 +1197,9 @@ impl InlineAssistant {
                     placement: BlockPlacement::Above(new_row),
                     height,
                     style: BlockStyle::Flex,
-                    render: Box::new(move |cx| {
+                    render: Arc::new(move |cx| {
                         div()
+                            .block_mouse_down()
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
                             .h(height as f32 * cx.line_height())
@@ -1317,7 +1318,7 @@ impl InlineAssistGroup {
 
 fn build_assist_editor_renderer(editor: &View<PromptEditor>) -> RenderBlock {
     let editor = editor.clone();
-    Box::new(move |cx: &mut BlockContext| {
+    Arc::new(move |cx: &mut BlockContext| {
         *editor.read(cx).gutter_dimensions.lock() = *cx.gutter_dimensions;
         editor.clone().into_any_element()
     })
@@ -1480,6 +1481,8 @@ impl Render for PromptEditor {
         h_flex()
             .key_context("PromptEditor")
             .bg(cx.theme().colors().editor_background)
+            .block_mouse_down()
+            .cursor(CursorStyle::Arrow)
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()
@@ -1757,6 +1760,20 @@ impl PromptEditor {
     ) {
         match event {
             EditorEvent::Edited { .. } => {
+                if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            let is_via_ssh = workspace
+                                .project()
+                                .update(cx, |project, _| project.is_via_ssh());
+
+                            workspace
+                                .client()
+                                .telemetry()
+                                .log_edit_event("inline assist", is_via_ssh);
+                        })
+                        .log_err();
+                }
                 let prompt = self.editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix
@@ -1899,21 +1916,58 @@ impl PromptEditor {
         let codegen = self.codegen.read(cx);
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let default_model = model_registry.active_model();
+        let alternative_models = model_registry.inline_alternative_models();
+
+        let get_model_name = |index: usize| -> String {
+            let name = |model: &Arc<dyn LanguageModel>| model.name().0.to_string();
+
+            match index {
+                0 => default_model.as_ref().map_or_else(String::new, name),
+                index if index <= alternative_models.len() => alternative_models
+                    .get(index - 1)
+                    .map_or_else(String::new, name),
+                _ => String::new(),
+            }
+        };
+
+        let total_models = alternative_models.len() + 1;
+
+        if total_models <= 1 {
+            return div().into_any_element();
+        }
+
+        let current_index = codegen.active_alternative;
+        let prev_index = (current_index + total_models - 1) % total_models;
+        let next_index = (current_index + 1) % total_models;
+
+        let prev_model_name = get_model_name(prev_index);
+        let next_model_name = get_model_name(next_index);
+
         h_flex()
             .child(
                 IconButton::new("previous", IconName::ChevronLeft)
                     .icon_color(Color::Muted)
-                    .disabled(disabled)
+                    .disabled(disabled || current_index == 0)
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |cx| {
-                            Tooltip::for_action_in(
-                                "Previous Alternative",
-                                &CyclePreviousInlineAssist,
-                                &focus_handle,
-                                cx,
-                            )
+                            cx.new_view(|cx| {
+                                let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CyclePreviousInlineAssist,
+                                        &focus_handle,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != 0 {
+                                    tooltip = tooltip.meta(prev_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, cx| {
@@ -1937,17 +1991,25 @@ impl PromptEditor {
             .child(
                 IconButton::new("next", IconName::ChevronRight)
                     .icon_color(Color::Muted)
-                    .disabled(disabled)
+                    .disabled(disabled || current_index == total_models - 1)
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |cx| {
-                            Tooltip::for_action_in(
-                                "Next Alternative",
-                                &CycleNextInlineAssist,
-                                &focus_handle,
-                                cx,
-                            )
+                            cx.new_view(|cx| {
+                                let mut tooltip = Tooltip::new("Next Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CycleNextInlineAssist,
+                                        &focus_handle,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != total_models - 1 {
+                                    tooltip = tooltip.meta(next_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, cx| {
@@ -2290,7 +2352,7 @@ pub struct Codegen {
     buffer: Model<MultiBuffer>,
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
-    telemetry: Option<Arc<Telemetry>>,
+    telemetry: Arc<Telemetry>,
     builder: Arc<PromptBuilder>,
     is_insertion: bool,
 }
@@ -2300,7 +2362,7 @@ impl Codegen {
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
-        telemetry: Option<Arc<Telemetry>>,
+        telemetry: Arc<Telemetry>,
         builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -2309,7 +2371,7 @@ impl Codegen {
                 buffer.clone(),
                 range.clone(),
                 false,
-                telemetry.clone(),
+                Some(telemetry.clone()),
                 builder.clone(),
                 cx,
             )
@@ -2400,7 +2462,7 @@ impl Codegen {
                     self.buffer.clone(),
                     self.range.clone(),
                     false,
-                    self.telemetry.clone(),
+                    Some(self.telemetry.clone()),
                     self.builder.clone(),
                     cx,
                 )
@@ -2503,6 +2565,7 @@ pub struct CodegenAlternative {
     line_operations: Vec<LineOperation>,
     request: Option<LanguageModelRequest>,
     elapsed_time: Option<f64>,
+    completion: Option<String>,
     message_id: Option<String>,
 }
 
@@ -2578,6 +2641,7 @@ impl CodegenAlternative {
             range,
             request: None,
             elapsed_time: None,
+            completion: None,
         }
     }
 
@@ -2790,6 +2854,9 @@ impl CodegenAlternative {
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
         let mut edit_start = self.range.start.to_offset(&snapshot);
+        let completion = Arc::new(Mutex::new(String::new()));
+        let completion_clone = completion.clone();
+
         self.generation = cx.spawn(|codegen, mut cx| {
             async move {
                 let stream = stream.await;
@@ -2821,6 +2888,7 @@ impl CodegenAlternative {
                                         response_latency = Some(request_start.elapsed());
                                     }
                                     let chunk = chunk?;
+                                    completion_clone.lock().push_str(&chunk);
 
                                     let mut lines = chunk.split('\n').peekable();
                                     while let Some(line) = lines.next() {
@@ -2990,6 +3058,7 @@ impl CodegenAlternative {
                             this.status = CodegenStatus::Done;
                         }
                         this.elapsed_time = Some(elapsed_time);
+                        this.completion = Some(completion.lock().clone());
                         cx.emit(CodegenEvent::Finished);
                         cx.notify();
                     })

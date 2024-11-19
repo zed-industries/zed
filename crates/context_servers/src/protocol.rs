@@ -11,8 +11,6 @@ use collections::HashMap;
 use crate::client::Client;
 use crate::types;
 
-const PROTOCOL_VERSION: &str = "2024-10-07";
-
 pub struct ModelContextProtocol {
     inner: Client,
 }
@@ -23,10 +21,9 @@ impl ModelContextProtocol {
     }
 
     fn supported_protocols() -> Vec<types::ProtocolVersion> {
-        vec![
-            types::ProtocolVersion::VersionString(PROTOCOL_VERSION.to_string()),
-            types::ProtocolVersion::VersionNumber(1),
-        ]
+        vec![types::ProtocolVersion(
+            types::LATEST_PROTOCOL_VERSION.to_string(),
+        )]
     }
 
     pub async fn initialize(
@@ -34,11 +31,13 @@ impl ModelContextProtocol {
         client_info: types::Implementation,
     ) -> Result<InitializedContextServerProtocol> {
         let params = types::InitializeParams {
-            protocol_version: types::ProtocolVersion::VersionString(PROTOCOL_VERSION.to_string()),
+            protocol_version: types::ProtocolVersion(types::LATEST_PROTOCOL_VERSION.to_string()),
             capabilities: types::ClientCapabilities {
                 experimental: None,
                 sampling: None,
+                roots: None,
             },
+            meta: None,
             client_info,
         };
 
@@ -113,7 +112,10 @@ impl InitializedContextServerProtocol {
 
         let response: types::PromptsListResponse = self
             .inner
-            .request(types::RequestType::PromptsList.as_str(), ())
+            .request(
+                types::RequestType::PromptsList.as_str(),
+                serde_json::json!({}),
+            )
             .await?;
 
         Ok(response.prompts)
@@ -125,7 +127,10 @@ impl InitializedContextServerProtocol {
 
         let response: types::ResourcesListResponse = self
             .inner
-            .request(types::RequestType::ResourcesList.as_str(), ())
+            .request(
+                types::RequestType::ResourcesList.as_str(),
+                serde_json::json!({}),
+            )
             .await?;
 
         Ok(response)
@@ -142,6 +147,7 @@ impl InitializedContextServerProtocol {
         let params = types::PromptsGetParams {
             name: prompt.as_ref().to_string(),
             arguments: Some(arguments),
+            meta: None,
         };
 
         let response: types::PromptsGetResponse = self
@@ -164,6 +170,7 @@ impl InitializedContextServerProtocol {
                 name: argument.into(),
                 value: value.into(),
             },
+            meta: None,
         };
         let result: types::CompletionCompleteResponse = self
             .inner
@@ -204,6 +211,7 @@ impl InitializedContextServerProtocol {
         let params = types::CallToolParams {
             name: tool.as_ref().to_string(),
             arguments,
+            meta: None,
         };
 
         let response: types::CallToolResponse = self

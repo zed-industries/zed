@@ -1,6 +1,6 @@
 # OCaml
 
-OCaml support is available through the [OCaml extension](https://github.com/zed-industries/zed/tree/main/extensions/ocaml).
+OCaml support is available through the [OCaml extension](https://github.com/zed-extensions/ocaml).
 
 - Tree Sitter: [tree-sitter/tree-sitter-ocaml](https://github.com/tree-sitter/tree-sitter-ocaml)
 - Language Server: [ocaml/ocaml-lsp](https://github.com/ocaml/ocaml-lsp)
