@@ -17,7 +17,6 @@ anyhow.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
-ctor.workspace = true
 foreign-types = "0.5"
 metal = "0.29"
 objc = "0.2"

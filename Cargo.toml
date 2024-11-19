@@ -148,7 +148,6 @@ members = [
     "extensions/haskell",
     "extensions/html",
     "extensions/lua",
-    "extensions/ocaml",
     "extensions/php",
     "extensions/perplexity",
     "extensions/prisma",
@@ -363,20 +362,20 @@ heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 hyper = "0.14"
-http = "1.1"
 ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "2"
 itertools = "0.13.0"
 jsonwebtoken = "9.3"
+jupyter-protocol = { version = "0.2.0" }
+jupyter-websocket-client = { version = "0.4.1" }
 libc = "0.2"
 linkify = "0.10.0"
-livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="4262308983646ab5b0e0802c3d8bc52154f99aab", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
-nbformat = "0.5.0"
+nbformat = "0.6.0"
 nix = "0.29"
 num-format = "0.4.4"
 once_cell = "1.19.0"
@@ -391,7 +390,7 @@ pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", 
 pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c"  }
 pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c"  }
 postage = { version = "0.5", features = ["futures-traits"] }
-pretty_assertions = "1.3.0"
+pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 profiling = "1"
 prost = "0.9"
 prost-build = "0.9"
@@ -410,7 +409,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = { version = "0.19.0", default-features = false, features = [
+runtimelib = { version = "0.21.0", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rustc-demangle = "0.1.23"
@@ -550,10 +549,6 @@ features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ]
-
-# TODO livekit https://github.com/RustAudio/cpal/pull/891
-[patch.crates-io]
-cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

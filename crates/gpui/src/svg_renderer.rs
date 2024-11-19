@@ -10,7 +10,7 @@ pub(crate) struct RenderSvgParams {
 }
 
 #[derive(Clone)]
-pub(crate) struct SvgRenderer {
+pub struct SvgRenderer {
     asset_source: Arc<dyn AssetSource>,
 }
 
@@ -24,7 +24,7 @@ impl SvgRenderer {
         Self { asset_source }
     }
 
-    pub fn render(&self, params: &RenderSvgParams) -> Result<Option<Vec<u8>>> {
+    pub(crate) fn render(&self, params: &RenderSvgParams) -> Result<Option<Vec<u8>>> {
         if params.size.is_zero() {
             return Err(anyhow!("can't render at a zero size"));
         }

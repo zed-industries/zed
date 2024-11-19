@@ -18,11 +18,6 @@ use room::Event;
 use settings::Settings;
 use std::sync::Arc;
 
-#[cfg(not(target_os = "windows"))]
-pub use live_kit_client::play_remote_video_track;
-pub use live_kit_client::{
-    track::RemoteVideoTrack, RemoteVideoTrackView, RemoteVideoTrackViewEvent,
-};
 pub use participant::ParticipantLocation;
 pub use room::Room;
 
@@ -31,10 +26,6 @@ struct GlobalActiveCall(Model<ActiveCall>);
 impl Global for GlobalActiveCall {}
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
-    live_kit_client::init(
-        cx.background_executor().dispatcher.clone(),
-        cx.http_client(),
-    );
     CallSettings::register(cx);
 
     let active_call = cx.new_model(|cx| ActiveCall::new(client, user_store, cx));

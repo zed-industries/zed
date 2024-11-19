@@ -16,8 +16,8 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
-    DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
+    BlockId, ChunkReplacement, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint,
+    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp, OpenExcerpts,
     PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
@@ -34,8 +34,8 @@ use gpui::{
     FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
-    ViewContext, WeakView, WindowContext,
+    StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, View, ViewContext,
+    WeakView, WindowContext,
 };
 use gpui::{ClickEvent, Subscription};
 use itertools::Itertools;
@@ -2019,7 +2019,7 @@ impl EditorElement {
             let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
             LineWithInvisibles::from_chunks(
                 chunks,
-                &style.text,
+                &style,
                 MAX_LINE_LEN,
                 rows.len(),
                 snapshot.mode,
@@ -4372,7 +4372,7 @@ impl LineWithInvisibles {
     #[allow(clippy::too_many_arguments)]
     fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
-        text_style: &TextStyle,
+        editor_style: &EditorStyle,
         max_line_len: usize,
         max_line_count: usize,
         editor_mode: EditorMode,
@@ -4380,6 +4380,7 @@ impl LineWithInvisibles {
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         cx: &mut WindowContext,
     ) -> Vec<Self> {
+        let text_style = &editor_style.text;
         let mut layouts = Vec::with_capacity(max_line_count);
         let mut fragments: SmallVec<[LineFragment; 1]> = SmallVec::new();
         let mut line = String::new();
@@ -4398,9 +4399,9 @@ impl LineWithInvisibles {
             text: "\n",
             style: None,
             is_tab: false,
-            renderer: None,
+            replacement: None,
         }]) {
-            if let Some(renderer) = highlighted_chunk.renderer {
+            if let Some(replacement) = highlighted_chunk.replacement {
                 if !line.is_empty() {
                     let shaped_line = cx
                         .text_system()
@@ -4413,42 +4414,71 @@ impl LineWithInvisibles {
                     styles.clear();
                 }
 
-                let available_width = if renderer.constrain_width {
-                    let chunk = if highlighted_chunk.text == ellipsis.as_ref() {
-                        ellipsis.clone()
-                    } else {
-                        SharedString::from(Arc::from(highlighted_chunk.text))
-                    };
-                    let shaped_line = cx
-                        .text_system()
-                        .shape_line(
-                            chunk,
-                            font_size,
-                            &[text_style.to_run(highlighted_chunk.text.len())],
-                        )
-                        .unwrap();
-                    AvailableSpace::Definite(shaped_line.width)
-                } else {
-                    AvailableSpace::MinContent
-                };
+                match replacement {
+                    ChunkReplacement::Renderer(renderer) => {
+                        let available_width = if renderer.constrain_width {
+                            let chunk = if highlighted_chunk.text == ellipsis.as_ref() {
+                                ellipsis.clone()
+                            } else {
+                                SharedString::from(Arc::from(highlighted_chunk.text))
+                            };
+                            let shaped_line = cx
+                                .text_system()
+                                .shape_line(
+                                    chunk,
+                                    font_size,
+                                    &[text_style.to_run(highlighted_chunk.text.len())],
+                                )
+                                .unwrap();
+                            AvailableSpace::Definite(shaped_line.width)
+                        } else {
+                            AvailableSpace::MinContent
+                        };
 
-                let mut element = (renderer.render)(&mut ChunkRendererContext {
-                    context: cx,
-                    max_width: text_width,
-                });
-                let line_height = text_style.line_height_in_pixels(cx.rem_size());
-                let size = element.layout_as_root(
-                    size(available_width, AvailableSpace::Definite(line_height)),
-                    cx,
-                );
+                        let mut element = (renderer.render)(&mut ChunkRendererContext {
+                            context: cx,
+                            max_width: text_width,
+                        });
+                        let line_height = text_style.line_height_in_pixels(cx.rem_size());
+                        let size = element.layout_as_root(
+                            size(available_width, AvailableSpace::Definite(line_height)),
+                            cx,
+                        );
 
-                width += size.width;
-                len += highlighted_chunk.text.len();
-                fragments.push(LineFragment::Element {
-                    element: Some(element),
-                    size,
-                    len: highlighted_chunk.text.len(),
-                });
+                        width += size.width;
+                        len += highlighted_chunk.text.len();
+                        fragments.push(LineFragment::Element {
+                            element: Some(element),
+                            size,
+                            len: highlighted_chunk.text.len(),
+                        });
+                    }
+                    ChunkReplacement::Str(x) => {
+                        let text_style = if let Some(style) = highlighted_chunk.style {
+                            Cow::Owned(text_style.clone().highlight(style))
+                        } else {
+                            Cow::Borrowed(text_style)
+                        };
+
+                        let run = TextRun {
+                            len: x.len(),
+                            font: text_style.font(),
+                            color: text_style.color,
+                            background_color: text_style.background_color,
+                            underline: text_style.underline,
+                            strikethrough: text_style.strikethrough,
+                        };
+                        let line_layout = cx
+                            .text_system()
+                            .shape_line(x, font_size, &[run])
+                            .unwrap()
+                            .with_len(highlighted_chunk.text.len());
+
+                        width += line_layout.width;
+                        len += highlighted_chunk.text.len();
+                        fragments.push(LineFragment::Text(line_layout))
+                    }
+                }
             } else {
                 for (ix, mut line_chunk) in highlighted_chunk.text.split('\n').enumerate() {
                     if ix > 0 {
@@ -5992,7 +6022,7 @@ fn layout_line(
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
     LineWithInvisibles::from_chunks(
         chunks,
-        &style.text,
+        &style,
         MAX_LINE_LEN,
         1,
         snapshot.mode,
