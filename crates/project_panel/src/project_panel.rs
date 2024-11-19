@@ -187,6 +187,8 @@ actions!(
         UnfoldDirectory,
         FoldDirectory,
         SelectParent,
+        SelectNextGitEntry,
+        SelectPrevGitEntry,
     ]
 );
 
@@ -1377,6 +1379,76 @@ impl ProjectPanel {
             }
         } else {
             self.select_first(&SelectFirst {}, cx);
+        }
+    }
+
+    /// Iterators through all entries starting from self.selected_entry until an entry meets the predicate
+    fn find_entry(
+        &self,
+        reverse_search: bool,
+        predicate: impl Fn(&Entry) -> bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<SelectedEntry> {
+        let (worktree, entry) = self.selected_sub_entry(&cx)?;
+        let entry_path = entry.path.clone();
+        let entry_id = entry.id;
+
+        worktree.update(cx, |tree, _| {
+            let mut iter = tree
+                .traverse_from_path(true, true, true, entry_path.as_ref())
+                .chain(tree.entries(true, 0).take_while(|ele| ele.id != entry_id));
+
+            let entry = if reverse_search {
+                iter.filter(|ele| ele.id != entry_id && predicate(ele))
+                    .last()
+            } else {
+                iter.find(|ele| ele.id != entry_id && predicate(ele))
+            }?;
+
+            Some(SelectedEntry {
+                worktree_id: tree.id(),
+                entry_id: entry.id,
+            })
+        })
+    }
+
+    fn select_prev_git_entry(&mut self, _: &SelectPrevGitEntry, cx: &mut ViewContext<Self>) {
+        let selection = self.find_entry(
+            true,
+            |entry| {
+                entry
+                    .git_status
+                    .is_some_and(|status| matches!(status, GitFileStatus::Modified))
+            },
+            cx,
+        );
+
+        if let Some(selection) = selection {
+            self.selection = Some(selection);
+            self.expand_entry(selection.worktree_id, selection.entry_id, cx);
+            self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
+            self.autoscroll(cx);
+            cx.notify();
+        }
+    }
+
+    fn select_next_git_entry(&mut self, _: &SelectNextGitEntry, cx: &mut ViewContext<Self>) {
+        let selection = self.find_entry(
+            false,
+            |entry| {
+                entry
+                    .git_status
+                    .is_some_and(|status| matches!(status, GitFileStatus::Modified))
+            },
+            cx,
+        );
+
+        if let Some(selection) = selection {
+            self.selection = Some(selection);
+            self.expand_entry(selection.worktree_id, selection.entry_id, cx);
+            self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
+            self.autoscroll(cx);
+            cx.notify();
         }
     }
 
@@ -3319,6 +3391,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::select_first))
                 .on_action(cx.listener(Self::select_last))
                 .on_action(cx.listener(Self::select_parent))
+                .on_action(cx.listener(Self::select_next_git_entry))
+                .on_action(cx.listener(Self::select_prev_git_entry))
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
