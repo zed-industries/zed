@@ -218,8 +218,15 @@ pub fn capture_local_audio_track(
             );
         }
         if let Some(stream) = &stream {
+            stream.play().log_err();
+            // We need to keep the thread alive and task not dropped, so the `stream` is not dropped.
+            // `stream` is `!Send` so we cannot move it away anywhere else.
             loop {
-                stream.play().log_err();
+                std::thread::park();
+                // Suppress the unreachable code warning
+                if false {
+                    break;
+                }
             }
         }
 
