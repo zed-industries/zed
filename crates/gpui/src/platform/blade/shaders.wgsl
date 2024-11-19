@@ -213,7 +213,6 @@ fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
 }
 
 // --- quads --- //
-
 struct Quad {
     order: u32,
     pad: u32,
@@ -249,12 +248,15 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     var out = QuadVarying();
     out.position = to_device_position(unit_vertex, quad.bounds);
     out.background_tag = quad.background.tag;
-    out.background_solid = hsla_to_rgba(quad.background.solid);
-    out.background_angle = quad.background.angle;
-    out.background_stop0_percentage = quad.background.stop0_percentage;
-    out.background_stop0_color = hsla_to_rgba(quad.background.stop0_color);
-    out.background_stop1_percentage = quad.background.stop1_percentage;
-    out.background_stop1_color = hsla_to_rgba(quad.background.stop1_color);
+    if (out.background_tag == 0u) {
+        out.background_solid = hsla_to_rgba(quad.background.solid);
+    } else if (out.background_tag == 1u) {
+      out.background_angle = quad.background.linear_gradient.angle;
+      out.background_stop0_percentage = quad.background.linear_gradient.stops[0].percentage;
+      out.background_stop0_color = hsla_to_rgba(quad.background.linear_gradient.stops[0].color);
+      out.background_stop1_percentage = quad.background.linear_gradient.stops[1].percentage;
+      out.background_stop1_color = hsla_to_rgba(quad.background.linear_gradient.stops[1].color);
+    }
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
@@ -269,13 +271,56 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     }
 
     let quad = b_quads[input.quad_id];
+
+    var background_color = vec4<f32>(0.0);
+    if (input.background_tag == 0u) {
+        background_color = input.background_solid;
+    } else if (input.background_tag == 1u) {
+        // Linear gradient background.
+        let position = input.position.xy;
+        var normalized_angle = input.background_angle % 360.0;
+        if (normalized_angle < -360.0) {
+            normalized_angle += 360.0;
+        } else if (normalized_angle > 360.0) {
+            normalized_angle -= 360.0;
+        }
+
+        // -90 degrees to match the CSS gradient angle.
+        let radians = (normalized_angle - 90.0) * M_PI_F / 180.0;
+        let direction = vec2<f32>(cos(radians), sin(radians));
+        let stop0_percentage = input.background_stop0_percentage;
+        let stop1_percentage = input.background_stop1_percentage;
+
+        // Get the t value for the linear gradient with the color stop percentages.
+        let half_size = vec2<f32>(quad.bounds.size.x / 2.0, quad.bounds.size.y / 2.0);
+        let center = vec2<f32>(quad.bounds.origin.x + half_size.x, quad.bounds.origin.y + half_size.y);;
+        let position_from_center = position - center;
+        var t = dot(position_from_center, direction) / length(direction);
+        // Check the direct to determine the use x or y
+        if (abs(direction.x) > abs(direction.y)) {
+            t = (t + half_size.x) / (2 * half_size.x);
+        } else {
+            t = (t + half_size.y) / (2 * half_size.y);
+        }
+
+        // Adjust t based on the stop percentages
+        t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
+        t = clamp(t, 0.0, 1.0);
+
+        let color0 = input.background_stop0_color;
+        let color1 = input.background_stop1_color;
+
+        background_color = mix(color0, color1, t);
+    }
+
+
     // Fast path when the quad is not rounded and doesn't have any border.
     if (quad.corner_radii.top_left == 0.0 && quad.corner_radii.bottom_left == 0.0 &&
         quad.corner_radii.top_right == 0.0 &&
         quad.corner_radii.bottom_right == 0.0 && quad.border_widths.top == 0.0 &&
         quad.border_widths.left == 0.0 && quad.border_widths.right == 0.0 &&
         quad.border_widths.bottom == 0.0) {
-        return blend_color(input.background_color, 1.0);
+        return blend_color(background_color, 1.0);
     }
 
     let half_size = quad.bounds.size / 2.0;
@@ -304,53 +349,13 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         border_width = vertical_border;
     }
 
-    var color;
-    if (input.background_tag == 0u) {
-        color = input.background_solid;
-    } else {
-        // Linear gradient background.
-        let position = input.position.xy;
-        let normalized_angle = input.background_angle % 360.0;
-        if (normalized_angle < -360.0) {
-            normalized_angle += 360.0;
-        } else if (normalized_angle > 360.0) {
-            normalized_angle -= 360.0;
-        }
-
-        // -90 degrees to match the CSS gradient angle.
-        let radians = (normalized_angle - 90.0) * M_PI_F / 180.0;
-        let direction = vec2<f32>(cos(radians), sin(radians));
-        let stop0_percentage = input.background_stop0_percentage;
-        let stop1_percentage = input.background_stop1_percentage;
-
-        // Get the t value for the linear gradient with the color stop percentages.
-        let half_size = vec2<f32>(quad.bounds.size.x / 2.0, quad.bounds.size.y / 2.0);
-        let center = vec2<f32>(quad.bounds.origin.x + half_size.x, quad.bounds.origin.y + half_size.y);;
-        let position_from_center = position - center;
-        let t = dot(position_from_center, direction) / length(direction);
-        // Check the direct to determine the use x or y
-        if (abs(direction.x) > abs(direction.y)) {
-            t = (t + half_size.x) / (2 * half_size.x);
-        } else {
-            t = (t + half_size.y) / (2 * half_size.y);
-        }
-
-        // Adjust t based on the stop percentages
-        t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
-        t = clamp(t, 0.0, 1.0);
-
-        let color0 = input.background_stop0_color;
-        let color1 = input.background_stop1_color;
-
-        color = mix(color0, color1, t);
-    }
-
+    var color = background_color;
     if (border_width > 0.0) {
         let inset_distance = distance + border_width;
         // Blend the border on top of the background and then linearly interpolate
         // between the two as we slide inside the background.
-        let blended_border = over(input.background_color, input.border_color);
-        color = mix(blended_border, input.background_color,
+        let blended_border = over(background_color, input.border_color);
+        color = mix(blended_border, background_color,
                     saturate(0.5 - inset_distance));
     }
 

@@ -548,26 +548,35 @@ impl<'de> Deserialize<'de> for Hsla {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub(crate) enum BackgroundTag {
+    Solid = 0,
+    LinearGradient = 1,
+}
+
 /// A background color, which can be either a solid color or a linear gradient.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
-pub enum Background {
-    /// A solid color.
-    Solid(Hsla),
-    /// A linear gradient.
-    LinearGradient {
-        /// The angle of the gradient.
-        angle: f32,
-        /// The color stops of the gradient.
-        stops: [LinearColorStop; 2],
-    },
+pub struct Background {
+    /// 0 is a solid color
+    /// 1 is a linear gradient.
+    pub(crate) tag: BackgroundTag,
+    pub(crate) solid: Hsla,
+    pub(crate) angle: f32,
+    pub(crate) colors: [LinearColorStop; 2],
 }
 
 impl Eq for Background {}
 
 impl Default for Background {
     fn default() -> Self {
-        Self::Solid(Hsla::default())
+        Self {
+            tag: BackgroundTag::Solid,
+            solid: Hsla::default(),
+            angle: 0.0,
+            colors: [LinearColorStop::default(), LinearColorStop::default()],
+        }
     }
 }
 
@@ -583,9 +592,11 @@ pub fn linear_gradient(
     from: impl Into<LinearColorStop>,
     to: impl Into<LinearColorStop>,
 ) -> Background {
-    Background::LinearGradient {
+    Background {
+        tag: BackgroundTag::LinearGradient,
         angle,
-        stops: [from.into(), to.into()],
+        colors: [from.into(), to.into()],
+        ..Default::default()
     }
 }
 
@@ -624,33 +635,41 @@ impl LinearColorStop {
 impl Background {
     /// Returns a new background color with the same hue, saturation, and lightness, but with a modified alpha value.
     pub fn opacity(&self, factor: f32) -> Self {
-        match self {
-            Self::Solid(color) => Self::Solid(color.opacity(factor)),
-            Self::LinearGradient { angle, stops } => Self::LinearGradient {
-                angle: *angle,
-                stops: [stops[0].opacity(factor), stops[1].opacity(factor)],
-            },
-        }
+        let mut background = self.clone();
+        background.solid = background.solid.opacity(factor);
+        background.colors = [
+            self.colors[0].opacity(factor),
+            self.colors[1].opacity(factor),
+        ];
+        background
     }
 
     /// Returns whether the background color is transparent.
     pub fn is_transparent(&self) -> bool {
-        match self {
-            Self::Solid(color) => color.is_transparent(),
-            Self::LinearGradient { stops, .. } => stops.iter().all(|c| c.color.is_transparent()),
+        match self.tag {
+            BackgroundTag::Solid => self.solid.is_transparent(),
+            BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
         }
     }
 }
 
 impl From<Hsla> for Background {
     fn from(value: Hsla) -> Self {
-        Background::Solid(value)
+        Background {
+            tag: BackgroundTag::Solid,
+            solid: value,
+            ..Default::default()
+        }
     }
 }
 
 impl From<Rgba> for Background {
     fn from(value: Rgba) -> Self {
-        Background::Solid(Hsla::from(value))
+        Background {
+            tag: BackgroundTag::Solid,
+            solid: Hsla::from(value),
+            ..Default::default()
+        }
     }
 }
 

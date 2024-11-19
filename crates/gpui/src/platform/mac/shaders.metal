@@ -68,11 +68,11 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
   Background background = quad.background;
   uint background_tag = background.tag;
   float4 background_solid = hsla_to_rgba(background.solid);
-  float background_angle = background.linear_gradient.angle;
-  float background_stop0_percentage = background.linear_gradient.stops[0].percentage;
-  float4 background_stop0_color = hsla_to_rgba(background.linear_gradient.stops[0].color);
-  float background_stop1_percentage = background.linear_gradient.stops[1].percentage;
-  float4 background_stop1_color = hsla_to_rgba(background.linear_gradient.stops[1].color);
+  float background_angle = background.angle;
+  float background_stop0_percentage = background.colors[0].percentage;
+  float4 background_stop0_color = hsla_to_rgba(background.colors[0].color);
+  float background_stop1_percentage = background.colors[1].percentage;
+  float4 background_stop1_color = hsla_to_rgba(background.colors[1].color);
   float4 border_color = hsla_to_rgba(quad.border_color);
 
   return QuadVertexOutput{
@@ -96,10 +96,10 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   float4 color;
   switch (input.background_tag) {
-      case Background_Solid:
+      case 0:
         color = input.background_solid;
         break;
-      case Background_LinearGradient: {
+      case 1: {
         float2 position = input.position.xy;
         // Normalize the angle to be within the range of -360 to 360 degrees.
         float normalized_angle = fmod(input.background_angle, 360.0);

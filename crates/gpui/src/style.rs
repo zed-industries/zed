@@ -5,10 +5,11 @@ use std::{
 };
 
 use crate::{
-    black, phi, point, quad, rems, size, AbsoluteLength, Background, Bounds, ContentMask, Corners,
-    CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
-    FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
-    PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
+    black, phi, point, quad, rems, size, AbsoluteLength, Background, BackgroundTag, Bounds,
+    ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges,
+    EdgesRefinement, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length,
+    Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun,
+    WindowContext,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -573,11 +574,13 @@ impl Style {
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.map_or(false, |color| !color.is_transparent()) {
             let mut border_color = match background_color {
-                Some(color) => match color {
-                    Background::Solid(c) => c,
-                    Background::LinearGradient { stops, .. } => {
-                        stops.first().map(|stop| stop.color).unwrap_or_default()
-                    }
+                Some(color) => match color.tag {
+                    BackgroundTag::Solid => color.solid,
+                    BackgroundTag::LinearGradient => color
+                        .colors
+                        .first()
+                        .map(|stop| stop.color)
+                        .unwrap_or_default(),
                 },
                 None => Hsla::default(),
             };
