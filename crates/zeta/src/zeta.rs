@@ -189,13 +189,14 @@ impl Zeta {
             position,
         });
 
-        let mut prompt = include_str!("./prompt_prefix.md").to_string();
+        let mut events = String::new();
         for event in self.events.values() {
-            prompt.push_str(&event.to_prompt());
-            prompt.push('\n');
-            prompt.push('\n');
+            events.push_str(&event.to_prompt());
+            events.push('\n');
+            events.push('\n');
         }
-        prompt.push_str(include_str!("./prompt_suffix.md"));
+
+        let prompt = include_str!("./complete_prompt.md").replace("<events>", &events);
         log::debug!("requesting completion: {}", prompt);
 
         let api_url = self.api_url.clone();
@@ -206,7 +207,7 @@ impl Zeta {
             stream: false,
             max_tokens: None,
             stop: Vec::new(),
-            temperature: 1.,
+            temperature: 0.2,
             tool_choice: None,
             tools: Vec::new(),
         };
@@ -633,7 +634,7 @@ mod tests {
                     }
 
                     let pivot_index = partition(arr);
-<|user_cursor_is_here|>
+                    <|user_cursor_is_here|>
                 }
             "},
             indoc! {"
@@ -650,6 +651,7 @@ mod tests {
                     quicksort(&mut arr[pivot_index + 1..]);
                 }
             "},
+            vec!["Ensure that the quicksort function is implememented correctly"],
             cx,
         )
         .await;
@@ -679,7 +681,7 @@ mod tests {
                         return;
                     }
 
-                    let pivot = par<|user_cursor_is_here|>
+                    let pivot = partit<|user_cursor_is_here|>
             "},
             indoc! {"
                 use std::cmp::Ord;
@@ -693,6 +695,37 @@ mod tests {
                     let pivot = partition(arr);
                 }
             "},
+            vec![
+                "Ensure that the pivot assignment is completed",
+                "Ensure that the quicksort function's closing curly brace gets inserted",
+            ],
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_import_statement(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "main.rs",
+            indoc! {"
+                fn main() {
+                }
+            "},
+            &indoc! {"
+                fn main() {
+                    thread::sleep(Duration::from_secs(1));<|user_cursor_is_here|>
+                }
+            "},
+            indoc! {"
+                use std::thread;
+                use std::time::Duration;
+
+                fn main() {
+                    thread::sleep(Duration::from_secs(1));
+                }
+            "},
+            vec!["Ensure that there are the Rust `use` statements importing `std::thread` and `std::time::Duration`, like `use std::thread;` at the start of the file"],
             cx,
         )
         .await;
@@ -703,6 +736,7 @@ mod tests {
         initial: &str,
         edited: &str,
         expected: &str,
+        mut assertions: Vec<&str>,
         cx: &mut TestAppContext,
     ) {
         cx.executor().allow_parking();
@@ -717,6 +751,21 @@ mod tests {
         autocomplete(&buffer, cursor_start, &zeta, cx).await;
         let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
 
+        assertions.insert(0, "Must be similar to the expected output");
+
+        let mut assertion_text = String::new();
+        for assertion in assertions {
+            assertion_text.push_str("- ");
+            assertion_text.push_str(assertion);
+            assertion_text.push('\n');
+        }
+
+        let prompt = include_str!("./eval_prompt.md")
+            .replace("<actual>", &autocompleted)
+            .replace("<expected>", expected)
+            .replace("<assertions>", &assertion_text);
+
+        log::debug!("grading prompt: {}", prompt);
         let (api_url, api_key, http_client, request) = zeta.read_with(cx, |zeta, _cx| {
             (
                 zeta.api_url.clone(),
@@ -724,21 +773,11 @@ mod tests {
                 zeta.http_client.clone(),
                 open_ai::Request {
                     model: zeta.model.to_string(),
-                    messages: vec![
-                        open_ai::RequestMessage::System {
-                            content: include_str!("./eval_prompt.md").into(),
-                        },
-                        open_ai::RequestMessage::User {
-                            content: format!(
-                                "## Test\n\nNow score the following pair. Reply with a single number.\nActual:\n```\n{}\n```\nExpected:\n```\n{}\n```",
-                                autocompleted, expected
-                            ),
-                        },
-                    ],
+                    messages: vec![open_ai::RequestMessage::User { content: prompt }],
                     stream: false,
                     max_tokens: None,
                     stop: Vec::new(),
-                    temperature: 1.,
+                    temperature: 0.0,
                     tool_choice: None,
                     tools: Vec::new(),
                 },
@@ -759,12 +798,15 @@ mod tests {
         log::info!("received score from LLM: {}", content);
 
         let score = content
+            .lines()
+            .last()
+            .unwrap()
             .parse::<f64>()
             .with_context(|| format!("failed to parse response into a f64: {:?}", content))
             .unwrap();
         assert!(
             score >= 0.8,
-            "score was {}\nactual:\n{}\nexpected:\n{}",
+            "score was {}\n----- actual: ------\n{}\n----- expected: ------\n{}",
             score,
             autocompleted,
             expected
