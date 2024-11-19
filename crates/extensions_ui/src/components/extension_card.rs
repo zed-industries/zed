@@ -52,7 +52,10 @@ impl RenderOnce for ExtensionCard {
                             .size_full()
                             .items_center()
                             .justify_center()
-                            .bg(cx.theme().colors().elevated_surface_background.opacity(0.8))
+                            .bg(theme::color_alpha(
+                                cx.theme().colors().elevated_surface_background,
+                                0.8,
+                            ))
                             .child(Label::new("Overridden by dev extension.")),
                     )
                 }),
