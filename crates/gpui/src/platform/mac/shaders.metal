@@ -101,29 +101,25 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       break;
     case Background_LinearGradient: {
       float2 position = input.position.xy;
-      float radians = fmod(input.background_angle, 360.0) * (M_PI_F / 180.0);
-      float2 direction = normalize(float2(cos(radians), sin(radians)));
+      // Normalize the angle to be within the range of -360 to 360 degrees.
+      float normalized_angle = fmod(input.background_angle, 360.0);
+      if (normalized_angle < -360.0) {
+        normalized_angle += 360.0;
+      } else if (normalized_angle > 360.0) {
+        normalized_angle -= 360.0;
+      }
+      // -90 degrees to match the CSS gradient angle.
+      float radians = (normalized_angle - 90.0) * (M_PI_F / 180.0);
+      float2 direction = float2(cos(radians), sin(radians));
+        float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
+        float2 center = float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
+        float2 position_from_center = position - center;
+        float t = dot(position_from_center, direction) / length(direction);
+        t = (t + half_size.x) / (2. * half_size.x);
 
-      // Calculate the start and end points of the gradient
-      float2 start_point = float2(quad.bounds.origin.x, quad.bounds.origin.y);
-      float2 end_point = start_point + direction * float2(quad.bounds.size.width, quad.bounds.size.height);
+        float4 color1 = input.background_stop0_color;
+        float4 color2 = input.background_stop1_color;
 
-      // Calculate the projection of the position on the gradient direction
-      float gradient_length = dot(position - start_point, direction);
-      float total_length = length(end_point - start_point);
-
-      // Calculate the percentage along the gradient
-      float percentage = gradient_length / total_length;
-
-      // Apply the stop percentages, the stop is 0.0..1.0
-      float stop0 = input.background_stop0_percentage;
-      float stop1 = input.background_stop1_percentage;
-
-      // Normalize the percentage between the two stops
-      float t = saturate((percentage - stop0) / (stop1 - stop0));
-
-      float4 color1 = input.background_stop0_color;
-      float4 color2 = input.background_stop1_color;
       color = mix(color1, color2, t);
       break;
     }

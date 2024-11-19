@@ -12,6 +12,9 @@ impl GradientViewer {
 
 impl Render for GradientViewer {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let red = gpui::red();
+        let blue = gpui::blue();
+
         div()
             .font_family(".SystemUIFont")
             .bg(gpui::white())
@@ -21,16 +24,29 @@ impl Render for GradientViewer {
             .flex_col()
             .gap_3()
             .child(
-                div()
-                    .h_24()
-                    .w_full()
-                    .rounded_lg()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(gpui::blue())
-                    .text_color(gpui::white())
-                    .child("Solid Color"),
+div().flex().flex_1().gap_3().child(
+    div()
+        .h_24()
+        .w_full()
+        .rounded_lg()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(blue)
+        .text_color(gpui::white())
+        .child("Solid Color"),
+).child(
+    div()
+        .h_24()
+        .w_full()
+        .rounded_lg()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(red)
+        .text_color(gpui::white())
+        .child("Solid Color"),
+)
             )
             .child(
                 div()
@@ -41,29 +57,29 @@ impl Render for GradientViewer {
                     .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
                         45.,
                         [
-                            BackgroundColorStop::new(0., gpui::red()),
-                            BackgroundColorStop::new(1., gpui::blue()),
+                            BackgroundColorStop::new(0., red),
+                            BackgroundColorStop::new(1., blue),
                         ],
                     )))
                     .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
                         135.,
                         [
-                            BackgroundColorStop::new(0., gpui::red()),
-                            BackgroundColorStop::new(1., gpui::blue()),
+                            BackgroundColorStop::new(0., red),
+                            BackgroundColorStop::new(1., blue),
                         ],
                     )))
                     .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
                         225.,
                         [
-                            BackgroundColorStop::new(0., gpui::red()),
-                            BackgroundColorStop::new(1., gpui::blue()),
+                            BackgroundColorStop::new(0., red),
+                            BackgroundColorStop::new(1., blue),
                         ],
                     )))
                     .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
                         315.,
                         [
-                            BackgroundColorStop::new(0., gpui::red()),
-                            BackgroundColorStop::new(1., gpui::blue()),
+                            BackgroundColorStop::new(0., red),
+                            BackgroundColorStop::new(1., blue),
                         ],
                     ))),
             )
@@ -76,29 +92,29 @@ impl Render for GradientViewer {
                     .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
                         0.,
                         [
-                            BackgroundColorStop::new(0., gpui::red()),
-                            BackgroundColorStop::new(1., gpui::blue()),
+                            BackgroundColorStop::new(0., red),
+                            BackgroundColorStop::new(1., blue),
                         ],
                     )))
                     .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
                         90.,
                         [
-                            BackgroundColorStop::new(0., gpui::red()),
-                            BackgroundColorStop::new(1., gpui::blue()),
+                            BackgroundColorStop::new(0., red),
+                            BackgroundColorStop::new(1., blue),
                         ],
                     )))
                     .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
                         180.,
                         [
-                            BackgroundColorStop::new(0., gpui::red()),
-                            BackgroundColorStop::new(1., gpui::blue()),
+                            BackgroundColorStop::new(0., red),
+                            BackgroundColorStop::new(1., blue),
                         ],
                     )))
                     .child(div().flex_1().rounded_lg().bg(Background::linear_gradient(
                         360.,
                         [
-                            BackgroundColorStop::new(0., gpui::red()),
-                            BackgroundColorStop::new(1., gpui::blue()),
+                            BackgroundColorStop::new(0., red),
+                            BackgroundColorStop::new(1., blue),
                         ],
                     ))),
             )
@@ -119,7 +135,7 @@ impl Render for GradientViewer {
                             div().flex_1().rounded_lg().bg(Background::linear_gradient(
                                 0.,
                                 [
-                                    BackgroundColorStop::new(0.5, gpui::blue()),
+                                    BackgroundColorStop::new(0.5, blue),
                                     BackgroundColorStop::new(1., gpui::green()),
                                 ],
                             )
