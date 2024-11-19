@@ -9,6 +9,11 @@
 (dynamic_type trait: (type_identifier) @type.interface)
 (trait_bounds (type_identifier) @type.interface)
 
+(trait_item
+  (declaration_list
+    (function_signature_item
+      name: (identifier) @interface.method)))
+
 (call_expression
   function: [
     (identifier) @function

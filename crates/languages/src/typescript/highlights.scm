@@ -26,6 +26,10 @@
 (method_definition
   name: (property_identifier) @function.method)
 
+(interface_body
+  (method_signature
+    name: (property_identifier) @interface.method))
+
 (pair
   key: (property_identifier) @function.method
   value: [(function_expression) (arrow_function)])
