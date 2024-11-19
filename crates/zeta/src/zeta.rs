@@ -587,7 +587,7 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
     fn active_completion_text<'a>(
         &'a self,
         buffer: &Model<Buffer>,
-        cursor_position: language::Anchor,
+        _cursor_position: language::Anchor,
         cx: &'a AppContext,
     ) -> Option<editor::CompletionProposal> {
         let completion = self.current_completion.as_ref()?;
@@ -598,25 +598,28 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
             .collect::<String>();
 
         let diff = similar::TextDiff::from_words(old_text.as_str(), completion.new_text.as_ref());
-        dbg!(old_text.as_str(), completion.new_text.as_ref(), diff);
+        let remapper = similar::utils::TextDiffRemapper::from_text_diff(
+            &diff,
+            old_text.as_str(),
+            completion.new_text.as_ref(),
+        );
+        let changes = diff.ops().iter().flat_map(move |x| remapper.iter_slices(x));
 
         let mut inlays = Vec::new();
         let mut ix = completion.range.start.to_offset(&snapshot);
-        let mut insert_ix = None;
 
-        for change in diff.iter_all_changes() {
-            match change.tag() {
+        for (tag, value) in changes {
+            match tag {
                 similar::ChangeTag::Equal => {
-                    ix += change.value().len();
+                    ix += value.len();
                 }
                 similar::ChangeTag::Delete => {
-                    ix += change.value().len();
+                    ix += value.len();
                 }
                 similar::ChangeTag::Insert => {
-                    insert_index.replace(ix);
                     inlays.push(editor::InlayProposal::Suggestion(
                         snapshot.anchor_after(ix),
-                        dbg!(language::Rope::from(change.value())),
+                        language::Rope::from(value),
                     ));
                 }
             }
