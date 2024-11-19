@@ -52,9 +52,9 @@ pub fn switch_source_header(
     cx.spawn(|_editor, mut cx| async move {
         let switch_source_header = switch_source_header_task
             .await
-            .with_context(|| format!("Switch source/header LSP request for path \"{}\" failed", source_file))?;
+            .with_context(|| format!("Switch source/header LSP request for path \"{source_file}\" failed"))?;
         if switch_source_header.0.is_empty() {
-            log::info!("Clangd returned an empty string when requesting to switch source/header from \"{}\"", source_file);
+            log::info!("Clangd returned an empty string when requesting to switch source/header from \"{source_file}\"" );
             return Ok(());
         }
 
