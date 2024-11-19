@@ -1259,18 +1259,18 @@ impl EditorElement {
             }),
         );
 
-        // let text_units_per_page = axis_pair(
-        //     track_bounds
-        //         .horizontal
-        //         .map_or(text_units_per_page.horizontal, |bounds_x| {
-        //             let vertical_width = track_bounds
-        //                 .vertical
-        //                 .map_or(px(0.), |vertical| vertical.size.width);
+        let text_units_per_page = axis_pair(
+            track_bounds
+                .horizontal
+                .map_or(text_units_per_page.horizontal, |bounds_x| {
+                    let vertical_width = track_bounds
+                        .vertical
+                        .map_or(px(0.), |vertical| vertical.size.width);
 
-        //             (bounds_x.size.width - vertical_width) / em_width
-        //         }),
-        //     text_units_per_page.vertical,
-        // );
+                    (bounds_x.size.width - vertical_width) / em_width
+                }),
+            text_units_per_page.vertical,
+        );
 
         let settings = EditorSettings::get_global(cx);
         let scroll_beyond_last_line: AxisPair<f32> = match settings.scroll_beyond_last_line {
@@ -5376,7 +5376,10 @@ impl Element for EditorElement {
                             ),
                         };
 
-                    let overscroll = size(em_width * scroll_beyond_last_line.horizontal, px(0.));
+                    let overscroll = size(
+                        em_width * scroll_beyond_last_line.horizontal + right_margin,
+                        px(0.),
+                    );
 
                     let editor_width =
                         text_width - gutter_dimensions.margin - overscroll.width - em_width;
