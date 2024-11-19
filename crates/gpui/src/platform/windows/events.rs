@@ -190,7 +190,7 @@ fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Optio
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
         drop(lock);
-        request_frame();
+        request_frame(Default::default());
         state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
     }
     unsafe { ValidateRect(handle, None).ok().log_err() };
@@ -1160,6 +1160,8 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_END => "end",
         VK_PRIOR => "pageup",
         VK_NEXT => "pagedown",
+        VK_BROWSER_BACK => "back",
+        VK_BROWSER_FORWARD => "forward",
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
@@ -1196,6 +1198,8 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
         VK_END => "end",
         VK_PRIOR => "pageup",
         VK_NEXT => "pagedown",
+        VK_BROWSER_BACK => "back",
+        VK_BROWSER_FORWARD => "forward",
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",

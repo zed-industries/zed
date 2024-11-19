@@ -312,7 +312,12 @@ async fn load_shell_environment(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let Some(env_output_start) = stdout.find(marker) else {
-        log::error!("failed to parse output of `env` command in login shell: {stdout}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!(
+            "failed to parse output of `env` command in login shell. stdout: {:?}, stderr: {:?}",
+            stdout,
+            stderr
+        );
         return message("Failed to parse stdout of env command. See logs for the output");
     };
 

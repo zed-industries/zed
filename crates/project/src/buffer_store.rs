@@ -20,7 +20,7 @@ use language::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
         split_operations,
     },
-    Buffer, BufferEvent, Capability, File as _, Language, Operation,
+    Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
 };
 use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
 use smol::channel::Receiver;
@@ -434,7 +434,10 @@ impl LocalBufferStore {
         let line_ending = buffer.line_ending();
         let version = buffer.version();
         let buffer_id = buffer.remote_id();
-        if buffer.file().is_some_and(|file| !file.is_created()) {
+        if buffer
+            .file()
+            .is_some_and(|file| file.disk_state() == DiskState::New)
+        {
             has_changed_file = true;
         }
 
@@ -444,7 +447,7 @@ impl LocalBufferStore {
 
         cx.spawn(move |this, mut cx| async move {
             let new_file = save.await?;
-            let mtime = new_file.mtime;
+            let mtime = new_file.disk_state().mtime();
             this.update(&mut cx, |this, cx| {
                 if let Some((downstream_client, project_id)) = this.downstream_client(cx) {
                     if has_changed_file {
@@ -658,37 +661,30 @@ impl LocalBufferStore {
                 return None;
             }
 
-            let new_file = if let Some(entry) = old_file
+            let snapshot_entry = old_file
                 .entry_id
                 .and_then(|entry_id| snapshot.entry_for_id(entry_id))
-            {
+                .or_else(|| snapshot.entry_for_path(old_file.path.as_ref()));
+
+            let new_file = if let Some(entry) = snapshot_entry {
                 File {
+                    disk_state: match entry.mtime {
+                        Some(mtime) => DiskState::Present { mtime },
+                        None => old_file.disk_state,
+                    },
                     is_local: true,
                     entry_id: Some(entry.id),
-                    mtime: entry.mtime,
                     path: entry.path.clone(),
                     worktree: worktree.clone(),
-                    is_deleted: false,
-                    is_private: entry.is_private,
-                }
-            } else if let Some(entry) = snapshot.entry_for_path(old_file.path.as_ref()) {
-                File {
-                    is_local: true,
-                    entry_id: Some(entry.id),
-                    mtime: entry.mtime,
-                    path: entry.path.clone(),
-                    worktree: worktree.clone(),
-                    is_deleted: false,
                     is_private: entry.is_private,
                 }
             } else {
                 File {
+                    disk_state: DiskState::Deleted,
                     is_local: true,
                     entry_id: old_file.entry_id,
                     path: old_file.path.clone(),
-                    mtime: old_file.mtime,
                     worktree: worktree.clone(),
-                    is_deleted: true,
                     is_private: old_file.is_private,
                 }
             };
@@ -867,10 +863,9 @@ impl BufferStoreImpl for Model<LocalBufferStore> {
                             Some(Arc::new(File {
                                 worktree,
                                 path,
-                                mtime: None,
+                                disk_state: DiskState::New,
                                 entry_id: None,
                                 is_local: true,
-                                is_deleted: false,
                                 is_private: false,
                             })),
                             Capability::ReadWrite,
@@ -907,30 +902,12 @@ impl BufferStoreImpl for Model<LocalBufferStore> {
     }
 
     fn create_buffer(&self, cx: &mut ModelContext<BufferStore>) -> Task<Result<Model<Buffer>>> {
-        let handle = self.clone();
         cx.spawn(|buffer_store, mut cx| async move {
             let buffer = cx.new_model(|cx| {
                 Buffer::local("", cx).with_language(language::PLAIN_TEXT.clone(), cx)
             })?;
             buffer_store.update(&mut cx, |buffer_store, cx| {
                 buffer_store.add_buffer(buffer.clone(), cx).log_err();
-                let buffer_id = buffer.read(cx).remote_id();
-                handle.update(cx, |this, cx| {
-                    if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                        this.local_buffer_ids_by_path.insert(
-                            ProjectPath {
-                                worktree_id: file.worktree_id(cx),
-                                path: file.path.clone(),
-                            },
-                            buffer_id,
-                        );
-
-                        if let Some(entry_id) = file.entry_id {
-                            this.local_buffer_ids_by_entry_id
-                                .insert(entry_id, buffer_id);
-                        }
-                    }
-                });
             })?;
             Ok(buffer)
         })

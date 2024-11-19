@@ -1,3 +1,4 @@
+use crate::SlashCommandWorkingSet;
 use crate::{slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssistant};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -522,7 +523,11 @@ impl PromptLibrary {
                             editor.set_use_modal_editing(false);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Some(Box::new(
-                                SlashCommandCompletionProvider::new(None, None),
+                                SlashCommandCompletionProvider::new(
+                                    Arc::new(SlashCommandWorkingSet::default()),
+                                    None,
+                                    None,
+                                ),
                             )));
                             if focus {
                                 editor.focus(cx);
@@ -825,7 +830,7 @@ impl PromptLibrary {
             .overflow_x_hidden()
             .child(
                 h_flex()
-                    .p(Spacing::Small.rems(cx))
+                    .p(DynamicSpacing::Base04.rems(cx))
                     .h_9()
                     .w_full()
                     .flex_none()
@@ -866,17 +871,17 @@ impl PromptLibrary {
                         .size_full()
                         .relative()
                         .overflow_hidden()
-                        .pl(Spacing::XXLarge.rems(cx))
-                        .pt(Spacing::Large.rems(cx))
+                        .pl(DynamicSpacing::Base16.rems(cx))
+                        .pt(DynamicSpacing::Base08.rems(cx))
                         .on_click(cx.listener(move |_, _, cx| {
                             cx.focus(&focus_handle);
                         }))
                         .child(
                             h_flex()
                                 .group("active-editor-header")
-                                .pr(Spacing::XXLarge.rems(cx))
-                                .pt(Spacing::XSmall.rems(cx))
-                                .pb(Spacing::Large.rems(cx))
+                                .pr(DynamicSpacing::Base16.rems(cx))
+                                .pt(DynamicSpacing::Base02.rems(cx))
+                                .pb(DynamicSpacing::Base08.rems(cx))
                                 .justify_between()
                                 .child(
                                     h_flex().gap_1().child(
@@ -938,13 +943,13 @@ impl PromptLibrary {
                                         .child(
                                             h_flex()
                                                 .h_full()
-                                                .gap(Spacing::XXLarge.rems(cx))
+                                                .gap(DynamicSpacing::Base16.rems(cx))
                                                 .child(div()),
                                         )
                                         .child(
                                             h_flex()
                                                 .h_full()
-                                                .gap(Spacing::XXLarge.rems(cx))
+                                                .gap(DynamicSpacing::Base16.rems(cx))
                                                 .children(prompt_editor.token_count.map(
                                                     |token_count| {
                                                         let token_count: SharedString =

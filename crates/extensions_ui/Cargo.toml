@@ -11,20 +11,23 @@ workspace = true
 [lib]
 path = "src/extensions_ui.rs"
 
-[features]
-test-support = []
-
 [dependencies]
 anyhow.workspace = true
+assistant_slash_command.workspace = true
 client.workspace = true
 collections.workspace = true
+context_servers.workspace = true
 db.workspace = true
 editor.workspace = true
+extension.workspace = true
 extension_host.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+indexed_docs.workspace = true
 language.workspace = true
+log.workspace = true
+lsp.workspace = true
 num-format.workspace = true
 picker.workspace = true
 project.workspace = true
@@ -33,11 +36,13 @@ semantic_version.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
+snippet_provider.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
 ui.workspace = true
 util.workspace = true
 vim.workspace = true
+wasmtime-wasi.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]

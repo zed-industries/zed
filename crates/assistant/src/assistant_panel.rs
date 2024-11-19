@@ -1,3 +1,6 @@
+use crate::slash_command::file_command::codeblock_fence_for_path;
+use crate::slash_command_working_set::SlashCommandWorkingSet;
+use crate::ToolWorkingSet;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -6,24 +9,22 @@ use crate::{
     slash_command::{
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
-        file_command::{self, codeblock_fence_for_path},
-        SlashCommandCompletionProvider, SlashCommandRegistry,
+        file_command, SlashCommandCompletionProvider,
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
     ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
     DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
-    InsertIntoEditor, Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate,
-    ModelSelector, NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
-    RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
-    ToggleModelSelector,
+    InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
+    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
+    ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
+    RequestType, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
-use assistant_tool::ToolRegistry;
 use client::{proto, zed_urls, Client, Status};
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
@@ -38,12 +39,12 @@ use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
-    AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
-    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
-    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    canvas, div, img, percentage, point, prelude::*, pulsating_between, size, Action, Animation,
+    AnimationExt, AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry,
+    ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle,
+    FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
+    Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription,
+    Task, Transformation, UpdateGlobal, View, WeakModel, WeakView,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -64,6 +65,7 @@ use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{
+    any::TypeId,
     borrow::Cow,
     cmp,
     ops::{ControlFlow, Range},
@@ -111,7 +113,8 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(ContextEditor::copy_code)
                 .register_action(ContextEditor::insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
-                .register_action(AssistantPanel::create_new_context);
+                .register_action(AssistantPanel::create_new_context)
+                .register_action(AssistantPanel::restart_context_servers);
         },
     )
     .detach();
@@ -314,10 +317,12 @@ impl AssistantPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
+            let slash_commands = Arc::new(SlashCommandWorkingSet::default());
+            let tools = Arc::new(ToolWorkingSet::default());
             let context_store = workspace
                 .update(&mut cx, |workspace, cx| {
                     let project = workspace.project().clone();
-                    ContextStore::new(project, prompt_builder.clone(), cx)
+                    ContextStore::new(project, prompt_builder.clone(), slash_commands, tools, cx)
                 })?
                 .await?;
 
@@ -442,27 +447,24 @@ impl AssistantPanel {
                     );
                 let _pane = cx.view().clone();
                 let right_children = h_flex()
-                    .gap(Spacing::Small.rems(cx))
+                    .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
-                        IconButton::new("new-context", IconName::Plus)
+                        IconButton::new("new-chat", IconName::Plus)
                             .on_click(
                                 cx.listener(|_, _, cx| {
                                     cx.dispatch_action(NewContext.boxed_clone())
                                 }),
                             )
                             .tooltip(move |cx| {
-                                Tooltip::for_action_in(
-                                    "New Context",
-                                    &NewContext,
-                                    &focus_handle,
-                                    cx,
-                                )
+                                Tooltip::for_action_in("New Chat", &NewContext, &focus_handle, cx)
                             }),
                     )
                     .child(
                         PopoverMenu::new("assistant-panel-popover-menu")
                             .trigger(
-                                IconButton::new("menu", IconName::Menu).icon_size(IconSize::Small),
+                                IconButton::new("menu", IconName::EllipsisVertical)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("Toggle Assistant Menu", cx)),
                             )
                             .menu(move |cx| {
                                 let zoom_label = if _pane.read(cx).is_zoomed() {
@@ -473,7 +475,7 @@ impl AssistantPanel {
                                 let focus_handle = _pane.focus_handle(cx);
                                 Some(ContextMenu::build(cx, move |menu, _| {
                                     menu.context(focus_handle.clone())
-                                        .action("New Context", Box::new(NewContext))
+                                        .action("New Chat", Box::new(NewContext))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
                                         .action("Configure", Box::new(ShowConfiguration))
@@ -1082,7 +1084,21 @@ impl AssistantPanel {
                 self.show_updated_summary(&context_editor, cx);
                 cx.notify()
             }
-            EditorEvent::Edited { .. } => cx.emit(AssistantPanelEvent::ContextEdited),
+            EditorEvent::Edited { .. } => {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        let is_via_ssh = workspace
+                            .project()
+                            .update(cx, |project, _| project.is_via_ssh());
+
+                        workspace
+                            .client()
+                            .telemetry()
+                            .log_edit_event("assistant panel", is_via_ssh);
+                    })
+                    .log_err();
+                cx.emit(AssistantPanelEvent::ContextEdited)
+            }
             _ => {}
         }
     }
@@ -1296,6 +1312,24 @@ impl AssistantPanel {
             .active_provider()
             .map_or(None, |provider| Some(provider.authenticate(cx)))
     }
+
+    fn restart_context_servers(
+        workspace: &mut Workspace,
+        _action: &context_servers::Restart,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        assistant_panel.update(cx, |assistant_panel, cx| {
+            assistant_panel
+                .context_store
+                .update(cx, |context_store, cx| {
+                    context_store.restart_context_servers(cx);
+                });
+        });
+    }
 }
 
 impl Render for AssistantPanel {
@@ -1446,7 +1480,6 @@ struct ScrollPosition {
 }
 
 struct PatchViewState {
-    footer_block_id: CustomBlockId,
     crease_id: CreaseId,
     editor: Option<PatchEditorState>,
     update_task: Option<Task<()>>,
@@ -1470,6 +1503,8 @@ enum AssistError {
 pub struct ContextEditor {
     context: Model<Context>,
     fs: Arc<dyn Fs>,
+    slash_commands: Arc<SlashCommandWorkingSet>,
+    tools: Arc<ToolWorkingSet>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
@@ -1479,7 +1514,7 @@ pub struct ContextEditor {
     scroll_position: Option<ScrollPosition>,
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
-    pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
+    invoked_slash_command_creases: HashMap<InvokedSlashCommandId, CreaseId>,
     pending_tool_use_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
     patches: HashMap<Range<language::Anchor>, PatchViewState>,
@@ -1497,7 +1532,7 @@ pub struct ContextEditor {
     dragged_file_worktrees: Vec<Model<Worktree>>,
 }
 
-const DEFAULT_TAB_TITLE: &str = "New Context";
+const DEFAULT_TAB_TITLE: &str = "New Chat";
 const MAX_TAB_TITLE_LEN: usize = 16;
 
 impl ContextEditor {
@@ -1511,6 +1546,7 @@ impl ContextEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
+            context.read(cx).slash_commands.clone(),
             Some(cx.view().downgrade()),
             Some(workspace.clone()),
         );
@@ -1538,8 +1574,12 @@ impl ContextEditor {
 
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
+        let slash_commands = context.read(cx).slash_commands.clone();
+        let tools = context.read(cx).tools.clone();
         let mut this = Self {
             context,
+            slash_commands,
+            tools,
             editor,
             lsp_adapter_delegate,
             blocks: Default::default(),
@@ -1550,7 +1590,7 @@ impl ContextEditor {
             workspace,
             project,
             pending_slash_command_creases: HashMap::default(),
-            pending_slash_command_blocks: HashMap::default(),
+            invoked_slash_command_creases: HashMap::default(),
             pending_tool_use_creases: HashMap::default(),
             _subscriptions,
             patches: HashMap::default(),
@@ -1575,13 +1615,12 @@ impl ContextEditor {
         });
         let command = self.context.update(cx, |context, cx| {
             context.reparse(cx);
-            context.pending_slash_commands()[0].clone()
+            context.parsed_slash_commands()[0].clone()
         });
         self.run_command(
             command.source_range,
             &command.name,
             &command.arguments,
-            false,
             false,
             self.workspace.clone(),
             cx,
@@ -1691,7 +1730,7 @@ impl ContextEditor {
     }
 
     pub fn insert_command(&mut self, name: &str, cx: &mut ViewContext<Self>) {
-        if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
+        if let Some(command) = self.slash_commands.command(name, cx) {
             self.editor.update(cx, |editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.try_cancel());
@@ -1755,7 +1794,6 @@ impl ContextEditor {
                     &command.name,
                     &command.arguments,
                     true,
-                    false,
                     workspace.clone(),
                     cx,
                 );
@@ -1771,11 +1809,10 @@ impl ContextEditor {
         name: &str,
         arguments: &[String],
         ensure_trailing_newline: bool,
-        expand_result: bool,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
+        if let Some(command) = self.slash_commands.command(name, cx) {
             let context = self.context.read(cx);
             let sections = context
                 .slash_command_output_sections()
@@ -1795,9 +1832,9 @@ impl ContextEditor {
             self.context.update(cx, |context, cx| {
                 context.insert_command_output(
                     command_range,
+                    name,
                     output,
                     ensure_trailing_newline,
-                    expand_result,
                     cx,
                 )
             });
@@ -1867,8 +1904,7 @@ impl ContextEditor {
                                     IconName::PocketKnife,
                                     tool_use.name.clone().into(),
                                 ),
-                                constrain_width: false,
-                                merge_adjacent: false,
+                                ..Default::default()
                             };
                             let render_trailer =
                                 move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
@@ -1897,7 +1933,7 @@ impl ContextEditor {
                                 );
                             });
 
-                            Crease::new(
+                            Crease::inline(
                                 start..end,
                                 placeholder,
                                 fold_toggle("tool-use"),
@@ -1923,26 +1959,15 @@ impl ContextEditor {
             ContextEvent::PatchesUpdated { removed, updated } => {
                 self.patches_updated(removed, updated, cx);
             }
-            ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
+            ContextEvent::ParsedSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
-                    let excerpt_id = *excerpt_id;
+                    let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
 
                     editor.remove_creases(
                         removed
                             .iter()
                             .filter_map(|range| self.pending_slash_command_creases.remove(range)),
-                        cx,
-                    );
-
-                    editor.remove_blocks(
-                        HashSet::from_iter(
-                            removed.iter().filter_map(|range| {
-                                self.pending_slash_command_blocks.remove(range)
-                            }),
-                        ),
-                        None,
                         cx,
                     );
 
@@ -1960,7 +1985,6 @@ impl ContextEditor {
                                                 &command.name,
                                                 &command.arguments,
                                                 false,
-                                                false,
                                                 workspace.clone(),
                                                 cx,
                                             );
@@ -1970,8 +1994,7 @@ impl ContextEditor {
                             });
                             let placeholder = FoldPlaceholder {
                                 render: Arc::new(move |_, _, _| Empty.into_any()),
-                                constrain_width: false,
-                                merge_adjacent: false,
+                                ..Default::default()
                             };
                             let render_toggle = {
                                 let confirm_command = confirm_command.clone();
@@ -2008,32 +2031,8 @@ impl ContextEditor {
                             let end = buffer
                                 .anchor_in_excerpt(excerpt_id, command.source_range.end)
                                 .unwrap();
-                            Crease::new(start..end, placeholder, render_toggle, render_trailer)
+                            Crease::inline(start..end, placeholder, render_toggle, render_trailer)
                         }),
-                        cx,
-                    );
-
-                    let block_ids = editor.insert_blocks(
-                        updated
-                            .iter()
-                            .filter_map(|command| match &command.status {
-                                PendingSlashCommandStatus::Error(error) => {
-                                    Some((command, error.clone()))
-                                }
-                                _ => None,
-                            })
-                            .map(|(command, error_message)| BlockProperties {
-                                style: BlockStyle::Fixed,
-                                height: 1,
-                                placement: BlockPlacement::Below(Anchor {
-                                    buffer_id: Some(buffer_id),
-                                    excerpt_id,
-                                    text_anchor: command.source_range.start,
-                                }),
-                                render: slash_command_error_block_renderer(error_message),
-                                priority: 0,
-                            }),
-                        None,
                         cx,
                     );
 
@@ -2043,32 +2042,23 @@ impl ContextEditor {
                             .map(|command| command.source_range.clone())
                             .zip(crease_ids),
                     );
-
-                    self.pending_slash_command_blocks.extend(
-                        updated
-                            .iter()
-                            .map(|command| command.source_range.clone())
-                            .zip(block_ids),
-                    );
                 })
             }
+            ContextEvent::InvokedSlashCommandChanged { command_id } => {
+                self.update_invoked_slash_command(*command_id, cx);
+            }
+            ContextEvent::SlashCommandOutputSectionAdded { section } => {
+                self.insert_slash_command_output_sections([section.clone()], false, cx);
+            }
             ContextEvent::SlashCommandFinished {
-                output_range,
-                sections,
-                run_commands_in_output,
-                expand_result,
+                output_range: _output_range,
+                run_commands_in_ranges,
             } => {
-                self.insert_slash_command_output_sections(
-                    sections.iter().cloned(),
-                    *expand_result,
-                    cx,
-                );
-
-                if *run_commands_in_output {
+                for range in run_commands_in_ranges {
                     let commands = self.context.update(cx, |context, cx| {
                         context.reparse(cx);
                         context
-                            .pending_commands_for_range(output_range.clone(), cx)
+                            .pending_commands_for_range(range.clone(), cx)
                             .to_vec()
                     });
 
@@ -2077,7 +2067,6 @@ impl ContextEditor {
                             command.source_range,
                             &command.name,
                             &command.arguments,
-                            false,
                             false,
                             self.workspace.clone(),
                             cx,
@@ -2096,8 +2085,7 @@ impl ContextEditor {
                     .collect::<Vec<_>>();
 
                 for tool_use in pending_tool_uses {
-                    let tool_registry = ToolRegistry::global(cx);
-                    if let Some(tool) = tool_registry.tool(&tool_use.name) {
+                    if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
                         let task = tool.run(tool_use.input, self.workspace.clone(), cx);
 
                         self.context.update(cx, |context, cx| {
@@ -2121,8 +2109,7 @@ impl ContextEditor {
                             IconName::PocketKnife,
                             format!("Tool Result: {tool_use_id}").into(),
                         ),
-                        constrain_width: false,
-                        merge_adjacent: false,
+                        ..Default::default()
                     };
                     let render_trailer =
                         move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
@@ -2136,7 +2123,7 @@ impl ContextEditor {
 
                     let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
 
-                    let crease = Crease::new(
+                    let crease = Crease::inline(
                         start..end,
                         placeholder,
                         fold_toggle("tool-use"),
@@ -2160,6 +2147,72 @@ impl ContextEditor {
         }
     }
 
+    fn update_invoked_slash_command(
+        &mut self,
+        command_id: InvokedSlashCommandId,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            if let Some(invoked_slash_command) =
+                self.context.read(cx).invoked_slash_command(&command_id)
+            {
+                if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let (&excerpt_id, _buffer_id, _buffer_snapshot) =
+                        buffer.as_singleton().unwrap();
+
+                    let start = buffer
+                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.start)
+                        .unwrap();
+                    let end = buffer
+                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
+                        .unwrap();
+                    editor.remove_folds_with_type(
+                        &[start..end],
+                        TypeId::of::<PendingSlashCommand>(),
+                        false,
+                        cx,
+                    );
+
+                    editor.remove_creases(
+                        HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
+                        cx,
+                    );
+                } else if let hash_map::Entry::Vacant(entry) =
+                    self.invoked_slash_command_creases.entry(command_id)
+                {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let (&excerpt_id, _buffer_id, _buffer_snapshot) =
+                        buffer.as_singleton().unwrap();
+                    let context = self.context.downgrade();
+                    let crease_start = buffer
+                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.start)
+                        .unwrap();
+                    let crease_end = buffer
+                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
+                        .unwrap();
+                    let crease = Crease::inline(
+                        crease_start..crease_end,
+                        invoked_slash_command_fold_placeholder(command_id, context),
+                        fold_toggle("invoked-slash-command"),
+                        |_row, _folded, _cx| Empty.into_any(),
+                    );
+                    let crease_ids = editor.insert_creases([crease.clone()], cx);
+                    editor.fold_creases(vec![crease], false, cx);
+                    entry.insert(crease_ids[0]);
+                } else {
+                    cx.notify()
+                }
+            } else {
+                editor.remove_creases(
+                    HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
+                    cx,
+                );
+                cx.notify();
+            };
+        });
+    }
+
     fn patches_updated(
         &mut self,
         removed: &Vec<Range<text::Anchor>>,
@@ -2167,23 +2220,32 @@ impl ContextEditor {
         cx: &mut ViewContext<ContextEditor>,
     ) {
         let this = cx.view().downgrade();
-        let mut removed_crease_ids = Vec::new();
-        let mut removed_block_ids = HashSet::default();
         let mut editors_to_close = Vec::new();
-        for range in removed {
-            if let Some(state) = self.patches.remove(range) {
-                editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
-                removed_block_ids.insert(state.footer_block_id);
-                removed_crease_ids.push(state.crease_id);
-            }
-        }
 
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let multibuffer = &snapshot.buffer_snapshot;
             let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
 
-            let mut replaced_blocks = HashMap::default();
+            let mut removed_crease_ids = Vec::new();
+            let mut ranges_to_unfold: Vec<Range<Anchor>> = Vec::new();
+            for range in removed {
+                if let Some(state) = self.patches.remove(range) {
+                    let patch_start = multibuffer
+                        .anchor_in_excerpt(excerpt_id, range.start)
+                        .unwrap();
+                    let patch_end = multibuffer
+                        .anchor_in_excerpt(excerpt_id, range.end)
+                        .unwrap();
+
+                    editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
+                    ranges_to_unfold.push(patch_start..patch_end);
+                    removed_crease_ids.push(state.crease_id);
+                }
+            }
+            editor.unfold_ranges(&ranges_to_unfold, true, false, cx);
+            editor.remove_creases(removed_crease_ids, cx);
+
             for range in updated {
                 let Some(patch) = self.context.read(cx).patch_for_range(&range, cx).cloned() else {
                     continue;
@@ -2196,19 +2258,21 @@ impl ContextEditor {
                 let patch_end = multibuffer
                     .anchor_in_excerpt(excerpt_id, patch.range.end)
                     .unwrap();
-                let render_block: RenderBlock = Box::new({
+                let render_block: RenderBlock = Arc::new({
                     let this = this.clone();
                     let patch_range = range.clone();
                     move |cx: &mut BlockContext<'_, '_>| {
                         let max_width = cx.max_width;
                         let gutter_width = cx.gutter_dimensions.full_width();
                         let block_id = cx.block_id;
+                        let selected = cx.selected;
                         this.update(&mut **cx, |this, cx| {
-                            this.render_patch_footer(
+                            this.render_patch_block(
                                 patch_range.clone(),
                                 max_width,
                                 gutter_width,
                                 block_id,
+                                selected,
                                 cx,
                             )
                         })
@@ -2218,26 +2282,16 @@ impl ContextEditor {
                     }
                 });
 
-                let header_placeholder = FoldPlaceholder {
-                    render: {
-                        let this = this.clone();
-                        let patch_range = range.clone();
-                        Arc::new(move |fold_id, _range, cx| {
-                            this.update(cx, |this, cx| {
-                                this.render_patch_header(patch_range.clone(), fold_id, cx)
-                            })
-                            .ok()
-                            .flatten()
-                            .unwrap_or_else(|| Empty.into_any())
-                        })
-                    },
-                    constrain_width: false,
-                    merge_adjacent: false,
-                };
+                let height = path_count as u32 + 1;
+                let crease = Crease::block(
+                    patch_start..patch_end,
+                    height,
+                    BlockStyle::Flex,
+                    render_block.clone(),
+                );
 
                 let should_refold;
                 if let Some(state) = self.patches.get_mut(&range) {
-                    replaced_blocks.insert(state.footer_block_id, render_block);
                     if let Some(editor_state) = &state.editor {
                         if editor_state.opened_patch != patch {
                             state.update_task = Some({
@@ -2254,33 +2308,11 @@ impl ContextEditor {
                     should_refold =
                         snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
                 } else {
-                    let block_ids = editor.insert_blocks(
-                        [BlockProperties {
-                            height: path_count as u32 + 1,
-                            style: BlockStyle::Flex,
-                            render: render_block,
-                            placement: BlockPlacement::Below(patch_start),
-                            priority: 0,
-                        }],
-                        None,
-                        cx,
-                    );
-
-                    let new_crease_ids = editor.insert_creases(
-                        [Crease::new(
-                            patch_start..patch_end,
-                            header_placeholder.clone(),
-                            fold_toggle("patch-header"),
-                            |_, _, _| Empty.into_any_element(),
-                        )],
-                        cx,
-                    );
-
+                    let crease_id = editor.insert_creases([crease.clone()], cx)[0];
                     self.patches.insert(
                         range.clone(),
                         PatchViewState {
-                            footer_block_id: block_ids[0],
-                            crease_id: new_crease_ids[0],
+                            crease_id,
                             editor: None,
                             update_task: None,
                         },
@@ -2290,14 +2322,10 @@ impl ContextEditor {
                 }
 
                 if should_refold {
-                    editor.unfold_ranges([patch_start..patch_end], true, false, cx);
-                    editor.fold_ranges([(patch_start..patch_end, header_placeholder)], false, cx);
+                    editor.unfold_ranges(&[patch_start..patch_end], true, false, cx);
+                    editor.fold_creases(vec![crease], false, cx);
                 }
             }
-
-            editor.remove_creases(removed_crease_ids, cx);
-            editor.remove_blocks(removed_block_ids, None, cx);
-            editor.replace_blocks(replaced_blocks, None, cx);
         });
 
         for editor in editors_to_close {
@@ -2328,7 +2356,7 @@ impl ContextEditor {
                 let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
                 creases.push(
-                    Crease::new(
+                    Crease::inline(
                         start..end,
                         FoldPlaceholder {
                             render: render_fold_icon_button(
@@ -2336,8 +2364,8 @@ impl ContextEditor {
                                 section.icon,
                                 section.label.clone(),
                             ),
-                            constrain_width: false,
                             merge_adjacent: false,
+                            ..Default::default()
                         },
                         render_slash_command_output_toggle,
                         |_, _, _| Empty.into_any_element(),
@@ -2581,6 +2609,29 @@ impl ContextEditor {
         })
     }
 
+    fn esc_kbd(cx: &WindowContext) -> Div {
+        let colors = cx.theme().colors().clone();
+
+        h_flex()
+            .items_center()
+            .gap_1()
+            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .text_size(TextSize::XSmall.rems(cx))
+            .text_color(colors.text_muted)
+            .child("Press")
+            .child(
+                h_flex()
+                    .rounded_md()
+                    .px_1()
+                    .mr_0p5()
+                    .border_1()
+                    .border_color(theme::color_alpha(colors.border_variant, 0.6))
+                    .bg(theme::color_alpha(colors.element_background, 0.6))
+                    .child("esc"),
+            )
+            .child("to cancel")
+    }
+
     fn update_message_headers(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
@@ -2594,8 +2645,9 @@ impl ContextEditor {
             let mut blocks_to_replace: HashMap<_, RenderBlock> = Default::default();
 
             let render_block = |message: MessageMetadata| -> RenderBlock {
-                Box::new({
+                Arc::new({
                     let context = self.context.clone();
+
                     move |cx| {
                         let message_id = MessageId(message.timestamp);
                         let llm_loading = message.role == Role::Assistant
@@ -2617,7 +2669,7 @@ impl ContextEditor {
                                             "pulsating-label",
                                             Animation::new(Duration::from_secs(2))
                                                 .repeat()
-                                                .with_easing(pulsating_between(0.3, 0.9)),
+                                                .with_easing(pulsating_between(0.4, 0.8)),
                                             |label, delta| label.alpha(delta),
                                         )
                                         .into_any_element()
@@ -2628,7 +2680,7 @@ impl ContextEditor {
                                     spinner = Some(
                                         Icon::new(IconName::ArrowCircle)
                                             .size(IconSize::XSmall)
-                                            .color(Color::Muted)
+                                            .color(Color::Info)
                                             .with_animation(
                                                 "arrow-circle",
                                                 Animation::new(Duration::from_secs(2)).repeat(),
@@ -2640,20 +2692,7 @@ impl ContextEditor {
                                             )
                                             .into_any_element(),
                                     );
-                                    note = Some(
-                                        div()
-                                            .font(
-                                                theme::ThemeSettings::get_global(cx)
-                                                    .buffer_font
-                                                    .clone(),
-                                            )
-                                            .child(
-                                                Label::new("Press 'esc' to cancel")
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::XSmall),
-                                            )
-                                            .into_any_element(),
-                                    );
+                                    note = Some(Self::esc_kbd(cx).into_any_element());
                                 }
                                 (animated_label, spinner, note)
                             }
@@ -2668,7 +2707,7 @@ impl ContextEditor {
 
                         let sender = h_flex()
                             .items_center()
-                            .gap_2()
+                            .gap_2p5()
                             .child(
                                 ButtonLike::new("role")
                                     .style(ButtonStyle::Filled)
@@ -2707,7 +2746,7 @@ impl ContextEditor {
                             .h_11()
                             .w_full()
                             .relative()
-                            .gap_1()
+                            .gap_1p5()
                             .child(sender)
                             .children(match &message.cache {
                                 Some(cache) if cache.is_final_anchor => match cache.status {
@@ -2721,7 +2760,7 @@ impl ContextEditor {
                                             )
                                             .tooltip(|cx| {
                                                 Tooltip::with_meta(
-                                                    "Context cached",
+                                                    "Context Cached",
                                                     None,
                                                     "Large messages cached to optimize performance",
                                                     cx,
@@ -2749,16 +2788,9 @@ impl ContextEditor {
                                         .selected_icon_color(Color::Error)
                                         .icon(IconName::XCircle)
                                         .icon_color(Color::Error)
-                                        .icon_size(IconSize::Small)
+                                        .icon_size(IconSize::XSmall)
                                         .icon_position(IconPosition::Start)
-                                        .tooltip(move |cx| {
-                                            Tooltip::with_meta(
-                                                "Error interacting with language model",
-                                                None,
-                                                "Click for more details",
-                                                cx,
-                                            )
-                                        })
+                                        .tooltip(move |cx| Tooltip::text("View Details", cx))
                                         .on_click({
                                             let context = context.clone();
                                             let error = error.clone();
@@ -2773,21 +2805,19 @@ impl ContextEditor {
                                         .into_any_element(),
                                 ),
                                 MessageStatus::Canceled => Some(
-                                    ButtonLike::new("canceled")
-                                        .child(Icon::new(IconName::XCircle).color(Color::Disabled))
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .child(
+                                            Icon::new(IconName::XCircle)
+                                                .color(Color::Disabled)
+                                                .size(IconSize::XSmall),
+                                        )
                                         .child(
                                             Label::new("Canceled")
                                                 .size(LabelSize::Small)
                                                 .color(Color::Disabled),
                                         )
-                                        .tooltip(move |cx| {
-                                            Tooltip::with_meta(
-                                                "Canceled",
-                                                None,
-                                                "Interaction with the assistant was canceled",
-                                                cx,
-                                            )
-                                        })
                                         .into_any_element(),
                                 ),
                                 _ => None,
@@ -3024,97 +3054,11 @@ impl ContextEditor {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
-        let Some(editor) = workspace
-            .active_item(cx)
-            .and_then(|item| item.act_as::<Editor>(cx))
-        else {
+
+        let Some(creases) = selections_creases(workspace, cx) else {
             return;
         };
 
-        let mut creases = vec![];
-        editor.update(cx, |editor, cx| {
-            let selections = editor.selections.all_adjusted(cx);
-            let buffer = editor.buffer().read(cx).snapshot(cx);
-            for selection in selections {
-                let range = editor::ToOffset::to_offset(&selection.start, &buffer)
-                    ..editor::ToOffset::to_offset(&selection.end, &buffer);
-                let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
-                if selected_text.is_empty() {
-                    continue;
-                }
-                let start_language = buffer.language_at(range.start);
-                let end_language = buffer.language_at(range.end);
-                let language_name = if start_language == end_language {
-                    start_language.map(|language| language.code_fence_block_name())
-                } else {
-                    None
-                };
-                let language_name = language_name.as_deref().unwrap_or("");
-                let filename = buffer
-                    .file_at(selection.start)
-                    .map(|file| file.full_path(cx));
-                let text = if language_name == "markdown" {
-                    selected_text
-                        .lines()
-                        .map(|line| format!("> {}", line))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                } else {
-                    let start_symbols = buffer
-                        .symbols_containing(selection.start, None)
-                        .map(|(_, symbols)| symbols);
-                    let end_symbols = buffer
-                        .symbols_containing(selection.end, None)
-                        .map(|(_, symbols)| symbols);
-
-                    let outline_text = if let Some((start_symbols, end_symbols)) =
-                        start_symbols.zip(end_symbols)
-                    {
-                        Some(
-                            start_symbols
-                                .into_iter()
-                                .zip(end_symbols)
-                                .take_while(|(a, b)| a == b)
-                                .map(|(a, _)| a.text)
-                                .collect::<Vec<_>>()
-                                .join(" > "),
-                        )
-                    } else {
-                        None
-                    };
-
-                    let line_comment_prefix = start_language
-                        .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
-
-                    let fence = codeblock_fence_for_path(
-                        filename.as_deref(),
-                        Some(selection.start.row..=selection.end.row),
-                    );
-
-                    if let Some((line_comment_prefix, outline_text)) =
-                        line_comment_prefix.zip(outline_text)
-                    {
-                        let breadcrumb =
-                            format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
-                        format!("{fence}{breadcrumb}{selected_text}\n```")
-                    } else {
-                        format!("{fence}{selected_text}\n```")
-                    }
-                };
-                let crease_title = if let Some(path) = filename {
-                    let start_line = selection.start.row + 1;
-                    let end_line = selection.end.row + 1;
-                    if start_line == end_line {
-                        format!("{}, Line {}", path.display(), start_line)
-                    } else {
-                        format!("{}, Lines {} to {}", path.display(), start_line, end_line)
-                    }
-                } else {
-                    "Quoted selection".to_string()
-                };
-                creases.push((text, crease_title));
-            }
-        });
         if creases.is_empty() {
             return;
         }
@@ -3154,7 +3098,7 @@ impl ContextEditor {
                                     crease_title,
                                     cx.view().downgrade(),
                                 );
-                                let crease = Crease::new(
+                                let crease = Crease::inline(
                                     anchor_before..anchor_after,
                                     fold_placeholder,
                                     render_quote_selection_output_toggle,
@@ -3244,31 +3188,29 @@ impl ContextEditor {
                             &snapshot,
                         )
                         .filter_map(|crease| {
-                            if let Some(metadata) = &crease.metadata {
-                                let start = crease
-                                    .range
+                            if let Crease::Inline {
+                                range, metadata, ..
+                            } = &crease
+                            {
+                                let metadata = metadata.as_ref()?;
+                                let start = range
                                     .start
                                     .to_offset(&snapshot)
                                     .saturating_sub(selection_start);
-                                let end = crease
-                                    .range
+                                let end = range
                                     .end
                                     .to_offset(&snapshot)
                                     .saturating_sub(selection_start);
 
                                 let range_relative_to_selection = start..end;
-
-                                if range_relative_to_selection.is_empty() {
-                                    None
-                                } else {
-                                    Some(SelectedCreaseMetadata {
+                                if !range_relative_to_selection.is_empty() {
+                                    return Some(SelectedCreaseMetadata {
                                         range_relative_to_selection,
                                         crease: metadata.clone(),
-                                    })
+                                    });
                                 }
-                            } else {
-                                None
                             }
+                            None
                         })
                         .collect::<Vec<_>>()
                 }),
@@ -3349,16 +3291,15 @@ impl ContextEditor {
 
                             let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                             buffer_rows_to_fold.insert(buffer_row);
-                            Crease::new(
+                            Crease::inline(
                                 start..end,
                                 FoldPlaceholder {
-                                    constrain_width: false,
                                     render: render_fold_icon_button(
                                         weak_editor.clone(),
                                         metadata.crease.icon,
                                         metadata.crease.label.clone(),
                                     ),
-                                    merge_adjacent: false,
+                                    ..Default::default()
                                 },
                                 render_slash_command_output_toggle,
                                 |_, _, _| Empty.into_any(),
@@ -3392,7 +3333,8 @@ impl ContextEditor {
 
             self.context.update(cx, |context, cx| {
                 for image in images {
-                    let Some(render_image) = image.to_image_data(cx).log_err() else {
+                    let Some(render_image) = image.to_image_data(cx.svg_renderer()).log_err()
+                    else {
                         continue;
                     };
                     let image_id = image.id();
@@ -3443,7 +3385,7 @@ impl ContextEditor {
                         placement: BlockPlacement::Above(anchor),
                         height: MAX_HEIGHT_IN_LINES,
                         style: BlockStyle::Sticky,
-                        render: Box::new(move |cx| {
+                        render: Arc::new(move |cx| {
                             let image_size = size_for_image(
                                 &image,
                                 size(
@@ -3500,33 +3442,13 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    fn render_patch_header(
-        &self,
-        range: Range<text::Anchor>,
-        _id: FoldId,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement> {
-        let patch = self.context.read(cx).patch_for_range(&range, cx)?;
-        let theme = cx.theme().clone();
-        Some(
-            h_flex()
-                .px_1()
-                .py_0p5()
-                .border_b_1()
-                .border_color(theme.status().info_border)
-                .gap_1()
-                .child(Icon::new(IconName::Diff).size(IconSize::Small))
-                .child(Label::new(patch.title.clone()).size(LabelSize::Small))
-                .into_any(),
-        )
-    }
-
-    fn render_patch_footer(
+    fn render_patch_block(
         &mut self,
         range: Range<text::Anchor>,
         max_width: Pixels,
         gutter_width: Pixels,
         id: BlockId,
+        selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
@@ -3537,10 +3459,7 @@ impl ContextEditor {
             .anchor_in_excerpt(excerpt_id, range.start)
             .unwrap();
 
-        if !snapshot.intersects_fold(anchor) {
-            return None;
-        }
-
+        let theme = cx.theme().clone();
         let patch = self.context.read(cx).patch_for_range(&range, cx)?;
         let paths = patch
             .paths()
@@ -3550,9 +3469,18 @@ impl ContextEditor {
         Some(
             v_flex()
                 .id(id)
-                .pl(gutter_width)
-                .w(max_width)
-                .py_2()
+                .bg(theme.colors().editor_background)
+                .ml(gutter_width)
+                .pb_1()
+                .w(max_width - gutter_width)
+                .rounded_md()
+                .border_1()
+                .border_color(theme.colors().border_variant)
+                .overflow_hidden()
+                .hover(|style| style.border_color(theme.colors().text_accent))
+                .when(selected, |this| {
+                    this.border_color(theme.colors().text_accent)
+                })
                 .cursor(CursorStyle::PointingHand)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.editor.update(cx, |editor, cx| {
@@ -3562,24 +3490,60 @@ impl ContextEditor {
                     });
                     this.focus_active_patch(cx);
                 }))
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .border_b_1()
+                        .border_color(theme.colors().border_variant)
+                        .bg(theme.colors().element_background)
+                        .child(
+                            Label::new(patch.title.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
                 .children(paths.into_iter().map(|path| {
                     h_flex()
-                        .pl_1()
-                        .gap_1()
+                        .px_2()
+                        .pt_1()
+                        .gap_1p5()
                         .child(Icon::new(IconName::File).size(IconSize::Small))
                         .child(Label::new(path).size(LabelSize::Small))
                 }))
                 .when(patch.status == AssistantPatchStatus::Pending, |div| {
                     div.child(
-                        Label::new("Generating")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small)
-                            .with_animation(
-                                "pulsating-label",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 1.)),
-                                |label, delta| label.alpha(delta),
+                        h_flex()
+                            .pt_1()
+                            .px_2()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(Transformation::rotate(percentage(
+                                                delta,
+                                            )))
+                                        },
+                                    ),
+                            )
+                            .child(
+                                Label::new("Generating…")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small)
+                                    .with_animation(
+                                        "pulsating-label",
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(pulsating_between(0.4, 0.8)),
+                                        |label, delta| label.alpha(delta),
+                                    ),
                             ),
                     )
                 })
@@ -3780,6 +3744,19 @@ impl ContextEditor {
             })
     }
 
+    fn render_inject_context_menu(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        slash_command_picker::SlashCommandSelector::new(
+            self.slash_commands.clone(),
+            cx.view().downgrade(),
+            Button::new("trigger", "Add Context")
+                .icon(IconName::Plus)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .icon_position(IconPosition::Start)
+                .tooltip(|cx| Tooltip::text("Type / to insert via keyboard", cx)),
+        )
+    }
+
     fn render_last_error(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         let last_error = self.last_error.as_ref()?;
 
@@ -3944,7 +3921,7 @@ impl ContextEditor {
             .child(
                 div()
                     .id("error-message")
-                    .max_h_24()
+                    .max_h_32()
                     .overflow_y_scroll()
                     .child(Label::new(error_message.clone())),
             )
@@ -4003,6 +3980,99 @@ fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Opti
     }
 
     None
+}
+
+pub fn selections_creases(
+    workspace: &mut workspace::Workspace,
+    cx: &mut ViewContext<Workspace>,
+) -> Option<Vec<(String, String)>> {
+    let editor = workspace
+        .active_item(cx)
+        .and_then(|item| item.act_as::<Editor>(cx))?;
+
+    let mut creases = vec![];
+    editor.update(cx, |editor, cx| {
+        let selections = editor.selections.all_adjusted(cx);
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+        for selection in selections {
+            let range = editor::ToOffset::to_offset(&selection.start, &buffer)
+                ..editor::ToOffset::to_offset(&selection.end, &buffer);
+            let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
+            if selected_text.is_empty() {
+                continue;
+            }
+            let start_language = buffer.language_at(range.start);
+            let end_language = buffer.language_at(range.end);
+            let language_name = if start_language == end_language {
+                start_language.map(|language| language.code_fence_block_name())
+            } else {
+                None
+            };
+            let language_name = language_name.as_deref().unwrap_or("");
+            let filename = buffer
+                .file_at(selection.start)
+                .map(|file| file.full_path(cx));
+            let text = if language_name == "markdown" {
+                selected_text
+                    .lines()
+                    .map(|line| format!("> {}", line))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                let start_symbols = buffer
+                    .symbols_containing(selection.start, None)
+                    .map(|(_, symbols)| symbols);
+                let end_symbols = buffer
+                    .symbols_containing(selection.end, None)
+                    .map(|(_, symbols)| symbols);
+
+                let outline_text =
+                    if let Some((start_symbols, end_symbols)) = start_symbols.zip(end_symbols) {
+                        Some(
+                            start_symbols
+                                .into_iter()
+                                .zip(end_symbols)
+                                .take_while(|(a, b)| a == b)
+                                .map(|(a, _)| a.text)
+                                .collect::<Vec<_>>()
+                                .join(" > "),
+                        )
+                    } else {
+                        None
+                    };
+
+                let line_comment_prefix = start_language
+                    .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
+
+                let fence = codeblock_fence_for_path(
+                    filename.as_deref(),
+                    Some(selection.start.row..=selection.end.row),
+                );
+
+                if let Some((line_comment_prefix, outline_text)) =
+                    line_comment_prefix.zip(outline_text)
+                {
+                    let breadcrumb = format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
+                    format!("{fence}{breadcrumb}{selected_text}\n```")
+                } else {
+                    format!("{fence}{selected_text}\n```")
+                }
+            };
+            let crease_title = if let Some(path) = filename {
+                let start_line = selection.start.row + 1;
+                let end_line = selection.end.row + 1;
+                if start_line == end_line {
+                    format!("{}, Line {}", path.display(), start_line)
+                } else {
+                    format!("{}, Lines {} to {}", path.display(), start_line, end_line)
+                }
+            } else {
+                "Quoted selection".to_string()
+            };
+            creases.push((text, crease_title));
+        }
+    });
+    Some(creases)
 }
 
 fn render_fold_icon_button(
@@ -4101,11 +4171,7 @@ impl Render for ContextEditor {
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .bg(cx.theme().colors().editor_background)
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(render_inject_context_menu(cx.view().downgrade(), cx)),
-                        )
+                        .child(h_flex().gap_1().child(self.render_inject_context_menu(cx)))
                         .child(
                             h_flex()
                                 .w_full()
@@ -4177,6 +4243,21 @@ impl Item for ContextEditor {
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, Item::deactivated)
+    }
+
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a View<Self>,
+        _: &'a AppContext,
+    ) -> Option<AnyView> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.to_any())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some(self.editor.to_any())
+        } else {
+            None
+        }
     }
 }
 
@@ -4367,42 +4448,9 @@ impl FollowableItem for ContextEditor {
 
 pub struct ContextEditorToolbarItem {
     fs: Arc<dyn Fs>,
-    workspace: WeakView<Workspace>,
     active_context_editor: Option<WeakView<ContextEditor>>,
     model_summary_editor: View<Editor>,
     model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
-}
-
-fn active_editor_focus_handle(
-    workspace: &WeakView<Workspace>,
-    cx: &WindowContext<'_>,
-) -> Option<FocusHandle> {
-    workspace.upgrade().and_then(|workspace| {
-        Some(
-            workspace
-                .read(cx)
-                .active_item_as::<Editor>(cx)?
-                .focus_handle(cx),
-        )
-    })
-}
-
-fn render_inject_context_menu(
-    active_context_editor: WeakView<ContextEditor>,
-    cx: &mut WindowContext<'_>,
-) -> impl IntoElement {
-    let commands = SlashCommandRegistry::global(cx);
-
-    slash_command_picker::SlashCommandSelector::new(
-        commands.clone(),
-        active_context_editor,
-        Button::new("trigger", "Add Context")
-            .icon(IconName::Plus)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .icon_position(IconPosition::Start)
-            .tooltip(|cx| Tooltip::text("Type / to insert via keyboard", cx)),
-    )
 }
 
 impl ContextEditorToolbarItem {
@@ -4413,7 +4461,6 @@ impl ContextEditorToolbarItem {
     ) -> Self {
         Self {
             fs: workspace.app_state().fs.clone(),
-            workspace: workspace.weak_handle(),
             active_context_editor: None,
             model_summary_editor,
             model_selector_menu_handle,
@@ -4466,16 +4513,29 @@ impl ContextEditorToolbarItem {
 impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let left_side = h_flex()
-            .pl_1()
-            .gap_2()
-            .flex_1()
-            .min_w(rems(DEFAULT_TAB_TITLE.len() as f32))
-            .when(self.active_context_editor.is_some(), |left_side| {
-                left_side.child(self.model_summary_editor.clone())
-            });
+            .group("chat-title-group")
+            .gap_1()
+            .items_center()
+            .flex_grow()
+            .child(
+                div()
+                    .w_full()
+                    .when(self.active_context_editor.is_some(), |left_side| {
+                        left_side.child(self.model_summary_editor.clone())
+                    }),
+            )
+            .child(
+                div().visible_on_hover("chat-title-group").child(
+                    IconButton::new("regenerate-context", IconName::RefreshTitle)
+                        .shape(ui::IconButtonShape::Square)
+                        .tooltip(|cx| Tooltip::text("Regenerate Title", cx))
+                        .on_click(cx.listener(move |_, _, cx| {
+                            cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
+                        })),
+                ),
+            );
         let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
-        let weak_self = cx.view().downgrade();
         let right_side = h_flex()
             .gap_2()
             // TODO display this in a nicer way, once we have a design for it.
@@ -4488,7 +4548,6 @@ impl Render for ContextEditorToolbarItem {
             //     let scan_items_remaining = cx.update_global(|db: &mut SemanticDb, cx| {
             //         project.and_then(|project| db.remaining_summaries(&project, cx))
             //     });
-
             //     scan_items_remaining
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
@@ -4510,9 +4569,13 @@ impl Render for ContextEditorToolbarItem {
                                             (Some(provider), Some(model)) => h_flex()
                                                 .gap_1()
                                                 .child(
-                                                    Icon::new(model.icon().unwrap_or_else(|| provider.icon()))
-                                                        .color(Color::Muted)
-                                                        .size(IconSize::XSmall),
+                                                    Icon::new(
+                                                        model
+                                                            .icon()
+                                                            .unwrap_or_else(|| provider.icon()),
+                                                    )
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::XSmall),
                                                 )
                                                 .child(
                                                     Label::new(model.name().0)
@@ -4538,73 +4601,10 @@ impl Render for ContextEditorToolbarItem {
                 )
                 .with_handle(self.model_selector_menu_handle.clone()),
             )
-            .children(self.render_remaining_tokens(cx))
-            .child(
-                PopoverMenu::new("context-editor-popover")
-                    .trigger(
-                        IconButton::new("context-editor-trigger", IconName::EllipsisVertical)
-                            .icon_size(IconSize::Small)
-                            .tooltip(|cx| Tooltip::text("Open Context Options", cx)),
-                    )
-                    .menu({
-                        let weak_self = weak_self.clone();
-                        move |cx| {
-                            let weak_self = weak_self.clone();
-                            Some(ContextMenu::build(cx, move |menu, cx| {
-                                let context = weak_self
-                                    .update(cx, |this, cx| {
-                                        active_editor_focus_handle(&this.workspace, cx)
-                                    })
-                                    .ok()
-                                    .flatten();
-                                menu.when_some(context, |menu, context| menu.context(context))
-                                    .entry("Regenerate Context Title", None, {
-                                        let weak_self = weak_self.clone();
-                                        move |cx| {
-                                            weak_self
-                                                .update(cx, |_, cx| {
-                                                    cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
-                                                })
-                                                .ok();
-                                        }
-                                    })
-                                    .custom_entry(
-                                        |_| {
-                                            h_flex()
-                                                .w_full()
-                                                .justify_between()
-                                                .gap_2()
-                                                .child(Label::new("Add Context"))
-                                                .child(Label::new("/ command").color(Color::Muted))
-                                                .into_any()
-                                        },
-                                        {
-                                            let weak_self = weak_self.clone();
-                                            move |cx| {
-                                                weak_self
-                                                    .update(cx, |this, cx| {
-                                                        if let Some(editor) =
-                                                        &this.active_context_editor
-                                                        {
-                                                            editor
-                                                                .update(cx, |this, cx| {
-                                                                    this.slash_menu_handle
-                                                                        .toggle(cx);
-                                                                })
-                                                                .ok();
-                                                        }
-                                                    })
-                                                    .ok();
-                                            }
-                                        },
-                                    )
-                                    .action("Add Selection", QuoteSelection.boxed_clone())
-                            }))
-                        }
-                    }),
-            );
+            .children(self.render_remaining_tokens(cx));
 
         h_flex()
+            .px_0p5()
             .size_full()
             .gap_2()
             .justify_between()
@@ -4817,7 +4817,7 @@ impl ConfigurationView {
                             h_flex().justify_end().child(
                                 Button::new(
                                     SharedString::from(format!("new-context-{provider_id}")),
-                                    "Open new context",
+                                    "Open New Chat",
                                 )
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::Plus)
@@ -4830,7 +4830,7 @@ impl ConfigurationView {
             )
             .child(
                 div()
-                    .p(Spacing::Large.rems(cx))
+                    .p(DynamicSpacing::Base08.rems(cx))
                     .bg(cx.theme().colors().surface_background)
                     .border_1()
                     .border_color(cx.theme().colors().border_variant)
@@ -4864,7 +4864,7 @@ impl Render for ConfigurationView {
             .overflow_y_scroll()
             .child(
                 v_flex()
-                    .p(Spacing::XXLarge.rems(cx))
+                    .p(DynamicSpacing::Base16.rems(cx))
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .gap_1()
@@ -4878,7 +4878,7 @@ impl Render for ConfigurationView {
             )
             .child(
                 v_flex()
-                    .p(Spacing::XXLarge.rems(cx))
+                    .p(DynamicSpacing::Base16.rems(cx))
                     .mt_1()
                     .gap_6()
                     .flex_1()
@@ -4979,8 +4979,8 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
                     .into_any_element()
             }
         }),
-        constrain_width: false,
         merge_adjacent: false,
+        ..Default::default()
     }
 }
 
@@ -5024,7 +5024,7 @@ fn render_pending_slash_command_gutter_decoration(
 
 fn render_docs_slash_command_trailer(
     row: MultiBufferRow,
-    command: PendingSlashCommand,
+    command: ParsedSlashCommand,
     cx: &mut WindowContext,
 ) -> AnyElement {
     if command.arguments.is_empty() {
@@ -5108,17 +5108,51 @@ fn make_lsp_adapter_delegate(
     })
 }
 
-fn slash_command_error_block_renderer(message: String) -> RenderBlock {
-    Box::new(move |_| {
-        div()
-            .pl_6()
-            .child(
-                Label::new(format!("error: {}", message))
-                    .single_line()
-                    .color(Color::Error),
-            )
-            .into_any()
-    })
+enum PendingSlashCommand {}
+
+fn invoked_slash_command_fold_placeholder(
+    command_id: InvokedSlashCommandId,
+    context: WeakModel<Context>,
+) -> FoldPlaceholder {
+    FoldPlaceholder {
+        constrain_width: false,
+        merge_adjacent: false,
+        render: Arc::new(move |fold_id, _, cx| {
+            let Some(context) = context.upgrade() else {
+                return Empty.into_any();
+            };
+
+            let Some(command) = context.read(cx).invoked_slash_command(&command_id) else {
+                return Empty.into_any();
+            };
+
+            h_flex()
+                .id(fold_id)
+                .px_1()
+                .ml_6()
+                .gap_2()
+                .bg(cx.theme().colors().surface_background)
+                .rounded_md()
+                .child(Label::new(format!("/{}", command.name.clone())))
+                .map(|parent| match &command.status {
+                    InvokedSlashCommandStatus::Running(_) => {
+                        parent.child(Icon::new(IconName::ArrowCircle).with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(4)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ))
+                    }
+                    InvokedSlashCommandStatus::Error(message) => parent.child(
+                        Label::new(format!("error: {message}"))
+                            .single_line()
+                            .color(Color::Error),
+                    ),
+                    InvokedSlashCommandStatus::Finished => parent,
+                })
+                .into_any_element()
+        }),
+        type_tag: Some(TypeId::of::<PendingSlashCommand>()),
+    }
 }
 
 enum TokenState {

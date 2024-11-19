@@ -7,13 +7,14 @@ use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
 use git::GitHostingProviderRegistry;
-use gpui::{AppContext, Context as _, Model, ModelContext, UpdateGlobal as _};
+use gpui::{AppContext, Context as _, Model, ModelContext, SemanticVersion, UpdateGlobal as _};
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
 
+use release_channel::AppVersion;
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -31,6 +32,7 @@ use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
+use std::str::FromStr;
 use std::{env, thread};
 use std::{
     io::Write,
@@ -376,6 +378,8 @@ fn init_paths() -> anyhow::Result<()> {
         paths::languages_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
+        paths::remote_extensions_dir(),
+        paths::remote_extensions_uploads_dir(),
     ]
     .iter()
     {
@@ -417,6 +421,9 @@ pub fn execute_run(
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::App::headless().run(move |cx| {
         settings::init(cx);
+        let app_version = AppVersion::init(env!("ZED_PKG_VERSION"));
+        release_channel::init(app_version, cx);
+
         HeadlessProject::init(cx);
 
         log::info!("gpui app started, initializing server");
@@ -465,6 +472,10 @@ pub fn execute_run(
         });
 
         handle_panic_requests(&project, &session);
+
+        cx.background_executor()
+            .spawn(async move { cleanup_old_binaries() })
+            .detach();
 
         mem::forget(project);
     });
@@ -873,4 +884,50 @@ unsafe fn redirect_standard_streams() -> Result<()> {
     );
 
     Ok(())
+}
+
+fn cleanup_old_binaries() -> Result<()> {
+    let server_dir = paths::remote_server_dir_relative();
+    let release_channel = release_channel::RELEASE_CHANNEL.dev_name();
+    let prefix = format!("zed-remote-server-{}-", release_channel);
+
+    for entry in std::fs::read_dir(server_dir)? {
+        let path = entry?.path();
+
+        if let Some(file_name) = path.file_name() {
+            if let Some(version) = file_name.to_string_lossy().strip_prefix(&prefix) {
+                if !is_new_version(version) && !is_file_in_use(file_name) {
+                    log::info!("removing old remote server binary: {:?}", path);
+                    std::fs::remove_file(&path)?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn is_new_version(version: &str) -> bool {
+    SemanticVersion::from_str(version)
+        .ok()
+        .zip(SemanticVersion::from_str(env!("ZED_PKG_VERSION")).ok())
+        .is_some_and(|(version, current_version)| version >= current_version)
+}
+
+fn is_file_in_use(file_name: &OsStr) -> bool {
+    let info =
+        sysinfo::System::new_with_specifics(sysinfo::RefreshKind::new().with_processes(
+            sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::Always),
+        ));
+
+    for process in info.processes().values() {
+        if process
+            .exe()
+            .is_some_and(|exe| exe.file_name().is_some_and(|name| name == file_name))
+        {
+            return true;
+        }
+    }
+
+    false
 }

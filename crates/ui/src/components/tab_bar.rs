@@ -3,6 +3,7 @@ use gpui::{AnyElement, ScrollHandle};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
+use crate::Tab;
 
 #[derive(IntoElement)]
 pub struct TabBar {
@@ -97,18 +98,14 @@ impl RenderOnce for TabBar {
             .flex()
             .flex_none()
             .w_full()
-            .h(
-                // TODO: This should scale with [UiDensity], however tabs,
-                // and other tab bar tools need to scale dynamically first.
-                rems_from_px(29.),
-            )
+            .h(Tab::container_height(cx))
             .bg(cx.theme().colors().tab_bar_background)
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
                     h_flex()
                         .flex_none()
-                        .gap(Spacing::Small.rems(cx))
-                        .px(Spacing::Medium.rems(cx))
+                        .gap(DynamicSpacing::Base04.rems(cx))
+                        .px(DynamicSpacing::Base06.rems(cx))
                         .border_b_1()
                         .border_r_1()
                         .border_color(cx.theme().colors().border)
@@ -145,8 +142,8 @@ impl RenderOnce for TabBar {
                 this.child(
                     h_flex()
                         .flex_none()
-                        .gap(Spacing::Small.rems(cx))
-                        .px(Spacing::Medium.rems(cx))
+                        .gap(DynamicSpacing::Base04.rems(cx))
+                        .px(DynamicSpacing::Base06.rems(cx))
                         .border_b_1()
                         .border_l_1()
                         .border_color(cx.theme().colors().border)

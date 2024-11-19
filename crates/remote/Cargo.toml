@@ -26,6 +26,7 @@ futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 log.workspace = true
+paths.workspace = true
 parking_lot.workspace = true
 prost.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
@@ -37,6 +38,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 util.workspace = true
 release_channel.workspace = true
+which.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

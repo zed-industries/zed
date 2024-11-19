@@ -1,17 +1,25 @@
+use std::sync::Arc;
+
 use anyhow::{anyhow, bail};
 use assistant_tool::Tool;
 use context_servers::manager::ContextServerManager;
 use context_servers::types;
-use gpui::Task;
+use gpui::{Model, Task};
 
 pub struct ContextServerTool {
-    server_id: String,
+    server_manager: Model<ContextServerManager>,
+    server_id: Arc<str>,
     tool: types::Tool,
 }
 
 impl ContextServerTool {
-    pub fn new(server_id: impl Into<String>, tool: types::Tool) -> Self {
+    pub fn new(
+        server_manager: Model<ContextServerManager>,
+        server_id: impl Into<Arc<str>>,
+        tool: types::Tool,
+    ) -> Self {
         Self {
+            server_manager,
             server_id: server_id.into(),
             tool,
         }
@@ -45,13 +53,11 @@ impl Tool for ContextServerTool {
         _workspace: gpui::WeakView<workspace::Workspace>,
         cx: &mut ui::WindowContext,
     ) -> gpui::Task<gpui::Result<String>> {
-        let manager = ContextServerManager::global(cx);
-        let manager = manager.read(cx);
-        if let Some(server) = manager.get_server(&self.server_id) {
+        if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
             cx.foreground_executor().spawn({
                 let tool_name = self.tool.name.clone();
                 async move {
-                    let Some(protocol) = server.client.read().clone() else {
+                    let Some(protocol) = server.client() else {
                         bail!("Context server not initialized");
                     };
 
@@ -68,11 +74,21 @@ impl Tool for ContextServerTool {
                     );
                     let response = protocol.run_tool(tool_name, arguments).await?;
 
-                    let tool_result = match response.tool_result {
-                        serde_json::Value::String(s) => s,
-                        _ => serde_json::to_string(&response.tool_result)?,
-                    };
-                    Ok(tool_result)
+                    let mut result = String::new();
+                    for content in response.content {
+                        match content {
+                            types::ToolResponseContent::Text { text } => {
+                                result.push_str(&text);
+                            }
+                            types::ToolResponseContent::Image { .. } => {
+                                log::warn!("Ignoring image content from tool response");
+                            }
+                            types::ToolResponseContent::Resource { .. } => {
+                                log::warn!("Ignoring resource content from tool response");
+                            }
+                        }
+                    }
+                    Ok(result)
                 }
             })
         } else {

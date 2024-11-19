@@ -1,69 +1,62 @@
 use std::sync::Arc;
 
+use anyhow::Result;
 use collections::HashMap;
-use gpui::{AppContext, Global, ReadGlobal};
-use parking_lot::RwLock;
+use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ReadGlobal, Task};
+use project::Project;
 
-struct GlobalContextServerRegistry(Arc<ContextServerRegistry>);
+use crate::manager::ServerCommand;
 
-impl Global for GlobalContextServerRegistry {}
+pub type ContextServerFactory = Arc<
+    dyn Fn(Model<Project>, &AsyncAppContext) -> Task<Result<ServerCommand>> + Send + Sync + 'static,
+>;
 
-pub struct ContextServerRegistry {
-    command_registry: RwLock<HashMap<String, Vec<Arc<str>>>>,
-    tool_registry: RwLock<HashMap<String, Vec<Arc<str>>>>,
+struct GlobalContextServerFactoryRegistry(Model<ContextServerFactoryRegistry>);
+
+impl Global for GlobalContextServerFactoryRegistry {}
+
+#[derive(Default)]
+pub struct ContextServerFactoryRegistry {
+    context_servers: HashMap<Arc<str>, ContextServerFactory>,
 }
 
-impl ContextServerRegistry {
-    pub fn global(cx: &AppContext) -> Arc<Self> {
-        GlobalContextServerRegistry::global(cx).0.clone()
+impl ContextServerFactoryRegistry {
+    /// Returns the global [`ContextServerFactoryRegistry`].
+    pub fn global(cx: &AppContext) -> Model<Self> {
+        GlobalContextServerFactoryRegistry::global(cx).0.clone()
     }
 
-    pub fn register(cx: &mut AppContext) {
-        cx.set_global(GlobalContextServerRegistry(Arc::new(
-            ContextServerRegistry {
-                command_registry: RwLock::new(HashMap::default()),
-                tool_registry: RwLock::new(HashMap::default()),
-            },
-        )))
+    /// Returns the global [`ContextServerFactoryRegistry`].
+    ///
+    /// Inserts a default [`ContextServerFactoryRegistry`] if one does not yet exist.
+    pub fn default_global(cx: &mut AppContext) -> Model<Self> {
+        if !cx.has_global::<GlobalContextServerFactoryRegistry>() {
+            let registry = cx.new_model(|_| Self::new());
+            cx.set_global(GlobalContextServerFactoryRegistry(registry));
+        }
+        cx.global::<GlobalContextServerFactoryRegistry>().0.clone()
     }
 
-    pub fn register_command(&self, server_id: String, command_name: &str) {
-        let mut registry = self.command_registry.write();
-        registry
-            .entry(server_id)
-            .or_default()
-            .push(command_name.into());
-    }
-
-    pub fn unregister_command(&self, server_id: &str, command_name: &str) {
-        let mut registry = self.command_registry.write();
-        if let Some(commands) = registry.get_mut(server_id) {
-            commands.retain(|name| name.as_ref() != command_name);
+    pub fn new() -> Self {
+        Self {
+            context_servers: HashMap::default(),
         }
     }
 
-    pub fn get_commands(&self, server_id: &str) -> Option<Vec<Arc<str>>> {
-        let registry = self.command_registry.read();
-        registry.get(server_id).cloned()
+    pub fn context_server_factories(&self) -> Vec<(Arc<str>, ContextServerFactory)> {
+        self.context_servers
+            .iter()
+            .map(|(id, factory)| (id.clone(), factory.clone()))
+            .collect()
     }
 
-    pub fn register_tool(&self, server_id: String, tool_name: &str) {
-        let mut registry = self.tool_registry.write();
-        registry
-            .entry(server_id)
-            .or_default()
-            .push(tool_name.into());
+    /// Registers the provided [`ContextServerFactory`].
+    pub fn register_server_factory(&mut self, id: Arc<str>, factory: ContextServerFactory) {
+        self.context_servers.insert(id, factory);
     }
 
-    pub fn unregister_tool(&self, server_id: &str, tool_name: &str) {
-        let mut registry = self.tool_registry.write();
-        if let Some(tools) = registry.get_mut(server_id) {
-            tools.retain(|name| name.as_ref() != tool_name);
-        }
-    }
-
-    pub fn get_tools(&self, server_id: &str) -> Option<Vec<Arc<str>>> {
-        let registry = self.tool_registry.read();
-        registry.get(server_id).cloned()
+    /// Unregisters the [`ContextServerFactory`] for the server with the given ID.
+    pub fn unregister_server_factory_by_id(&mut self, server_id: &str) {
+        self.context_servers.remove(server_id);
     }
 }

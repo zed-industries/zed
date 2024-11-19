@@ -1,7 +1,12 @@
-pub(crate) mod wit;
+pub mod wit;
 
-use crate::ExtensionManifest;
-use anyhow::{anyhow, Context as _, Result};
+use crate::{ExtensionManifest, ExtensionRegistrationHooks};
+use anyhow::{anyhow, bail, Context as _, Result};
+use async_trait::async_trait;
+use extension::{
+    CodeLabel, Command, Completion, KeyValueStoreDelegate, SlashCommand,
+    SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
+};
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
 use futures::{
@@ -14,7 +19,8 @@ use futures::{
 };
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use http_client::HttpClient;
-use language::LanguageRegistry;
+use language::LanguageName;
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
@@ -26,17 +32,18 @@ use wasmtime::{
     component::{Component, ResourceTable},
     Engine, Store,
 };
-use wasmtime_wasi as wasi;
+use wasmtime_wasi::{self as wasi, WasiView};
 use wit::Extension;
+pub use wit::ExtensionProject;
 
-pub(crate) struct WasmHost {
+pub struct WasmHost {
     engine: Engine,
     release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
-    pub(crate) language_registry: Arc<LanguageRegistry>,
+    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     fs: Arc<dyn Fs>,
-    pub(crate) work_dir: PathBuf,
+    pub work_dir: PathBuf,
     _main_thread_message_task: Task<()>,
     main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
@@ -44,16 +51,240 @@ pub(crate) struct WasmHost {
 #[derive(Clone)]
 pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
-    pub(crate) manifest: Arc<ExtensionManifest>,
+    pub manifest: Arc<ExtensionManifest>,
+    pub work_dir: Arc<Path>,
     #[allow(unused)]
     pub zed_api_version: SemanticVersion,
 }
 
-pub(crate) struct WasmState {
+#[async_trait]
+impl extension::Extension for WasmExtension {
+    fn manifest(&self) -> Arc<ExtensionManifest> {
+        self.manifest.clone()
+    }
+
+    fn work_dir(&self) -> Arc<Path> {
+        self.work_dir.clone()
+    }
+
+    async fn language_server_command(
+        &self,
+        language_server_id: LanguageServerName,
+        language_name: LanguageName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Command> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let command = extension
+                    .call_language_server_command(
+                        store,
+                        &language_server_id,
+                        &language_name,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(command.into())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn language_server_initialization_options(
+        &self,
+        language_server_id: LanguageServerName,
+        language_name: LanguageName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let options = extension
+                    .call_language_server_initialization_options(
+                        store,
+                        &language_server_id,
+                        &language_name,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+                anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn language_server_workspace_configuration(
+        &self,
+        language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let options = extension
+                    .call_language_server_workspace_configuration(
+                        store,
+                        &language_server_id,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+                anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn labels_for_completions(
+        &self,
+        language_server_id: LanguageServerName,
+        completions: Vec<Completion>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        self.call(|extension, store| {
+            async move {
+                let labels = extension
+                    .call_labels_for_completions(
+                        store,
+                        &language_server_id,
+                        completions.into_iter().map(Into::into).collect(),
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(labels
+                    .into_iter()
+                    .map(|label| label.map(Into::into))
+                    .collect())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn labels_for_symbols(
+        &self,
+        language_server_id: LanguageServerName,
+        symbols: Vec<Symbol>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        self.call(|extension, store| {
+            async move {
+                let labels = extension
+                    .call_labels_for_symbols(
+                        store,
+                        &language_server_id,
+                        symbols.into_iter().map(Into::into).collect(),
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(labels
+                    .into_iter()
+                    .map(|label| label.map(Into::into))
+                    .collect())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn complete_slash_command_argument(
+        &self,
+        command: SlashCommand,
+        arguments: Vec<String>,
+    ) -> Result<Vec<SlashCommandArgumentCompletion>> {
+        self.call(|extension, store| {
+            async move {
+                let completions = extension
+                    .call_complete_slash_command_argument(store, &command.into(), &arguments)
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(completions.into_iter().map(Into::into).collect())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn run_slash_command(
+        &self,
+        command: SlashCommand,
+        arguments: Vec<String>,
+        delegate: Option<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<SlashCommandOutput> {
+        self.call(|extension, store| {
+            async move {
+                let resource = if let Some(delegate) = delegate {
+                    Some(store.data_mut().table().push(delegate)?)
+                } else {
+                    None
+                };
+
+                let output = extension
+                    .call_run_slash_command(store, &command.into(), &arguments, resource)
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(output.into())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>> {
+        self.call(|extension, store| {
+            async move {
+                let packages = extension
+                    .call_suggest_docs_packages(store, provider.as_ref())
+                    .await?
+                    .map_err(|err| anyhow!("{err:?}"))?;
+
+                Ok(packages)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn index_docs(
+        &self,
+        provider: Arc<str>,
+        package_name: Arc<str>,
+        kv_store: Arc<dyn KeyValueStoreDelegate>,
+    ) -> Result<()> {
+        self.call(|extension, store| {
+            async move {
+                let kv_store_resource = store.data_mut().table().push(kv_store)?;
+                extension
+                    .call_index_docs(
+                        store,
+                        provider.as_ref(),
+                        package_name.as_ref(),
+                        kv_store_resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err:?}"))?;
+
+                anyhow::Ok(())
+            }
+            .boxed()
+        })
+        .await
+    }
+}
+
+pub struct WasmState {
     manifest: Arc<ExtensionManifest>,
-    pub(crate) table: ResourceTable,
+    pub table: ResourceTable,
     ctx: wasi::WasiCtx,
-    pub(crate) host: Arc<WasmHost>,
+    pub host: Arc<WasmHost>,
 }
 
 type MainThreadCall =
@@ -81,7 +312,7 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
-        language_registry: Arc<LanguageRegistry>,
+        registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
         work_dir: PathBuf,
         cx: &mut AppContext,
     ) -> Arc<Self> {
@@ -97,7 +328,7 @@ impl WasmHost {
             work_dir,
             http_client,
             node_runtime,
-            language_registry,
+            registration_hooks,
             release_channel: ReleaseChannel::global(cx),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
@@ -107,13 +338,13 @@ impl WasmHost {
     pub fn load_extension(
         self: &Arc<Self>,
         wasm_bytes: Vec<u8>,
-        manifest: Arc<ExtensionManifest>,
+        manifest: &Arc<ExtensionManifest>,
         executor: BackgroundExecutor,
     ) -> Task<Result<WasmExtension>> {
         let this = self.clone();
+        let manifest = manifest.clone();
         executor.clone().spawn(async move {
-            let zed_api_version =
-                extension::parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
+            let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
 
             let component = Component::from_binary(&this.engine, &wasm_bytes)
                 .context("failed to compile wasm component")?;
@@ -151,7 +382,8 @@ impl WasmHost {
                 .detach();
 
             Ok(WasmExtension {
-                manifest,
+                manifest: manifest.clone(),
+                work_dir: this.work_dir.join(manifest.id.as_ref()).into(),
                 tx,
                 zed_api_version,
             })
@@ -182,11 +414,6 @@ impl WasmHost {
             .build())
     }
 
-    pub fn path_from_extension(&self, id: &Arc<str>, path: &Path) -> PathBuf {
-        let extension_work_dir = self.work_dir.join(id.as_ref());
-        normalize_path(&extension_work_dir.join(path))
-    }
-
     pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {
         let extension_work_dir = self.work_dir.join(id.as_ref());
         let path = normalize_path(&extension_work_dir.join(path));
@@ -198,7 +425,75 @@ impl WasmHost {
     }
 }
 
+pub fn parse_wasm_extension_version(
+    extension_id: &str,
+    wasm_bytes: &[u8],
+) -> Result<SemanticVersion> {
+    let mut version = None;
+
+    for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
+        if let wasmparser::Payload::CustomSection(s) =
+            part.context("error parsing wasm extension")?
+        {
+            if s.name() == "zed:api-version" {
+                version = parse_wasm_extension_version_custom_section(s.data());
+                if version.is_none() {
+                    bail!(
+                        "extension {} has invalid zed:api-version section: {:?}",
+                        extension_id,
+                        s.data()
+                    );
+                }
+            }
+        }
+    }
+
+    // The reason we wait until we're done parsing all of the Wasm bytes to return the version
+    // is to work around a panic that can happen inside of Wasmtime when the bytes are invalid.
+    //
+    // By parsing the entirety of the Wasm bytes before we return, we're able to detect this problem
+    // earlier as an `Err` rather than as a panic.
+    version.ok_or_else(|| anyhow!("extension {} has no zed:api-version section", extension_id))
+}
+
+fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVersion> {
+    if data.len() == 6 {
+        Some(SemanticVersion::new(
+            u16::from_be_bytes([data[0], data[1]]) as _,
+            u16::from_be_bytes([data[2], data[3]]) as _,
+            u16::from_be_bytes([data[4], data[5]]) as _,
+        ))
+    } else {
+        None
+    }
+}
+
 impl WasmExtension {
+    pub async fn load(
+        extension_dir: PathBuf,
+        manifest: &Arc<ExtensionManifest>,
+        wasm_host: Arc<WasmHost>,
+        cx: &AsyncAppContext,
+    ) -> Result<Self> {
+        let path = extension_dir.join("extension.wasm");
+
+        let mut wasm_file = wasm_host
+            .fs
+            .open_sync(&path)
+            .await
+            .context("failed to open wasm file")?;
+
+        let mut wasm_bytes = Vec::new();
+        wasm_file
+            .read_to_end(&mut wasm_bytes)
+            .context("failed to read wasm")?;
+
+        wasm_host
+            .load_extension(wasm_bytes, manifest, cx.background_executor().clone())
+            .await
+            .with_context(|| format!("failed to load wasm extension {}", manifest.id))
+    }
+
     pub async fn call<T, Fn>(&self, f: Fn) -> T
     where
         T: 'static + Send,

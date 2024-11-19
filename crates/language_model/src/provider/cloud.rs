@@ -21,7 +21,7 @@ use gpui::{
     AnyElement, AnyView, AppContext, AsyncAppContext, EventEmitter, FontWeight, Global, Model,
     ModelContext, ReadGlobal, Subscription, Task,
 };
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
+use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use proto::TypedEnvelope;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -32,7 +32,6 @@ use smol::{
     lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard},
 };
 use std::fmt;
-use std::time::Duration;
 use std::{
     future,
     sync::{Arc, LazyLock},
@@ -63,7 +62,6 @@ fn zed_cloud_provider_additional_models() -> &'static [AvailableModel] {
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
     pub available_models: Vec<AvailableModel>,
-    pub low_speed_timeout: Option<Duration>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -475,7 +473,6 @@ impl CloudLanguageModel {
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
         body: PerformCompletionParams,
-        low_speed_timeout: Option<Duration>,
     ) -> Result<Response<AsyncBody>> {
         let http_client = &client.http_client();
 
@@ -483,10 +480,7 @@ impl CloudLanguageModel {
         let mut did_retry = false;
 
         let response = loop {
-            let mut request_builder = http_client::Request::builder();
-            if let Some(low_speed_timeout) = low_speed_timeout {
-                request_builder = request_builder.read_timeout(low_speed_timeout);
-            };
+            let request_builder = http_client::Request::builder();
             let request = request_builder
                 .method(Method::POST)
                 .uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
@@ -607,11 +601,8 @@ impl LanguageModel for CloudLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        _cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        let openai_low_speed_timeout =
-            AllLanguageModelSettings::try_read_global(cx, |s| s.openai.low_speed_timeout.unwrap());
-
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let request = request.into_anthropic(
@@ -632,7 +623,6 @@ impl LanguageModel for CloudLanguageModel {
                                 &request,
                             )?)?,
                         },
-                        None,
                     )
                     .await?;
                     Ok(map_to_language_model_completion_events(Box::pin(
@@ -656,7 +646,6 @@ impl LanguageModel for CloudLanguageModel {
                                 &request,
                             )?)?,
                         },
-                        openai_low_speed_timeout,
                     )
                     .await?;
                     Ok(open_ai::extract_text_from_events(response_lines(response)))
@@ -684,7 +673,6 @@ impl LanguageModel for CloudLanguageModel {
                                 &request,
                             )?)?,
                         },
-                        None,
                     )
                     .await?;
                     Ok(google_ai::extract_text_from_events(response_lines(
@@ -741,7 +729,6 @@ impl LanguageModel for CloudLanguageModel {
                                     &request,
                                 )?)?,
                             },
-                            None,
                         )
                         .await?;
 
@@ -786,7 +773,6 @@ impl LanguageModel for CloudLanguageModel {
                                     &request,
                                 )?)?,
                             },
-                            None,
                         )
                         .await?;
 
@@ -912,7 +898,7 @@ impl Render for ConfigurationView {
 
         let is_pro = plan == Some(proto::Plan::ZedPro);
         let subscription_text = Label::new(if is_pro {
-            "You have full access to Zed's hosted models from Anthropic, OpenAI, Google with faster speeds and higher limits through Zed Pro."
+            "You have full access to Zed's hosted LLMs, which include models from Anthropic, OpenAI, and Google. They come with faster speeds and higher limits through Zed Pro."
         } else {
             "You have basic access to models from Anthropic through the Zed AI Free plan."
         });
@@ -957,27 +943,14 @@ impl Render for ConfigurationView {
                 })
         } else {
             v_flex()
-                .gap_6()
-                .child(Label::new("Use the zed.dev to access language models."))
+                .gap_2()
+                .child(Label::new("Use Zed AI to access hosted language models."))
                 .child(
-                    v_flex()
-                        .gap_2()
-                        .child(
-                            Button::new("sign_in", "Sign in")
-                                .icon_color(Color::Muted)
-                                .icon(IconName::Github)
-                                .icon_position(IconPosition::Start)
-                                .style(ButtonStyle::Filled)
-                                .full_width()
-                                .on_click(cx.listener(move |this, _, cx| this.authenticate(cx))),
-                        )
-                        .child(
-                            div().flex().w_full().items_center().child(
-                                Label::new("Sign in to enable collaboration.")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
-                        ),
+                    Button::new("sign_in", "Sign In")
+                        .icon_color(Color::Muted)
+                        .icon(IconName::Github)
+                        .icon_position(IconPosition::Start)
+                        .on_click(cx.listener(move |this, _, cx| this.authenticate(cx))),
                 )
         }
     }
