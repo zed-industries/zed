@@ -1572,6 +1572,9 @@ fn for_snowflake(
                 body.release_channel.clone().into(),
             );
             map.insert("signed_in".to_string(), event.signed_in.into());
+            if let Some(country_code) = country_code.as_ref() {
+                map.insert("country_code".to_string(), country_code.clone().into());
+            }
         }
 
         let user_properties = Some(serde_json::json!({
