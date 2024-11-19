@@ -1259,21 +1259,24 @@ impl EditorElement {
             }),
         );
 
-        let text_units_per_page = axis_pair(
-            track_bounds
-                .horizontal
-                .map_or(text_units_per_page.horizontal, |bounds_x| {
-                    let vertical_width = track_bounds.vertical.map_or(px(0.), |vertical| vertical.size.width);
+        // let text_units_per_page = axis_pair(
+        //     track_bounds
+        //         .horizontal
+        //         .map_or(text_units_per_page.horizontal, |bounds_x| {
+        //             let vertical_width = track_bounds
+        //                 .vertical
+        //                 .map_or(px(0.), |vertical| vertical.size.width);
 
-                    (bounds_x.size.width - vertical_width) / em_width
-                }),
-            text_units_per_page.vertical,
-        );
+        //             (bounds_x.size.width - vertical_width) / em_width
+        //         }),
+        //     text_units_per_page.vertical,
+        // );
 
         let settings = EditorSettings::get_global(cx);
         let scroll_beyond_last_line: AxisPair<f32> = match settings.scroll_beyond_last_line {
             ScrollBeyondLastLine::OnePage => text_units_per_page.clone(),
             ScrollBeyondLastLine::Off => axis_pair(1.0, 1.0),
+            // TODO: This should be ScrollMargin not VerticalScrollMargin
             ScrollBeyondLastLine::VerticalScrollMargin => axis_pair(
                 1.0 + settings.horizontal_scroll_margin,
                 1.0 + settings.vertical_scroll_margin,
@@ -1291,7 +1294,7 @@ impl EditorElement {
                 // The text render range shouldn't include the scroll to the side.
                 let longest_line = (snapshot.line_len(snapshot.longest_row()) as f32);
                 Some(
-                    (longest_line/* + scroll_beyond_last_line.horizontal */)
+                    (longest_line + scroll_beyond_last_line.horizontal)
                         .max(text_units_per_page.horizontal),
                 )
                 // longest_line.map(|longest| {
@@ -3871,6 +3874,7 @@ impl EditorElement {
 
                                 let mut position = editor.scroll_position(cx);
                                 position.x = top_row as f32;
+
                                 editor.set_scroll_position(position, cx);
                             } else {
                                 editor.scroll_manager.show_scrollbar(cx);
@@ -5336,7 +5340,43 @@ impl Element for EditorElement {
                     } else {
                         px(0.)
                     };
-                    let overscroll = size(em_width + right_margin, px(0.));
+
+                    // TODO: This code exists twice, this can be condensed
+                    let hitbox = cx.insert_hitbox(bounds, false);
+                    let gutter_hitbox =
+                        cx.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
+                    let text_hitbox = cx.insert_hitbox(
+                        Bounds {
+                            origin: gutter_hitbox.upper_right(),
+                            size: size(text_width, bounds.size.height),
+                        },
+                        false,
+                    );
+
+                    let content_origin =
+                        text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
+
+                    let scrollbar_bounds =
+                        Bounds::from_corners(content_origin, bounds.lower_right());
+
+                    let height_in_lines = scrollbar_bounds.size.height / line_height;
+                    let width_in_chars = scrollbar_bounds.size.width / em_width;
+
+                    let text_units_per_page = axis_pair(width_in_chars, height_in_lines);
+
+                    let settings = EditorSettings::get_global(cx);
+                    let scroll_beyond_last_line: AxisPair<f32> =
+                        match settings.scroll_beyond_last_line {
+                            ScrollBeyondLastLine::OnePage => text_units_per_page.clone(),
+                            ScrollBeyondLastLine::Off => axis_pair(1.0, 1.0),
+                            // TODO: This should be ScrollMargin not VerticalScrollMargin
+                            ScrollBeyondLastLine::VerticalScrollMargin => axis_pair(
+                                1.0 + settings.horizontal_scroll_margin,
+                                1.0 + settings.vertical_scroll_margin,
+                            ),
+                        };
+
+                    let overscroll = size(em_width * scroll_beyond_last_line.horizontal, px(0.));
 
                     let editor_width =
                         text_width - gutter_dimensions.margin - overscroll.width - em_width;
@@ -5375,26 +5415,26 @@ impl Element for EditorElement {
                         .map(|(guide, active)| (self.column_pixels(*guide, cx), *active))
                         .collect::<SmallVec<[_; 2]>>();
 
-                    let hitbox = cx.insert_hitbox(bounds, false);
-                    let gutter_hitbox =
-                        cx.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
-                    let text_hitbox = cx.insert_hitbox(
-                        Bounds {
-                            origin: gutter_hitbox.upper_right(),
-                            size: size(text_width, bounds.size.height),
-                        },
-                        false,
-                    );
+                    // let hitbox = cx.insert_hitbox(bounds, false);
+                    // let gutter_hitbox =
+                    //     cx.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
+                    // let text_hitbox = cx.insert_hitbox(
+                    //     Bounds {
+                    //         origin: gutter_hitbox.upper_right(),
+                    //         size: size(text_width, bounds.size.height),
+                    //     },
+                    //     false,
+                    // );
                     // Offset the content_bounds from the text_bounds by the gutter margin (which
                     // is roughly half a character wide) to make hit testing work more like how we want.
-                    let content_origin =
-                        text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
+                    // let content_origin =
+                    //     text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
 
-                    let scrollbar_bounds =
-                        Bounds::from_corners(content_origin, bounds.lower_right());
+                    // let scrollbar_bounds =
+                    //     Bounds::from_corners(content_origin, bounds.lower_right());
 
-                    let height_in_lines = scrollbar_bounds.size.height / line_height;
-                    let width_in_chars = scrollbar_bounds.size.width / em_width;
+                    // let height_in_lines = scrollbar_bounds.size.height / line_height;
+                    // let width_in_chars = scrollbar_bounds.size.width / em_width;
 
                     let max_row = snapshot.max_point().row().as_f32();
                     let max_scroll_top = if matches!(snapshot.mode, EditorMode::AutoHeight { .. }) {
