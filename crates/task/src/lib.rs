@@ -51,6 +51,10 @@ pub struct SpawnInTerminal {
     pub hide: HideStrategy,
     /// Which shell to use when spawning the task.
     pub shell: Shell,
+    /// Wether to hide the task line in the task output.
+    pub hide_task: bool,
+    /// Weather to hide the command line in the task output.
+    pub hide_command: bool,
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.
