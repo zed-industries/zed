@@ -260,7 +260,10 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
 
     #[allow(non_upper_case_globals)]
     let key = match first_char {
-        Some(SPACE_KEY) => "space".to_string(),
+        Some(SPACE_KEY) => {
+            ime_key = Some(" ".to_string());
+            "space".to_string()
+        }
         Some(BACKSPACE_KEY) => "backspace".to_string(),
         Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter".to_string(),
         Some(ESCAPE_KEY) => "escape".to_string(),

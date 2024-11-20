@@ -418,7 +418,7 @@ pub async fn post_events(
     if let Some(kinesis_client) = app.kinesis_client.clone() {
         if let Some(stream) = app.config.kinesis_stream.clone() {
             let mut request = kinesis_client.put_records().stream_name(stream);
-            for row in for_snowflake(request_body.clone(), first_event_at) {
+            for row in for_snowflake(request_body.clone(), first_event_at, country_code.clone()) {
                 if let Some(data) = serde_json::to_vec(&row).log_err() {
                     request = request.records(
                         aws_sdk_kinesis::types::PutRecordsRequestEntry::builder()
@@ -483,20 +483,7 @@ pub async fn post_events(
                         checksum_matched,
                     ))
             }
-            Event::Cpu(event) => to_upload.cpu_events.push(CpuEventRow::from_event(
-                event.clone(),
-                wrapper,
-                &request_body,
-                first_event_at,
-                checksum_matched,
-            )),
-            Event::Memory(event) => to_upload.memory_events.push(MemoryEventRow::from_event(
-                event.clone(),
-                wrapper,
-                &request_body,
-                first_event_at,
-                checksum_matched,
-            )),
+            Event::Cpu(_) | Event::Memory(_) => continue,
             Event::App(event) => to_upload.app_events.push(AppEventRow::from_event(
                 event.clone(),
                 wrapper,
@@ -947,6 +934,7 @@ pub struct CpuEventRow {
 }
 
 impl CpuEventRow {
+    #[allow(unused)]
     fn from_event(
         event: CpuEvent,
         wrapper: &EventWrapper,
@@ -1001,6 +989,7 @@ pub struct MemoryEventRow {
 }
 
 impl MemoryEventRow {
+    #[allow(unused)]
     fn from_event(
         event: MemoryEvent,
         wrapper: &EventWrapper,
@@ -1392,8 +1381,9 @@ pub fn calculate_json_checksum(app: Arc<AppState>, json: &impl AsRef<[u8]>) -> O
 fn for_snowflake(
     body: EventRequestBody,
     first_event_at: chrono::DateTime<chrono::Utc>,
+    country_code: Option<String>,
 ) -> impl Iterator<Item = SnowflakeRow> {
-    body.events.into_iter().map(move |event| {
+    body.events.into_iter().flat_map(move |event| {
         let timestamp =
             first_event_at + Duration::milliseconds(event.milliseconds_since_first_event);
         let (event_type, mut event_properties) = match &event.event {
@@ -1450,14 +1440,7 @@ fn for_snowflake(
                 },
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::Cpu(e) => (
-                "System CPU Sampled".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
-            Event::Memory(e) => (
-                "System Memory Sampled".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
+            Event::Cpu(_) | Event::Memory(_) => return None,
             Event::App(e) => {
                 let mut properties = json!({});
                 let event_type = match e.operation.trim() {
@@ -1571,13 +1554,19 @@ fn for_snowflake(
                 body.release_channel.clone().into(),
             );
             map.insert("signed_in".to_string(), event.signed_in.into());
+            if let Some(country_code) = country_code.as_ref() {
+                map.insert("country_code".to_string(), country_code.clone().into());
+            }
         }
 
         let user_properties = Some(serde_json::json!({
             "is_staff": body.is_staff,
+            "Country": country_code.clone(),
+            "OS": format!("{} {}", body.os_name, body.os_version.clone().unwrap_or_default()),
+            "Version": body.app_version.clone(),
         }));
 
-        SnowflakeRow {
+        Some(SnowflakeRow {
             time: timestamp,
             user_id: body.metrics_id.clone(),
             device_id: body.system_id.clone(),
@@ -1585,7 +1574,7 @@ fn for_snowflake(
             event_properties,
             user_properties,
             insert_id: Some(Uuid::new_v4().to_string()),
-        }
+        })
     })
 }
 
