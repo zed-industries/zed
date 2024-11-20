@@ -100,7 +100,7 @@ impl Render for ApplicationMenu {
                         .action("Open a new Project...", Box::new(workspace::Open))
                         .action(
                             "Open Recent Projects...",
-                            Box::new(recent_projects::OpenRecent {
+                            Box::new(zed_actions::OpenRecent {
                                 create_new_window: false,
                             }),
                         )

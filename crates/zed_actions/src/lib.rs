@@ -50,3 +50,11 @@ pub struct InlineAssist {
 }
 
 impl_actions!(assistant, [InlineAssist]);
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct OpenRecent {
+    #[serde(default)]
+    pub create_new_window: bool,
+}
+gpui::impl_actions!(projects, [OpenRecent]);
+gpui::actions!(projects, [OpenRemote]);

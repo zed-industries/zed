@@ -16,7 +16,6 @@ use picker::{
     Picker, PickerDelegate,
 };
 pub use remote_servers::RemoteServerProjects;
-use serde::Deserialize;
 use settings::Settings;
 pub use ssh_connections::SshSettings;
 use std::{
@@ -29,19 +28,7 @@ use workspace::{
     CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceId,
     WORKSPACE_DB,
 };
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct OpenRecent {
-    #[serde(default = "default_create_new_window")]
-    pub create_new_window: bool,
-}
-
-fn default_create_new_window() -> bool {
-    false
-}
-
-gpui::impl_actions!(projects, [OpenRecent]);
-gpui::actions!(projects, [OpenRemote]);
+use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut AppContext) {
     SshSettings::register(cx);

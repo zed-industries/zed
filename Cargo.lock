@@ -9684,6 +9684,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12594,7 +12595,6 @@ dependencies = [
  "notifications",
  "pretty_assertions",
  "project",
- "recent_projects",
  "remote",
  "rpc",
  "serde",
