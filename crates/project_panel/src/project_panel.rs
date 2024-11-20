@@ -1444,7 +1444,7 @@ impl ProjectPanel {
         let mut worktree_ids: Vec<_> = self
             .visible_entries
             .iter()
-            .map(|(worktree_id, _, _)| worktree_id.clone())
+            .map(|(worktree_id, _, _)| *worktree_id)
             .collect();
 
         let mut last_found: Option<SelectedEntry> = None;
@@ -1546,7 +1546,7 @@ impl ProjectPanel {
         let mut worktree_ids: Vec<_> = self
             .visible_entries
             .iter()
-            .map(|(worktree_id, _, _)| worktree_id.clone())
+            .map(|(worktree_id, _, _)| *worktree_id)
             .collect();
 
         let mut last_found: Option<SelectedEntry> = None;
@@ -1640,8 +1640,7 @@ impl ProjectPanel {
                     && entry.is_file()
                     && self
                         .diagnostics
-                        .get(&(worktree_id, entry.path.to_path_buf()))
-                        .is_some()
+                        .contains_key(&(worktree_id, entry.path.to_path_buf()))
             },
             cx,
         );
@@ -1671,8 +1670,7 @@ impl ProjectPanel {
                     && entry.is_file()
                     && self
                         .diagnostics
-                        .get(&(worktree_id, entry.path.to_path_buf()))
-                        .is_some()
+                        .contains_key(&(worktree_id, entry.path.to_path_buf()))
             },
             cx,
         );
