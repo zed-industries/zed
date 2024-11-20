@@ -38,8 +38,8 @@ use std::{
 };
 use util::{fs::remove_matching, maybe, ResultExt};
 
-pub use copilot_completion_provider::CopilotCompletionProvider;
-pub use sign_in::CopilotCodeVerification;
+pub use crate::copilot_completion_provider::CopilotCompletionProvider;
+pub use crate::sign_in::{initiate_sign_in, CopilotCodeVerification};
 
 actions!(
     copilot,
