@@ -24,6 +24,8 @@ use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, Subscription, Tas
 use log;
 use parking_lot::RwLock;
 use project::Project;
+use schemars::gen::SchemaGenerator;
+use schemars::schema::{InstanceType, Schema, SchemaObject};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsStore};
@@ -43,7 +45,15 @@ pub struct ContextServerSettings {
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug, Default)]
 pub struct ServerConfig {
     pub command: Option<ServerCommand>,
+    #[schemars(schema_with = "server_config_settings_json_schema")]
     pub settings: Option<serde_json::Value>,
+}
+
+fn server_config_settings_json_schema(_generator: &mut SchemaGenerator) -> Schema {
+    Schema::Object(SchemaObject {
+        instance_type: Some(InstanceType::Object.into()),
+        ..Default::default()
+    })
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
