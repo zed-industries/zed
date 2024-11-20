@@ -11875,7 +11875,15 @@ impl Editor {
         style: &EditorStyle,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
-        if !self.newest_selection_head_on_empty_line(cx) || self.has_active_inline_completion(cx) {
+        let selection = self.selections.newest::<Point>(cx);
+        if !selection.is_empty() {
+            return None;
+        };
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let buffer_row = MultiBufferRow(selection.head().row);
+
+        if snapshot.line_len(buffer_row) != 0 || self.has_active_inline_completion(cx) {
             return None;
         }
 
