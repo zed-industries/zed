@@ -91,21 +91,27 @@
   "}" @punctuation.special) @embedded
 
 ; Docstrings.
+(module
+  .(expression_statement (string) @string.doc)+)
+
+(class_definition
+  body: (block .(expression_statement (string) @string.doc)+))
+
 (function_definition
   "async"?
   "def"
   name: (_)
   (parameters)?
-  body: (block (expression_statement (string) @string.doc)))
+  body: (block .(expression_statement (string) @string.doc)+))
 
 (module
   (expression_statement (assignment))
-  . (expression_statement (string) @string.doc))
+  . (expression_statement (string) @string.doc)+)
 
 (class_definition
   body: (block
     (expression_statement (assignment))
-    . (expression_statement (string) @string.doc)))
+    . (expression_statement (string) @string.doc)+))
 
 (class_definition
   body: (block
@@ -114,7 +120,7 @@
       (#eq? @function.method.constructor "__init__")
       body: (block
         (expression_statement (assignment))
-        . (expression_statement (string) @string.doc)))))
+        . (expression_statement (string) @string.doc)+))))
 
 
 [
