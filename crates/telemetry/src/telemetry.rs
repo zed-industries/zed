@@ -39,7 +39,7 @@ impl EventRequestBody {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct EventWrapper {
     pub signed_in: bool,
     /// Duration between this event's timestamp and the timestamp of the first event in the current batch
@@ -95,7 +95,7 @@ impl Display for AssistantPhase {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum EventBody {
     Event(Event),
@@ -312,7 +312,7 @@ macro_rules! serialize_property {
     };
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Event {
     pub name: String,
     pub properties: HashMap<String, serde_json::Value>,
