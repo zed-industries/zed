@@ -250,7 +250,7 @@ impl Render for WelcomePage {
                                                     "welcome page: open extensions".to_string(),
                                                 );
                                                 cx.dispatch_action(Box::new(
-                                                    extensions_ui::Extensions,
+                                                    zed_actions::Extensions,
                                                 ));
                                             })),
                                     )

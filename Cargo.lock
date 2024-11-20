@@ -4218,6 +4218,7 @@ dependencies = [
  "vim",
  "wasmtime-wasi",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12575,7 +12576,6 @@ dependencies = [
  "collections",
  "command_palette",
  "editor",
- "extensions_ui",
  "feature_flags",
  "feedback",
  "gpui",
@@ -14358,7 +14358,6 @@ dependencies = [
  "client",
  "db",
  "editor",
- "extensions_ui",
  "fuzzy",
  "gpui",
  "inline_completion_button",
