@@ -244,8 +244,8 @@ jobs:
           #
           # 25 was chosen arbitrarily.
           fetch-depth: 25
-          fetch-tags: true
           clean: false
+          ref: ${{ github.ref }}
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
