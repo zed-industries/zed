@@ -415,9 +415,9 @@ impl Editor {
         let border_color = cx.theme().colors().border_variant;
         let bg_color = cx.theme().colors().editor_background;
         let gutter_color = match hunk.status {
-            DiffHunkStatus::Added => cx.theme().status().created,
-            DiffHunkStatus::Modified => cx.theme().status().modified,
-            DiffHunkStatus::Removed => cx.theme().status().deleted,
+            DiffHunkStatus::Added => cx.theme().status().created_border,
+            DiffHunkStatus::Modified => cx.theme().status().modified_border,
+            DiffHunkStatus::Removed => cx.theme().status().deleted_border,
         };
 
         BlockProperties {
@@ -694,8 +694,8 @@ impl Editor {
     ) -> BlockProperties<Anchor> {
         let gutter_color = match hunk.status {
             DiffHunkStatus::Added => unreachable!(),
-            DiffHunkStatus::Modified => cx.theme().status().modified,
-            DiffHunkStatus::Removed => cx.theme().status().deleted,
+            DiffHunkStatus::Modified => cx.theme().status().modified_border,
+            DiffHunkStatus::Removed => cx.theme().status().deleted_border,
         };
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
@@ -1053,15 +1053,11 @@ fn create_diff_base_buffer(buffer: &Model<Buffer>, cx: &mut AppContext) -> Optio
 }
 
 fn added_hunk_color(cx: &AppContext) -> Hsla {
-    let mut created_color = cx.theme().status().git().created;
-    created_color.fade_out(0.7);
-    created_color
+    cx.theme().status().created_background
 }
 
 fn deleted_hunk_color(cx: &AppContext) -> Hsla {
-    let mut deleted_color = cx.theme().status().deleted;
-    deleted_color.fade_out(0.7);
-    deleted_color
+    cx.theme().status().deleted_background
 }
 
 fn editor_with_deleted_text(
