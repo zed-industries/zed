@@ -42,7 +42,7 @@ impl RemoteRunningKernel {
         working_directory: std::path::PathBuf,
         session: View<Session>,
         cx: &mut WindowContext,
-    ) -> Task<anyhow::Result<Self>> {
+    ) -> Task<Result<Box<dyn RunningKernel>>> {
         let remote_server = RemoteServer {
             base_url: kernelspec.url,
             token: kernelspec.token,
@@ -90,7 +90,7 @@ impl RemoteRunningKernel {
                 }
             });
 
-            anyhow::Ok(Self {
+            anyhow::Ok(Box::new(Self {
                 _routing_task: routing_task,
                 _receiving_task: receiving_task,
                 remote_server,
@@ -99,7 +99,7 @@ impl RemoteRunningKernel {
                 // todo(kyle): pull this from the kernel API to start with
                 execution_state: ExecutionState::Idle,
                 kernel_info: None,
-            })
+            }) as Box<dyn RunningKernel>)
         })
     }
 }
