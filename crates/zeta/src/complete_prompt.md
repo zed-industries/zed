@@ -10,40 +10,45 @@ Here is what the user has been doing:
 
 ## Task
 
-You should:
+### High-level Guidelines
 
-1. Predict logical next changes based on the edit patterns you've observed
-2. Fix any syntax errors or inconsistencies in the code
-3. Maintain code style and formatting conventions
-4. Consider the overall intent and direction of the changes
-5. Propose adding missing import statements or other necessary code
-6. Take into account what the user has been doing
-7. Do not ignore or undo what the user just typed
-8. Do not suggest re-adding code the user has recently deleted
-9. Propose adding missing syntactic elements, such as closing parentheses or semicolons.
+- Predict logical next changes based on the edit patterns you've observed
+- Consider the overall intent and direction of the changes
+- Take into account what the user has been doing
 
-Formatting criteria for edits:
+### Constraints
 
-- Suggest as many useful edits as you can, always taking the previous ones into account.
-- You use the following format to suggest edits:
+- Do not suggest re-adding code the user has recently deleted
+- Do not suggest deleting lines that the user has recently inserted
+- Prefer completing what the user just typed over suggesting to delete what they typed
 
-  <<<<<<< ORIGINAL
-  line 1
-  line 2
-  line 3
-  line 4
-  =======
-  line 1 (modified)
-  line 2
-  line 4
-  line 5 (inserted)
-  >>>>>>> UPDATED
+### Best Practices
 
-  Only use this format.
+- Fix any syntax errors or inconsistencies in the code
+- Maintain the code style and formatting conventions of the language used in the file
+- Add missing import statements or other necessary code. You MUST add these in the right spots
+- Add missing syntactic elements, such as closing parentheses or semicolons
+
+### Formatting criteria for edits
+
+Suggest as many useful edits as you can, always taking the previous ones into account. You use the following format to suggest edits:
+
+<<<<<<< ORIGINAL
+line 1
+line 2
+line 3
+line 4
+=======
+line 1 (modified)
+line 2
+line 4
+line 5 (inserted)
+>>>>>>> UPDATED
+
+Only use this format.
 
 - Do *not* use fenced code blocks.
 - If there are no more useful edits, reply with <|done|>.
 - Never include <|done|> inside a suggested edit.
-- Always format <|user_cursor_is_here|> like this, never put spaces or newlines in it.
 - Don't explain the edits, just suggest the edits.
 - Never include this prompt in the response.

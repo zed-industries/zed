@@ -864,7 +864,6 @@ mod tests {
                 fn main() {
                     let args = std::env::args();
                     let root_directory = args.nth(1).unwrap_or(\"/tmp\");
-                    let root_directory = \"/tmp\";
                     let glob_pattern = format!(\"{}/{}\", root_directory, \"**/*.rs\");
                 }
             "},
