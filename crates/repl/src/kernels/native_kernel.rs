@@ -5,7 +5,7 @@ use futures::{
     stream::{SelectAll, StreamExt},
     AsyncBufReadExt as _, SinkExt as _,
 };
-use gpui::{EntityId, Task, View};
+use gpui::{EntityId, Task, View, WindowContext};
 use jupyter_protocol::{JupyterMessage, JupyterMessageContent, KernelInfoReply};
 use project::Fs;
 use runtimelib::{dirs, ConnectionInfo, ExecutionState, JupyterKernelspec};
@@ -17,7 +17,6 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use ui::WindowContext;
 use uuid::Uuid;
 
 use crate::Session;
@@ -96,7 +95,7 @@ pub struct NativeRunningKernel {
     _control_task: Task<Result<()>>,
     _routing_task: Task<Result<()>>,
     connection_path: PathBuf,
-    process_status_task: Option<Task<()>>,
+    _process_status_task: Option<Task<()>>,
     pub working_directory: PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
@@ -314,7 +313,7 @@ impl NativeRunningKernel {
                 process,
                 request_tx,
                 working_directory,
-                process_status_task: Some(process_status_task),
+                _process_status_task: Some(process_status_task),
                 _shell_task: shell_task,
                 _control_task: control_task,
                 _routing_task: routing_task,
