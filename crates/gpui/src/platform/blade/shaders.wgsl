@@ -111,6 +111,13 @@ fn srgb_to_linear(srgb: vec3<f32>) -> vec3<f32> {
     return select(higher, lower, cutoff);
 }
 
+fn linear_to_srgb(linear: vec3<f32>) -> vec3<f32> {
+    let cutoff = linear < vec3<f32>(0.0031308);
+    let higher = vec3<f32>(1.055) * pow(linear, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+    let lower = linear * vec3<f32>(12.92);
+    return select(higher, lower, cutoff);
+}
+
 fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
     let h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
     let s = hsla.s;
@@ -300,10 +307,15 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
         t = clamp(t, 0.0, 1.0);
 
-        let color0 = input.background_stop0_color;
-        let color1 = input.background_stop1_color;
+        var color0 = input.background_stop0_color;
+        var color1 = input.background_stop1_color;
 
-        background_color = mix(color0, color1, t);
+        // Convert back to sRGB space, the mix function will interpolate in linear space.
+        color0 = vec4<f32>(linear_to_srgb(color0.rgb), color0.a);
+        color1 = vec4<f32>(linear_to_srgb(color1.rgb), color1.a);
+        let color = mix(color0, color1, t);
+        // Convert back to linear space for blending.
+        background_color = vec4<f32>(srgb_to_linear(color.rgb), color.a);
     }
 
     // Fast path when the quad is not rounded and doesn't have any border.
