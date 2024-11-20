@@ -1467,7 +1467,9 @@ impl ProjectPanel {
                 }
 
                 let first = first_iter
-                    .take_until(|ele| *ele == root_entry)
+                    .enumerate()
+                    .take_until(|(count, ele)| *ele == root_entry && *count != 0usize)
+                    .map(|(_, ele)| ele)
                     .find(|ele| predicate(ele, tree_id))
                     .cloned();
 
