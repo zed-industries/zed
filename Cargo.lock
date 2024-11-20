@@ -2876,6 +2876,7 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
+ "inline_completion",
  "language",
  "lsp",
  "menu",
@@ -3721,6 +3722,7 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
+ "inline_completion",
  "itertools 0.13.0",
  "language",
  "linkify",
@@ -6054,6 +6056,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
+]
+
+[[package]]
+name = "inline_completion"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "language",
+ "project",
+ "text",
 ]
 
 [[package]]
@@ -11781,6 +11793,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "inline_completion",
  "language",
  "log",
  "postage",
