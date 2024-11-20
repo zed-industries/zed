@@ -5419,8 +5419,10 @@ impl Element for EditorElement {
                         px(0.),
                     );
 
-                    let editor_width =
-                        text_width - gutter_dimensions.margin - overscroll.width - em_width;
+                    let editor_width = text_width - gutter_dimensions.margin - em_width;
+
+                    println!("text_width: {}", text_width);
+                    println!("editor_width: {}", editor_width);
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
