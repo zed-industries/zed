@@ -824,8 +824,13 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
-    cx.on_keyboard_layout_change(move |_| {
-        keyboard_layout_tx.unbounded_send(()).ok();
+    let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+    cx.on_keyboard_layout_change(move |cx| {
+        let next_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+        if next_mapping != current_mapping {
+            current_mapping = next_mapping;
+            keyboard_layout_tx.unbounded_send(()).ok();
+        }
     })
     .detach();
 
