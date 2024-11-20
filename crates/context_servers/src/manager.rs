@@ -38,13 +38,21 @@ use crate::{
 
 #[derive(Deserialize, Serialize, Default, Clone, PartialEq, Eq, JsonSchema, Debug)]
 pub struct ContextServerSettings {
+    /// Settings for context servers used in the Assistant.
     #[serde(default)]
     pub context_servers: HashMap<Arc<str>, ServerConfig>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug, Default)]
 pub struct ServerConfig {
+    /// The command to run this context server.
+    ///
+    /// This will override the command set by an extension.
     pub command: Option<ServerCommand>,
+    /// The settings for this context server.
+    ///
+    /// Consult the documentation for the context server to see what settings
+    /// are supported.
     #[schemars(schema_with = "server_config_settings_json_schema")]
     pub settings: Option<serde_json::Value>,
 }
