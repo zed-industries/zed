@@ -97,11 +97,15 @@ impl Zeta {
                 if let Event::InlineCompletion {
                     old_text: old_text_completion,
                     new_text: new_text_completion,
+                    path: path_completion,
                     accepted: Some(true),
                     ..
                 } = last_entry.get()
                 {
-                    if old_text_completion == old_text && new_text_completion == new_text {
+                    if path == path_completion
+                        && old_text_completion == old_text
+                        && new_text_completion == new_text
+                    {
                         return;
                     }
                 }
@@ -202,6 +206,10 @@ impl Zeta {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
         let snapshot = self.report_changes_for_buffer(buffer, cx);
+        let path = snapshot
+            .file()
+            .map(|f| f.path().clone())
+            .unwrap_or_else(|| Arc::from(Path::new("untitled")));
 
         let id = self.next_inline_completion_id;
         self.next_inline_completion_id.0 += 1;
@@ -321,6 +329,7 @@ impl Zeta {
                 this.update(&mut cx, |this, _cx| {
                     this.push_event(Event::InlineCompletion {
                         id,
+                        path,
                         old_text,
                         new_text: new_text.clone(),
                         accepted: None,
@@ -478,6 +487,7 @@ enum Event {
     },
     InlineCompletion {
         id: InlineCompletionId,
+        path: Arc<Path>,
         old_text: Arc<str>,
         new_text: Arc<str>,
         accepted: Option<bool>,
