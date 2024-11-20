@@ -17,10 +17,10 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
+copilot.workspace = true
 db.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
-inline_completion_button.workspace = true
 install_cli.workspace = true
 picker.workspace = true
 project.workspace = true

@@ -177,7 +177,7 @@ impl Render for WelcomePage {
                                                 this.telemetry.report_app_event(
                                                     "welcome page: sign in to copilot".to_string(),
                                                 );
-                                                inline_completion_button::initiate_sign_in(cx);
+                                                copilot::initiate_sign_in(cx);
                                             }),
                                         ),
                                     )

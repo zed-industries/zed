@@ -6076,7 +6076,6 @@ dependencies = [
  "supermaven",
  "theme",
  "ui",
- "util",
  "workspace",
  "zed_actions",
 ]
@@ -6521,7 +6520,6 @@ dependencies = [
  "gpui",
  "http_client",
  "image",
- "inline_completion_button",
  "language",
  "log",
  "menu",
@@ -14356,11 +14354,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "copilot",
  "db",
  "editor",
  "fuzzy",
  "gpui",
- "inline_completion_button",
  "install_cli",
  "picker",
  "project",
