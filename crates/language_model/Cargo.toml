@@ -13,10 +13,7 @@ path = "src/language_model.rs"
 doctest = false
 
 [features]
-test-support = [
-    # "language/test-support",
-    # "text/test-support",
-]
+test-support = []
 
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
