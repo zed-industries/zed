@@ -15,8 +15,7 @@ use editor::{
     scroll::Autoscroll,
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
 };
-use futures::io::BufReader;
-use futures::{AsyncBufReadExt as _, FutureExt as _, StreamExt as _};
+use futures::FutureExt as _;
 use gpui::{
     div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
 };
@@ -35,8 +34,6 @@ pub struct Session {
     editor: WeakView<Editor>,
     pub kernel: Kernel,
     blocks: HashMap<String, EditorBlock>,
-    messaging_task: Option<Task<()>>,
-    process_status_task: Option<Task<()>>,
     pub kernel_specification: KernelSpecification,
     telemetry: Arc<Telemetry>,
     _buffer_subscription: Subscription,
@@ -219,8 +216,6 @@ impl Session {
             fs,
             editor,
             kernel: Kernel::StartingKernel(Task::ready(()).shared()),
-            messaging_task: None,
-            process_status_task: None,
             blocks: HashMap::default(),
             kernel_specification,
             _buffer_subscription: subscription,
@@ -246,6 +241,8 @@ impl Session {
             cx.entity_id().to_string(),
         );
 
+        let session_view = cx.view().clone();
+
         let kernel = match self.kernel_specification.clone() {
             KernelSpecification::Jupyter(kernel_specification)
             | KernelSpecification::PythonEnv(kernel_specification) => NativeRunningKernel::new(
@@ -253,6 +250,7 @@ impl Session {
                 entity_id,
                 working_directory,
                 self.fs.clone(),
+                session_view,
                 cx,
             ),
             KernelSpecification::Remote(_remote_kernel_specification) => {
@@ -265,78 +263,15 @@ impl Session {
                 let kernel = kernel.await;
 
                 match kernel {
-                    Ok((mut kernel, mut messages_rx)) => {
+                    Ok(mut kernel) => {
                         this.update(&mut cx, |session, cx| {
-                            let status = kernel.process.status();
                             session.kernel(Kernel::RunningKernel(Box::new(kernel)), cx);
-
-                            let process_status_task = cx.spawn(|session, mut cx| async move {
-                                let error_message = match status.await {
-                                    Ok(status) => {
-                                        if status.success() {
-                                            log::info!("kernel process exited successfully");
-                                            return;
-                                        }
-
-                                        format!("kernel process exited with status: {:?}", status)
-                                    }
-                                    Err(err) => {
-                                        format!("kernel process exited with error: {:?}", err)
-                                    }
-                                };
-
-                                log::error!("{}", error_message);
-
-                                session
-                                    .update(&mut cx, |session, cx| {
-                                        session.kernel(
-                                            Kernel::ErroredLaunch(error_message.clone()),
-                                            cx,
-                                        );
-
-                                        session.blocks.values().for_each(|block| {
-                                            block.execution_view.update(
-                                                cx,
-                                                |execution_view, cx| {
-                                                    match execution_view.status {
-                                                        ExecutionStatus::Finished => {
-                                                            // Do nothing when the output was good
-                                                        }
-                                                        _ => {
-                                                            // All other cases, set the status to errored
-                                                            execution_view.status =
-                                                                ExecutionStatus::KernelErrored(
-                                                                    error_message.clone(),
-                                                                )
-                                                        }
-                                                    }
-                                                    cx.notify();
-                                                },
-                                            );
-                                        });
-
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            });
-
-                            session.process_status_task = Some(process_status_task);
-
-                            session.messaging_task = Some(cx.spawn(|session, mut cx| async move {
-                                while let Some(message) = messages_rx.next().await {
-                                    session
-                                        .update(&mut cx, |session, cx| {
-                                            session.route(&message, cx);
-                                        })
-                                        .ok();
-                                }
-                            }));
                         })
                         .ok();
                     }
                     Err(err) => {
                         this.update(&mut cx, |session, cx| {
-                            session.kernel(Kernel::ErroredLaunch(err.to_string()), cx);
+                            session.kernel_errored(err.to_string(), cx);
                         })
                         .ok();
                     }
@@ -346,6 +281,26 @@ impl Session {
 
         self.kernel(Kernel::StartingKernel(pending_kernel), cx);
         cx.notify();
+    }
+
+    pub fn kernel_errored(&mut self, error_message: String, cx: &mut ViewContext<Self>) {
+        self.kernel(Kernel::ErroredLaunch(error_message.clone()), cx);
+
+        self.blocks.values().for_each(|block| {
+            block.execution_view.update(cx, |execution_view, cx| {
+                match execution_view.status {
+                    ExecutionStatus::Finished => {
+                        // Do nothing when the output was good
+                    }
+                    _ => {
+                        // All other cases, set the status to errored
+                        execution_view.status =
+                            ExecutionStatus::KernelErrored(error_message.clone())
+                    }
+                }
+                cx.notify();
+            });
+        });
     }
 
     fn on_buffer_event(
@@ -518,7 +473,7 @@ impl Session {
         }
     }
 
-    fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
+    pub fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
         let parent_message_id = match message.parent_header.as_ref() {
             Some(header) => &header.msg_id,
             None => return,
@@ -605,12 +560,6 @@ impl Session {
                     // Give the kernel a bit of time to clean up
                     cx.background_executor().timer(Duration::from_secs(3)).await;
 
-                    this.update(&mut cx, |session, _cx| {
-                        session.messaging_task.take();
-                        session.process_status_task.take();
-                    })
-                    .ok();
-
                     kernel.force_shutdown().ok();
 
                     this.update(&mut cx, |session, cx| {
@@ -623,8 +572,6 @@ impl Session {
                 .detach();
             }
             _ => {
-                self.messaging_task.take();
-                self.process_status_task.take();
                 self.kernel(Kernel::Shutdown, cx);
             }
         }
@@ -647,12 +594,6 @@ impl Session {
                     let message: JupyterMessage = ShutdownRequest { restart: true }.into();
                     request_tx.try_send(message).ok();
 
-                    this.update(&mut cx, |session, _cx| {
-                        session.messaging_task.take();
-                        session.process_status_task.take();
-                    })
-                    .ok();
-
                     // Wait for kernel to shutdown
                     cx.background_executor().timer(Duration::from_secs(1)).await;
 
@@ -670,9 +611,6 @@ impl Session {
                 .detach();
             }
             _ => {
-                // If it's not already running, we can just clean up and start a new kernel
-                self.messaging_task.take();
-                self.process_status_task.take();
                 self.clear_outputs(cx);
                 self.start_kernel(cx);
             }
