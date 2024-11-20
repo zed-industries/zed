@@ -842,6 +842,38 @@ mod tests {
         .await;
     }
 
+    #[gpui::test]
+    async fn test_command_line_args(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "main.rs",
+            indoc! {"
+                fn main() {
+                    let root_directory = \"/tmp\";
+                    let glob_pattern = format!(\"{}/{}\", root_directory, \"**/*.rs\");
+                }
+            "},
+            indoc! {"
+                fn main() {
+                    let args = std::env::args();
+                    let <|user_cursor_is_here|>
+                    let root_directory = \"/tmp\";
+                    let glob_pattern = format!(\"{}/{}\", root_directory, \"**/*.rs\");
+                }
+            "},
+            indoc! {"
+                fn main() {
+                    let args = std::env::args();
+                    let root_directory = args.nth(1).unwrap_or(\"/tmp\");
+                    let root_directory = \"/tmp\";
+                    let glob_pattern = format!(\"{}/{}\", root_directory, \"**/*.rs\");
+                }
+            "},
+            vec!["Ensure that the Actual test output added the new root_directory assignment that reads the first command line argument"],
+            cx,
+        )
+        .await;
+    }
+
     async fn assert_open_edit_complete(
         filename: &str,
         initial: &str,
