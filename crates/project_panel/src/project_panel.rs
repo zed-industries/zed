@@ -1388,88 +1388,115 @@ impl ProjectPanel {
     fn find_entry(
         &self,
         reverse_search: bool,
-        predicate: impl Fn(&Entry) -> bool,
+        predicate: impl Fn(&Entry, WorktreeId) -> bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<SelectedEntry> {
-        let (worktree, entry) = self.selected_sub_entry(&cx)?;
-        let entry_path = entry.path.clone();
-        let entry_id = entry.id;
+        let mut worktree_ids: Vec<_> = self
+            .visible_entries
+            .iter()
+            .map(|(worktree_id, _, _)| worktree_id.clone())
+            .collect();
 
-        worktree.update(cx, |tree, _| {
-            let mut iter = tree
-                .traverse_from_path(true, true, true, entry_path.as_ref())
-                .chain(tree.entries(true, 0).take_while(|ele| ele.id != entry_id));
+        // We want to start the search from a selected entry if there is one
+        if let Some(selected_entry) = self.selection.as_ref() {
+            let first_id = selected_entry.worktree_id;
+            let idx = worktree_ids
+                .iter()
+                .enumerate()
+                .find_map(|(idx, id)| if *id == first_id { Some(idx) } else { None })
+                .unwrap_or(0);
 
-            let entry = if reverse_search {
-                iter.filter(|ele| ele.id != entry_id && predicate(ele))
-                    .last()
-            } else {
-                iter.find(|ele| ele.id != entry_id && predicate(ele))
-            }?;
+            worktree_ids.rotate_left(idx);
+        }
 
-            Some(SelectedEntry {
-                worktree_id: tree.id(),
-                entry_id: entry.id,
-            })
-        })
+        for &worktree_id in worktree_ids.iter() {
+            let entry_id = self.selection.as_ref().and_then(|selection| {
+                if worktree_id == selection.worktree_id {
+                    Some(selection.entry_id)
+                } else {
+                    None
+                }
+            });
+
+            if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
+                let found_entry = worktree.update(cx, |tree, _| {
+                    let entry = entry_id
+                        .and_then(|id| tree.entry_for_id(id))
+                        .unwrap_or(tree.root_entry()?);
+                    let entry_id = entry.id;
+                    let entry_path = entry.path.clone();
+                    let mut iter = tree.traverse_from_path(true, true, true, entry_path.as_ref());
+
+                    let entry = if reverse_search {
+                        iter.filter(|ele| ele.id != entry_id && predicate(ele, worktree_id))
+                            .last()
+                    } else {
+                        iter.find(|ele| ele.id != entry_id && predicate(ele, worktree_id))
+                    }?;
+
+                    Some(SelectedEntry {
+                        worktree_id: tree.id(),
+                        entry_id: entry.id,
+                    })
+                });
+
+                if found_entry.is_some() {
+                    return found_entry;
+                }
+            }
+        }
+
+        None
     }
 
     fn select_prev_diagnostic(&mut self, _: &SelectPrevDiagnostic, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, _)) = self.selected_sub_entry(cx) {
-            let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
+        let selection = self.find_entry(
+            true,
+            |entry, worktree_id| {
+                entry.is_file()
+                    && self
+                        .diagnostics
+                        .get(&(worktree_id, entry.path.to_path_buf()))
+                        .is_some()
+            },
+            cx,
+        );
 
-            let selection = self.find_entry(
-                true,
-                |entry| {
-                    entry.is_file()
-                        && self
-                            .diagnostics
-                            .get(&(worktree_id, entry.path.to_path_buf()))
-                            .is_some()
-                },
-                cx,
-            );
-
-            if let Some(selection) = selection {
-                self.selection = Some(selection);
-                self.expand_entry(selection.worktree_id, selection.entry_id, cx);
-                self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
-                self.autoscroll(cx);
-                cx.notify();
-            }
+        if let Some(selection) = selection {
+            self.selection = Some(selection);
+            self.expand_entry(selection.worktree_id, selection.entry_id, cx);
+            self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
+            self.autoscroll(cx);
+            cx.notify();
         }
     }
 
     fn select_next_diagnostic(&mut self, _: &SelectNextDiagnostic, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, _)) = self.selected_sub_entry(cx) {
-            let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
+        let selection = self.find_entry(
+            false,
+            |entry, worktree_id| {
+                entry.is_file()
+                    && self
+                        .diagnostics
+                        .get(&(worktree_id, entry.path.to_path_buf()))
+                        .is_some()
+            },
+            cx,
+        );
 
-            let selection = self.find_entry(
-                false,
-                |entry| {
-                    entry.is_file()
-                        && self
-                            .diagnostics
-                            .get(&(worktree_id, entry.path.to_path_buf()))
-                            .is_some()
-                },
-                cx,
-            );
-
-            if let Some(selection) = selection {
-                self.selection = Some(selection);
-                self.expand_entry(selection.worktree_id, selection.entry_id, cx);
-                self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
-                self.autoscroll(cx);
-                cx.notify();
-            }
+        if let Some(selection) = selection {
+            self.selection = Some(selection);
+            self.expand_entry(selection.worktree_id, selection.entry_id, cx);
+            self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
+            self.autoscroll(cx);
+            cx.notify();
         }
     }
 
     fn select_prev_git_entry(&mut self, _: &SelectPrevGitEntry, cx: &mut ViewContext<Self>) {
         let selection = self.find_entry(
             true,
-            |entry| {
+            |entry, _| {
                 entry.is_file()
                     && entry
                         .git_status
@@ -1490,7 +1517,7 @@ impl ProjectPanel {
     fn select_next_git_entry(&mut self, _: &SelectNextGitEntry, cx: &mut ViewContext<Self>) {
         let selection = self.find_entry(
             false,
-            |entry| {
+            |entry, _| {
                 entry.is_file()
                     && entry
                         .git_status
