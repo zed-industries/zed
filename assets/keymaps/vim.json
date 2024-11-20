@@ -381,8 +381,7 @@
       "shift-b": "vim::CurlyBrackets",
       "<": "vim::AngleBrackets",
       ">": "vim::AngleBrackets",
-      "a": "vim::AngleBrackets",
-      "g": "vim::Argument"
+      "a": "vim::Argument"
     }
   },
   {
