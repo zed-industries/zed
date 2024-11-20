@@ -1,5 +1,6 @@
 use crate::slash_command::file_command::codeblock_fence_for_path;
 use crate::slash_command_working_set::SlashCommandWorkingSet;
+use crate::tools::code_edits_tool::{CodeEditsTool, CodeEditsToolInput};
 use crate::ToolWorkingSet;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
@@ -1898,47 +1899,111 @@ impl ContextEditor {
                     let creases = new_tool_uses
                         .iter()
                         .map(|tool_use| {
-                            let placeholder = FoldPlaceholder {
-                                render: render_fold_icon_button(
-                                    cx.view().downgrade(),
-                                    IconName::PocketKnife,
-                                    tool_use.name.clone().into(),
-                                ),
-                                ..Default::default()
-                            };
-                            let render_trailer =
-                                move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+                            if &tool_use.name == CodeEditsTool::TOOL_NAME {
+                                // If this is a Code Edit tool,
+                                match serde_json::from_value::<CodeEditsToolInput>(
+                                    tool_use.input.clone(),
+                                ) {
+                                    Ok(CodeEditsToolInput { title, edits }) => {
+                                        let placeholder = FoldPlaceholder {
+                                            render: render_fold_icon_button(
+                                                cx.view().downgrade(),
+                                                IconName::Sparkle,
+                                                title.into(),
+                                            ),
+                                            ..Default::default()
+                                        };
+                                        let render_trailer =
+                                            move |_row, _unfold, _cx: &mut WindowContext| {
+                                                Empty.into_any()
+                                            };
 
-                            let start = buffer
-                                .anchor_in_excerpt(excerpt_id, tool_use.source_range.start)
-                                .unwrap();
-                            let end = buffer
-                                .anchor_in_excerpt(excerpt_id, tool_use.source_range.end)
-                                .unwrap();
+                                        let start = buffer
+                                            .anchor_in_excerpt(
+                                                excerpt_id,
+                                                tool_use.source_range.start,
+                                            )
+                                            .unwrap();
+                                        let end = buffer
+                                            .anchor_in_excerpt(
+                                                excerpt_id,
+                                                tool_use.source_range.end,
+                                            )
+                                            .unwrap();
 
-                            let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
-                            buffer_rows_to_fold.insert(buffer_row);
+                                        let buffer_row =
+                                            MultiBufferRow(start.to_point(&buffer).row);
+                                        buffer_rows_to_fold.insert(buffer_row);
 
-                            self.context.update(cx, |context, cx| {
-                                context.insert_content(
-                                    Content::ToolUse {
-                                        range: tool_use.source_range.clone(),
-                                        tool_use: LanguageModelToolUse {
-                                            id: tool_use.id.to_string(),
-                                            name: tool_use.name.clone(),
-                                            input: tool_use.input.clone(),
+                                        self.context.update(cx, |context, cx| {
+                                            context.insert_content(
+                                                Content::ToolUse {
+                                                    range: tool_use.source_range.clone(),
+                                                    tool_use: LanguageModelToolUse {
+                                                        id: tool_use.id.to_string(),
+                                                        name: tool_use.name.clone(),
+                                                        input: tool_use.input.clone(),
+                                                    },
+                                                },
+                                                cx,
+                                            );
+                                        });
+
+                                        Crease::inline(
+                                            start..end,
+                                            placeholder,
+                                            fold_toggle("tool-use"),
+                                            render_trailer,
+                                        )
+                                    }
+                                    Err(json_err) => {
+                                        // TODO gracefully handle malformed JSON (should distinguish from "errored out" vs "not done streaming yet")
+                                        todo!();
+                                    }
+                                }
+                            } else {
+                                let placeholder = FoldPlaceholder {
+                                    render: render_fold_icon_button(
+                                        cx.view().downgrade(),
+                                        IconName::PocketKnife,
+                                        tool_use.name.clone().into(),
+                                    ),
+                                    ..Default::default()
+                                };
+                                let render_trailer =
+                                    move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+
+                                let start = buffer
+                                    .anchor_in_excerpt(excerpt_id, tool_use.source_range.start)
+                                    .unwrap();
+                                let end = buffer
+                                    .anchor_in_excerpt(excerpt_id, tool_use.source_range.end)
+                                    .unwrap();
+
+                                let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                                buffer_rows_to_fold.insert(buffer_row);
+
+                                self.context.update(cx, |context, cx| {
+                                    context.insert_content(
+                                        Content::ToolUse {
+                                            range: tool_use.source_range.clone(),
+                                            tool_use: LanguageModelToolUse {
+                                                id: tool_use.id.to_string(),
+                                                name: tool_use.name.clone(),
+                                                input: tool_use.input.clone(),
+                                            },
                                         },
-                                    },
-                                    cx,
-                                );
-                            });
+                                        cx,
+                                    );
+                                });
 
-                            Crease::inline(
-                                start..end,
-                                placeholder,
-                                fold_toggle("tool-use"),
-                                render_trailer,
-                            )
+                                Crease::inline(
+                                    start..end,
+                                    placeholder,
+                                    fold_toggle("tool-use"),
+                                    render_trailer,
+                                )
+                            }
                         })
                         .collect::<Vec<_>>();
 

@@ -47,9 +47,13 @@ pub enum Operation {
 
 pub struct CodeEditsTool;
 
+impl CodeEditsTool {
+    pub const TOOL_NAME: &str = "zed_code_edits";
+}
+
 impl Tool for CodeEditsTool {
     fn name(&self) -> String {
-        "code_edits".to_string()
+        Self::TOOL_NAME.to_string()
     }
 
     fn description(&self) -> String {
