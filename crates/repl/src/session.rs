@@ -267,35 +267,6 @@ impl Session {
                 match kernel {
                     Ok((mut kernel, mut messages_rx)) => {
                         this.update(&mut cx, |session, cx| {
-                            let stderr = kernel.process.stderr.take();
-
-                            cx.spawn(|_session, mut _cx| async move {
-                                if stderr.is_none() {
-                                    return;
-                                }
-                                let reader = BufReader::new(stderr.unwrap());
-                                let mut lines = reader.lines();
-                                while let Some(Ok(line)) = lines.next().await {
-                                    // todo!(): Log stdout and stderr to something the session can show
-                                    log::error!("kernel: {}", line);
-                                }
-                            })
-                            .detach();
-
-                            let stdout = kernel.process.stdout.take();
-
-                            cx.spawn(|_session, mut _cx| async move {
-                                if stdout.is_none() {
-                                    return;
-                                }
-                                let reader = BufReader::new(stdout.unwrap());
-                                let mut lines = reader.lines();
-                                while let Some(Ok(line)) = lines.next().await {
-                                    log::info!("kernel: {}", line);
-                                }
-                            })
-                            .detach();
-
                             let status = kernel.process.status();
                             session.kernel(Kernel::RunningKernel(Box::new(kernel)), cx);
 

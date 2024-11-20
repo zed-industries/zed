@@ -47,7 +47,7 @@ impl RemoteRunningKernel {
         };
 
         // todo: launch a kernel to get a kernel ID
-        let kernel_id = "not-implemented";
+        let kernel_id = "d77b481b-2f14-4528-af0a-6c4c9ca98085";
 
         let kernel_socket = remote_server.connect_to_kernel(kernel_id).await?;
 

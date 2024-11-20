@@ -1,8 +1,9 @@
 use anyhow::{Context as _, Result};
 use futures::{
     channel::mpsc::{self},
+    io::BufReader,
     stream::{SelectAll, StreamExt},
-    SinkExt as _,
+    AsyncBufReadExt as _, SinkExt as _,
 };
 use gpui::{AppContext, EntityId, Task};
 use jupyter_protocol::{JupyterMessage, JupyterMessageContent, KernelInfoReply};
@@ -142,7 +143,7 @@ impl NativeRunningKernel {
 
             let mut cmd = kernel_specification.command(&connection_path)?;
 
-            let process = cmd
+            let mut process = cmd
                 .current_dir(&working_directory)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -226,6 +227,35 @@ impl NativeRunningKernel {
                     anyhow::Ok(())
                 }
             });
+
+            let stderr = process.stderr.take();
+
+            cx.spawn(|mut _cx| async move {
+                if stderr.is_none() {
+                    return;
+                }
+                let reader = BufReader::new(stderr.unwrap());
+                let mut lines = reader.lines();
+                while let Some(Ok(line)) = lines.next().await {
+                    // todo!(): Log stdout and stderr to something the session can show
+                    log::error!("kernel: {}", line);
+                }
+            })
+            .detach();
+
+            let stdout = process.stdout.take();
+
+            cx.spawn(|mut _cx| async move {
+                if stdout.is_none() {
+                    return;
+                }
+                let reader = BufReader::new(stdout.unwrap());
+                let mut lines = reader.lines();
+                while let Some(Ok(line)) = lines.next().await {
+                    log::info!("kernel: {}", line);
+                }
+            })
+            .detach();
 
             anyhow::Ok((
                 Self {
