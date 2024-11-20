@@ -18,7 +18,6 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::{OpenRemote, RecentProjects};
 use rpc::proto;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -30,7 +29,7 @@ use ui::{
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
-use zed_actions::OpenBrowser;
+use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -397,7 +396,6 @@ impl TitleBar {
             "Open recent project".to_string()
         };
 
-        let workspace = self.workspace.clone();
         Button::new("project_name_trigger", name)
             .when(!is_project_selected, |b| b.color(Color::Muted))
             .style(ButtonStyle::Subtle)
@@ -405,18 +403,19 @@ impl TitleBar {
             .tooltip(move |cx| {
                 Tooltip::for_action(
                     "Recent Projects",
-                    &recent_projects::OpenRecent {
+                    &zed_actions::OpenRecent {
                         create_new_window: false,
                     },
                     cx,
                 )
             })
             .on_click(cx.listener(move |_, _, cx| {
-                if let Some(workspace) = workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        RecentProjects::open(workspace, false, cx);
-                    })
-                }
+                cx.dispatch_action(
+                    OpenRecent {
+                        create_new_window: false,
+                    }
+                    .boxed_clone(),
+                );
             }))
     }
 
