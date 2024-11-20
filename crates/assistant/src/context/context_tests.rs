@@ -1,11 +1,11 @@
-use super::{AssistantEdit, MessageCacheMetadata};
+use super::MessageCacheMetadata;
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
     Context, ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId,
     MessageStatus, PromptBuilder,
 };
+use crate::{AssistantEdit, ToolWorkingSet};
 use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,

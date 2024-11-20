@@ -61,7 +61,6 @@ impl Tool for CodeEditsTool {
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(CodeEditsToolInput);
 
-        eprintln!("schema: {}", serde_json::to_string_pretty(&schema).unwrap());
         serde_json::to_value(&schema).unwrap()
     }
 
@@ -75,8 +74,6 @@ impl Tool for CodeEditsTool {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
-
-        dbg!(&input);
 
         let text = format!("The tool returned {:?}.", input);
 

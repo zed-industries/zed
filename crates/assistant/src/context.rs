@@ -7,7 +7,7 @@ use crate::{
     prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
     tools::code_edits_tool::CodeEditsTool,
-    AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
+    AssistantPatch, MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -45,7 +45,6 @@ use std::{
     iter, mem,
     ops::Range,
     path::{Path, PathBuf},
-    str::FromStr as _,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -563,7 +562,6 @@ pub struct Context {
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
     patches: Vec<AssistantPatch>,
-    xml_tags: Vec<XmlTag>,
     project: Option<Model<Project>>,
     prompt_builder: Arc<PromptBuilder>,
 }
@@ -672,7 +670,6 @@ impl Context {
             slash_commands,
             tools,
             patches: Vec::new(),
-            xml_tags: Vec::new(),
             prompt_builder,
         };
 
@@ -964,7 +961,6 @@ impl Context {
         }
 
         if !changed_messages.is_empty() {
-            self.message_roles_updated(changed_messages, cx);
             cx.emit(ContextEvent::MessagesEdited);
             cx.notify();
         }
@@ -1388,8 +1384,6 @@ impl Context {
 
         let mut removed_parsed_slash_command_ranges = Vec::new();
         let mut updated_parsed_slash_commands = Vec::new();
-        let mut removed_patches = Vec::new();
-        let mut updated_patches = Vec::new();
         while let Some(mut row_range) = row_ranges.next() {
             while let Some(next_row_range) = row_ranges.peek() {
                 if row_range.end >= next_row_range.start {
@@ -1414,13 +1408,6 @@ impl Context {
                 cx,
             );
             self.invalidate_pending_slash_commands(&buffer, cx);
-            self.reparse_patches_in_range(
-                start..end,
-                &buffer,
-                &mut updated_patches,
-                &mut removed_patches,
-                cx,
-            );
         }
 
         if !updated_parsed_slash_commands.is_empty()
@@ -1429,13 +1416,6 @@ impl Context {
             cx.emit(ContextEvent::ParsedSlashCommandsUpdated {
                 removed: removed_parsed_slash_command_ranges,
                 updated: updated_parsed_slash_commands,
-            });
-        }
-
-        if !updated_patches.is_empty() || !removed_patches.is_empty() {
-            cx.emit(ContextEvent::PatchesUpdated {
-                removed: removed_patches,
-                updated: updated_patches,
             });
         }
     }
@@ -1526,267 +1506,6 @@ impl Context {
                 cx,
             );
         }
-    }
-
-    fn reparse_patches_in_range(
-        &mut self,
-        range: Range<text::Anchor>,
-        buffer: &BufferSnapshot,
-        updated: &mut Vec<Range<text::Anchor>>,
-        removed: &mut Vec<Range<text::Anchor>>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        // Rebuild the XML tags in the edited range.
-        let intersecting_tags_range =
-            self.indices_intersecting_buffer_range(&self.xml_tags, range.clone(), cx);
-        let new_tags = self.parse_xml_tags_in_range(buffer, range.clone(), cx);
-        self.xml_tags
-            .splice(intersecting_tags_range.clone(), new_tags);
-
-        // Find which patches intersect the changed range.
-        let intersecting_patches_range =
-            self.indices_intersecting_buffer_range(&self.patches, range.clone(), cx);
-
-        // Reparse all tags after the last unchanged patch before the change.
-        let mut tags_start_ix = 0;
-        if let Some(preceding_unchanged_patch) =
-            self.patches[..intersecting_patches_range.start].last()
-        {
-            tags_start_ix = match self.xml_tags.binary_search_by(|tag| {
-                tag.range
-                    .start
-                    .cmp(&preceding_unchanged_patch.range.end, buffer)
-                    .then(Ordering::Less)
-            }) {
-                Ok(ix) | Err(ix) => ix,
-            };
-        }
-
-        // Rebuild the patches in the range.
-        let new_patches = self.parse_patches(tags_start_ix, range.end, buffer, cx);
-        updated.extend(new_patches.iter().map(|patch| patch.range.clone()));
-        let removed_patches = self.patches.splice(intersecting_patches_range, new_patches);
-        removed.extend(
-            removed_patches
-                .map(|patch| patch.range)
-                .filter(|range| !updated.contains(&range)),
-        );
-    }
-
-    fn parse_xml_tags_in_range(
-        &self,
-        buffer: &BufferSnapshot,
-        range: Range<text::Anchor>,
-        cx: &AppContext,
-    ) -> Vec<XmlTag> {
-        let mut messages = self.messages(cx).peekable();
-
-        let mut tags = Vec::new();
-        let mut lines = buffer.text_for_range(range).lines();
-        let mut offset = lines.offset();
-
-        while let Some(line) = lines.next() {
-            while let Some(message) = messages.peek() {
-                if offset < message.offset_range.end {
-                    break;
-                } else {
-                    messages.next();
-                }
-            }
-
-            let is_assistant_message = messages
-                .peek()
-                .map_or(false, |message| message.role == Role::Assistant);
-            if is_assistant_message {
-                for (start_ix, _) in line.match_indices('<') {
-                    let mut name_start_ix = start_ix + 1;
-                    let closing_bracket_ix = line[start_ix..].find('>').map(|i| start_ix + i);
-                    if let Some(closing_bracket_ix) = closing_bracket_ix {
-                        let end_ix = closing_bracket_ix + 1;
-                        let mut is_open_tag = true;
-                        if line[name_start_ix..closing_bracket_ix].starts_with('/') {
-                            name_start_ix += 1;
-                            is_open_tag = false;
-                        }
-                        let tag_inner = &line[name_start_ix..closing_bracket_ix];
-                        let tag_name_len = tag_inner
-                            .find(|c: char| c.is_whitespace())
-                            .unwrap_or(tag_inner.len());
-                        if let Ok(kind) = XmlTagKind::from_str(&tag_inner[..tag_name_len]) {
-                            tags.push(XmlTag {
-                                range: buffer.anchor_after(offset + start_ix)
-                                    ..buffer.anchor_before(offset + end_ix),
-                                is_open_tag,
-                                kind,
-                            });
-                        };
-                    }
-                }
-            }
-
-            offset = lines.offset();
-        }
-        tags
-    }
-
-    fn parse_patches(
-        &mut self,
-        tags_start_ix: usize,
-        buffer_end: text::Anchor,
-        buffer: &BufferSnapshot,
-        cx: &AppContext,
-    ) -> Vec<AssistantPatch> {
-        let mut new_patches = Vec::new();
-        let mut pending_patch = None;
-        let mut patch_tag_depth = 0;
-        let mut tags = self.xml_tags[tags_start_ix..].iter().peekable();
-        'tags: while let Some(tag) = tags.next() {
-            if tag.range.start.cmp(&buffer_end, buffer).is_gt() && patch_tag_depth == 0 {
-                break;
-            }
-
-            if tag.kind == XmlTagKind::Patch && tag.is_open_tag {
-                patch_tag_depth += 1;
-                let patch_start = tag.range.start;
-                let mut edits = Vec::<Result<AssistantEdit>>::new();
-                let mut patch = AssistantPatch {
-                    range: patch_start..patch_start,
-                    title: String::new().into(),
-                    edits: Default::default(),
-                    status: crate::AssistantPatchStatus::Pending,
-                };
-
-                while let Some(tag) = tags.next() {
-                    if tag.kind == XmlTagKind::Patch && !tag.is_open_tag {
-                        patch_tag_depth -= 1;
-                        if patch_tag_depth == 0 {
-                            patch.range.end = tag.range.end;
-
-                            // Include the line immediately after this <patch> tag if it's empty.
-                            let patch_end_offset = patch.range.end.to_offset(buffer);
-                            let mut patch_end_chars = buffer.chars_at(patch_end_offset);
-                            if patch_end_chars.next() == Some('\n')
-                                && patch_end_chars.next().map_or(true, |ch| ch == '\n')
-                            {
-                                let messages = self.messages_for_offsets(
-                                    [patch_end_offset, patch_end_offset + 1],
-                                    cx,
-                                );
-                                if messages.len() == 1 {
-                                    patch.range.end = buffer.anchor_before(patch_end_offset + 1);
-                                }
-                            }
-
-                            edits.sort_unstable_by(|a, b| {
-                                if let (Ok(a), Ok(b)) = (a, b) {
-                                    a.path.cmp(&b.path)
-                                } else {
-                                    Ordering::Equal
-                                }
-                            });
-                            patch.edits = edits.into();
-                            patch.status = AssistantPatchStatus::Ready;
-                            new_patches.push(patch);
-                            continue 'tags;
-                        }
-                    }
-
-                    if tag.kind == XmlTagKind::Title && tag.is_open_tag {
-                        let content_start = tag.range.end;
-                        while let Some(tag) = tags.next() {
-                            if tag.kind == XmlTagKind::Title && !tag.is_open_tag {
-                                let content_end = tag.range.start;
-                                patch.title =
-                                    trimmed_text_in_range(buffer, content_start..content_end)
-                                        .into();
-                                break;
-                            }
-                        }
-                    }
-
-                    if tag.kind == XmlTagKind::Edit && tag.is_open_tag {
-                        let mut path = None;
-                        let mut old_text = None;
-                        let mut new_text = None;
-                        let mut operation = None;
-                        let mut description = None;
-
-                        while let Some(tag) = tags.next() {
-                            if tag.kind == XmlTagKind::Edit && !tag.is_open_tag {
-                                edits.push(AssistantEdit::new(
-                                    path,
-                                    operation,
-                                    old_text,
-                                    new_text,
-                                    description,
-                                ));
-                                break;
-                            }
-
-                            if tag.is_open_tag
-                                && [
-                                    XmlTagKind::Path,
-                                    XmlTagKind::OldText,
-                                    XmlTagKind::NewText,
-                                    XmlTagKind::Operation,
-                                    XmlTagKind::Description,
-                                ]
-                                .contains(&tag.kind)
-                            {
-                                let kind = tag.kind;
-                                let content_start = tag.range.end;
-                                if let Some(tag) = tags.peek() {
-                                    if tag.kind == kind && !tag.is_open_tag {
-                                        let tag = tags.next().unwrap();
-                                        let content_end = tag.range.start;
-                                        let content = trimmed_text_in_range(
-                                            buffer,
-                                            content_start..content_end,
-                                        );
-                                        match kind {
-                                            XmlTagKind::Path => path = Some(content),
-                                            XmlTagKind::Operation => operation = Some(content),
-                                            XmlTagKind::OldText => {
-                                                old_text = Some(content).filter(|s| !s.is_empty())
-                                            }
-                                            XmlTagKind::NewText => {
-                                                new_text = Some(content).filter(|s| !s.is_empty())
-                                            }
-                                            XmlTagKind::Description => {
-                                                description =
-                                                    Some(content).filter(|s| !s.is_empty())
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                patch.edits = edits.into();
-                pending_patch = Some(patch);
-            }
-        }
-
-        if let Some(mut pending_patch) = pending_patch {
-            let patch_start = pending_patch.range.start.to_offset(buffer);
-            if let Some(message) = self.message_for_offset(patch_start, cx) {
-                if message.anchor_range.end == text::Anchor::MAX {
-                    pending_patch.range.end = text::Anchor::MAX;
-                } else {
-                    let message_end = buffer.anchor_after(message.offset_range.end - 1);
-                    pending_patch.range.end = message_end;
-                }
-            } else {
-                pending_patch.range.end = text::Anchor::MAX;
-            }
-
-            new_patches.push(pending_patch);
-        }
-
-        new_patches
     }
 
     pub fn pending_command_for_position(
@@ -2561,25 +2280,6 @@ impl Context {
             completion_request.messages.push(request_message);
         }
 
-        if let RequestType::SuggestEdits = request_type {
-            if let Ok(preamble) = self.prompt_builder.generate_suggest_edits_prompt() {
-                let last_elem_index = completion_request.messages.len();
-
-                completion_request
-                    .messages
-                    .push(LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: vec![MessageContent::Text(preamble)],
-                        cache: false,
-                    });
-
-                // The preamble message should be sent right before the last actual user message.
-                completion_request
-                    .messages
-                    .swap(last_elem_index, last_elem_index.saturating_sub(1));
-            }
-        }
-
         completion_request
     }
 
@@ -2602,28 +2302,6 @@ impl Context {
                 let role = metadata.role.cycle();
                 self.update_metadata(*id, cx, |metadata| metadata.role = role);
             }
-        }
-
-        self.message_roles_updated(ids, cx);
-    }
-
-    fn message_roles_updated(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {
-        let mut ranges = Vec::new();
-        for message in self.messages(cx) {
-            if ids.contains(&message.id) {
-                ranges.push(message.anchor_range.clone());
-            }
-        }
-
-        let buffer = self.buffer.read(cx).text_snapshot();
-        let mut updated = Vec::new();
-        let mut removed = Vec::new();
-        for range in ranges {
-            self.reparse_patches_in_range(range, &buffer, &mut updated, &mut removed, cx);
-        }
-
-        if !updated.is_empty() || !removed.is_empty() {
-            cx.emit(ContextEvent::PatchesUpdated { removed, updated })
         }
     }
 
