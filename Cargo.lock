@@ -12151,7 +12151,6 @@ dependencies = [
  "sha2",
  "shellexpand 2.1.2",
  "util",
- "zed_actions",
 ]
 
 [[package]]
