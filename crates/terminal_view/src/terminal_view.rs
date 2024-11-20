@@ -33,8 +33,8 @@ use workspace::{
     notifications::NotifyResultExt,
     register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, Pane, ToolbarItemLocation,
-    Workspace, WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, Pane, SplitTerminal,
+    ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 use anyhow::Context;
@@ -229,6 +229,7 @@ impl TerminalView {
         let context_menu = ContextMenu::build(cx, |menu, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal))
+                .action("Split Terminal", Box::new(SplitTerminal))
                 .separator()
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))

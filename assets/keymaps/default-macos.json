@@ -684,6 +684,7 @@
       "cmd-v": "terminal::Paste",
       "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
+      "cmd-\\": "workspace::SplitTerminal",
       "ctrl-enter": "assistant::InlineAssist",
       // Some nice conveniences
       "cmd-backspace": ["terminal::SendText", "\u0015"],

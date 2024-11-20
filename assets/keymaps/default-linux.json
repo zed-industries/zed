@@ -684,6 +684,7 @@
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
       "ctrl-insert": "terminal::Copy",
       "shift-insert": "terminal::Paste",
+      "ctrl-\\": "workspace::SplitTerminal",
       "ctrl-enter": "assistant::InlineAssist",
       // Overrides for conflicting keybindings
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],

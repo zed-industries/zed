@@ -44,6 +44,7 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
+            workspace.register_action(TerminalPanel::split_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
                 if workspace
                     .panel::<TerminalPanel>(cx)
@@ -84,7 +85,7 @@ impl TerminalPanel {
                 NewTerminal.boxed_clone(),
                 cx,
             );
-            pane.set_can_split(false, cx);
+            pane.set_can_split(true, cx);
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
@@ -552,6 +553,41 @@ impl TerminalPanel {
                 this.add_terminal(kind, RevealStrategy::Always, cx)
             })
             .detach_and_log_err(cx);
+    }
+
+    fn split_terminal(
+        workspace: &mut Workspace,
+        _: &workspace::SplitTerminal,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
+            return;
+        };
+
+        let kind = TerminalKind::Shell(default_working_directory(workspace, cx));
+
+        terminal_panel
+            .update(cx, |this, cx| {
+                println!("Splitting terminal");
+                this.add_terminal(kind, RevealStrategy::Always, cx)
+            })
+            .detach_and_log_err(cx);
+
+        // terminal_panel.update(cx, |this, cx| {
+        //     // Split the terminal
+        //     if let Some(active_terminal) = this.pane.read(cx).active_item() {
+        //         println!("Splitting terminal");
+        //         println!("Active terminal: {:?}", active_terminal);
+        //         // TODO: Implement split terminal functionality
+        //         // this.pane.update(cx, |pane, cx| {
+        //         //     pane.split_item(active_terminal, gpui::Split::Right, cx);
+        //         // });
+        //     }
+
+        //     // Create new terminal in the split
+        //     // this.add_terminal(kind, RevealStrategy::Always, cx)
+        // })
+        // .detach_and_log_err(cx);
     }
 
     fn terminals_for_task(
