@@ -1044,8 +1044,8 @@ impl Item for TerminalView {
                 .shape(ui::IconButtonShape::Square)
                 .tooltip(|cx| Tooltip::text("Rerun task", cx))
                 .on_click(move |_, cx| {
-                    cx.dispatch_action(Box::new(tasks_ui::Rerun {
-                        task_id: Some(task_id.clone()),
+                    cx.dispatch_action(Box::new(zed_actions::Rerun {
+                        task_id: Some(task_id.0.clone()),
                         allow_concurrent_runs: Some(true),
                         use_new_terminal: Some(false),
                         reevaluate_context: false,

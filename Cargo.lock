@@ -12150,6 +12150,7 @@ dependencies = [
  "sha2",
  "shellexpand 2.1.2",
  "util",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12175,6 +12176,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12278,7 +12280,6 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "task",
- "tasks_ui",
  "terminal",
  "theme",
  "ui",

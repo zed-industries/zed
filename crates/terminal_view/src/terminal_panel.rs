@@ -218,7 +218,7 @@ impl TerminalPanel {
                                         // context menu will be gone the moment we spawn the modal.
                                         .action(
                                             "Spawn task",
-                                            tasks_ui::Spawn::modal().boxed_clone(),
+                                            zed_actions::Spawn::modal().boxed_clone(),
                                         )
                                 });
 
