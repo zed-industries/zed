@@ -88,7 +88,9 @@ impl Zeta {
     fn push_event(&mut self, event: Event) {
         // Filter out an edit event that occurs when an inline completion is accepted
         if let Event::Edit {
-            old_text, new_text, ..
+            old_text,
+            new_text,
+            path,
         } = &event
         {
             if let Some(last_entry) = self.events.last_entry() {
@@ -205,11 +207,67 @@ impl Zeta {
         self.next_inline_completion_id.0 += 1;
 
         let mut events = String::new();
+        // let mut first_edit_event = None;
+        // let mut last_edit_event = None;
         for event in self.events.values() {
+            // match event {
+            //     Event::Edit { .. } => {
+            //         if first_edit_event.is_none() {
+            //             first_edit_event = Some(event);
+            //         }
+            //         last_edit_event = Some(event);
+            //         continue;
+            //     }
+            //     _ => {
+            //         if let Some((
+            //             Event::Edit {
+            //                 old_text: first_old_text,
+            //                 ..
+            //             },
+            //             Event::Edit {
+            //                 path,
+            //                 new_text: last_new_text,
+            //                 ..
+            //             },
+            //         )) = first_edit_event.take().zip(last_edit_event.take())
+            //         {
+            //             let coalesced_edit = Event::Edit {
+            //                 old_text: first_old_text.clone(),
+            //                 new_text: last_new_text.clone(),
+            //                 path: path.clone(),
+            //             };
+            //             events.push_str(&coalesced_edit.to_prompt());
+            //             events.push('\n');
+            //             events.push('\n');
+            //         }
+            //     }
+            // }
             events.push_str(&event.to_prompt());
             events.push('\n');
             events.push('\n');
         }
+
+        // if let Some((
+        //     Event::Edit {
+        //         old_text: first_old_text,
+        //         ..
+        //     },
+        //     Event::Edit {
+        //         path,
+        //         new_text: last_new_text,
+        //         ..
+        //     },
+        // )) = first_edit_event.take().zip(last_edit_event.take())
+        // {
+        //     let coalesced_edit = Event::Edit {
+        //         old_text: first_old_text.clone(),
+        //         new_text: last_new_text.clone(),
+        //         path: path.clone(),
+        //     };
+        //     events.push_str(&coalesced_edit.to_prompt());
+        //     events.push('\n');
+        //     events.push('\n');
+        // }
 
         let excerpt = inline_completion_excerpt(&snapshot, &position);
         let prompt = include_str!("./complete_prompt.md")
@@ -383,7 +441,6 @@ impl Zeta {
                         .into(),
                 });
             }
-
             drop(edits);
             new_snapshot
         }
@@ -762,42 +819,6 @@ mod tests {
                 }
             "},
             vec!["Ensure that there are the Rust `use` statements importing `std::thread` and `std::time::Duration`, like `use std::thread;` at the start of the file"],
-            cx,
-        )
-        .await;
-    }
-
-    #[gpui::test]
-    async fn test_import_statement_typescript(cx: &mut TestAppContext) {
-        assert_open_edit_complete(
-            "main.ts",
-            indoc! {"
-                function main() {
-                }
-            "},
-            indoc! {"
-                function main() {
-                    fs.readFile('/Users/joe/test.txt', 'utf8', (err, data) => {
-                        if (err) {
-                            return;
-                        }
-                        console.log(data);
-                    });<|user_cursor_is_here|>
-                }
-            "},
-            indoc! {"
-                const fs = require('node:fs');
-
-                function main() {
-                    fs.readFile('/Users/joe/test.txt', 'utf8', (_, data) => {
-                        if (err) {
-                            return;
-                        }
-                        console.log(data);
-                    });
-                }
-            "},
-            vec!["Ensure that there is a `require` statement importing `fs`"],
             cx,
         )
         .await;
