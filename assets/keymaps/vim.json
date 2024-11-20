@@ -612,6 +612,8 @@
       "[ c": "project_panel::SelectPrevGitEntry",
       "] d": "project_panel::SelectNextDiagnostic",
       "[ d": "project_panel::SelectPrevDiagnostic",
+      "}": "project_panel::SelectNextDirectory",
+      "{": "project_panel::SelectPrevDirectory",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
       "-": "project_panel::SelectParent",

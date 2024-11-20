@@ -191,6 +191,8 @@ actions!(
         SelectPrevGitEntry,
         SelectNextDiagnostic,
         SelectPrevDiagnostic,
+        SelectNextDirectory,
+        SelectPrevDirectory,
     ]
 );
 
@@ -1436,7 +1438,6 @@ impl ProjectPanel {
         &self,
         start: Option<&SelectedEntry>,
         reverse_search: bool,
-        only_visible_entries: bool,
         predicate: impl Fn(&Entry, WorktreeId) -> bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<SelectedEntry> {
@@ -1454,89 +1455,40 @@ impl ProjectPanel {
                 .read(cx)
                 .worktree_for_id(start.worktree_id, cx)?;
 
-            let search = if !only_visible_entries {
-                worktree.update(cx, |tree, _| {
-                    let entry = tree.entry_for_id(start.entry_id)?;
-                    let root_entry = tree.root_entry()?;
-                    let tree_id = tree.id();
+            let search = worktree.update(cx, |tree, _| {
+                let entry = tree.entry_for_id(start.entry_id)?;
+                let root_entry = tree.root_entry()?;
+                let tree_id = tree.id();
 
-                    let mut first_iter =
-                        tree.traverse_from_path(true, true, true, entry.path.as_ref());
+                let mut first_iter = tree.traverse_from_path(true, true, true, entry.path.as_ref());
 
-                    if reverse_search {
-                        first_iter.next();
-                    }
+                if reverse_search {
+                    first_iter.next();
+                }
 
-                    let first = first_iter
-                        .take_until(|ele| *ele == root_entry)
-                        .find(|ele| predicate(ele, tree_id))
-                        .cloned();
+                let first = first_iter
+                    .take_until(|ele| *ele == root_entry)
+                    .find(|ele| predicate(ele, tree_id))
+                    .cloned();
 
-                    let second_iter = tree.entries(true, 0usize);
+                let second_iter = tree.entries(true, 0usize);
 
-                    let second = if reverse_search {
-                        second_iter
-                            .take_until(|ele| ele.id == start.entry_id)
-                            .filter(|ele| predicate(ele, tree_id))
-                            .last()
-                            .cloned()
-                    } else {
-                        second_iter
-                            .take_while(|ele| ele.id != start.entry_id)
-                            .filter(|ele| predicate(ele, tree_id))
-                            .last()
-                            .cloned()
-                    };
-
-                    Some((first, second))
-                })
-            } else {
-                let entries = self
-                    .visible_entries
-                    .iter()
-                    .find(|(worktree_id, _, _)| *worktree_id == start.worktree_id)
-                    .map(|(_, entries, _)| entries)?;
-
-                let start_idx = entries
-                    .iter()
-                    .enumerate()
-                    .find(|(_, ele)| ele.id == start.entry_id)
-                    .map(|(idx, _)| idx)?;
-
-                let (first_half, second_half) = entries.split_at_checked(start_idx)?;
-
-                let (first, second) = if reverse_search {
-                    let mut first = first_half
-                        .iter()
-                        .rev()
-                        .find(|ele| predicate(ele, start.worktree_id));
-
-                    if second_half
-                        .first()
-                        .is_some_and(|ele| predicate(ele, start.worktree_id))
-                    {
-                        first = second_half.first();
-                    }
-
-                    let second = second_half
-                        .iter()
-                        .rev()
-                        .find(|ele| predicate(ele, start.worktree_id));
-
-                    (first, second)
+                let second = if reverse_search {
+                    second_iter
+                        .take_until(|ele| ele.id == start.entry_id)
+                        .filter(|ele| predicate(ele, tree_id))
+                        .last()
+                        .cloned()
                 } else {
-                    let first = second_half
-                        .iter()
-                        .find(|ele| predicate(ele, start.worktree_id));
-                    let second = first_half
-                        .iter()
-                        .find(|ele| predicate(ele, start.worktree_id));
-
-                    (first, second)
+                    second_iter
+                        .take_while(|ele| ele.id != start.entry_id)
+                        .filter(|ele| predicate(ele, tree_id))
+                        .last()
+                        .cloned()
                 };
 
-                Some((first.cloned(), second.cloned()))
-            };
+                Some((first, second))
+            });
 
             if let Some((first, second)) = search {
                 let first = first.map(|entry| SelectedEntry {
@@ -1571,13 +1523,97 @@ impl ProjectPanel {
         }
 
         for tree_id in worktree_ids.into_iter() {
-            if let Some(found) = self.find_entry_in_worktree(
-                tree_id,
-                reverse_search,
-                only_visible_entries,
-                &predicate,
-                cx,
-            ) {
+            if let Some(found) =
+                self.find_entry_in_worktree(tree_id, reverse_search, false, &predicate, cx)
+            {
+                return Some(SelectedEntry {
+                    worktree_id: tree_id,
+                    entry_id: found.id,
+                });
+            }
+        }
+
+        last_found
+    }
+
+    fn find_visible_entry(
+        &self,
+        start: Option<&SelectedEntry>,
+        reverse_search: bool,
+        predicate: impl Fn(&Entry, WorktreeId) -> bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<SelectedEntry> {
+        let mut worktree_ids: Vec<_> = self
+            .visible_entries
+            .iter()
+            .map(|(worktree_id, _, _)| worktree_id.clone())
+            .collect();
+
+        let mut last_found: Option<SelectedEntry> = None;
+
+        if let Some(start) = start {
+            let entries = self
+                .visible_entries
+                .iter()
+                .find(|(worktree_id, _, _)| *worktree_id == start.worktree_id)
+                .map(|(_, entries, _)| entries)?;
+
+            let mut start_idx = entries
+                .iter()
+                .enumerate()
+                .find(|(_, ele)| ele.id == start.entry_id)
+                .map(|(idx, _)| idx)?;
+
+            if reverse_search {
+                start_idx = start_idx.saturating_add(1usize);
+            }
+
+            let (left, right) = entries.split_at_checked(start_idx)?;
+
+            let first_search = if reverse_search {
+                left.iter()
+                    .rev()
+                    .find(|ele| predicate(ele, start.worktree_id))
+            } else {
+                right.iter().find(|ele| predicate(ele, start.worktree_id))
+            };
+
+            if first_search.is_some() {
+                return first_search.map(|entry| SelectedEntry {
+                    worktree_id: start.worktree_id,
+                    entry_id: entry.id,
+                });
+            }
+
+            last_found = if reverse_search {
+                right
+                    .iter()
+                    .rev()
+                    .find(|ele| predicate(ele, start.worktree_id))
+            } else {
+                left.iter().find(|ele| predicate(ele, start.worktree_id))
+            }
+            .map(|entry| SelectedEntry {
+                worktree_id: start.worktree_id,
+                entry_id: entry.id,
+            });
+
+            let idx = worktree_ids
+                .iter()
+                .enumerate()
+                .find(|(_, ele)| **ele == start.worktree_id)
+                .map(|(idx, _)| idx);
+
+            if let Some(idx) = idx {
+                worktree_ids.rotate_left(idx + 1usize);
+                worktree_ids.pop();
+            }
+        }
+
+        for tree_id in worktree_ids.into_iter() {
+            if let Some(found) =
+                self.find_entry_in_worktree(tree_id, reverse_search, true, &predicate, cx)
+            {
                 return Some(SelectedEntry {
                     worktree_id: tree_id,
                     entry_id: found.id,
@@ -1592,15 +1628,16 @@ impl ProjectPanel {
         let selection = self.find_entry(
             self.selection.as_ref(),
             true,
-            false,
             |entry, worktree_id| {
-                self.selection.is_some_and(|selection| {
-                    if selection.worktree_id == worktree_id {
-                        selection.entry_id != entry.id
-                    } else {
-                        true
-                    }
-                }) && entry.is_file()
+                (self.selection.is_none()
+                    || self.selection.is_some_and(|selection| {
+                        if selection.worktree_id == worktree_id {
+                            selection.entry_id != entry.id
+                        } else {
+                            true
+                        }
+                    }))
+                    && entry.is_file()
                     && self
                         .diagnostics
                         .get(&(worktree_id, entry.path.to_path_buf()))
@@ -1622,15 +1659,16 @@ impl ProjectPanel {
         let selection = self.find_entry(
             self.selection.as_ref(),
             false,
-            false,
             |entry, worktree_id| {
-                self.selection.is_some_and(|selection| {
-                    if selection.worktree_id == worktree_id {
-                        selection.entry_id != entry.id
-                    } else {
-                        true
-                    }
-                }) && entry.is_file()
+                (self.selection.is_none()
+                    || self.selection.is_some_and(|selection| {
+                        if selection.worktree_id == worktree_id {
+                            selection.entry_id != entry.id
+                        } else {
+                            true
+                        }
+                    }))
+                    && entry.is_file()
                     && self
                         .diagnostics
                         .get(&(worktree_id, entry.path.to_path_buf()))
@@ -1652,15 +1690,16 @@ impl ProjectPanel {
         let selection = self.find_entry(
             self.selection.as_ref(),
             true,
-            false,
             |entry, worktree_id| {
-                self.selection.is_some_and(|selection| {
-                    if selection.worktree_id == worktree_id {
-                        selection.entry_id != entry.id
-                    } else {
-                        true
-                    }
-                }) && entry.is_file()
+                (self.selection.is_none()
+                    || self.selection.is_some_and(|selection| {
+                        if selection.worktree_id == worktree_id {
+                            selection.entry_id != entry.id
+                        } else {
+                            true
+                        }
+                    }))
+                    && entry.is_file()
                     && entry
                         .git_status
                         .is_some_and(|status| matches!(status, GitFileStatus::Modified))
@@ -1677,19 +1716,70 @@ impl ProjectPanel {
         }
     }
 
+    fn select_prev_directory(&mut self, _: &SelectPrevDirectory, cx: &mut ViewContext<Self>) {
+        let selection = self.find_visible_entry(
+            self.selection.as_ref(),
+            true,
+            |entry, worktree_id| {
+                (self.selection.is_none()
+                    || self.selection.is_some_and(|selection| {
+                        if selection.worktree_id == worktree_id {
+                            selection.entry_id != entry.id
+                        } else {
+                            true
+                        }
+                    }))
+                    && entry.is_dir()
+            },
+            cx,
+        );
+
+        if let Some(selection) = selection {
+            self.selection = Some(selection);
+            self.autoscroll(cx);
+            cx.notify();
+        }
+    }
+
+    fn select_next_directory(&mut self, _: &SelectNextDirectory, cx: &mut ViewContext<Self>) {
+        let selection = self.find_visible_entry(
+            self.selection.as_ref(),
+            false,
+            |entry, worktree_id| {
+                (self.selection.is_none()
+                    || self.selection.is_some_and(|selection| {
+                        if selection.worktree_id == worktree_id {
+                            selection.entry_id != entry.id
+                        } else {
+                            true
+                        }
+                    }))
+                    && entry.is_dir()
+            },
+            cx,
+        );
+
+        if let Some(selection) = selection {
+            self.selection = Some(selection);
+            self.autoscroll(cx);
+            cx.notify();
+        }
+    }
+
     fn select_next_git_entry(&mut self, _: &SelectNextGitEntry, cx: &mut ViewContext<Self>) {
         let selection = self.find_entry(
             self.selection.as_ref(),
             false,
-            false,
             |entry, worktree_id| {
-                self.selection.is_some_and(|selection| {
-                    if selection.worktree_id == worktree_id {
-                        selection.entry_id != entry.id
-                    } else {
-                        true
-                    }
-                }) && entry.is_file()
+                (self.selection.is_none()
+                    || self.selection.is_some_and(|selection| {
+                        if selection.worktree_id == worktree_id {
+                            selection.entry_id != entry.id
+                        } else {
+                            true
+                        }
+                    }))
+                    && entry.is_file()
                     && entry
                         .git_status
                         .is_some_and(|status| matches!(status, GitFileStatus::Modified))
@@ -3649,6 +3739,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::select_prev_git_entry))
                 .on_action(cx.listener(Self::select_next_diagnostic))
                 .on_action(cx.listener(Self::select_prev_diagnostic))
+                .on_action(cx.listener(Self::select_next_directory))
+                .on_action(cx.listener(Self::select_prev_directory))
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
