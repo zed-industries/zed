@@ -7,15 +7,12 @@ use crate::{
     prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
     tools::code_edits_tool::CodeEditsTool,
-    AssistantEdit, AssistantEdit, AssistantEdit, AssistantPatch, AssistantPatch, AssistantPatch,
-    AssistantPatchStatus, AssistantPatchStatus, AssistantPatchStatus, MessageId, MessageId,
-    MessageId, MessageStatus, MessageStatus, MessageStatus,
+    AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
 };
-use assistant_tool::ToolRegistry;
 use assistant_tool::{Tool, ToolRegistry};
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
