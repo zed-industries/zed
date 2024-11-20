@@ -1555,15 +1555,15 @@ fn for_snowflake(
             );
             map.insert("signed_in".to_string(), event.signed_in.into());
             if let Some(country_code) = country_code.as_ref() {
-                map.insert("country_code".to_string(), country_code.clone().into());
+                map.insert("country".to_string(), country_code.clone().into());
             }
         }
 
+        // NOTE: most amplitude user properties are read out of our event_properties
+        // dictionary. See https://app.amplitude.com/data/zed/Zed/sources/detail/production/falcon%3A159998
+        // for how that is configured.
         let user_properties = Some(serde_json::json!({
             "is_staff": body.is_staff,
-            "Country": country_code.clone(),
-            "OS": format!("{} {}", body.os_name, body.os_version.clone().unwrap_or_default()),
-            "Version": body.app_version.clone(),
         }));
 
         Some(SnowflakeRow {

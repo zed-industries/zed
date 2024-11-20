@@ -224,6 +224,8 @@ impl Telemetry {
         cx.background_executor()
             .spawn({
                 let state = state.clone();
+                let os_version = os_version();
+                state.lock().os_version = Some(os_version.clone());
                 async move {
                     if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
                         state.lock().log_file = Some(tempfile);
