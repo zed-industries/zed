@@ -50,7 +50,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Open…", workspace::Open),
                 MenuItem::action(
                     "Open Recent...",
-                    recent_projects::OpenRecent {
+                    zed_actions::OpenRecent {
                         create_new_window: true,
                     },
                 ),

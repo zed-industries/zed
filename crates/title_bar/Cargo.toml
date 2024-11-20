@@ -37,7 +37,6 @@ feature_flags.workspace = true
 gpui.workspace = true
 notifications.workspace = true
 project.workspace = true
-recent_projects.workspace = true
 remote.workspace = true
 rpc.workspace = true
 serde.workspace = true
