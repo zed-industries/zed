@@ -86,6 +86,26 @@ impl Zeta {
     }
 
     fn push_event(&mut self, event: Event) {
+        // Filter out an edit event that occurs when an inline completion is accepted
+        if let Event::Edit {
+            old_text, new_text, ..
+        } = &event
+        {
+            if let Some(last_entry) = self.events.last_entry() {
+                if let Event::InlineCompletion {
+                    old_text: old_text_completion,
+                    new_text: new_text_completion,
+                    accepted: Some(true),
+                    ..
+                } = last_entry.get()
+                {
+                    if old_text_completion == old_text && new_text_completion == new_text {
+                        return;
+                    }
+                }
+            }
+        }
+
         let id = self.next_event_id;
         self.next_event_id.0 += 1;
 
@@ -159,7 +179,7 @@ impl Zeta {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::BufferEvent::Edited => {
+            language::BufferEvent::Edited if buffer.read(cx).file().is_some() => {
                 self.report_changes_for_buffer(&buffer, cx);
             }
             language::BufferEvent::Saved => {
@@ -183,11 +203,6 @@ impl Zeta {
 
         let id = self.next_inline_completion_id;
         self.next_inline_completion_id.0 += 1;
-        self.push_event(Event::RequestInlineCompletion {
-            id,
-            snapshot: snapshot.clone(),
-            position,
-        });
 
         let mut events = String::new();
         for event in self.events.values() {
@@ -196,7 +211,10 @@ impl Zeta {
             events.push('\n');
         }
 
-        let prompt = include_str!("./complete_prompt.md").replace("<events>", &events);
+        let excerpt = inline_completion_excerpt(&snapshot, &position);
+        let prompt = include_str!("./complete_prompt.md")
+            .replace("<events>", &events)
+            .replace("<excerpt>", &excerpt);
         log::debug!("requesting completion: {}", prompt);
 
         let api_url = self.api_url.clone();
@@ -238,8 +256,8 @@ impl Zeta {
                 let old_start = orig_start + ORIGINAL_MARKER.len();
                 let new_start = sep + SEPARATOR_MARKER.len();
 
-                let old_text: Arc<str> = content[old_start..sep].into();
-                let new_text: Arc<str> = content[new_start..upd_end].into();
+                let old_text: Arc<str> = content[old_start..sep + 1].into();
+                let new_text: Arc<str> = content[new_start..upd_end + 1].into();
                 let range = fuzzy::search(&snapshot, &old_text);
 
                 this.update(&mut cx, |this, _cx| {
@@ -401,11 +419,6 @@ enum Event {
         old_text: Arc<str>,
         new_text: Arc<str>,
     },
-    RequestInlineCompletion {
-        id: InlineCompletionId,
-        snapshot: BufferSnapshot,
-        position: Anchor,
-    },
     InlineCompletion {
         id: InlineCompletionId,
         old_text: Arc<str>,
@@ -439,41 +452,6 @@ impl Event {
                     format_edit(old_text, new_text)
                 )
             }
-            Event::RequestInlineCompletion {
-                snapshot, position, ..
-            } => {
-                let position = position.to_point(snapshot);
-
-                let start = Point::new(position.row.saturating_sub(50), 0);
-                let end = cmp::min(Point::new(position.row + 50, 0), snapshot.max_point());
-
-                let mut content = String::new();
-                writeln!(
-                    content,
-                    "User requested an edit suggestion in the following excerpt of a file:"
-                )
-                .unwrap();
-                writeln!(
-                    content,
-                    "```{}",
-                    snapshot
-                        .file()
-                        .map_or(Cow::Borrowed("untitled"), |file| file
-                            .path()
-                            .to_string_lossy())
-                )
-                .unwrap();
-
-                for chunk in snapshot.text_for_range(start..position) {
-                    content.push_str(chunk);
-                }
-                content.push_str(CURSOR_MARKER);
-                for chunk in snapshot.text_for_range(position..end) {
-                    content.push_str(chunk);
-                }
-                content.push_str("\n```");
-                content
-            }
             Event::InlineCompletion {
                 old_text,
                 new_text,
@@ -496,6 +474,35 @@ impl Event {
             Event::NoInlineCompletion { .. } => "<|DONE|>".into(),
         }
     }
+}
+
+fn inline_completion_excerpt(snapshot: &BufferSnapshot, position: &Anchor) -> String {
+    let position = position.to_point(snapshot);
+
+    let start = Point::new(position.row.saturating_sub(50), 0);
+    let end = cmp::min(Point::new(position.row + 50, 0), snapshot.max_point());
+
+    let mut content = String::new();
+    writeln!(
+        content,
+        "```{}",
+        snapshot
+            .file()
+            .map_or(Cow::Borrowed("untitled"), |file| file
+                .path()
+                .to_string_lossy())
+    )
+    .unwrap();
+
+    for chunk in snapshot.text_for_range(start..position) {
+        content.push_str(chunk);
+    }
+    content.push_str(CURSOR_MARKER);
+    for chunk in snapshot.text_for_range(position..end) {
+        content.push_str(chunk);
+    }
+    content.push_str("\n```");
+    content
 }
 
 fn format_edit(old_text: &str, new_text: &str) -> String {
@@ -909,12 +916,12 @@ mod tests {
         .await;
     }
 
-    async fn assert_open_edit_complete(
+    async fn assert_open_edit_complete_full(
         filename: &str,
         initial: &str,
         edited: &str,
         expected: &str,
-        mut assertions: Vec<&str>,
+        assertions: &[&str],
         cx: &mut TestAppContext,
     ) {
         cx.executor().allow_parking();
@@ -928,9 +935,52 @@ mod tests {
         edit(&buffer, &edited, cx);
         autocomplete(&buffer, cursor_start, &zeta, cx).await;
         let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert_autocompleted(autocompleted, expected, assertions, zeta, cx).await;
+    }
 
+    async fn assert_open_edit_complete_incremental(
+        filename: &str,
+        initial: &str,
+        edited: &str,
+        expected: &str,
+        assertions: &[&str],
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let zeta = zeta(cx);
+
+        let buffer = open_buffer(filename, initial, &zeta, cx);
+        let cursor_start = edited
+            .find(CURSOR_MARKER)
+            .expect(&format!("{CURSOR_MARKER} not found"));
+        let edited = edited.replace(CURSOR_MARKER, "");
+        character_wise_edit(&buffer, &edited, cx);
+        autocomplete(&buffer, cursor_start, &zeta, cx).await;
+        let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert_autocompleted(autocompleted, expected, assertions, zeta, cx).await;
+    }
+
+    async fn assert_open_edit_complete(
+        filename: &str,
+        initial: &str,
+        edited: &str,
+        expected: &str,
+        mut assertions: Vec<&str>,
+        cx: &mut TestAppContext,
+    ) {
         assertions.insert(0, "Must be similar to the expected output");
+        assert_open_edit_complete_full(filename, initial, edited, expected, &assertions, cx).await;
+        // assert_open_edit_complete_incremental(filename, initial, edited, expected, &assertions, cx)
+        //     .await;
+    }
 
+    async fn assert_autocompleted(
+        autocompleted: String,
+        expected: &str,
+        assertions: &[&str],
+        zeta: Model<Zeta>,
+        cx: &mut TestAppContext,
+    ) {
         let mut assertion_text = String::new();
         for assertion in assertions {
             assertion_text.push_str("- ");
@@ -1016,6 +1066,33 @@ mod tests {
             .executor()
             .block(buffer.update(cx, |buffer, cx| buffer.diff(text.to_string(), cx)));
         buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx));
+    }
+
+    fn character_wise_edit(buffer: &Model<Buffer>, text: &str, cx: &mut TestAppContext) {
+        let diff = cx
+            .executor()
+            .block(buffer.update(cx, |buffer, cx| buffer.diff(text.to_string(), cx)));
+
+        let mut delta = 0isize;
+        for (old_range, new_text) in &diff.edits {
+            let new_range = (old_range.start as isize + delta) as usize
+                ..(old_range.end as isize + delta) as usize;
+
+            if !new_range.is_empty() {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.edit([(new_range.clone(), "")], None, cx)
+                });
+            }
+
+            for (char_ix, ch) in new_text.char_indices() {
+                buffer.update(cx, |buffer, cx| {
+                    let insertion_ix = new_range.start + char_ix;
+                    buffer.edit([(insertion_ix..insertion_ix, ch.to_string())], None, cx)
+                });
+            }
+
+            delta += new_text.len() as isize - new_range.len() as isize;
+        }
     }
 
     async fn autocomplete(

@@ -8,6 +8,9 @@ Here is what the user has been doing:
 
 <events>
 
+User requested an edit suggestion in the following excerpt of a file:
+<excerpt>
+
 ## Task
 
 ### High-level Guidelines
