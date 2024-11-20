@@ -2505,7 +2505,7 @@ impl ContextEditor {
 
         let editor = cx.new_view(|cx| {
             let mut editor = ProposedChangesEditor::new(
-                patch.title.clone(),
+                SharedString::from(""),
                 Vec::<ProposedChangeLocation<usize>>::new(),
                 Some(project.clone()),
                 cx,

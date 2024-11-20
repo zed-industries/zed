@@ -576,12 +576,6 @@ impl ContextAnnotation for ParsedSlashCommand {
     }
 }
 
-impl ContextAnnotation for AssistantPatch {
-    fn range(&self) -> &Range<language::Anchor> {
-        &self.range
-    }
-}
-
 impl ContextAnnotation for (Range<language::Anchor>, PatchId) {
     fn range(&self) -> &Range<language::Anchor> {
         &self.0
