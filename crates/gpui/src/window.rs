@@ -43,7 +43,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Weak,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use util::post_inc;
 use util::{measure, ResultExt};
@@ -1441,13 +1441,26 @@ impl<'a> WindowContext<'a> {
         self.window
             .next_frame
             .finish(&mut self.window.rendered_frame);
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+        let must_drop_trash = ELEMENT_ARENA.with_borrow_mut(|element_arena| {
             let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
             if percentage >= 80. {
                 log::warn!("elevated element arena occupation: {}.", percentage);
             }
-            element_arena.clear();
+            let start = SystemTime::now();
+            let must_drop_trash = element_arena.trash_everything();
+            log::error!(
+                "Clear time = {:?}",
+                SystemTime::now().duration_since(start).unwrap()
+            );
+            must_drop_trash
         });
+        self.app
+            .background_executor()
+            .spawn(async move {
+                // FIXME: doesn't work as it's thread local
+                ELEMENT_ARENA.with_borrow(|element_arena| element_arena.drop_trash(must_drop_trash))
+            })
+            .detach();
 
         self.window.draw_phase = DrawPhase::Focus;
         let previous_focus_path = self.window.rendered_frame.focus_path();

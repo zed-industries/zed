@@ -1,23 +1,30 @@
+use parking_lot::Mutex;
 use std::{
     alloc,
     cell::Cell,
     ops::{Deref, DerefMut},
     ptr,
     rc::Rc,
+    sync::atomic,
+    sync::atomic::AtomicPtr,
 };
 
 struct ArenaElementHeader {
     next_element: *mut u8,
     value: *mut u8,
-    drop: unsafe fn(*mut u8),
+    drop_mutex: Mutex<unsafe fn(*mut u8)>,
 }
 
 pub struct Arena {
     start: *mut u8,
     end: *mut u8,
-    next_write: *mut u8,
+    next_write: AtomicPtr<u8>,
+    trash_start: AtomicPtr<u8>,
+    trash_end: AtomicPtr<u8>,
     valid: Rc<Cell<bool>>,
 }
+
+pub struct MustDropTrash();
 
 impl Arena {
     pub fn new(size_in_bytes: usize) -> Self {
@@ -28,14 +35,16 @@ impl Arena {
             Self {
                 start,
                 end,
-                next_write: start,
+                next_write: AtomicPtr::new(start),
+                trash_start: AtomicPtr::new(start),
+                trash_end: AtomicPtr::new(start),
                 valid: Rc::new(Cell::new(true)),
             }
         }
     }
 
     pub fn len(&self) -> usize {
-        self.next_write as usize - self.start as usize
+        self.next_write.load(atomic::Ordering::Relaxed) as usize - self.start as usize
     }
 
     pub fn capacity(&self) -> usize {
@@ -43,22 +52,47 @@ impl Arena {
     }
 
     pub fn clear(&mut self) {
+        let must_drop_trash = self.trash_everything();
+        self.drop_trash(must_drop_trash);
+    }
+
+    pub fn trash_everything(&mut self) -> MustDropTrash {
         self.valid.set(false);
         self.valid = Rc::new(Cell::new(true));
+        let trash_end = self.trash_end.load(atomic::Ordering::Relaxed);
         unsafe {
-            let mut offset = self.start;
-            while offset < self.next_write {
-                let (header_ptr, _) = get_allocation_ptrs::<ArenaElementHeader>(offset);
-                let ArenaElementHeader {
-                    next_element,
-                    value,
-                    drop,
-                } = ptr::read(header_ptr);
-                (drop)(value);
-                offset = next_element;
+            // Help finish last `drop_trash` if still ongoing. This is so that there is only one
+            // concurrent `drop_trash` happening at a time.
+            self.ensure_no_trash_before(trash_end);
+        }
+        let next_write = self.next_write.load(atomic::Ordering::Relaxed);
+        let trash_start = self.trash_start.load(atomic::Ordering::Relaxed);
+        assert!(trash_start == trash_end);
+        self.trash_end.store(next_write, atomic::Ordering::Relaxed);
+        MustDropTrash()
+    }
+
+    pub fn drop_trash(&self, _: MustDropTrash) {
+        let trash_start = self.trash_start.load(atomic::Ordering::Relaxed);
+        let trash_end = self.trash_end.load(atomic::Ordering::Relaxed);
+        let mut offset = trash_start;
+        while ptr_is_within_circular_interval(offset, trash_start, trash_end) {
+            unsafe {
+                offset = drop_arena_element(offset);
+            }
+            self.trash_start.store(offset, atomic::Ordering::Relaxed);
+        }
+    }
+
+    unsafe fn ensure_no_trash_before(&self, target: *mut u8) {
+        let mut offset = self.trash_start.load(atomic::Ordering::Relaxed);
+        let mut trash_end = self.trash_end.load(atomic::Ordering::Relaxed);
+        if ptr_is_within_circular_interval(target, offset, trash_end) {
+            log::warn!("Unexpectedly needed to clear element arena trash on main thread.");
+            while ptr_is_within_circular_interval(target, offset, trash_end) {
+                offset = drop_arena_element(offset);
             }
         }
-        self.next_write = self.start;
     }
 
     #[inline(always)]
@@ -68,25 +102,48 @@ impl Arena {
         }
 
         unsafe {
-            let (header_ptr, offset) = get_allocation_ptrs::<ArenaElementHeader>(self.next_write);
-            let (value_ptr, offset) = get_allocation_ptrs::<T>(offset);
+            let next_write = self.next_write.load(atomic::Ordering::Relaxed);
+            let trash_start = self.trash_start.load(atomic::Ordering::Relaxed);
+            let trash_end = self.trash_end.load(atomic::Ordering::Relaxed);
+
+            let (header_ptr, offset) =
+                self.get_wrapped_allocation_ptrs::<ArenaElementHeader>(next_write);
+            let (value_ptr, offset) = self.get_wrapped_allocation_ptrs::<T>(offset);
             assert!(offset <= self.end, "not enough space in Arena");
-            self.next_write = offset;
+            assert!(
+                !ptr_is_within_circular_interval(offset, trash_start, trash_end),
+                "not enough space in Arena"
+            );
+            self.ensure_no_trash_before(offset);
 
             ptr::write(
                 header_ptr,
                 ArenaElementHeader {
-                    next_element: self.next_write,
+                    next_element: offset,
                     value: value_ptr.cast(),
-                    drop: drop::<T>,
+                    drop_mutex: Mutex::new(drop::<T>),
                 },
             );
             ptr::write(value_ptr, f());
+
+            self.next_write.store(offset, atomic::Ordering::Relaxed);
 
             ArenaBox {
                 ptr: value_ptr,
                 valid: self.valid.clone(),
             }
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn get_wrapped_allocation_ptrs<T>(&self, offset: *mut u8) -> (*mut T, *mut u8) {
+        let (ptr, next_offset) = get_allocation_ptrs::<T>(offset);
+        if next_offset < self.end {
+            (ptr, next_offset)
+        } else if next_offset == self.end {
+            (ptr, self.start)
+        } else {
+            get_allocation_ptrs::<T>(self.start)
         }
     }
 }
@@ -97,6 +154,30 @@ unsafe fn get_allocation_ptrs<T>(offset: *mut u8) -> (*mut T, *mut u8) {
     let offset = offset.add(offset.align_offset(data_layout.align()));
     let data_ptr = offset.cast::<T>();
     (data_ptr, offset.add(data_layout.size()))
+}
+
+// TODO: many uses of this only actively use one of the bounds.
+#[inline(always)]
+fn ptr_is_within_circular_interval<T>(ptr: *const T, start: *const T, end: *const T) -> bool {
+    if end < start {
+        ptr >= start || ptr < end
+    } else {
+        ptr >= start && ptr < end
+    }
+}
+
+unsafe fn drop_arena_element(offset: *mut u8) -> *mut u8 {
+    let (header, _) = get_allocation_ptrs::<ArenaElementHeader>(offset);
+    if (*header).value.is_null() {
+        return (*header).next_element;
+    }
+    let drop_fn = (*header).drop_mutex.lock();
+    if (*header).value.is_null() {
+        return (*header).next_element;
+    }
+    (drop_fn)((*header).value);
+    (*header).value = ptr::null_mut();
+    (*header).next_element
 }
 
 impl Drop for Arena {
