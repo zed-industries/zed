@@ -117,6 +117,7 @@ slotmap::new_key_type! {
 
 thread_local! {
     /// 8MB wasn't quite enough...
+    /// TODO: make this blow up when called from other threads
     pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
 }
 
@@ -1441,24 +1442,28 @@ impl<'a> WindowContext<'a> {
         self.window
             .next_frame
             .finish(&mut self.window.rendered_frame);
-        let must_drop_trash = ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+        let trash_handle = ELEMENT_ARENA.with_borrow_mut(|element_arena| {
             let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
             if percentage >= 80. {
                 log::warn!("elevated element arena occupation: {}.", percentage);
             }
             let start = SystemTime::now();
-            let must_drop_trash = element_arena.trash_everything();
+            let trash_handle = element_arena.trash_everything();
             log::error!(
-                "Clear time = {:?}",
+                "trash_everything elapsed time = {:?}",
                 SystemTime::now().duration_since(start).unwrap()
             );
-            must_drop_trash
+            trash_handle
         });
         self.app
             .background_executor()
             .spawn(async move {
-                // FIXME: doesn't work as it's thread local
-                ELEMENT_ARENA.with_borrow(|element_arena| element_arena.drop_trash(must_drop_trash))
+                let start = SystemTime::now();
+                trash_handle.drop_trash();
+                log::error!(
+                    "drop_trash elapsed time = {:?}",
+                    SystemTime::now().duration_since(start).unwrap()
+                );
             })
             .detach();
 
