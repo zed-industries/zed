@@ -64,7 +64,7 @@ impl TintColor {
                 icon_color: cx.theme().colors().text,
             },
             TintColor::Negative => ButtonLikeStyles {
-                background: cx.theme().status().error_background,
+                background: discard_hunk_color(cx),
                 border_color: cx.theme().status().error_border,
                 label_color: cx.theme().colors().text,
                 icon_color: cx.theme().colors().text,
@@ -76,13 +76,41 @@ impl TintColor {
                 icon_color: cx.theme().colors().text,
             },
             TintColor::Positive => ButtonLikeStyles {
-                background: cx.theme().status().success_background,
+                background: accept_hunk_color(cx),
                 border_color: cx.theme().status().success_border,
                 label_color: cx.theme().colors().text,
                 icon_color: cx.theme().colors().text,
             },
         }
     }
+}
+
+fn added_hunk_color(cx: &WindowContext) -> Hsla {
+    let mut created_color = cx.theme().status().git().created;
+    created_color.fade_out(0.7);
+    created_color
+}
+
+fn accept_hunk_color(cx: &WindowContext) -> Hsla {
+    cx.theme()
+        .colors()
+        .editor_background
+        .blend(added_hunk_color(cx))
+        .opacity(1.0)
+}
+
+fn deleted_hunk_color(cx: &WindowContext) -> Hsla {
+    let mut deleted_color = cx.theme().status().deleted;
+    deleted_color.fade_out(0.7);
+    deleted_color
+}
+
+fn discard_hunk_color(cx: &WindowContext) -> Hsla {
+    cx.theme()
+        .colors()
+        .editor_background
+        .blend(deleted_hunk_color(cx))
+        .opacity(1.0)
 }
 
 impl From<TintColor> for Color {
