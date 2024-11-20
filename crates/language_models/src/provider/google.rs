@@ -2,50 +2,46 @@ use anyhow::{anyhow, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
+use google_ai::stream_generate_content;
 use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
     View, WhiteSpace,
 };
 use http_client::HttpClient;
-use open_ai::{
-    stream_completion, FunctionDefinition, ResponseStreamEvent, ToolChoice, ToolDefinition,
+use language_model::LanguageModelCompletionEvent;
+use language_model::{
+    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, RateLimiter,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::sync::Arc;
+use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::ResultExt;
 
-use crate::LanguageModelCompletionEvent;
-use crate::{
-    settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
-};
+use crate::AllLanguageModelSettings;
 
-const PROVIDER_ID: &str = "openai";
-const PROVIDER_NAME: &str = "OpenAI";
+const PROVIDER_ID: &str = "google";
+const PROVIDER_NAME: &str = "Google AI";
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct OpenAiSettings {
+pub struct GoogleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub needs_setting_migration: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: usize,
-    pub max_output_tokens: Option<u32>,
-    pub max_completion_tokens: Option<u32>,
+    name: String,
+    display_name: Option<String>,
+    max_tokens: usize,
 }
 
-pub struct OpenAiLanguageModelProvider {
+pub struct GoogleLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: gpui::Model<State>,
 }
@@ -56,7 +52,7 @@ pub struct State {
     _subscription: Subscription,
 }
 
-const OPENAI_API_KEY_VAR: &str = "OPENAI_API_KEY";
+const GOOGLE_AI_API_KEY_VAR: &str = "GOOGLE_AI_API_KEY";
 
 impl State {
     fn is_authenticated(&self) -> bool {
@@ -64,10 +60,10 @@ impl State {
     }
 
     fn reset_api_key(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
-        let delete_credentials = cx.delete_credentials(&settings.api_url);
+        let delete_credentials =
+            cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).google.api_url);
         cx.spawn(|this, mut cx| async move {
-            delete_credentials.await.log_err();
+            delete_credentials.await.ok();
             this.update(&mut cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
@@ -77,7 +73,7 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: String, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
+        let settings = &AllLanguageModelSettings::get_global(cx).google;
         let write_credentials =
             cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
 
@@ -95,11 +91,13 @@ impl State {
             Task::ready(Ok(()))
         } else {
             let api_url = AllLanguageModelSettings::get_global(cx)
-                .openai
+                .google
                 .api_url
                 .clone();
+
             cx.spawn(|this, mut cx| async move {
-                let (api_key, from_env) = if let Ok(api_key) = std::env::var(OPENAI_API_KEY_VAR) {
+                let (api_key, from_env) = if let Ok(api_key) = std::env::var(GOOGLE_AI_API_KEY_VAR)
+                {
                     (api_key, true)
                 } else {
                     let (_, api_key) = cx
@@ -108,6 +106,7 @@ impl State {
                         .ok_or_else(|| anyhow!("credentials not found"))?;
                     (String::from_utf8(api_key)?, false)
                 };
+
                 this.update(&mut cx, |this, cx| {
                     this.api_key = Some(api_key);
                     this.api_key_from_env = from_env;
@@ -118,12 +117,12 @@ impl State {
     }
 }
 
-impl OpenAiLanguageModelProvider {
+impl GoogleLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let state = cx.new_model(|cx| State {
             api_key: None,
             api_key_from_env: false,
-            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
+            _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
         });
@@ -132,7 +131,7 @@ impl OpenAiLanguageModelProvider {
     }
 }
 
-impl LanguageModelProviderState for OpenAiLanguageModelProvider {
+impl LanguageModelProviderState for GoogleLanguageModelProvider {
     type ObservableEntity = State;
 
     fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
@@ -140,7 +139,7 @@ impl LanguageModelProviderState for OpenAiLanguageModelProvider {
     }
 }
 
-impl LanguageModelProvider for OpenAiLanguageModelProvider {
+impl LanguageModelProvider for GoogleLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
         LanguageModelProviderId(PROVIDER_ID.into())
     }
@@ -150,32 +149,30 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn icon(&self) -> IconName {
-        IconName::AiOpenAi
+        IconName::AiGoogle
     }
 
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
-        // Add base models from open_ai::Model::iter()
-        for model in open_ai::Model::iter() {
-            if !matches!(model, open_ai::Model::Custom { .. }) {
+        // Add base models from google_ai::Model::iter()
+        for model in google_ai::Model::iter() {
+            if !matches!(model, google_ai::Model::Custom { .. }) {
                 models.insert(model.id().to_string(), model);
             }
         }
 
         // Override with available models from settings
         for model in &AllLanguageModelSettings::get_global(cx)
-            .openai
+            .google
             .available_models
         {
             models.insert(
                 model.name.clone(),
-                open_ai::Model::Custom {
+                google_ai::Model::Custom {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
-                    max_output_tokens: model.max_output_tokens,
-                    max_completion_tokens: model.max_completion_tokens,
                 },
             );
         }
@@ -183,12 +180,12 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         models
             .into_values()
             .map(|model| {
-                Arc::new(OpenAiLanguageModel {
+                Arc::new(GoogleLanguageModel {
                     id: LanguageModelId::from(model.id().to_string()),
                     model,
                     state: self.state.clone(),
                     http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
+                    rate_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -208,45 +205,28 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.reset_api_key(cx))
+        let state = self.state.clone();
+        let delete_credentials =
+            cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).google.api_url);
+        cx.spawn(|mut cx| async move {
+            delete_credentials.await.log_err();
+            state.update(&mut cx, |this, cx| {
+                this.api_key = None;
+                cx.notify();
+            })
+        })
     }
 }
 
-pub struct OpenAiLanguageModel {
+pub struct GoogleLanguageModel {
     id: LanguageModelId,
-    model: open_ai::Model,
+    model: google_ai::Model,
     state: gpui::Model<State>,
     http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
+    rate_limiter: RateLimiter,
 }
 
-impl OpenAiLanguageModel {
-    fn stream_completion(
-        &self,
-        request: open_ai::Request,
-        cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
-        let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).openai;
-            (state.api_key.clone(), settings.api_url.clone())
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing OpenAI API Key"))?;
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
-    }
-}
-
-impl LanguageModel for OpenAiLanguageModel {
+impl LanguageModel for GoogleLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
     }
@@ -264,15 +244,11 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn telemetry_id(&self) -> String {
-        format!("openai/{}", self.model.id())
+        format!("google/{}", self.model.id())
     }
 
     fn max_token_count(&self) -> usize {
         self.model.max_token_count()
-    }
-
-    fn max_output_tokens(&self) -> Option<u32> {
-        self.model.max_output_tokens()
     }
 
     fn count_tokens(
@@ -280,7 +256,27 @@ impl LanguageModel for OpenAiLanguageModel {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        count_open_ai_tokens(request, self.model.clone(), cx)
+        let request = request.into_google(self.model.id().to_string());
+        let http_client = self.http_client.clone();
+        let api_key = self.state.read(cx).api_key.clone();
+
+        let settings = &AllLanguageModelSettings::get_global(cx).google;
+        let api_url = settings.api_url.clone();
+
+        async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
+            let response = google_ai::count_tokens(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                google_ai::CountTokensRequest {
+                    contents: request.contents,
+                },
+            )
+            .await?;
+            Ok(response.total_tokens)
+        }
+        .boxed()
     }
 
     fn stream_completion(
@@ -291,10 +287,26 @@ impl LanguageModel for OpenAiLanguageModel {
         'static,
         Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
     > {
-        let request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
-        let completions = self.stream_completion(request, cx);
+        let request = request.into_google(self.model.id().to_string());
+
+        let http_client = self.http_client.clone();
+        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).google;
+            (state.api_key.clone(), settings.api_url.clone())
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        let future = self.rate_limiter.stream(async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API Key"))?;
+            let response =
+                stream_generate_content(http_client.as_ref(), &api_url, &api_key, request);
+            let events = response.await?;
+            Ok(google_ai::extract_text_from_events(events).boxed())
+        });
         async move {
-            Ok(open_ai::extract_text_from_events(completions.await?)
+            Ok(future
+                .await?
                 .map(|result| result.map(LanguageModelCompletionEvent::Text))
                 .boxed())
         }
@@ -303,74 +315,14 @@ impl LanguageModel for OpenAiLanguageModel {
 
     fn use_any_tool(
         &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        schema: serde_json::Value,
-        cx: &AsyncAppContext,
+        _request: LanguageModelRequest,
+        _name: String,
+        _description: String,
+        _schema: serde_json::Value,
+        _cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
-        request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
-            function: FunctionDefinition {
-                name: tool_name.clone(),
-                description: None,
-                parameters: None,
-            },
-        }));
-        request.tools = vec![ToolDefinition::Function {
-            function: FunctionDefinition {
-                name: tool_name.clone(),
-                description: Some(tool_description),
-                parameters: Some(schema),
-            },
-        }];
-
-        let response = self.stream_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let response = response.await?;
-                Ok(
-                    open_ai::extract_tool_args_from_events(tool_name, Box::pin(response))
-                        .await?
-                        .boxed(),
-                )
-            })
-            .boxed()
+        future::ready(Err(anyhow!("not implemented"))).boxed()
     }
-}
-
-pub fn count_open_ai_tokens(
-    request: LanguageModelRequest,
-    model: open_ai::Model,
-    cx: &AppContext,
-) -> BoxFuture<'static, Result<usize>> {
-    cx.background_executor()
-        .spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.string_contents()),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
-
-            match model {
-                open_ai::Model::Custom { .. }
-                | open_ai::Model::O1Mini
-                | open_ai::Model::O1Preview => {
-                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-                }
-                _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            }
-        })
-        .boxed()
 }
 
 struct ConfigurationView {
@@ -381,12 +333,6 @@ struct ConfigurationView {
 
 impl ConfigurationView {
     fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
-        let api_key_editor = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
-            editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
-            editor
-        });
-
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
@@ -402,7 +348,6 @@ impl ConfigurationView {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
-
                 this.update(&mut cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
@@ -412,7 +357,11 @@ impl ConfigurationView {
         }));
 
         Self {
-            api_key_editor,
+            api_key_editor: cx.new_view(|cx| {
+                let mut editor = Editor::single_line(cx);
+                editor.set_placeholder_text("AIzaSy...", cx);
+                editor
+            }),
             state,
             load_credentials_task,
         }
@@ -485,12 +434,11 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const OPENAI_CONSOLE_URL: &str = "https://platform.openai.com/api-keys";
-        const INSTRUCTIONS: [&str; 4] = [
-            "To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:",
-            " - Create one by visiting:",
-            " - Ensure your OpenAI account has credits",
-            " - Paste your API key below and hit enter to start using the assistant",
+        const GOOGLE_CONSOLE_URL: &str = "https://aistudio.google.com/app/apikey";
+        const INSTRUCTIONS: [&str; 3] = [
+            "To use Zed's assistant with Google AI, you need to add an API key. Follow these steps:",
+            "- Create one by visiting:",
+            "- Paste your API key below and hit enter to use the assistant",
         ];
 
         let env_var_set = self.state.read(cx).api_key_from_env;
@@ -503,17 +451,15 @@ impl Render for ConfigurationView {
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new(INSTRUCTIONS[0]))
                 .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("openai_console", OPENAI_CONSOLE_URL)
+                    Button::new("google_console", GOOGLE_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
                         .icon(IconName::ExternalLink)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .on_click(move |_, cx| cx.open_url(OPENAI_CONSOLE_URL))
+                        .on_click(move |_, cx| cx.open_url(GOOGLE_CONSOLE_URL))
                     )
                 )
-                .children(
-                    (2..INSTRUCTIONS.len()).map(|n|
-                        Label::new(INSTRUCTIONS[n])).collect::<Vec<_>>())
+                .child(Label::new(INSTRUCTIONS[2]))
                 .child(
                     h_flex()
                         .w_full()
@@ -526,13 +472,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {OPENAI_API_KEY_VAR} environment variable and restart Zed."),
-                    )
-                    .size(LabelSize::Small),
-                )
-                .child(
-                    Label::new(
-                        "Note that having a subscription for another service like GitHub Copilot won't work.".to_string(),
+                        format!("You can also assign the {GOOGLE_AI_API_KEY_VAR} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small),
                 )
@@ -546,7 +486,7 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("API key set in {OPENAI_API_KEY_VAR} environment variable.")
+                            format!("API key set in {GOOGLE_AI_API_KEY_VAR} environment variable.")
                         } else {
                             "API key configured.".to_string()
                         })),
@@ -558,7 +498,7 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(|cx| Tooltip::text(format!("To reset your API key, unset the {OPENAI_API_KEY_VAR} environment variable."), cx))
+                            this.tooltip(|cx| Tooltip::text(format!("To reset your API key, unset the {GOOGLE_AI_API_KEY_VAR} environment variable."), cx))
                         })
                         .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
                 )

@@ -61,6 +61,7 @@ install_cli.workspace = true
 journal.workspace = true
 language.workspace = true
 language_model.workspace = true
+language_models.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }

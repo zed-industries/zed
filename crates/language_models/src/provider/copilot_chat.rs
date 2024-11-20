@@ -14,6 +14,11 @@ use gpui::{
     percentage, svg, Animation, AnimationExt, AnyView, AppContext, AsyncAppContext, Model, Render,
     Subscription, Task, Transformation,
 };
+use language_model::{
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+};
 use settings::SettingsStore;
 use std::time::Duration;
 use strum::IntoEnumIterator;
@@ -22,12 +27,6 @@ use ui::{
     IconName, IconPosition, IconSize, IntoElement, Label, LabelCommon, ParentElement, Styled,
     ViewContext, VisualContext, WindowContext,
 };
-
-use crate::{
-    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest, RateLimiter, Role,
-};
-use crate::{LanguageModelCompletionEvent, LanguageModelProviderState};
 
 use super::anthropic::count_anthropic_tokens;
 use super::open_ai::count_open_ai_tokens;

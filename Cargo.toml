@@ -55,6 +55,7 @@ members = [
     "crates/journal",
     "crates/language",
     "crates/language_model",
+    "crates/language_models",
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
@@ -228,6 +229,7 @@ install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_model = { path = "crates/language_model" }
+language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }

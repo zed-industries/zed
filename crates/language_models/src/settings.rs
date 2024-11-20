@@ -2,22 +2,20 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use gpui::AppContext;
+use language_model::LanguageModelCacheConfiguration;
 use project::Fs;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsSources};
 
-use crate::{
-    provider::{
-        self,
-        anthropic::AnthropicSettings,
-        cloud::{self, ZedDotDevSettings},
-        copilot_chat::CopilotChatSettings,
-        google::GoogleSettings,
-        ollama::OllamaSettings,
-        open_ai::OpenAiSettings,
-    },
-    LanguageModelCacheConfiguration,
+use crate::provider::{
+    self,
+    anthropic::AnthropicSettings,
+    cloud::{self, ZedDotDevSettings},
+    copilot_chat::CopilotChatSettings,
+    google::GoogleSettings,
+    ollama::OllamaSettings,
+    open_ai::OpenAiSettings,
 };
 
 /// Initializes the language model settings.
