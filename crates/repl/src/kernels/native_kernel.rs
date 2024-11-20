@@ -119,7 +119,7 @@ impl NativeRunningKernel {
         // todo: convert to weak view
         session: View<Session>,
         cx: &mut WindowContext,
-    ) -> Task<Result<Self>> {
+    ) -> Task<Result<Box<dyn RunningKernel>>> {
         cx.spawn(|cx| async move {
             let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
             let ports = peek_ports(ip).await?;
@@ -309,7 +309,7 @@ impl NativeRunningKernel {
                     .ok();
             });
 
-            anyhow::Ok(Self {
+            anyhow::Ok(Box::new(Self {
                 process,
                 request_tx,
                 working_directory,
@@ -320,7 +320,7 @@ impl NativeRunningKernel {
                 connection_path,
                 execution_state: ExecutionState::Idle,
                 kernel_info: None,
-            })
+            }) as Box<dyn RunningKernel>)
         })
     }
 }

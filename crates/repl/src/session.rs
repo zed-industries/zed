@@ -1,4 +1,5 @@
 use crate::components::KernelListItem;
+use crate::kernels::{RemoteKernelSpecification, RemoteRunningKernel};
 use crate::setup_editor_session_actions;
 use crate::{
     kernels::{Kernel, KernelSpecification, NativeRunningKernel},
@@ -22,8 +23,8 @@ use gpui::{
 use language::Point;
 use project::Fs;
 use runtimelib::{
-    ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
-    ShutdownRequest,
+    ExecuteRequest, ExecutionState, InterruptRequest, JupyterKernelspec, JupyterMessage,
+    JupyterMessageContent, ShutdownRequest,
 };
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
@@ -212,6 +213,27 @@ impl Session {
             })
             .ok();
 
+        // Creating a baked in kernel specification to see if remoting is working
+        let kernel_specification = KernelSpecification::Remote(RemoteKernelSpecification {
+            name: "todo".to_string(),
+            url: "http://localhost:8888/".to_string(),
+            token: std::env::var("JUPYTER_TOKEN").expect("JUPYTER_TOKEN not set"),
+            kernelspec: JupyterKernelspec {
+                argv: vec![
+                    "python".to_string(),
+                    "-m".to_string(),
+                    "ipykernel_launcher".to_string(),
+                    "-f".to_string(),
+                    "{connection_file}".to_string(),
+                ],
+                env: None,
+                display_name: "Python 3 (ipykernel)".to_string(),
+                language: "python".to_string(),
+                interrupt_mode: Some("signal".to_string()),
+                metadata: None,
+            },
+        });
+
         let mut session = Self {
             fs,
             editor,
@@ -253,9 +275,12 @@ impl Session {
                 session_view,
                 cx,
             ),
-            KernelSpecification::Remote(_remote_kernel_specification) => {
-                unimplemented!()
-            }
+            KernelSpecification::Remote(remote_kernel_specification) => RemoteRunningKernel::new(
+                remote_kernel_specification,
+                working_directory,
+                session_view,
+                cx,
+            ),
         };
 
         let pending_kernel = cx
@@ -265,7 +290,7 @@ impl Session {
                 match kernel {
                     Ok(kernel) => {
                         this.update(&mut cx, |session, cx| {
-                            session.kernel(Kernel::RunningKernel(Box::new(kernel)), cx);
+                            session.kernel(Kernel::RunningKernel(kernel), cx);
                         })
                         .ok();
                     }
