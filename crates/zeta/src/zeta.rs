@@ -207,7 +207,7 @@ impl Zeta {
             stream: false,
             max_tokens: None,
             stop: Vec::new(),
-            temperature: 0.2,
+            temperature: 0.0,
             tool_choice: None,
             tools: Vec::new(),
         };
@@ -734,7 +734,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_import_statement(cx: &mut TestAppContext) {
+    async fn test_import_statement_rust(cx: &mut TestAppContext) {
         assert_open_edit_complete(
             "main.rs",
             indoc! {"
@@ -755,6 +755,42 @@ mod tests {
                 }
             "},
             vec!["Ensure that there are the Rust `use` statements importing `std::thread` and `std::time::Duration`, like `use std::thread;` at the start of the file"],
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_import_statement_typescript(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "main.ts",
+            indoc! {"
+                function main() {
+                }
+            "},
+            indoc! {"
+                function main() {
+                    fs.readFile('/Users/joe/test.txt', 'utf8', (err, data) => {
+                        if (err) {
+                            return;
+                        }
+                        console.log(data);
+                    });<|user_cursor_is_here|>
+                }
+            "},
+            indoc! {"
+                const fs = require('node:fs');
+
+                function main() {
+                    fs.readFile('/Users/joe/test.txt', 'utf8', (_, data) => {
+                        if (err) {
+                            return;
+                        }
+                        console.log(data);
+                    });
+                }
+            "},
+            vec!["Ensure that there is a `require` statement importing `fs`"],
             cx,
         )
         .await;
@@ -867,7 +903,7 @@ mod tests {
                     let glob_pattern = format!(\"{}/{}\", root_directory, \"**/*.rs\");
                 }
             "},
-            vec!["Ensure that the Actual test output added the new root_directory assignment that reads the first command line argument"],
+            vec!["Ensure that `root_directory` is using the first command line argument"],
             cx,
         )
         .await;
@@ -957,12 +993,21 @@ mod tests {
 
     fn zeta(cx: &mut TestAppContext) -> Model<Zeta> {
         cx.new_model(|_| {
-            Zeta::new(
-                "http://localhost:11434/v1".into(),
-                "".into(),
-                "qwen2.5-coder:32b-instruct-q4_K_M".into(),
-                Arc::new(ReqwestClient::new()),
-            )
+            let (api_url, api_key, model) = match std::env::var("FIREWORKS_API_KEY") {
+                Ok(api_key) => (
+                    Arc::from("https://api.fireworks.ai/inference/v1"),
+                    Arc::from(api_key),
+                    Arc::from(std::env::var("FIREWORKS_MODEL").unwrap_or_else(|_| {
+                        "accounts/fireworks/models/qwen2p5-coder-32b-instruct".to_string()
+                    })),
+                ),
+                Err(_) => (
+                    Arc::from("http://localhost:11434"),
+                    Arc::from(""),
+                    Arc::from("qwen2.5-coder:32b"),
+                ),
+            };
+            Zeta::new(api_url, api_key, model, Arc::new(ReqwestClient::new()))
         })
     }
 
