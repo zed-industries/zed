@@ -28,6 +28,7 @@ use settings::{watch_config_file, Settings, SettingsStore};
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 
+use ::telemetry::LocationData;
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
 use std::ffi::OsStr;
@@ -40,7 +41,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use telemetry::LocationData;
 use util::ResultExt;
 
 fn init_logging_proxy() {
@@ -147,7 +147,7 @@ fn init_panic_hook() {
             (&backtrace).join("\n")
         );
 
-        let panic_data = telemetry::Panic {
+        let panic_data = ::telemetry::Panic {
             thread: thread_name.into(),
             payload: payload.clone(),
             location_data: info.location().map(|location| LocationData {
