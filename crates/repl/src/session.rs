@@ -263,7 +263,7 @@ impl Session {
                 let kernel = kernel.await;
 
                 match kernel {
-                    Ok(mut kernel) => {
+                    Ok(kernel) => {
                         this.update(&mut cx, |session, cx| {
                             session.kernel(Kernel::RunningKernel(Box::new(kernel)), cx);
                         })

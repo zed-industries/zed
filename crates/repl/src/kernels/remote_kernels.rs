@@ -1,8 +1,9 @@
 use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
-use gpui::{AppContext, Task};
+use gpui::{Task, View, WindowContext};
 use jupyter_protocol::{ExecutionState, JupyterMessage, KernelInfoReply};
-// todo(kyle): figure out if this needs to be different
 use runtimelib::JupyterKernelspec;
+
+use crate::Session;
 
 use super::RunningKernel;
 use anyhow::Result;
@@ -36,65 +37,70 @@ pub struct RemoteRunningKernel {
 }
 
 impl RemoteRunningKernel {
-    pub async fn new(
+    pub fn new(
         kernelspec: RemoteKernelSpecification,
         working_directory: std::path::PathBuf,
-        cx: &mut AppContext,
-    ) -> anyhow::Result<(Self, mpsc::Receiver<JupyterMessage>)> {
+        session: View<Session>,
+        cx: &mut WindowContext,
+    ) -> Task<anyhow::Result<Self>> {
         let remote_server = RemoteServer {
             base_url: kernelspec.url,
             token: kernelspec.token,
         };
+        cx.spawn(|cx| async move {
+            // todo: launch a kernel to get a kernel ID
+            let kernel_id = "d77b481b-2f14-4528-af0a-6c4c9ca98085";
 
-        // todo: launch a kernel to get a kernel ID
-        let kernel_id = "d77b481b-2f14-4528-af0a-6c4c9ca98085";
+            let kernel_socket = remote_server.connect_to_kernel(kernel_id).await?;
 
-        let kernel_socket = remote_server.connect_to_kernel(kernel_id).await?;
+            let (mut w, mut r): (JupyterWebSocketWriter, JupyterWebSocketReader) =
+                kernel_socket.split();
 
-        let (mut w, mut r): (JupyterWebSocketWriter, JupyterWebSocketReader) =
-            kernel_socket.split();
+            let (request_tx, mut request_rx) =
+                futures::channel::mpsc::channel::<JupyterMessage>(100);
 
-        let (mut messages_tx, messages_rx) = mpsc::channel::<JupyterMessage>(100);
-
-        let (request_tx, mut request_rx) = futures::channel::mpsc::channel::<JupyterMessage>(100);
-
-        let routing_task = cx.background_executor().spawn({
-            async move {
-                while let Some(message) = request_rx.next().await {
-                    w.send(message).await.ok();
+            let routing_task = cx.background_executor().spawn({
+                async move {
+                    while let Some(message) = request_rx.next().await {
+                        w.send(message).await.ok();
+                    }
+                    Ok(())
                 }
-                Ok(())
-            }
-        });
+            });
 
-        let receiving_task = cx.background_executor().spawn({
-            async move {
-                while let Some(message) = r.next().await {
-                    match message {
-                        Ok(message) => {
-                            messages_tx.send(message).await.ok();
-                        }
-                        Err(e) => {
-                            log::error!("Error receiving message: {:?}", e);
+            let receiving_task = cx.spawn({
+                let session = session.clone();
+
+                |mut cx| async move {
+                    while let Some(message) = r.next().await {
+                        match message {
+                            Ok(message) => {
+                                session
+                                    .update(&mut cx, |session, cx| {
+                                        session.route(&message, cx);
+                                    })
+                                    .ok();
+                            }
+                            Err(e) => {
+                                log::error!("Error receiving message: {:?}", e);
+                            }
                         }
                     }
+                    Ok(())
                 }
-                Ok(())
-            }
-        });
+            });
 
-        anyhow::Ok((
-            Self {
+            anyhow::Ok(Self {
                 _routing_task: routing_task,
                 _receiving_task: receiving_task,
                 remote_server,
                 working_directory,
                 request_tx,
+                // todo(kyle): pull this from the kernel API to start with
                 execution_state: ExecutionState::Idle,
                 kernel_info: None,
-            },
-            messages_rx,
-        ))
+            })
+        })
     }
 }
 
