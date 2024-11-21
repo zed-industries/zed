@@ -112,7 +112,7 @@ impl Zeta {
         self.next_event_id.0 += 1;
 
         self.events.insert(id, event);
-        if self.events.len() > 100 {
+        if self.events.len() > 10 {
             self.events.pop_first();
         }
     }
