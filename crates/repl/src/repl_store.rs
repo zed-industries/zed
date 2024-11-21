@@ -121,6 +121,11 @@ impl ReplStore {
         cx.notify();
     }
 
+    pub fn refresh_remote_kernelspecs() -> Task<Result<()>> {
+        //
+        todo!()
+    }
+
     pub fn refresh_python_kernelspecs(
         &mut self,
         worktree_id: WorktreeId,

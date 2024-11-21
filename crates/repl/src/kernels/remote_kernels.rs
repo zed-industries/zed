@@ -1,14 +1,20 @@
 use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
 use gpui::{Task, View, WindowContext};
+use http_client::{AsyncBody, HttpClientWithUrl, Request};
 use jupyter_protocol::{ExecutionState, JupyterMessage, KernelInfoReply};
 use runtimelib::JupyterKernelspec;
+
+use futures::StreamExt;
+use smol::io::AsyncReadExt as _;
 
 use crate::Session;
 
 use super::RunningKernel;
 use anyhow::Result;
-use jupyter_websocket_client::{JupyterWebSocketReader, JupyterWebSocketWriter, RemoteServer};
-use std::fmt::Debug;
+use jupyter_websocket_client::{
+    JupyterWebSocketReader, JupyterWebSocketWriter, KernelSpecsResponse, RemoteServer,
+};
+use std::{fmt::Debug, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub struct RemoteKernelSpecification {
@@ -16,6 +22,36 @@ pub struct RemoteKernelSpecification {
     pub url: String,
     pub token: String,
     pub kernelspec: JupyterKernelspec,
+}
+
+pub async fn list_remote_kernelspecs(
+    remote_server: RemoteServer,
+    http_client: Arc<HttpClientWithUrl>,
+) -> Result<KernelSpecsResponse> {
+    let url = remote_server.api_url("/kernelspecs");
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(&url)
+        .header("Authorization", format!("token {}", remote_server.token))
+        .body(AsyncBody::default())?;
+
+    let response = http_client.send(request).await?;
+
+    if response.status().is_success() {
+        let mut body = response.into_body();
+
+        let mut body_bytes = Vec::new();
+        body.read_to_end(&mut body_bytes).await?;
+
+        let kernel_specs: KernelSpecsResponse = serde_json::from_slice(&body_bytes)?;
+        Ok(kernel_specs)
+    } else {
+        Err(anyhow::anyhow!(
+            "Failed to fetch kernel specs: {}",
+            response.status()
+        ))
+    }
 }
 
 impl PartialEq for RemoteKernelSpecification {
