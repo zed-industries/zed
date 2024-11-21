@@ -861,6 +861,26 @@ mod tests {
             cx,
         )
         .await;
+
+        let edited_2 = include_str!("../fixtures/new-cli-arg/edit2.rs");
+        let cursor_start = edited_2
+            .find(CURSOR_MARKER)
+            .expect(&format!("{CURSOR_MARKER} not found"));
+        let edited_2 = edited_2.replace(CURSOR_MARKER, "");
+        edit(&buffer, &edited_2, cx);
+        autocomplete(&buffer, cursor_start, &zeta, cx).await;
+
+        let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert_autocompleted(
+            autocompleted,
+            &[
+                "Ensure that the `main` function contains an if-expression checking if an update-flag in args is set",
+                "It's okay if the body of that if-expression does not contain logic yet. It's fine if it only contains placeholder comments."
+            ],
+            &zeta,
+            cx,
+        )
+        .await;
     }
 
     async fn assert_open_edit_complete_full(
