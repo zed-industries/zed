@@ -44,7 +44,6 @@ story = { workspace = true, optional = true }
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
-vcs_menu.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 

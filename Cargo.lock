@@ -12641,7 +12641,6 @@ dependencies = [
  "tree-sitter-md",
  "ui",
  "util",
- "vcs_menu",
  "windows 0.58.0",
  "workspace",
  "zed_actions",
@@ -13653,6 +13652,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
