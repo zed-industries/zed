@@ -15,7 +15,10 @@ actions!(
         SelectAll,
         Home,
         End,
-        ShowCharacterPalette
+        ShowCharacterPalette,
+        Paste,
+        Cut,
+        Copy,
     ]
 );
 
@@ -105,6 +108,28 @@ impl TextInput {
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
         cx.show_character_palette();
+    }
+
+    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            self.replace_text_in_range(None, &text.replace("\n", " "), cx);
+        }
+    }
+
+    fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
+        if !self.selected_range.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                (&self.content[self.selected_range.clone()]).to_string(),
+            ));
+        }
+    }
+    fn cut(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
+        if !self.selected_range.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                (&self.content[self.selected_range.clone()]).to_string(),
+            ));
+            self.replace_text_in_range(None, "", cx)
+        }
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
@@ -219,9 +244,11 @@ impl ViewInputHandler for TextInput {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
+        actual_range: &mut Option<Range<usize>>,
         _cx: &mut ViewContext<Self>,
     ) -> Option<String> {
         let range = self.range_from_utf16(&range_utf16);
+        actual_range.replace(self.range_to_utf16(&range));
         Some(self.content[range].to_string())
     }
 
@@ -497,6 +524,9 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::show_character_palette))
+            .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(Self::cut))
+            .on_action(cx.listener(Self::copy))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -602,6 +632,9 @@ fn main() {
             KeyBinding::new("shift-left", SelectLeft, None),
             KeyBinding::new("shift-right", SelectRight, None),
             KeyBinding::new("cmd-a", SelectAll, None),
+            KeyBinding::new("cmd-v", Paste, None),
+            KeyBinding::new("cmd-c", Copy, None),
+            KeyBinding::new("cmd-x", Cut, None),
             KeyBinding::new("home", Home, None),
             KeyBinding::new("end", End, None),
             KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
