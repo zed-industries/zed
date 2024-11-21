@@ -12607,7 +12607,6 @@ dependencies = [
  "call",
  "client",
  "collections",
- "command_palette",
  "editor",
  "feature_flags",
  "feedback",
