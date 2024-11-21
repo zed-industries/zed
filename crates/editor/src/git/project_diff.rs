@@ -3,6 +3,7 @@ use std::{
     cmp::Ordering,
     collections::HashSet,
     ops::Range,
+    path::Path,
     time::Duration,
 };
 
@@ -1093,4 +1094,53 @@ impl Render for ProjectDiffEditor {
             .size_full()
             .child(child)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+
+    use super::*;
+
+    // #[gpui::test]
+    // async fn randomized_tests(cx: &mut TestAppContext) {
+    //     // Create a new project (how?? temp fs?),
+    //     let fs = FakeFs::new(cx.executor());
+    //     let project = Project::test(fs, [], cx).await;
+
+    //     // create random files with random content
+
+    //     // Commit it into git somehow (technically can do with "real" fs in a temp dir)
+    //     //
+    //     // Apply randomized changes to the project: select a random file, random change and apply to buffers
+    // }
+
+    #[gpui::test]
+    async fn simple_test(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let dst = dir.path();
+
+        std::fs::write(dst.join("file_a"), "This is file_a").unwrap();
+        std::fs::write(dst.join("file_b"), "This is file_b").unwrap();
+
+        run_git(dst, &["init"]).await;
+        run_git(dst, &["add", "*"]).await;
+        run_git(dst, &["commit", "-m", "Initial commit"]).await;
+
+        // Open the project diff view
+        // Apply edit to file
+        // -> confirm that an "modified" hunk for that file is shown in project diff view
+        //
+        // git revert
+        // -> confirm that it's gone
+    }
+}
+
+async fn run_git(path: &Path, args: &[&str]) {
+    smol::process::Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .await
+        .expect("git commit failed");
 }
