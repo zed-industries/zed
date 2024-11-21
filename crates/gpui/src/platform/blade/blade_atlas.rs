@@ -67,10 +67,8 @@ impl BladeAtlas {
     pub(crate) fn clear_textures(&self, texture_kind: AtlasTextureKind) {
         let mut lock = self.0.lock();
         let textures = &mut lock.storage[texture_kind];
-        for texture in textures {
-            if let Some(texture) = texture {
-                texture.clear();
-            }
+        for texture in textures.iter_mut().flatten() {
+            texture.clear();
         }
     }
 
@@ -324,20 +322,14 @@ impl ops::Index<AtlasTextureId> for BladeAtlasStorage {
 
 impl BladeAtlasStorage {
     fn destroy(&mut self, gpu: &gpu::Context) {
-        for mut texture in self.monochrome_textures.drain(..) {
-            if let Some(mut texture) = texture {
-                texture.destroy(gpu);
-            }
+        for mut texture in self.monochrome_textures.drain(..).flatten() {
+            texture.destroy(gpu);
         }
-        for mut texture in self.polychrome_textures.drain(..) {
-            if let Some(mut texture) = texture {
-                texture.destroy(gpu);
-            }
+        for mut texture in self.polychrome_textures.drain(..).flatten() {
+            texture.destroy(gpu);
         }
-        for mut texture in self.path_textures.drain(..) {
-            if let Some(mut texture) = texture {
-                texture.destroy(gpu);
-            }
+        for mut texture in self.path_textures.drain(..).flatten() {
+            texture.destroy(gpu);
         }
     }
 }
