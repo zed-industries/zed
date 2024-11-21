@@ -85,36 +85,6 @@ impl TintColor {
     }
 }
 
-// To remove?
-
-// fn added_hunk_color(cx: &WindowContext) -> Hsla {
-//     let mut created_color = cx.theme().status().git().created;
-//     created_color.fade_out(0.7);
-//     created_color
-// }
-
-// fn accept_hunk_color(cx: &WindowContext) -> Hsla {
-//     cx.theme()
-//         .colors()
-//         .editor_background
-//         .blend(added_hunk_color(cx))
-//         .opacity(1.0)
-// }
-
-// fn deleted_hunk_color(cx: &WindowContext) -> Hsla {
-//     let mut deleted_color = cx.theme().status().deleted;
-//     deleted_color.fade_out(0.7);
-//     deleted_color
-// }
-
-// fn discard_hunk_color(cx: &WindowContext) -> Hsla {
-//     cx.theme()
-//         .colors()
-//         .editor_background
-//         .blend(deleted_hunk_color(cx))
-//         .opacity(1.0)
-// }
-
 impl From<TintColor> for Color {
     fn from(tint: TintColor) -> Self {
         match tint {

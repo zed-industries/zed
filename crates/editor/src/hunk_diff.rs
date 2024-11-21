@@ -455,7 +455,6 @@ impl Editor {
                     h_flex()
                         .id(cx.block_id)
                         .block_mouse_down()
-                        // .h(cx.line_height())
                         .pr_5()
                         .w_full()
                         .justify_end()
@@ -470,10 +469,10 @@ impl Editor {
                                 .rounded_b_lg()
                                 .bg(cx.theme().colors().editor_background)
                                 .shadow(smallvec::smallvec![gpui::BoxShadow {
-                                    color: gpui::hsla(0.0, 0.0, 0.0, 0.15),
+                                    color: gpui::hsla(0.0, 0.0, 0.0, 0.1),
                                     blur_radius: px(1.0),
                                     spread_radius: px(1.0),
-                                    offset: gpui::point(px(0.), px(2.0)),
+                                    offset: gpui::point(px(0.), px(1.5)),
                                 }])
                                 .when(!is_branch_buffer, |row| {
                                     row.child(
