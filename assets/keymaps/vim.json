@@ -577,7 +577,7 @@
     }
   },
   {
-    "context": "EmptyPane || SharedScreen || MarkdownPreview || KeyContextView",
+    "context": "EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
     "use_layout_keys": true,
     "bindings": {
       ":": "command_palette::Toggle",

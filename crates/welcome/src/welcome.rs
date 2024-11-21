@@ -73,6 +73,7 @@ impl Render for WelcomePage {
         h_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
+            .key_context("Welcome")
             .track_focus(&self.focus_handle(cx))
             .child(
                 v_flex()
