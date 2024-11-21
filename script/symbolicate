@@ -29,6 +29,7 @@ elif [[ "$bundle_id" == *Preview* ]]; then
     channel="preview"
 fi
 
+
 mkdir -p target/dsyms/$channel
 
 dsym="$channel/Zed-$version-$arch.dwarf"

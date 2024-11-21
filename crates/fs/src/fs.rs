@@ -496,16 +496,23 @@ impl Fs for RealFs {
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
+        dbg!("saving to", path);
         let buffer_size = text.summary().len.min(10 * 1024);
         if let Some(path) = path.parent() {
-            self.create_dir(path).await?;
+            dbg!(path);
+            self.create_dir(path).await.inspect_err(|e| {
+                dbg!(e);
+            })?;
         }
-        let file = smol::fs::File::create(path).await?;
+        let file = smol::fs::File::create(path).await.inspect_err(|e| {
+            dbg!(e);
+        })?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
         for chunk in chunks(text, line_ending) {
             writer.write_all(chunk.as_bytes()).await?;
         }
         writer.flush().await?;
+        dbg!("saved to", path);
         Ok(())
     }
 
