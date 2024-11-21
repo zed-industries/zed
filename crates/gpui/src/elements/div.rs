@@ -35,6 +35,7 @@ use std::{
     mem,
     ops::DerefMut,
     rc::Rc,
+    sync::Arc,
     time::Duration,
 };
 use taffy::style::Overflow;
@@ -61,6 +62,7 @@ pub struct DragMoveEvent<T> {
     /// The bounds of this element.
     pub bounds: Bounds<Pixels>,
     drag: PhantomData<T>,
+    dragged_item: Arc<dyn Any>,
 }
 
 impl<T: 'static> DragMoveEvent<T> {
@@ -70,6 +72,11 @@ impl<T: 'static> DragMoveEvent<T> {
             .as_ref()
             .and_then(|drag| drag.value.downcast_ref::<T>())
             .expect("DragMoveEvent is only valid when the stored active drag is of the same type.")
+    }
+
+    /// An item that is about to be dropped.
+    pub fn dragged_item(&self) -> &dyn Any {
+        self.dragged_item.as_ref()
     }
 }
 
@@ -243,20 +250,20 @@ impl Interactivity {
     {
         self.mouse_move_listeners
             .push(Box::new(move |event, phase, hitbox, cx| {
-                if phase == DispatchPhase::Capture
-                    && cx
-                        .active_drag
-                        .as_ref()
-                        .is_some_and(|drag| drag.value.as_ref().type_id() == TypeId::of::<T>())
-                {
-                    (listener)(
-                        &DragMoveEvent {
-                            event: event.clone(),
-                            bounds: hitbox.bounds,
-                            drag: PhantomData,
-                        },
-                        cx,
-                    );
+                if phase == DispatchPhase::Capture {
+                    if let Some(drag) = &cx.active_drag {
+                        if drag.value.as_ref().type_id() == TypeId::of::<T>() {
+                            (listener)(
+                                &DragMoveEvent {
+                                    event: event.clone(),
+                                    bounds: hitbox.bounds,
+                                    drag: PhantomData,
+                                    dragged_item: Arc::clone(&drag.value),
+                                },
+                                cx,
+                            );
+                        }
+                    }
                 }
             }));
     }
@@ -454,7 +461,7 @@ impl Interactivity {
             "calling on_drag more than once on the same element is not supported"
         );
         self.drag_listener = Some((
-            Box::new(value),
+            Arc::new(value),
             Box::new(move |value, offset, cx| {
                 constructor(value.downcast_ref().unwrap(), offset, cx).into()
             }),
@@ -1292,7 +1299,7 @@ pub struct Interactivity {
     pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
-    pub(crate) drag_listener: Option<(Box<dyn Any>, DragListener)>,
+    pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) occlude_mouse: bool,

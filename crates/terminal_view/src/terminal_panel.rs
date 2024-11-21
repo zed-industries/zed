@@ -89,6 +89,19 @@ impl TerminalPanel {
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
+            pane.set_can_split(Some(Arc::new(|pane, dragged_item, cx| {
+                if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
+                    let item = if &tab.pane == cx.view() {
+                        pane.item_for_index(tab.ix)
+                    } else {
+                        tab.pane.read(cx).item_for_index(tab.ix)
+                    };
+                    if let Some(item) = item {
+                        return item.downcast::<TerminalView>().is_some();
+                    }
+                }
+                false
+            })));
 
             let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
             pane.toolbar()
@@ -112,6 +125,7 @@ impl TerminalPanel {
                     };
                     if let Some(item) = item {
                         // TODO kb need to "move" task terminals instead of splitting them + create new terminal in the old pane, if the task terminal was the last one
+                        // TODO kb when the entire pane is hovered, no split should happen.
                         if item.downcast::<TerminalView>().is_some() {
                             cx.emit(pane::Event::Split(
                                 pane.drag_split_direction.unwrap_or(SplitDirection::Right),
@@ -414,8 +428,6 @@ impl TerminalPanel {
                 NewTerminal.boxed_clone(),
                 cx,
             );
-            // TODO kb need to only allow splits for terminal tabs
-            // pane.set_can_split(false, cx);
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
