@@ -344,14 +344,17 @@ impl RunningKernel for NativeRunningKernel {
         self.kernel_info = Some(info);
     }
 
-    fn force_shutdown(&mut self) -> anyhow::Result<()> {
-        match self.process.kill() {
+    fn force_shutdown(&mut self, _cx: &mut WindowContext) -> Task<anyhow::Result<()>> {
+        self._process_status_task.take();
+        self.request_tx.close_channel();
+
+        Task::ready(match self.process.kill() {
             Ok(_) => Ok(()),
             Err(error) => Err(anyhow::anyhow!(
                 "Failed to kill the kernel process: {}",
                 error
             )),
-        }
+        })
     }
 }
 

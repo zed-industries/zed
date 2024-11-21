@@ -1,5 +1,5 @@
 use crate::components::KernelListItem;
-use crate::kernels::{RemoteKernelSpecification, RemoteRunningKernel};
+use crate::kernels::RemoteRunningKernel;
 use crate::setup_editor_session_actions;
 use crate::{
     kernels::{Kernel, KernelSpecification, NativeRunningKernel},
@@ -23,12 +23,13 @@ use gpui::{
 use language::Point;
 use project::Fs;
 use runtimelib::{
-    ExecuteRequest, ExecutionState, InterruptRequest, JupyterKernelspec, JupyterMessage,
-    JupyterMessageContent, ShutdownRequest,
+    ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
+    ShutdownRequest,
 };
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
 use ui::{prelude::*, IconButtonShape, Tooltip};
+use util::ResultExt as _;
 
 pub struct Session {
     fs: Arc<dyn Fs>,
@@ -557,14 +558,16 @@ impl Session {
             Kernel::RunningKernel(mut kernel) => {
                 let mut request_tx = kernel.request_tx().clone();
 
+                let forced = kernel.force_shutdown(cx);
+
                 cx.spawn(|this, mut cx| async move {
                     let message: JupyterMessage = ShutdownRequest { restart: false }.into();
                     request_tx.try_send(message).ok();
 
+                    forced.await;
+
                     // Give the kernel a bit of time to clean up
                     cx.background_executor().timer(Duration::from_secs(3)).await;
-
-                    kernel.force_shutdown().ok();
 
                     this.update(&mut cx, |session, cx| {
                         session.clear_outputs(cx);
@@ -592,6 +595,8 @@ impl Session {
             Kernel::RunningKernel(mut kernel) => {
                 let mut request_tx = kernel.request_tx().clone();
 
+                let forced = kernel.force_shutdown(cx);
+
                 cx.spawn(|this, mut cx| async move {
                     // Send shutdown request with restart flag
                     log::debug!("restarting kernel");
@@ -602,7 +607,7 @@ impl Session {
                     cx.background_executor().timer(Duration::from_secs(1)).await;
 
                     // Force kill the kernel if it hasn't shut down
-                    kernel.force_shutdown().ok();
+                    forced.await.log_err();
 
                     // Start a new kernel
                     this.update(&mut cx, |session, cx| {
