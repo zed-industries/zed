@@ -39,6 +39,7 @@ settings.workspace = true
 tokio = { version = "1.15", features = ["full"], optional = true }
 ui.workspace = true
 util.workspace = true
+vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 
