@@ -845,6 +845,45 @@ mod tests {
         .await;
     }
 
+    #[gpui::test]
+    async fn test_element_to_vec(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "main.rs",
+            indoc! {"
+                fn main() {
+                    let word = \"hello\";
+                    for ch in word.chars() {
+                        dbg!(ch);
+                    }
+                }
+            "},
+            indoc! {"
+                fn main() {
+                    let words = vec![<|user_cursor_is_here|>\"hello\";
+                    for ch in word.chars() {
+                        dbg!(ch);
+                    }
+                }
+            "},
+            indoc! {"
+                fn main() {
+                    let words = vec![\"hello\"];
+                    for word in words {
+                        for ch in word.chars() {
+                            dbg!(ch);
+                        }
+                    }
+                }
+            "},
+            vec![
+                "Ensure that `words` assignment is valid",
+                "Ensure a nested loop is created",
+            ],
+            cx,
+        )
+        .await;
+    }
+
     async fn assert_open_edit_complete_full(
         filename: &str,
         initial: &str,
