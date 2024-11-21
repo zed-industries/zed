@@ -16,7 +16,7 @@ pub use remote_kernels::*;
 
 use anyhow::Result;
 use runtimelib::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
-use ui::SharedString;
+use ui::{Icon, IconName, SharedString};
 
 pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 
@@ -58,6 +58,19 @@ impl KernelSpecification {
             Self::PythonEnv(spec) => spec.kernelspec.language.clone(),
             Self::Remote(spec) => spec.kernelspec.language.clone(),
         })
+    }
+
+    pub fn icon(&self, cx: &AppContext) -> Icon {
+        let lang_name = match self {
+            Self::Jupyter(spec) => spec.kernelspec.language.clone(),
+            Self::PythonEnv(spec) => spec.kernelspec.language.clone(),
+            Self::Remote(spec) => spec.kernelspec.language.clone(),
+        };
+
+        file_icons::FileIcons::get(cx)
+            .get_type_icon(&lang_name.to_lowercase())
+            .map(Icon::from_path)
+            .unwrap_or(Icon::new(IconName::ReplNeutral))
     }
 }
 
