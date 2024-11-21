@@ -14,9 +14,9 @@ pub enum SplitDirection {
 }
 
 impl TerminalGroup {
-    pub fn new() -> Self {
+    pub fn new(initial_terminal: Terminal) -> Self {
         Self {
-            terminals: Vec::new(),
+            terminals: vec![initial_terminal],
             split_direction: SplitDirection::Horizontal,
             active_terminal_index: 0,
         }
@@ -39,5 +39,22 @@ impl TerminalGroup {
 
     pub fn close_terminal(&mut self, cx: &mut ViewContext<Self>, index: usize) {
         self.terminals.remove(index);
+    }
+}
+
+impl Render for TerminalGroup {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        match self.split_direction {
+            SplitDirection::Horizontal => h_flex().size_full().children(
+                self.terminals
+                    .iter()
+                    .map(|terminal| div().size_full().flex_1().child(terminal.clone())),
+            ),
+            SplitDirection::Vertical => v_flex().size_full().children(
+                self.terminals
+                    .iter()
+                    .map(|terminal| div().size_full().flex_1().child(terminal.clone())),
+            ),
+        }
     }
 }

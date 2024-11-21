@@ -627,6 +627,9 @@ impl TerminalPanel {
                 let terminal = workspace
                     .project()
                     .update(cx, |project, cx| project.create_terminal(kind, window, cx))?;
+
+                // TODO(dennis): Unsure how we handle "models" and "views".
+                // I think I want the TerminalView to hold a Model<TerminalGroup> seeing as how it currently holds a Model<Terminal>.
                 let terminal_view = Box::new(cx.new_view(|cx| {
                     TerminalView::new(
                         terminal.clone(),
