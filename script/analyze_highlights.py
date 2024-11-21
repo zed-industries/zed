@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 This script analyzes all the highlight.scm files in our embedded languages and extensions.
 It counts the number of unique instances of @{name} and the languages in which they are used.

@@ -343,8 +343,10 @@ impl MacPlatform {
                                 ns_string(key_to_native(&keystroke.key).as_ref()),
                             )
                             .autorelease();
-                        let _: () =
-                            msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
+                        if MacPlatform::os_version().unwrap() >= SemanticVersion::new(12, 0, 0) {
+                            let _: () =
+                                msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
+                        }
                         item.setKeyEquivalentModifierMask_(mask);
                     }
                     // For multi-keystroke bindings, render the keystroke as part of the title.

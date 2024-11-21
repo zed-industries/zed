@@ -18,6 +18,7 @@ mod terminal_inline_assistant;
 mod tool_working_set;
 mod tools;
 
+use crate::slash_command::project_command::ProjectSlashCommandFeatureFlag;
 pub use crate::slash_command_working_set::{SlashCommandId, SlashCommandWorkingSet};
 pub use crate::tool_working_set::{ToolId, ToolWorkingSet};
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
@@ -215,23 +216,32 @@ pub fn init(
         });
     }
 
-    if cx.has_flag::<SearchSlashCommandFeatureFlag>() {
-        cx.spawn(|mut cx| {
-            let client = client.clone();
-            async move {
-                let embedding_provider = CloudEmbeddingProvider::new(client.clone());
-                let semantic_index = SemanticDb::new(
-                    paths::embeddings_dir().join("semantic-index-db.0.mdb"),
-                    Arc::new(embedding_provider),
-                    &mut cx,
-                )
-                .await?;
+    cx.spawn(|mut cx| {
+        let client = client.clone();
+        async move {
+            let is_search_slash_command_enabled = cx
+                .update(|cx| cx.wait_for_flag::<SearchSlashCommandFeatureFlag>())?
+                .await;
+            let is_project_slash_command_enabled = cx
+                .update(|cx| cx.wait_for_flag::<ProjectSlashCommandFeatureFlag>())?
+                .await;
 
-                cx.update(|cx| cx.set_global(semantic_index))
+            if !is_search_slash_command_enabled && !is_project_slash_command_enabled {
+                return Ok(());
             }
-        })
-        .detach();
-    }
+
+            let embedding_provider = CloudEmbeddingProvider::new(client.clone());
+            let semantic_index = SemanticDb::new(
+                paths::embeddings_dir().join("semantic-index-db.0.mdb"),
+                Arc::new(embedding_provider),
+                &mut cx,
+            )
+            .await?;
+
+            cx.update(|cx| cx.set_global(semantic_index))
+        }
+    })
+    .detach();
 
     context_store::init(&client.clone().into());
     prompt_library::init(cx);

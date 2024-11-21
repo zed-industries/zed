@@ -276,6 +276,7 @@ message Envelope {
 
         LanguageServerPromptRequest language_server_prompt_request = 268;
         LanguageServerPromptResponse language_server_prompt_response = 269;
+
         GitBranches git_branches = 270;
         GitBranchesResponse git_branches_response = 271;
 
@@ -295,9 +296,12 @@ message Envelope {
 
         CancelLanguageServerWork cancel_language_server_work = 282;
 
-        SyncExtensions sync_extensions = 283;
-        SyncExtensionsResponse sync_extensions_response = 284;
-        InstallExtension install_extension = 285; // current max
+        LspExtOpenDocs lsp_ext_open_docs = 283;
+        LspExtOpenDocsResponse lsp_ext_open_docs_response = 284;
+
+        SyncExtensions sync_extensions = 285;
+        SyncExtensionsResponse sync_extensions_response = 286;
+        InstallExtension install_extension = 287; // current max
     }
 
     reserved 87 to 88;
@@ -2026,6 +2030,17 @@ message LspExtExpandMacro {
 message LspExtExpandMacroResponse {
     string name = 1;
     string expansion = 2;
+}
+
+message LspExtOpenDocs {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message LspExtOpenDocsResponse {
+    optional string web = 1;
+    optional string local = 2;
 }
 
 message LspExtSwitchSourceHeader {

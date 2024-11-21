@@ -267,7 +267,6 @@ async fn perform_completion(
                 anthropic::ANTHROPIC_API_URL,
                 api_key,
                 request,
-                None,
             )
             .await
             .map_err(|err| match err {
@@ -357,7 +356,6 @@ async fn perform_completion(
                 open_ai::OPEN_AI_API_URL,
                 api_key,
                 serde_json::from_str(params.provider_request.get())?,
-                None,
             )
             .await?;
 
@@ -390,7 +388,6 @@ async fn perform_completion(
                 google_ai::API_URL,
                 api_key,
                 serde_json::from_str(params.provider_request.get())?,
-                None,
             )
             .await?;
 

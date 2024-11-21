@@ -32,6 +32,7 @@ actions!(
         Quit,
         OpenKeymap,
         About,
+        Extensions,
         OpenLicenses,
         OpenTelemetryLog,
         DecreaseBufferFontSize,

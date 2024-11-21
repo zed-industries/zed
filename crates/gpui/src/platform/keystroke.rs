@@ -222,6 +222,8 @@ fn is_printable_key(key: &str) -> bool {
             | "insert"
             | "home"
             | "end"
+            | "back"
+            | "forward"
             | "escape"
     )
 }

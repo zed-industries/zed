@@ -248,7 +248,6 @@ struct ItemColors {
     default: Hsla,
     hover: Hsla,
     drag_over: Hsla,
-    selected: Hsla,
     marked_active: Hsla,
 }
 
@@ -257,9 +256,8 @@ fn get_item_color(cx: &ViewContext<ProjectPanel>) -> ItemColors {
 
     ItemColors {
         default: colors.surface_background,
-        hover: colors.ghost_element_hover,
+        hover: colors.element_active,
         drag_over: colors.drop_target_background,
-        selected: colors.surface_background,
         marked_active: colors.ghost_element_selected,
     }
 }
@@ -2626,6 +2624,7 @@ impl ProjectPanel {
             active_selection: selection,
             marked_selections: selections,
         };
+
         div()
             .id(entry_id.to_proto() as usize)
             .when(is_local, |div| {
@@ -2808,7 +2807,7 @@ impl ProjectPanel {
                                                 IconDecorationKind::Dot
                                             },
                                             if is_marked || is_active {
-                                                item_colors.selected
+                                                item_colors.marked_active
                                             } else {
                                                 item_colors.default
                                             },

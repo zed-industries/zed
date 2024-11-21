@@ -26,7 +26,6 @@ impl IndexedDocsProvider for ExtensionIndexedDocsProvider {
 
     fn database_path(&self) -> PathBuf {
         let mut database_path = PathBuf::from(self.extension.work_dir().as_ref());
-        database_path.push(self.extension.manifest().id.as_ref());
         database_path.push("docs");
         database_path.push(format!("{}.0.mdb", self.id));
 

@@ -5,3 +5,6 @@
 
 ((inline) @content
  (#set! "language" "markdown-inline"))
+
+((html_block) @content
+  (#set! "language" "html"))

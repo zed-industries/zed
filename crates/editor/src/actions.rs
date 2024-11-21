@@ -297,6 +297,7 @@ gpui::actions!(
         OpenExcerptsSplit,
         OpenProposedChangesEditor,
         OpenFile,
+        OpenDocs,
         OpenPermalinkToLine,
         OpenUrl,
         Outdent,

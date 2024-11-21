@@ -32,7 +32,7 @@ pub fn app_menus() -> Vec<Menu> {
                     items: vec![],
                 }),
                 MenuItem::separator(),
-                MenuItem::action("Extensions", extensions_ui::Extensions),
+                MenuItem::action("Extensions", zed_actions::Extensions),
                 MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
                 MenuItem::action("Hide Zed", super::Hide),

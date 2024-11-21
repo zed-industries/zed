@@ -5,12 +5,12 @@ use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
     language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
-    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
+    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, DiskState, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
 use lsp::{DiagnosticSeverity, NumberOrString};
 use parking_lot::Mutex;
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
@@ -3239,10 +3239,22 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
             Path::new("b/c/file5")
         );
 
-        assert!(!buffer2.read(cx).file().unwrap().is_deleted());
-        assert!(!buffer3.read(cx).file().unwrap().is_deleted());
-        assert!(!buffer4.read(cx).file().unwrap().is_deleted());
-        assert!(buffer5.read(cx).file().unwrap().is_deleted());
+        assert_matches!(
+            buffer2.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_matches!(
+            buffer3.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_matches!(
+            buffer4.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_eq!(
+            buffer5.read(cx).file().unwrap().disk_state(),
+            DiskState::Deleted
+        );
     });
 
     // Update the remote worktree. Check that it becomes consistent with the
@@ -3416,7 +3428,11 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
             ]
         );
         events.lock().clear();
-        buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), cx);
+        buffer.did_save(
+            buffer.version(),
+            buffer.file().unwrap().disk_state().mtime(),
+            cx,
+        );
     });
 
     // after saving, the buffer is not dirty, and emits a saved event.

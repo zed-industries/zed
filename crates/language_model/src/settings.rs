@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use anyhow::Result;
 use gpui::AppContext;
@@ -87,7 +87,6 @@ impl AnthropicSettingsContent {
             AnthropicSettingsContent::Legacy(content) => (
                 AnthropicSettingsContentV1 {
                     api_url: content.api_url,
-                    low_speed_timeout_in_seconds: content.low_speed_timeout_in_seconds,
                     available_models: content.available_models.map(|models| {
                         models
                             .into_iter()
@@ -132,7 +131,6 @@ impl AnthropicSettingsContent {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct LegacyAnthropicSettingsContent {
     pub api_url: Option<String>,
-    pub low_speed_timeout_in_seconds: Option<u64>,
     pub available_models: Option<Vec<anthropic::Model>>,
 }
 
@@ -146,14 +144,12 @@ pub enum VersionedAnthropicSettingsContent {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AnthropicSettingsContentV1 {
     pub api_url: Option<String>,
-    pub low_speed_timeout_in_seconds: Option<u64>,
     pub available_models: Option<Vec<provider::anthropic::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct OllamaSettingsContent {
     pub api_url: Option<String>,
-    pub low_speed_timeout_in_seconds: Option<u64>,
     pub available_models: Option<Vec<provider::ollama::AvailableModel>>,
 }
 
@@ -170,7 +166,6 @@ impl OpenAiSettingsContent {
             OpenAiSettingsContent::Legacy(content) => (
                 OpenAiSettingsContentV1 {
                     api_url: content.api_url,
-                    low_speed_timeout_in_seconds: content.low_speed_timeout_in_seconds,
                     available_models: content.available_models.map(|models| {
                         models
                             .into_iter()
@@ -205,7 +200,6 @@ impl OpenAiSettingsContent {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct LegacyOpenAiSettingsContent {
     pub api_url: Option<String>,
-    pub low_speed_timeout_in_seconds: Option<u64>,
     pub available_models: Option<Vec<open_ai::Model>>,
 }
 
@@ -219,27 +213,22 @@ pub enum VersionedOpenAiSettingsContent {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct OpenAiSettingsContentV1 {
     pub api_url: Option<String>,
-    pub low_speed_timeout_in_seconds: Option<u64>,
     pub available_models: Option<Vec<provider::open_ai::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
-    pub low_speed_timeout_in_seconds: Option<u64>,
     pub available_models: Option<Vec<provider::google::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ZedDotDevSettingsContent {
     available_models: Option<Vec<cloud::AvailableModel>>,
-    pub low_speed_timeout_in_seconds: Option<u64>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct CopilotChatSettingsContent {
-    low_speed_timeout_in_seconds: Option<u64>,
-}
+pub struct CopilotChatSettingsContent {}
 
 impl settings::Settings for AllLanguageModelSettings {
     const KEY: Option<&'static str> = Some("language_models");
@@ -272,13 +261,6 @@ impl settings::Settings for AllLanguageModelSettings {
                 &mut settings.anthropic.api_url,
                 anthropic.as_ref().and_then(|s| s.api_url.clone()),
             );
-            if let Some(low_speed_timeout_in_seconds) = anthropic
-                .as_ref()
-                .and_then(|s| s.low_speed_timeout_in_seconds)
-            {
-                settings.anthropic.low_speed_timeout =
-                    Some(Duration::from_secs(low_speed_timeout_in_seconds));
-            }
             merge(
                 &mut settings.anthropic.available_models,
                 anthropic.as_ref().and_then(|s| s.available_models.clone()),
@@ -291,14 +273,6 @@ impl settings::Settings for AllLanguageModelSettings {
                 &mut settings.ollama.api_url,
                 value.ollama.as_ref().and_then(|s| s.api_url.clone()),
             );
-            if let Some(low_speed_timeout_in_seconds) = value
-                .ollama
-                .as_ref()
-                .and_then(|s| s.low_speed_timeout_in_seconds)
-            {
-                settings.ollama.low_speed_timeout =
-                    Some(Duration::from_secs(low_speed_timeout_in_seconds));
-            }
             merge(
                 &mut settings.ollama.available_models,
                 ollama.as_ref().and_then(|s| s.available_models.clone()),
@@ -318,17 +292,10 @@ impl settings::Settings for AllLanguageModelSettings {
                 &mut settings.openai.api_url,
                 openai.as_ref().and_then(|s| s.api_url.clone()),
             );
-            if let Some(low_speed_timeout_in_seconds) =
-                openai.as_ref().and_then(|s| s.low_speed_timeout_in_seconds)
-            {
-                settings.openai.low_speed_timeout =
-                    Some(Duration::from_secs(low_speed_timeout_in_seconds));
-            }
             merge(
                 &mut settings.openai.available_models,
                 openai.as_ref().and_then(|s| s.available_models.clone()),
             );
-
             merge(
                 &mut settings.zed_dot_dev.available_models,
                 value
@@ -336,27 +303,10 @@ impl settings::Settings for AllLanguageModelSettings {
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );
-            if let Some(low_speed_timeout_in_seconds) = value
-                .zed_dot_dev
-                .as_ref()
-                .and_then(|s| s.low_speed_timeout_in_seconds)
-            {
-                settings.zed_dot_dev.low_speed_timeout =
-                    Some(Duration::from_secs(low_speed_timeout_in_seconds));
-            }
-
             merge(
                 &mut settings.google.api_url,
                 value.google.as_ref().and_then(|s| s.api_url.clone()),
             );
-            if let Some(low_speed_timeout_in_seconds) = value
-                .google
-                .as_ref()
-                .and_then(|s| s.low_speed_timeout_in_seconds)
-            {
-                settings.google.low_speed_timeout =
-                    Some(Duration::from_secs(low_speed_timeout_in_seconds));
-            }
             merge(
                 &mut settings.google.available_models,
                 value
@@ -364,15 +314,6 @@ impl settings::Settings for AllLanguageModelSettings {
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );
-
-            if let Some(low_speed_timeout) = value
-                .copilot_chat
-                .as_ref()
-                .and_then(|s| s.low_speed_timeout_in_seconds)
-            {
-                settings.copilot_chat.low_speed_timeout =
-                    Some(Duration::from_secs(low_speed_timeout));
-            }
         }
 
         Ok(settings)

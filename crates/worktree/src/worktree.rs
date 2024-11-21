@@ -29,6 +29,7 @@ use gpui::{
     Task,
 };
 use ignore::IgnoreStack;
+use language::DiskState;
 use parking_lot::Mutex;
 use paths::local_settings_folder_relative_path;
 use postage::{
@@ -1313,9 +1314,10 @@ impl LocalWorktree {
                         entry_id: None,
                         worktree,
                         path,
-                        mtime: Some(metadata.mtime),
+                        disk_state: DiskState::Present {
+                            mtime: metadata.mtime,
+                        },
                         is_local: true,
-                        is_deleted: false,
                         is_private,
                     })
                 }
@@ -1374,9 +1376,10 @@ impl LocalWorktree {
                         entry_id: None,
                         worktree,
                         path,
-                        mtime: Some(metadata.mtime),
+                        disk_state: DiskState::Present {
+                            mtime: metadata.mtime,
+                        },
                         is_local: true,
-                        is_deleted: false,
                         is_private,
                     })
                 }
@@ -1512,10 +1515,11 @@ impl LocalWorktree {
                 Ok(Arc::new(File {
                     worktree,
                     path,
-                    mtime: Some(metadata.mtime),
+                    disk_state: DiskState::Present {
+                        mtime: metadata.mtime,
+                    },
                     entry_id: None,
                     is_local: true,
-                    is_deleted: false,
                     is_private,
                 }))
             }
@@ -3178,10 +3182,9 @@ impl fmt::Debug for Snapshot {
 pub struct File {
     pub worktree: Model<Worktree>,
     pub path: Arc<Path>,
-    pub mtime: Option<SystemTime>,
+    pub disk_state: DiskState,
     pub entry_id: Option<ProjectEntryId>,
     pub is_local: bool,
-    pub is_deleted: bool,
     pub is_private: bool,
 }
 
@@ -3194,8 +3197,8 @@ impl language::File for File {
         }
     }
 
-    fn mtime(&self) -> Option<SystemTime> {
-        self.mtime
+    fn disk_state(&self) -> DiskState {
+        self.disk_state
     }
 
     fn path(&self) -> &Arc<Path> {
@@ -3238,10 +3241,6 @@ impl language::File for File {
         self.worktree.read(cx).id()
     }
 
-    fn is_deleted(&self) -> bool {
-        self.is_deleted
-    }
-
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -3251,8 +3250,8 @@ impl language::File for File {
             worktree_id: self.worktree.read(cx).id().to_proto(),
             entry_id: self.entry_id.map(|id| id.to_proto()),
             path: self.path.to_string_lossy().into(),
-            mtime: self.mtime.map(|time| time.into()),
-            is_deleted: self.is_deleted,
+            mtime: self.disk_state.mtime().map(|time| time.into()),
+            is_deleted: self.disk_state == DiskState::Deleted,
         }
     }
 
@@ -3293,10 +3292,13 @@ impl File {
         Arc::new(Self {
             worktree,
             path: entry.path.clone(),
-            mtime: entry.mtime,
+            disk_state: if let Some(mtime) = entry.mtime {
+                DiskState::Present { mtime }
+            } else {
+                DiskState::New
+            },
             entry_id: Some(entry.id),
             is_local: true,
-            is_deleted: false,
             is_private: entry.is_private,
         })
     }
@@ -3316,13 +3318,22 @@ impl File {
             return Err(anyhow!("worktree id does not match file"));
         }
 
+        let disk_state = if proto.is_deleted {
+            DiskState::Deleted
+        } else {
+            if let Some(mtime) = proto.mtime.map(&Into::into) {
+                DiskState::Present { mtime }
+            } else {
+                DiskState::New
+            }
+        };
+
         Ok(Self {
             worktree,
             path: Path::new(&proto.path).into(),
-            mtime: proto.mtime.map(|time| time.into()),
+            disk_state,
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
-            is_deleted: proto.is_deleted,
             is_private: false,
         })
     }
@@ -3336,15 +3347,14 @@ impl File {
     }
 
     pub fn project_entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
-        if self.is_deleted {
-            None
-        } else {
-            self.entry_id
+        match self.disk_state {
+            DiskState::Deleted => None,
+            _ => self.entry_id,
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub id: ProjectEntryId,
     pub kind: EntryKind,
@@ -3376,7 +3386,7 @@ pub struct Entry {
     pub is_fifo: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
     UnloadedDir,
     PendingDir,

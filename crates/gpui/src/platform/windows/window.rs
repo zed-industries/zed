@@ -647,11 +647,47 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-        self.0
-            .state
-            .borrow_mut()
+        let mut window_state = self.0.state.borrow_mut();
+        window_state
             .renderer
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+        let mut version = unsafe { std::mem::zeroed() };
+        let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+        if status.is_ok() {
+            if background_appearance == WindowBackgroundAppearance::Blurred {
+                if version.dwBuildNumber >= 17763 {
+                    set_window_composition_attribute(window_state.hwnd, Some((0, 0, 0, 10)), 4);
+                }
+            } else {
+                if version.dwBuildNumber >= 17763 {
+                    set_window_composition_attribute(window_state.hwnd, None, 0);
+                }
+            }
+            //Transparent effect might cause some flickering and performance issues due `WS_EX_COMPOSITED` is enabled
+            //if `WS_EX_COMPOSITED` is removed the window instance won't initiate
+            if background_appearance == WindowBackgroundAppearance::Transparent {
+                unsafe {
+                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(
+                        window_state.hwnd,
+                        GWL_EXSTYLE,
+                        current_style | WS_EX_LAYERED.0 as i32 | WS_EX_COMPOSITED.0 as i32,
+                    );
+                    SetLayeredWindowAttributes(window_state.hwnd, COLORREF(0), 225, LWA_ALPHA)
+                        .inspect_err(|e| log::error!("Unable to set window to transparent: {e}"))
+                        .ok();
+                };
+            } else {
+                unsafe {
+                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(
+                        window_state.hwnd,
+                        GWL_EXSTYLE,
+                        current_style & !WS_EX_LAYERED.0 as i32 & !WS_EX_COMPOSITED.0 as i32,
+                    );
+                }
+            }
+        }
     }
 
     fn minimize(&self) {
@@ -932,6 +968,23 @@ struct StyleAndBounds {
     cy: i32,
 }
 
+#[repr(C)]
+struct WINDOWCOMPOSITIONATTRIBDATA {
+    attrib: u32,
+    pv_data: *mut std::ffi::c_void,
+    cb_data: usize,
+}
+
+#[repr(C)]
+struct AccentPolicy {
+    accent_state: u32,
+    accent_flags: u32,
+    gradient_color: u32,
+    animation_id: u32,
+}
+
+type Color = (u8, u8, u8, u8);
+
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct WindowBorderOffset {
     width_offset: i32,
@@ -1134,6 +1187,44 @@ fn retrieve_window_placement(
     let bounds = bounds.to_device_pixels(scale_factor);
     placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
     Ok(placement)
+}
+
+fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32) {
+    unsafe {
+        type SetWindowCompositionAttributeType =
+            unsafe extern "system" fn(HWND, *mut WINDOWCOMPOSITIONATTRIBDATA) -> BOOL;
+        let module_name = PCSTR::from_raw("user32.dll\0".as_ptr());
+        let user32 = GetModuleHandleA(module_name);
+        if user32.is_ok() {
+            let func_name = PCSTR::from_raw("SetWindowCompositionAttribute\0".as_ptr());
+            let set_window_composition_attribute: SetWindowCompositionAttributeType =
+                std::mem::transmute(GetProcAddress(user32.unwrap(), func_name));
+            let mut color = color.unwrap_or_default();
+            let is_acrylic = state == 4;
+            if is_acrylic && color.3 == 0 {
+                color.3 = 1;
+            }
+            let accent = AccentPolicy {
+                accent_state: state,
+                accent_flags: if is_acrylic { 0 } else { 2 },
+                gradient_color: (color.0 as u32)
+                    | ((color.1 as u32) << 8)
+                    | ((color.2 as u32) << 16)
+                    | (color.3 as u32) << 24,
+                animation_id: 0,
+            };
+            let mut data = WINDOWCOMPOSITIONATTRIBDATA {
+                attrib: 0x13,
+                pv_data: &accent as *const _ as *mut _,
+                cb_data: std::mem::size_of::<AccentPolicy>(),
+            };
+            let _ = set_window_composition_attribute(hwnd, &mut data as *mut _ as _);
+        } else {
+            let _ = user32
+                .inspect_err(|e| log::error!("Error getting module: {e}"))
+                .ok();
+        }
+    }
 }
 
 mod windows_renderer {
