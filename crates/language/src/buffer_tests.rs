@@ -916,6 +916,35 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+fn test_text_objects(cx: &mut AppContext) {
+    let (text, ranges) = marked_text_ranges(
+        indoc! {r#"
+            impl Hello {
+                fn say(&seˇlf, name: &str) { }
+            }"#
+        },
+        false,
+    );
+
+    let buffer =
+        cx.new_model(|cx| Buffer::local(text.clone(), cx).with_language(Arc::new(rust_lang()), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    let matches = snapshot
+        .text_object_ranges(ranges[0].clone())
+        .map(|(range, text_object)| (&text[range], text_object))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        matches,
+        &[
+            ("&self", TextObject::InsideParameter),
+            ("&self,", TextObject::AroundParameter),
+        ],
+    )
+}
+
+#[gpui::test]
 fn test_enclosing_bracket_ranges(cx: &mut AppContext) {
     let mut assert = |selection_text, range_markers| {
         assert_bracket_pairs(selection_text, range_markers, rust_lang(), cx)
@@ -3179,6 +3208,16 @@ fn rust_lang() -> Language {
     .with_brackets_query(
         r#"
         ("{" @open "}" @close)
+        "#,
+    )
+    .unwrap()
+    .with_text_object_query(
+        r#"
+        (arguments
+          ((_) @parameter.inside . ","? @parameter.around) @parameter.around)
+
+        (parameters
+          ((_) @parameter.inside . ","? @parameter.around) @parameter.around)
         "#,
     )
     .unwrap()
