@@ -10,8 +10,9 @@ use crate::{
     ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, View,
     ViewContext, WindowContext,
 };
+use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
+use std::{cmp, ops::Range, sync::Arc};
 use taffy::style::Overflow;
 
 use super::ListHorizontalSizingBehavior;
@@ -24,7 +25,7 @@ pub fn uniform_list<I, R, V>(
     view: View<V>,
     id: I,
     item_count: usize,
-    f: impl 'static + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> Vec<R>,
+    f: impl 'static + Send + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> Vec<R>,
 ) -> UniformList
 where
     I: Into<ElementId>,
@@ -68,8 +69,9 @@ where
 pub struct UniformList {
     item_count: usize,
     item_to_measure_index: usize,
-    render_items:
-        Box<dyn for<'a> Fn(Range<usize>, &'a mut WindowContext) -> SmallVec<[AnyElement; 64]>>,
+    render_items: Box<
+        dyn for<'a> Fn(Range<usize>, &'a mut WindowContext) -> SmallVec<[AnyElement; 64]> + Send,
+    >,
     decorations: Vec<Box<dyn UniformListDecoration>>,
     interactivity: Interactivity,
     scroll_handle: Option<UniformListScrollHandle>,
@@ -86,7 +88,7 @@ pub struct UniformListFrameState {
 /// A handle for controlling the scroll position of a uniform list.
 /// This should be stored in your view and passed to the uniform_list on each frame.
 #[derive(Clone, Debug, Default)]
-pub struct UniformListScrollHandle(pub Rc<RefCell<UniformListScrollState>>);
+pub struct UniformListScrollHandle(pub Arc<Mutex<UniformListScrollState>>);
 
 /// Where to place the element scrolled to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,7 +123,7 @@ pub struct ItemSize {
 impl UniformListScrollHandle {
     /// Create a new scroll handle to bind to a uniform list.
     pub fn new() -> Self {
-        Self(Rc::new(RefCell::new(UniformListScrollState {
+        Self(Arc::new(Mutex::new(UniformListScrollState {
             base_handle: ScrollHandle::new(),
             deferred_scroll_to_item: None,
             last_item_size: None,
@@ -130,13 +132,13 @@ impl UniformListScrollHandle {
 
     /// Scroll the list to the given item index.
     pub fn scroll_to_item(&self, ix: usize, strategy: ScrollStrategy) {
-        self.0.borrow_mut().deferred_scroll_to_item = Some((ix, strategy));
+        self.0.lock().deferred_scroll_to_item = Some((ix, strategy));
     }
 
     /// Get the index of the topmost visible child.
     #[cfg(any(test, feature = "test-support"))]
     pub fn logical_scroll_top_index(&self) -> usize {
-        let this = self.0.borrow();
+        let this = self.0.lock();
         this.deferred_scroll_to_item
             .map(|(ix, _)| ix)
             .unwrap_or_else(|| this.base_handle.logical_scroll_top().0)
@@ -242,7 +244,7 @@ impl Element for UniformList {
         let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
         let item_height = longest_item_size.height;
         let shared_scroll_to_item = self.scroll_handle.as_mut().and_then(|handle| {
-            let mut handle = handle.0.borrow_mut();
+            let mut handle = handle.0.lock();
             handle.last_item_size = Some(ItemSize {
                 item: padded_bounds.size,
                 contents: content_size,
@@ -265,7 +267,7 @@ impl Element for UniformList {
                 );
 
                 if let Some(handle) = self.scroll_handle.as_mut() {
-                    handle.0.borrow_mut().base_handle.set_bounds(bounds);
+                    handle.0.lock().base_handle.set_bounds(bounds);
                 }
 
                 if self.item_count > 0 {
@@ -274,7 +276,7 @@ impl Element for UniformList {
                     let is_scrolled_vertically = !scroll_offset.y.is_zero();
                     let min_vertical_scroll_offset = padded_bounds.size.height - content_height;
                     if is_scrolled_vertically && scroll_offset.y < min_vertical_scroll_offset {
-                        shared_scroll_offset.borrow_mut().y = min_vertical_scroll_offset;
+                        shared_scroll_offset.lock().y = min_vertical_scroll_offset;
                         scroll_offset.y = min_vertical_scroll_offset;
                     }
 
@@ -282,13 +284,13 @@ impl Element for UniformList {
                     let is_scrolled_horizontally =
                         can_scroll_horizontally && !scroll_offset.x.is_zero();
                     if is_scrolled_horizontally && content_width <= padded_bounds.size.width {
-                        shared_scroll_offset.borrow_mut().x = Pixels::ZERO;
+                        shared_scroll_offset.lock().x = Pixels::ZERO;
                         scroll_offset.x = Pixels::ZERO;
                     }
 
                     if let Some((ix, scroll_strategy)) = shared_scroll_to_item {
                         let list_height = padded_bounds.size.height;
-                        let mut updated_scroll_offset = shared_scroll_offset.borrow_mut();
+                        let mut updated_scroll_offset = shared_scroll_offset.lock();
                         let item_top = item_height * ix + padding.top;
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;
@@ -424,7 +426,7 @@ impl IntoElement for UniformList {
 
 /// A decoration for a [`UniformList`]. This can be used for various things,
 /// such as rendering indent guides, or other visual effects.
-pub trait UniformListDecoration {
+pub trait UniformListDecoration: Send {
     /// Compute the decoration element, given the visible range of list items,
     /// the bounds of the list, and the height of each item.
     fn compute(
@@ -496,7 +498,7 @@ impl UniformList {
 
     /// Track and render scroll state of this list with reference to the given scroll handle.
     pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {
-        self.interactivity.tracked_scroll_handle = Some(handle.0.borrow().base_handle.clone());
+        self.interactivity.tracked_scroll_handle = Some(handle.0.lock().base_handle.clone());
         self.scroll_handle = Some(handle);
         self
     }

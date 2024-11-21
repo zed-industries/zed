@@ -12,7 +12,7 @@ pub struct Animation {
     pub oneshot: bool,
     /// A function that takes a delta between 0 and 1 and returns a new delta
     /// between 0 and 1 based on the given easing function.
-    pub easing: Box<dyn Fn(f32) -> f32>,
+    pub easing: Box<dyn Send + Fn(f32) -> f32>,
 }
 
 impl Animation {
@@ -35,7 +35,7 @@ impl Animation {
     /// Set the easing function to use for this animation.
     /// The easing function will take a time delta between 0 and 1 and return a new delta
     /// between 0 and 1
-    pub fn with_easing(mut self, easing: impl Fn(f32) -> f32 + 'static) -> Self {
+    pub fn with_easing(mut self, easing: impl Send + Fn(f32) -> f32 + 'static) -> Self {
         self.easing = Box::new(easing);
         self
     }
@@ -48,7 +48,7 @@ pub trait AnimationExt {
         self,
         id: impl Into<ElementId>,
         animation: Animation,
-        animator: impl Fn(Self, f32) -> Self + 'static,
+        animator: impl Send + Fn(Self, f32) -> Self + 'static,
     ) -> AnimationElement<Self>
     where
         Self: Sized,
@@ -69,7 +69,7 @@ pub struct AnimationElement<E> {
     id: ElementId,
     element: Option<E>,
     animation: Animation,
-    animator: Box<dyn Fn(E, f32) -> E + 'static>,
+    animator: Box<dyn Send + Fn(E, f32) -> E + 'static>,
 }
 
 impl<E> AnimationElement<E> {

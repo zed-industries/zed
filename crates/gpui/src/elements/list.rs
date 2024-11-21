@@ -13,8 +13,9 @@ use crate::{
     Size, Style, StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
+use parking_lot::Mutex;
 use refineable::Refineable as _;
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
 use taffy::style::Overflow;
 
@@ -44,19 +45,19 @@ impl List {
 
 /// The list state that views must hold on behalf of the list element.
 #[derive(Clone)]
-pub struct ListState(Rc<RefCell<StateInner>>);
+pub struct ListState(Arc<Mutex<StateInner>>);
 
 struct StateInner {
     last_layout_bounds: Option<Bounds<Pixels>>,
     last_padding: Option<Edges<Pixels>>,
-    render_item: Box<dyn FnMut(usize, &mut WindowContext) -> AnyElement>,
+    render_item: Box<dyn Send + FnMut(usize, &mut WindowContext) -> AnyElement>,
     items: SumTree<ListItem>,
     logical_scroll_top: Option<ListOffset>,
     alignment: ListAlignment,
     overdraw: Pixels,
     reset: bool,
     #[allow(clippy::type_complexity)]
-    scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut WindowContext)>>,
+    scroll_handler: Option<Box<dyn Send + FnMut(&ListScrollEvent, &mut WindowContext)>>,
 }
 
 /// Whether the list is scrolling from top to bottom or bottom to top.
@@ -186,9 +187,9 @@ impl ListState {
         render_item: R,
     ) -> Self
     where
-        R: 'static + FnMut(usize, &mut WindowContext) -> AnyElement,
+        R: 'static + Send + FnMut(usize, &mut WindowContext) -> AnyElement,
     {
-        let this = Self(Rc::new(RefCell::new(StateInner {
+        let this = Self(Arc::new(Mutex::new(StateInner {
             last_layout_bounds: None,
             last_padding: None,
             render_item: Box::new(render_item),
@@ -208,7 +209,7 @@ impl ListState {
     /// Note that this will cause scroll events to be dropped until the next paint.
     pub fn reset(&self, element_count: usize) {
         let old_count = {
-            let state = &mut *self.0.borrow_mut();
+            let state = &mut *self.0.lock();
             state.reset = true;
             state.logical_scroll_top = None;
             state.items.summary().count
@@ -219,7 +220,7 @@ impl ListState {
 
     /// The number of items in this list.
     pub fn item_count(&self) -> usize {
-        self.0.borrow().items.summary().count
+        self.0.lock().items.summary().count
     }
 
     /// Inform the list state that the items in `old_range` have been replaced
@@ -237,7 +238,7 @@ impl ListState {
         old_range: Range<usize>,
         focus_handles: impl IntoIterator<Item = Option<FocusHandle>>,
     ) {
-        let state = &mut *self.0.borrow_mut();
+        let state = &mut *self.0.lock();
 
         let mut old_items = state.items.cursor::<Count>(&());
         let mut new_items = old_items.slice(&Count(old_range.start), Bias::Right, &());
@@ -272,19 +273,19 @@ impl ListState {
     /// Set a handler that will be called when the list is scrolled.
     pub fn set_scroll_handler(
         &self,
-        handler: impl FnMut(&ListScrollEvent, &mut WindowContext) + 'static,
+        handler: impl Send + FnMut(&ListScrollEvent, &mut WindowContext) + 'static,
     ) {
-        self.0.borrow_mut().scroll_handler = Some(Box::new(handler))
+        self.0.lock().scroll_handler = Some(Box::new(handler))
     }
 
     /// Get the current scroll offset, in terms of the list's items.
     pub fn logical_scroll_top(&self) -> ListOffset {
-        self.0.borrow().logical_scroll_top()
+        self.0.lock().logical_scroll_top()
     }
 
     /// Scroll the list to the given offset
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
-        let state = &mut *self.0.borrow_mut();
+        let state = &mut *self.0.lock();
         let item_count = state.items.summary().count;
         if scroll_top.item_ix >= item_count {
             scroll_top.item_ix = item_count;
@@ -296,7 +297,7 @@ impl ListState {
 
     /// Scroll the list to the given item, such that the item is fully visible.
     pub fn scroll_to_reveal_item(&self, ix: usize) {
-        let state = &mut *self.0.borrow_mut();
+        let state = &mut *self.0.lock();
 
         let mut scroll_top = state.logical_scroll_top();
         let height = state
@@ -329,7 +330,7 @@ impl ListState {
     /// Get the bounds for the given item in window coordinates, if it's
     /// been rendered.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
-        let state = &*self.0.borrow();
+        let state = &*self.0.lock();
 
         let bounds = state.last_layout_bounds.unwrap_or_default();
         let scroll_top = state.logical_scroll_top();
@@ -724,7 +725,7 @@ impl Element for List {
                 style.overflow.y = Overflow::Scroll;
                 style.refine(&self.style);
                 cx.with_text_style(style.text_style().cloned(), |cx| {
-                    let state = &mut *self.state.0.borrow_mut();
+                    let state = &mut *self.state.0.lock();
 
                     let available_height = if let Some(last_bounds) = state.last_layout_bounds {
                         last_bounds.size.height
@@ -785,7 +786,7 @@ impl Element for List {
         _: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> ListPrepaintState {
-        let state = &mut *self.state.0.borrow_mut();
+        let state = &mut *self.state.0.lock();
         state.reset = false;
 
         let mut style = Style::default();
@@ -841,7 +842,7 @@ impl Element for List {
         let hitbox_id = prepaint.hitbox.id;
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(cx) {
-                list_state.0.borrow_mut().scroll(
+                list_state.0.lock().scroll(
                     &scroll_top,
                     height,
                     event.delta.pixel_delta(px(20.)),

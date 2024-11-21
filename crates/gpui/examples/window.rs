@@ -5,7 +5,7 @@ struct SubWindow {
     custom_titlebar: bool,
 }
 
-fn button(text: &str, on_click: impl Fn(&mut WindowContext) + 'static) -> impl IntoElement {
+fn button(text: &str, on_click: impl Send + Fn(&mut WindowContext) + 'static) -> impl IntoElement {
     div()
         .id(SharedString::from(text.to_string()))
         .flex_none()

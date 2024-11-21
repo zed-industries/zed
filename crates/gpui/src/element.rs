@@ -43,14 +43,14 @@ use std::{any::Any, fmt::Debug, mem};
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
 /// You can create custom elements by implementing this trait, see the module-level documentation
 /// for more details.
-pub trait Element: 'static + IntoElement {
+pub trait Element: 'static + IntoElement + Send {
     /// The type of state returned from [`Element::request_layout`]. A mutable reference to this state is subsequently
     /// provided to [`Element::prepaint`] and [`Element::paint`].
-    type RequestLayoutState: 'static;
+    type RequestLayoutState: 'static + Send;
 
     /// The type of state returned from [`Element::prepaint`]. A mutable reference to this state is subsequently
     /// provided to [`Element::paint`].
-    type PrepaintState: 'static;
+    type PrepaintState: 'static + Send;
 
     /// If this element has a unique identifier, return it here. This is used to track elements across frames, and
     /// will cause a GlobalElementId to be passed to the request_layout, prepaint, and paint methods.
@@ -95,7 +95,7 @@ pub trait Element: 'static + IntoElement {
 }
 
 /// Implemented by any type that can be converted into an element.
-pub trait IntoElement: Sized {
+pub trait IntoElement: Sized + Send {
     /// The specific type of element into which the implementing type is converted.
     /// Useful for converting other types into elements automatically, like Strings
     type Element: Element;
@@ -129,7 +129,7 @@ impl Render for Empty {
 /// components as a recipe for a certain pattern of elements. RenderOnce allows
 /// you to invoke this pattern, without breaking the fluent builder pattern of
 /// the element APIs.
-pub trait RenderOnce: 'static {
+pub trait RenderOnce: 'static + Send {
     /// Render this component into an element tree. Note that this method
     /// takes ownership of self, as compared to [`Render::render()`] method
     /// which takes a mutable reference.
@@ -225,7 +225,7 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 #[derive(Deref, DerefMut, Default, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(pub(crate) SmallVec<[ElementId; 32]>);
 
-trait ElementObject {
+trait ElementObject: Send {
     fn inner_element(&mut self) -> &mut dyn Any;
 
     fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId;
@@ -471,7 +471,7 @@ pub struct AnyElement(ArenaBox<dyn ElementObject>);
 impl AnyElement {
     pub(crate) fn new<E>(element: E) -> Self
     where
-        E: 'static + Element,
+        E: 'static + Element + Send,
         E::RequestLayoutState: Any,
     {
         let element = ELEMENT_ARENA

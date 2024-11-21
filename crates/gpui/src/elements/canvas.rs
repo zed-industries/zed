@@ -8,8 +8,8 @@ use crate::{
 /// Construct a canvas element with the given paint callback.
 /// Useful for adding short term custom drawing to a view.
 pub fn canvas<T>(
-    prepaint: impl 'static + FnOnce(Bounds<Pixels>, &mut WindowContext) -> T,
-    paint: impl 'static + FnOnce(Bounds<Pixels>, T, &mut WindowContext),
+    prepaint: impl 'static + Send + FnOnce(Bounds<Pixels>, &mut WindowContext) -> T,
+    paint: impl 'static + Send + FnOnce(Bounds<Pixels>, T, &mut WindowContext),
 ) -> Canvas<T> {
     Canvas {
         prepaint: Some(Box::new(prepaint)),
@@ -21,12 +21,12 @@ pub fn canvas<T>(
 /// A canvas element, meant for accessing the low level paint API without defining a whole
 /// custom element
 pub struct Canvas<T> {
-    prepaint: Option<Box<dyn FnOnce(Bounds<Pixels>, &mut WindowContext) -> T>>,
-    paint: Option<Box<dyn FnOnce(Bounds<Pixels>, T, &mut WindowContext)>>,
+    prepaint: Option<Box<dyn Send + FnOnce(Bounds<Pixels>, &mut WindowContext) -> T>>,
+    paint: Option<Box<dyn Send + FnOnce(Bounds<Pixels>, T, &mut WindowContext)>>,
     style: StyleRefinement,
 }
 
-impl<T: 'static> IntoElement for Canvas<T> {
+impl<T: 'static + Send> IntoElement for Canvas<T> {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
@@ -34,7 +34,7 @@ impl<T: 'static> IntoElement for Canvas<T> {
     }
 }
 
-impl<T: 'static> Element for Canvas<T> {
+impl<T: 'static + Send> Element for Canvas<T> {
     type RequestLayoutState = Style;
     type PrepaintState = Option<T>;
 

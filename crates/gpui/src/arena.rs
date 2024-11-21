@@ -1,15 +1,13 @@
 use parking_lot::Mutex;
 use std::{
     alloc,
-    cell::Cell,
     ops::{Deref, DerefMut},
     ptr,
-    rc::Rc,
     sync::{
-        atomic::{self, AtomicPtr},
+        atomic::{self, AtomicBool, AtomicPtr},
         Arc,
     },
-    thread,
+    thread::sleep,
     time::Duration,
 };
 
@@ -38,7 +36,7 @@ use std::{
 pub struct Arena {
     shared: Arc<SharedState>,
     next_write: *mut u8,
-    valid: Rc<Cell<bool>>,
+    valid: Arc<AtomicBool>,
 }
 
 /// Mutable state shared by `Arena` and `TrashHandle`.
@@ -60,6 +58,8 @@ impl TrashHandle {
     }
 }
 
+// FIXME: spawn a thread and do park / unpark to control it?
+
 impl Arena {
     pub fn new(size_in_bytes: usize) -> Self {
         unsafe {
@@ -76,7 +76,7 @@ impl Arena {
             Self {
                 shared,
                 next_write: start,
-                valid: Rc::new(Cell::new(true)),
+                valid: Arc::new(AtomicBool::new(true)),
             }
         }
     }
@@ -90,8 +90,8 @@ impl Arena {
     }
 
     pub fn trash_everything(&mut self) -> TrashHandle {
-        self.valid.set(false);
-        self.valid = Rc::new(Cell::new(true));
+        self.valid.store(false, atomic::Ordering::SeqCst);
+        self.valid = Arc::new(AtomicBool::new(true));
         self.shared
             .trash_end
             .store(self.next_write, atomic::Ordering::Relaxed);
@@ -99,7 +99,10 @@ impl Arena {
     }
 
     #[inline(always)]
-    pub fn alloc<T>(&mut self, f: impl FnOnce() -> T) -> ArenaBox<T> {
+    pub fn alloc<T>(&mut self, f: impl FnOnce() -> T) -> ArenaBox<T>
+    where
+        T: Send,
+    {
         unsafe fn drop<T>(ptr: *mut u8) {
             ptr::drop_in_place(ptr.cast::<T>());
         }
@@ -208,8 +211,8 @@ impl SharedState {
                 "Needed to spin waiting for background thread to clear element arena trash."
             );
             while ptr_is_within_circular_interval(target, self.trash_start(), trash_end) {
-                // TODO: revisit choice of sleep duration
-                thread::sleep(Duration::from_micros(50));
+                sleep(Duration::from_micros(50));
+                // std::hint::spin_loop();
             }
         }
     }
@@ -273,8 +276,10 @@ unsafe fn drop_arena_element(offset: *mut u8) -> *mut u8 {
 
 pub struct ArenaBox<T: ?Sized> {
     ptr: *mut T,
-    valid: Rc<Cell<bool>>,
+    valid: Arc<AtomicBool>,
 }
+
+unsafe impl<T: ?Sized + Send> Send for ArenaBox<T> {}
 
 impl<T: ?Sized> ArenaBox<T> {
     #[inline(always)]
@@ -287,7 +292,7 @@ impl<T: ?Sized> ArenaBox<T> {
 
     fn validate(&self) {
         assert!(
-            self.valid.get(),
+            self.valid.load(atomic::Ordering::SeqCst),
             "attempted to dereference an ArenaRef after its Arena was cleared"
         );
     }
@@ -339,9 +344,8 @@ impl<T: ?Sized> Deref for ArenaRef<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, rc::Rc};
-
     use super::*;
+    use atomic::AtomicBool;
 
     #[test]
     fn test_arena() {
@@ -366,16 +370,16 @@ mod tests {
         assert_eq!(*d, 8);
 
         // Ensure drop gets called.
-        let dropped = Rc::new(Cell::new(false));
-        struct DropGuard(Rc<Cell<bool>>);
+        let dropped = Arc::new(AtomicBool::new(false));
+        struct DropGuard(Arc<AtomicBool>);
         impl Drop for DropGuard {
             fn drop(&mut self) {
-                self.0.set(true);
+                self.0.store(true, atomic::Ordering::SeqCst);
             }
         }
         arena.alloc(|| DropGuard(dropped.clone()));
         arena.trash_everything().drop_trash();
-        assert!(dropped.get());
+        assert!(dropped.load(atomic::Ordering::SeqCst));
     }
 
     #[test]

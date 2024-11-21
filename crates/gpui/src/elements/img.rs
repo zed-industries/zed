@@ -37,14 +37,20 @@ pub type ImgResourceLoader = AssetLogger<ImageAssetLoader>;
 /// A source of image content.
 #[derive(Clone)]
 pub enum ImageSource {
-    /// The image content will be loaded from some resource location
+    /// Th)e image content will be loaded from some resource location
     Resource(Resource),
     /// Cached image data
     Render(Arc<RenderImage>),
     /// Cached image data
     Image(Arc<Image>),
     /// A custom loading function to use
-    Custom(Arc<dyn Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
+    Custom(
+        Arc<
+            dyn Send
+                + Sync
+                + Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>>,
+        >,
+    ),
 }
 
 fn is_uri(uri: &str) -> bool {
@@ -113,8 +119,12 @@ impl From<Arc<Image>> for ImageSource {
     }
 }
 
-impl<F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static>
-    From<F> for ImageSource
+impl<
+        F: Send
+            + Sync
+            + Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>>
+            + 'static,
+    > From<F> for ImageSource
 {
     fn from(value: F) -> Self {
         Self::Custom(Arc::new(value))
@@ -125,8 +135,8 @@ impl<F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheErro
 pub struct ImageStyle {
     grayscale: bool,
     object_fit: ObjectFit,
-    loading: Option<Box<dyn Fn() -> AnyElement>>,
-    fallback: Option<Box<dyn Fn() -> AnyElement>>,
+    loading: Option<Box<dyn Send + Fn() -> AnyElement>>,
+    fallback: Option<Box<dyn Send + Fn() -> AnyElement>>,
 }
 
 impl Default for ImageStyle {
@@ -158,13 +168,13 @@ pub trait StyledImage: Sized {
     }
 
     /// Set the object fit for the image.
-    fn with_fallback(mut self, fallback: impl Fn() -> AnyElement + 'static) -> Self {
+    fn with_fallback(mut self, fallback: impl Send + Fn() -> AnyElement + 'static) -> Self {
         self.image_style().fallback = Some(Box::new(fallback));
         self
     }
 
     /// Set the object fit for the image.
-    fn with_loading(mut self, loading: impl Fn() -> AnyElement + 'static) -> Self {
+    fn with_loading(mut self, loading: impl Send + Fn() -> AnyElement + 'static) -> Self {
         self.image_style().loading = Some(Box::new(loading));
         self
     }
