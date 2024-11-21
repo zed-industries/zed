@@ -66,21 +66,12 @@ pub struct TerminalPanel {
     width: Option<Pixels>,
     height: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
-    pending_terminals_to_add: usize,
+    pending_terminal_groups_to_add: usize,
     _subscriptions: Vec<Subscription>,
     deferred_tasks: HashMap<TaskId, Task<()>>,
     enabled: bool,
     assistant_enabled: bool,
     assistant_tab_bar_button: Option<AnyView>,
-}
-
-/// A group of terminals that can be arranged horizontally or vertically.
-/// A pane may have multiple terminal groups, each created on `workspace::NewTerminal`.
-/// TODO(dennis): I am adopting VSCode's TerminalGroup idea.
-pub struct TerminalGroup {
-    instances: Vec<TerminalView>,
-    // VSCode has an orientation feature, but to be quick here, we'll only support horizontal for now.
-    // orientation: Orientation,
 }
 
 impl TerminalPanel {
@@ -165,7 +156,7 @@ impl TerminalPanel {
             pending_serialization: Task::ready(None),
             width: None,
             height: None,
-            pending_terminals_to_add: 0,
+            pending_terminal_groups_to_add: 0,
             deferred_tasks: HashMap::default(),
             _subscriptions: subscriptions,
             enabled,
@@ -395,7 +386,7 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |panel, cx| {
-                panel.add_terminal(
+                panel.add_terminal_group(
                     TerminalKind::Shell(Some(action.working_directory.clone())),
                     RevealStrategy::Always,
                     cx,
@@ -542,7 +533,7 @@ impl TerminalPanel {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Model<Terminal>>> {
         let reveal = spawn_task.reveal;
-        self.add_terminal(TerminalKind::Task(spawn_task), reveal, cx)
+        self.add_terminal_group(TerminalKind::Task(spawn_task), reveal, cx)
     }
 
     /// Create a new Terminal in the current working directory or the user's home directory
@@ -559,7 +550,7 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |this, cx| {
-                this.add_terminal(kind, RevealStrategy::Always, cx)
+                this.add_terminal_group(kind, RevealStrategy::Always, cx)
             })
             .detach_and_log_err(cx);
     }
@@ -578,26 +569,13 @@ impl TerminalPanel {
         terminal_panel
             .update(cx, |this, cx| {
                 println!("Splitting terminal");
-
-                this.add_terminal(kind, RevealStrategy::Always, cx)
+                // TODO(dennis):
+                // 1. Find the active terminal group (the one in focus). Terminal groups should be the primary
+                //    abstraction the terminal panel understands.
+                // 2. Call split_terminal on the active terminal group.
+                this.add_terminal_group(kind, RevealStrategy::Always, cx)
             })
             .detach_and_log_err(cx);
-
-        // terminal_panel.update(cx, |this, cx| {
-        //     // Split the terminal
-        //     if let Some(active_terminal) = this.pane.read(cx).active_item() {
-        //         println!("Splitting terminal");
-        //         println!("Active terminal: {:?}", active_terminal);
-        //         // TODO: Implement split terminal functionality
-        //         // this.pane.update(cx, |pane, cx| {
-        //         //     pane.split_item(active_terminal, gpui::Split::Right, cx);
-        //         // });
-        //     }
-
-        //     // Create new terminal in the split
-        //     // this.add_terminal(kind, RevealStrategy::Always, cx)
-        // })
-        // .detach_and_log_err(cx);
     }
 
     fn terminals_for_task(
@@ -627,8 +605,7 @@ impl TerminalPanel {
         })
     }
 
-    /// TODO(dennis): Adding a new terminal should instead add a new TerminalGroup.
-    fn add_terminal(
+    fn add_terminal_group(
         &mut self,
         kind: TerminalKind,
         reveal_strategy: RevealStrategy,
@@ -641,7 +618,7 @@ impl TerminalPanel {
         }
 
         let workspace = self.workspace.clone();
-        self.pending_terminals_to_add += 1;
+        self.pending_terminal_groups_to_add += 1;
 
         cx.spawn(|terminal_panel, mut cx| async move {
             let pane = terminal_panel.update(&mut cx, |this, _| this.pane.clone())?;
@@ -675,7 +652,8 @@ impl TerminalPanel {
                 Ok(terminal)
             })?;
             terminal_panel.update(&mut cx, |this, cx| {
-                this.pending_terminals_to_add = this.pending_terminals_to_add.saturating_sub(1);
+                this.pending_terminal_groups_to_add =
+                    this.pending_terminal_groups_to_add.saturating_sub(1);
                 this.serialize(cx)
             })?;
             result
@@ -777,7 +755,7 @@ impl TerminalPanel {
     }
 
     fn has_no_terminals(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
+        self.pane.read(cx).items_len() == 0 && self.pending_terminal_groups_to_add == 0
     }
 
     pub fn assistant_enabled(&self) -> bool {
@@ -909,7 +887,7 @@ impl Panel for TerminalPanel {
                 return;
             };
 
-            this.add_terminal(kind, RevealStrategy::Never, cx)
+            this.add_terminal_group(kind, RevealStrategy::Never, cx)
                 .detach_and_log_err(cx)
         })
     }
