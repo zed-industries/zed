@@ -255,7 +255,7 @@ impl SshSocket {
     // and passes -l as an argument to sh, not to ls.
     // You need to do it like this: $ ssh host "sh -c 'ls -l /tmp'"
     fn ssh_command(&self, program: &str, args: &[&str]) -> process::Command {
-        let mut command = process::Command::new("ssh");
+        let mut command = util::command::new_smol_command("ssh");
         let to_run = iter::once(&program)
             .chain(args.iter())
             .map(|token| {
@@ -1224,7 +1224,7 @@ trait RemoteConnection: Send + Sync {
 
 struct SshRemoteConnection {
     socket: SshSocket,
-    master_process: Mutex<Option<process::Child>>,
+    master_process: Mutex<Option<Child>>,
     remote_binary_path: Option<PathBuf>,
     _temp_dir: TempDir,
 }
@@ -1258,7 +1258,7 @@ impl RemoteConnection for SshRemoteConnection {
         dest_path: PathBuf,
         cx: &AppContext,
     ) -> Task<Result<()>> {
-        let mut command = process::Command::new("scp");
+        let mut command = util::command::new_smol_command("scp");
         let output = self
             .socket
             .ssh_options(&mut command)
@@ -1910,7 +1910,7 @@ impl SshRemoteConnection {
 
     async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
-        let mut command = process::Command::new("scp");
+        let mut command = util::command::new_smol_command("scp");
         let output = self
             .socket
             .ssh_options(&mut command)
