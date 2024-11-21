@@ -376,12 +376,12 @@ impl Event {
                     let mut new_end = edit.new.end.row;
 
                     old_start = old_start.saturating_sub(2);
-                    old_end = cmp::max(old_end + 2, old_snapshot.max_point().row + 1);
+                    old_end = cmp::min(old_end + 2, old_snapshot.max_point().row + 1);
 
                     // Peek at further edits and merge if they overlap
                     while let Some(next_edit) = edits.peek() {
                         if next_edit.old.start.row <= old_end {
-                            old_end = cmp::max(
+                            old_end = cmp::min(
                                 next_edit.old.end.row + 2,
                                 old_snapshot.max_point().row + 1,
                             );
@@ -393,7 +393,7 @@ impl Event {
                     }
 
                     new_start = new_start.saturating_sub(2);
-                    new_end = cmp::max(new_end + 2, new_snapshot.max_point().row + 1);
+                    new_end = cmp::min(new_end + 2, new_snapshot.max_point().row + 1);
 
                     // Report the merged edit
                     let edit = format_edit(
@@ -429,10 +429,23 @@ impl Event {
 }
 
 fn inline_completion_excerpt(snapshot: &BufferSnapshot, position: &Anchor) -> String {
+    const CONTEXT_LINES: u32 = 16;
+
     let position = position.to_point(snapshot);
 
-    let start = Point::new(position.row.saturating_sub(50), 0);
-    let end = cmp::min(Point::new(position.row + 50, 0), snapshot.max_point());
+    let mut context_lines_before = CONTEXT_LINES;
+    let mut context_lines_after = CONTEXT_LINES;
+    if position.row < CONTEXT_LINES {
+        context_lines_after += CONTEXT_LINES - position.row;
+    } else if position.row + CONTEXT_LINES > snapshot.max_point().row {
+        context_lines_before += (position.row + CONTEXT_LINES) - snapshot.max_point().row;
+    }
+
+    let start = Point::new(position.row.saturating_sub(context_lines_before), 0);
+    let end = cmp::min(
+        Point::new(position.row + context_lines_after, 0),
+        snapshot.max_point(),
+    );
 
     let mut content = String::new();
     writeln!(
@@ -642,21 +655,7 @@ mod tests {
                     <|user_cursor_is_here|>
                 }
             "},
-            indoc! {"
-                use std::cmp::Ord;
-
-                pub fn quicksort<T: Ord>(arr: &mut [T]) {
-                    let len = arr.len();
-                    if len <= 1 {
-                        return;
-                    }
-
-                    let pivot_index = partition(arr);
-                    quicksort(&mut arr[0..pivot_index]);
-                    quicksort(&mut arr[pivot_index + 1..]);
-                }
-            "},
-            vec!["Ensure that the quicksort function is implememented correctly"],
+            vec!["Ensure that the quicksort function recurses to the left and to the right of the pivot"],
             cx,
         )
         .await;
@@ -688,18 +687,7 @@ mod tests {
 
                     let pivot = partit<|user_cursor_is_here|>
             "},
-            indoc! {"
-                use std::cmp::Ord;
-
-                pub fn quicksort<T: Ord>(arr: &mut [T]) {
-                    let len = arr.len();
-                    if len <= 1 {
-                        return;
-                    }
-
-                    let pivot = partition(arr);
-            "},
-            vec!["Ensure that the 'pivot' assignment statement is valid"],
+            vec!["Ensure that it calls a function called `partition` and assign its to `pivot`"],
             cx,
         )
         .await;
@@ -716,14 +704,6 @@ mod tests {
             indoc! {"
                 fn main() {
                     thread::sleep(Duration::from_secs(1));<|user_cursor_is_here|>
-                }
-            "},
-            indoc! {"
-                use std::thread;
-                use std::time::Duration;
-
-                fn main() {
-                    thread::sleep(Duration::from_secs(1));
                 }
             "},
             vec!["Ensure that there are the Rust `use` statements importing `std::thread` and `std::time::Duration`, like `use std::thread;` at the start of the file"],
@@ -748,12 +728,6 @@ mod tests {
                     let glob_pattern = format!(\"{}/**/*.rs\", root_directory);
                 }
             "},
-            indoc! {"
-                fn main() {
-                    let dir = \"/tmp\";
-                    let glob_pattern = format!(\"{}/**/*.rs\", dir);
-                }
-            "},
             vec!["Ensure that the Actual test output does not contain the `root_directory` variable anymore and that it has been renamed into dir everywhere"],
             cx,
         )
@@ -773,12 +747,6 @@ mod tests {
                 fn main() {
                     let dir = \"/tmp\";<|user_cursor_is_here|>
                     let glob_pattern = format!(\"{}/**/*.rs\", \"/tmp\");
-                }
-            "},
-            indoc! {"
-                fn main() {
-                    let dir = \"/tmp\";
-                    let glob_pattern = format!(\"{}/**/*.rs\", dir);
                 }
             "},
             vec!["Ensure that the Actual test output replaced the string `\"/tmp\"` with the variable `dir` in the call to `format!`"],
@@ -802,12 +770,6 @@ mod tests {
                     let glob_pattern = format!(\"{}/**/*.rs\", \"/tmp\");
                 }
             "},
-            indoc! {"
-                fn main() {
-                    let dir = \"/tmp\";
-                    let glob_pattern = format!(\"{}/**/*.rs\", dir);
-                }
-            "},
             vec!["Ensure that the Actual test output assigns the string `\"/tmp\"` to the variable `dir``"],
             cx,
         )
@@ -829,13 +791,6 @@ mod tests {
                     let args = std::env::args();
                     let <|user_cursor_is_here|>
                     let root_directory = \"/tmp\";
-                    let glob_pattern = format!(\"{}/{}\", root_directory, \"**/*.rs\");
-                }
-            "},
-            indoc! {"
-                fn main() {
-                    let args = std::env::args();
-                    let root_directory = args.nth(1).unwrap_or(\"/tmp\");
                     let glob_pattern = format!(\"{}/{}\", root_directory, \"**/*.rs\");
                 }
             "},
@@ -865,16 +820,6 @@ mod tests {
                     }
                 }
             "},
-            indoc! {"
-                fn main() {
-                    let words = vec![\"hello\"];
-                    for word in words {
-                        for ch in word.chars() {
-                            dbg!(ch);
-                        }
-                    }
-                }
-            "},
             vec![
                 "Ensure that `words` assignment is valid",
                 "Ensure a nested loop is created",
@@ -884,11 +829,44 @@ mod tests {
         .await;
     }
 
+    #[gpui::test]
+    async fn test_new_cli_arg(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let zeta = zeta(cx);
+
+        let buffer = open_buffer(
+            "crates/cli/src/main.rs",
+            include_str!("../fixtures/new-cli-arg/initial.rs"),
+            &zeta,
+            cx,
+        );
+        let edited_1 = include_str!("../fixtures/new-cli-arg/edit1.rs");
+        let cursor_start = edited_1
+            .find(CURSOR_MARKER)
+            .expect(&format!("{CURSOR_MARKER} not found"));
+        let edited_1 = edited_1.replace(CURSOR_MARKER, "");
+        edit(&buffer, &edited_1, cx);
+        autocomplete(&buffer, cursor_start, &zeta, cx).await;
+
+        let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert_autocompleted(
+            autocompleted,
+            &[
+                "Ensure a new boolean field has been added to the `Args` struct to control whether to do an update or not",
+                "Ensure the field also has an `#[arg]` attribute macro",
+                "Ideally, it has the `#[arg(long)]` attribute macro",
+                "Ideally, the field name is `update` (but if it's not called that, that's fine too)",
+            ],
+            &zeta,
+            cx,
+        )
+        .await;
+    }
+
     async fn assert_open_edit_complete_full(
         filename: &str,
         initial: &str,
         edited: &str,
-        expected: &str,
         assertions: &[&str],
         cx: &mut TestAppContext,
     ) {
@@ -903,14 +881,13 @@ mod tests {
         edit(&buffer, &edited, cx);
         autocomplete(&buffer, cursor_start, &zeta, cx).await;
         let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
-        assert_autocompleted(autocompleted, expected, assertions, zeta, cx).await;
+        assert_autocompleted(autocompleted, assertions, &zeta, cx).await;
     }
 
     async fn assert_open_edit_complete_incremental(
         filename: &str,
         initial: &str,
         edited: &str,
-        expected: &str,
         assertions: &[&str],
         cx: &mut TestAppContext,
     ) {
@@ -925,28 +902,24 @@ mod tests {
         character_wise_edit(&buffer, &edited, cx);
         autocomplete(&buffer, cursor_start, &zeta, cx).await;
         let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
-        assert_autocompleted(autocompleted, expected, assertions, zeta, cx).await;
+        assert_autocompleted(autocompleted, assertions, &zeta, cx).await;
     }
 
     async fn assert_open_edit_complete(
         filename: &str,
         initial: &str,
         edited: &str,
-        expected: &str,
-        mut assertions: Vec<&str>,
+        assertions: Vec<&str>,
         cx: &mut TestAppContext,
     ) {
-        assertions.insert(0, "Must be similar to the expected output");
-        assert_open_edit_complete_full(filename, initial, edited, expected, &assertions, cx).await;
-        assert_open_edit_complete_incremental(filename, initial, edited, expected, &assertions, cx)
-            .await;
+        assert_open_edit_complete_full(filename, initial, edited, &assertions, cx).await;
+        assert_open_edit_complete_incremental(filename, initial, edited, &assertions, cx).await;
     }
 
     async fn assert_autocompleted(
         autocompleted: String,
-        expected: &str,
         assertions: &[&str],
-        zeta: Model<Zeta>,
+        zeta: &Model<Zeta>,
         cx: &mut TestAppContext,
     ) {
         let mut assertion_text = String::new();
@@ -958,7 +931,6 @@ mod tests {
 
         let prompt = include_str!("./eval_prompt.md")
             .replace("<actual>", &autocompleted)
-            .replace("<expected>", expected)
             .replace("<assertions>", &assertion_text);
 
         log::debug!("grading prompt: {}", prompt);
@@ -1002,10 +974,9 @@ mod tests {
             .unwrap();
         assert!(
             score >= 0.8,
-            "score was {}\n----- actual: ------\n{}\n----- expected: ------\n{}",
+            "score was {}\n----- actual: ------\n{}",
             score,
             autocompleted,
-            expected
         );
     }
 
