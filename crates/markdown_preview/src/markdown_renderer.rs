@@ -5,7 +5,7 @@ use crate::markdown_elements::{
     ParsedMarkdownTableRow, ParsedMarkdownText,
 };
 use gpui::{
-    div, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
+    div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
     ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length,
     Modifiers, ParentElement, Resource, SharedString, Styled, StyledText, TextStyle, WeakView,
     WindowContext,
@@ -428,8 +428,7 @@ fn render_markdown_text(
     cx: &mut RenderContext,
 ) -> Vec<AnyElement> {
     let mut any_element = vec![];
-
-    // Clone required fields outside the loop to avoid lifetime issues
+    // these values are cloned in-order satisfy borrow checker
     let syntax_theme = cx.syntax_theme.clone();
     let workspace_clone = cx.workspace.clone();
     let code_span_bg_color = cx.code_span_background_color;
@@ -437,7 +436,6 @@ fn render_markdown_text(
 
     for parsed_region in parsed_new {
         match parsed_region {
-            // Handle text paragraphs
             MarkdownParagraph::MarkdownText(parsed) => {
                 let element_id = cx.next_id(&parsed.source_range);
 
@@ -554,26 +552,23 @@ fn render_markdown_text(
                         let fallback_alt_text = alt_text.clone();
                         let element_id_new = element_id.clone();
                         let element = div()
-                            .child(
-                                gpui::img(ImageSource::Resource(image_source)).with_fallback({
-                                    move || {
-                                        fallback_text(
-                                            fallback_alt_text.clone().unwrap(),
-                                            element_id.clone(),
-                                            &fallback_syntax_theme,
-                                            code_span_bg_color,
-                                            fallback_workspace.clone(),
-                                            &fallback_text_style,
-                                        )
-                                    }
-                                }),
-                            )
+                            .child(img(ImageSource::Resource(image_source)).with_fallback({
+                                move || {
+                                    fallback_text(
+                                        fallback_alt_text.clone().unwrap(),
+                                        element_id.clone(),
+                                        &fallback_syntax_theme,
+                                        code_span_bg_color,
+                                        fallback_workspace.clone(),
+                                        &fallback_text_style,
+                                    )
+                                }
+                            }))
                             .id(element_id_new)
                             .into_any();
                         any_element.push(element);
                     }
                     Some(link) => {
-                        // Image with a link
                         let link_click = link.clone();
                         let link_tooltip = link.clone();
                         let fallback_workspace = workspace_clone.clone();
@@ -582,20 +577,18 @@ fn render_markdown_text(
                         let fallback_alt_text = alt_text.clone();
                         let element_id_new = element_id.clone();
                         let image_element = div()
-                            .child(
-                                gpui::img(ImageSource::Resource(image_source)).with_fallback({
-                                    move || {
-                                        fallback_text(
-                                            fallback_alt_text.clone().unwrap(),
-                                            element_id.clone(),
-                                            &fallback_syntax_theme,
-                                            code_span_bg_color,
-                                            fallback_workspace.clone(),
-                                            &fallback_text_style,
-                                        )
-                                    }
-                                }),
-                            )
+                            .child(img(ImageSource::Resource(image_source)).with_fallback({
+                                move || {
+                                    fallback_text(
+                                        fallback_alt_text.clone().unwrap(),
+                                        element_id.clone(),
+                                        &fallback_syntax_theme,
+                                        code_span_bg_color,
+                                        fallback_workspace.clone(),
+                                        &fallback_text_style,
+                                    )
+                                }
+                            }))
                             .id(element_id_new)
                             .tooltip(move |cx| LinkPreview::new(&link_tooltip.to_string(), cx))
                             .on_click({

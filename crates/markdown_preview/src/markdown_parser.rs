@@ -338,13 +338,22 @@ impl<'a> MarkdownParser<'a> {
                         if is_valid_image {
                             text.truncate(text.len() - t.len());
                             if !t.is_empty() {
-                                let alt_text = dbg!(ParsedMarkdownText {
+                                let alt_text = ParsedMarkdownText {
                                     source_range: source_range.clone(),
-                                    contents:   t.to_string(),
+                                    contents: t.to_string(),
                                     highlights: highlights.clone(),
                                     region_ranges: region_ranges.clone(),
                                     regions: regions.clone(),
-                                });
+                                };
+                                image = image.with_alt_text(alt_text);
+                            } else {
+                                let alt_text = ParsedMarkdownText {
+                                    source_range: source_range.clone(),
+                                    contents: "img".to_string(),
+                                    highlights: highlights.clone(),
+                                    region_ranges: region_ranges.clone(),
+                                    regions: regions.clone(),
+                                };
                                 image = image.with_alt_text(alt_text);
                             }
                             if !text.is_empty() {
@@ -455,7 +464,7 @@ impl<'a> MarkdownParser<'a> {
                 region_ranges,
             }));
         }
-        dbg!(markdown_text_like)
+        markdown_text_like
     }
 
     fn parse_heading(&mut self, level: pulldown_cmark::HeadingLevel) -> ParsedMarkdownHeading {
@@ -956,7 +965,15 @@ mod tests {
                 source_range: 0..111,
                 url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
                 link: None,
-                alt_text: None
+                alt_text: Some(
+                        ParsedMarkdownText {
+                        source_range: 0..111,
+                       contents: "test".to_string(),
+                       highlights: vec![],
+                     region_ranges: vec![],
+                      regions: vec![],
+                 },
+                  ),
             },)
         );
     }

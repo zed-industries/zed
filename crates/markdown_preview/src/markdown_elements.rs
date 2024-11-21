@@ -298,7 +298,7 @@ pub enum Image {
         /// Link URL if exists.
         link: Option<Link>,
         /// alt text if it exists
-        alt_text: Option<ParsedMarkdownText>
+        alt_text: Option<ParsedMarkdownText>,
     },
     ///  Image path on the filesystem.
     Path {
@@ -310,7 +310,7 @@ pub enum Image {
         /// Link URL if exists.
         link: Option<Link>,
         /// alt text if it exists
-        alt_text: Option<ParsedMarkdownText>
+        alt_text: Option<ParsedMarkdownText>,
     },
 }
 
@@ -326,7 +326,7 @@ impl Image {
                 source_range,
                 url: text,
                 link,
-                alt_text: None
+                alt_text: None,
             });
         }
         let path = PathBuf::from(&text);
@@ -336,7 +336,7 @@ impl Image {
                 display_path: path.clone(),
                 path,
                 link,
-                alt_text: None
+                alt_text: None,
             });
         }
         if let Some(file_location_directory) = file_location_directory {
@@ -347,7 +347,7 @@ impl Image {
                 display_path,
                 path,
                 link,
-                alt_text: None
+                alt_text: None,
             });
         }
         None
@@ -360,19 +360,25 @@ impl Image {
                 ref url,
                 ref link,
                 ..
-                } => Image::Web {source_range: source_range.clone(), url: url.clone(),link: link.clone(),alt_text:Some(alt_text) },
+            } => Image::Web {
+                source_range: source_range.clone(),
+                url: url.clone(),
+                link: link.clone(),
+                alt_text: Some(alt_text),
+            },
             Image::Path {
                 ref source_range,
                 ref display_path,
                 ref path,
                 ref link,
-                .. } => Image::Path {
-                    source_range: source_range.clone(),
-                    display_path: display_path.clone(),
-                    path: path.clone(),
-                    link: link.clone(),
-                    alt_text: Some(alt_text),
-                },
+                ..
+            } => Image::Path {
+                source_range: source_range.clone(),
+                display_path: display_path.clone(),
+                path: path.clone(),
+                link: link.clone(),
+                alt_text: Some(alt_text),
+            },
         }
     }
 }
