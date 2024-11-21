@@ -19,7 +19,6 @@ test-support = [
     "call/test-support",
     "client/test-support",
     "collections/test-support",
-    "editor/test-support",
     "gpui/test-support",
     "http_client/test-support",
     "project/test-support",
@@ -31,7 +30,6 @@ test-support = [
 auto_update.workspace = true
 call.workspace = true
 client.workspace = true
-feedback.workspace = true
 feature_flags.workspace = true
 gpui.workspace = true
 notifications.workspace = true
@@ -54,7 +52,6 @@ windows.workspace = true
 call = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
-editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 notifications = { workspace = true, features = ["test-support"] }
