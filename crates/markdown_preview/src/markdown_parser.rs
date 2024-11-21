@@ -240,46 +240,6 @@ impl<'a> MarkdownParser<'a> {
                 Event::Text(t) => {
                     text.push_str(t.as_ref());
                     let mut style = MarkdownHighlightStyle::default();
-                    if let Some(image) = image.clone() {
-                        let is_valid_image = match image.clone() {
-                            Image::Path {
-                                source_range: _,
-                                display_path,
-                                path: _,
-                                link: _,
-                            } => gpui::ImageSource::try_from(display_path).is_ok(),
-                            Image::Web {
-                                source_range: _,
-                                url,
-                                link: _,
-                            } => gpui::ImageSource::try_from(url).is_ok(),
-                        };
-                        if is_valid_image {
-                            text.truncate(text.len() - t.len());
-                            if !text.is_empty() {
-                                let parsed_regions =
-                                    MarkdownParagraph::MarkdownText(ParsedMarkdownText {
-                                        source_range: source_range.clone(),
-                                        contents: text.clone(),
-                                        highlights: highlights.clone(),
-                                        region_ranges: region_ranges.clone(),
-                                        regions: regions.clone(),
-                                    });
-                                text = String::new();
-                                highlights = vec![];
-                                region_ranges = vec![];
-                                regions = vec![];
-                                italic_depth = 0;
-                                bold_depth = 0;
-                                strikethrough_depth = 0;
-                                markdown_text_like.push(parsed_regions);
-                            }
-                            let parsed_image = MarkdownParagraph::MarkdownImage(image.clone());
-                            markdown_text_like.push(parsed_image);
-                            style = MarkdownHighlightStyle::default();
-                        }
-                        style.underline = true;
-                    };
 
                     if bold_depth > 0 {
                         style.weight = FontWeight::BOLD;
@@ -359,9 +319,57 @@ impl<'a> MarkdownParser<'a> {
                             ));
                         }
                     }
-                }
+                    if let Some(mut image) = image.clone() {
+                        let is_valid_image = match image.clone() {
+                            Image::Path {
+                                source_range: _,
+                                display_path,
+                                path: _,
+                                link: _,
+                                alt_text: _,
+                            } => gpui::ImageSource::try_from(display_path).is_ok(),
+                            Image::Web {
+                                source_range: _,
+                                url,
+                                link: _,
+                                alt_text: _,
+                            } => gpui::ImageSource::try_from(url).is_ok(),
+                        };
+                        if is_valid_image {
+                            text.truncate(text.len() - t.len());
+                            if !t.is_empty() {
+                                let alt_text = dbg!(ParsedMarkdownText {
+                                    source_range: source_range.clone(),
+                                    contents:   t.to_string(),
+                                    highlights: highlights.clone(),
+                                    region_ranges: region_ranges.clone(),
+                                    regions: regions.clone(),
+                                });
+                                image = image.with_alt_text(alt_text);
+                            }
+                            if !text.is_empty() {
+                                let parsed_regions =
+                                    MarkdownParagraph::MarkdownText(ParsedMarkdownText {
+                                        source_range: source_range.clone(),
+                                        contents: text.clone(),
+                                        highlights: highlights.clone(),
+                                        region_ranges: region_ranges.clone(),
+                                        regions: regions.clone(),
+                                    });
+                                text = String::new();
+                                highlights = vec![];
+                                region_ranges = vec![];
+                                regions = vec![];
+                                markdown_text_like.push(parsed_regions);
+                            }
 
-                // Note: This event means "inline code" and not "code block"
+                            let parsed_image = MarkdownParagraph::MarkdownImage(image.clone());
+                            markdown_text_like.push(parsed_image);
+                            style = MarkdownHighlightStyle::default();
+                        }
+                        style.underline = true;
+                    };
+                }
                 Event::Code(t) => {
                     text.push_str(t.as_ref());
                     region_ranges.push(prev_len..text.len());
@@ -447,7 +455,7 @@ impl<'a> MarkdownParser<'a> {
                 region_ranges,
             }));
         }
-        markdown_text_like
+        dbg!(markdown_text_like)
     }
 
     fn parse_heading(&mut self, level: pulldown_cmark::HeadingLevel) -> ParsedMarkdownHeading {
@@ -948,6 +956,7 @@ mod tests {
                 source_range: 0..111,
                 url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
                 link: None,
+                alt_text: None
             },)
         );
     }
