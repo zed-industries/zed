@@ -37,7 +37,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(ProjectDiffEditor::register).detach();
 }
 
-const UPDATE_DEBOUNCE: Duration = Duration::from_millis(80);
+const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 struct ProjectDiffEditor {
     buffer_changes: BTreeMap<WorktreeId, HashMap<ProjectEntryId, Changes>>,
@@ -291,11 +291,33 @@ impl ProjectDiffEditor {
                     })
                     .await;
 
+                let mut diff_recalculations = FuturesUnordered::new();
                 project_diff_editor
                     .update(&mut cx, |project_diff_editor, cx| {
                         project_diff_editor.update_excerpts(id, new_changes, new_entry_order, cx);
+                        for buffer in project_diff_editor
+                            .editor
+                            .read(cx)
+                            .buffer()
+                            .read(cx)
+                            .all_buffers()
+                        {
+                            buffer.update(cx, |buffer, cx| {
+                                if let Some(diff_recalculation) = buffer.recalculate_diff(cx) {
+                                    diff_recalculations.push(diff_recalculation);
+                                }
+                            });
+                        }
                     })
                     .ok();
+
+                cx.background_executor()
+                    .spawn(async move {
+                        while let Some(()) = diff_recalculations.next().await {
+                            // another diff is calculated
+                        }
+                    })
+                    .await;
             }),
         );
     }
