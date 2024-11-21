@@ -6126,6 +6126,7 @@ fn join_pane_into_active(active_pane: &View<Pane>, pane: &View<Pane>, cx: &mut W
         return;
     } else if pane.read(cx).items_len() == 0 {
         pane.update(cx, |_, cx| {
+            dbg!("????");
             cx.emit(pane::Event::Remove {
                 focus_on_pane: None,
             });

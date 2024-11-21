@@ -43,6 +43,10 @@ actions!(terminal_panel, [ToggleFocus]);
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
+            // TODO kb new actions (which keybindings to use?? cmd-k is taken on macOS):
+            // * ActivatePaneInDirection, ActivateNextPane, ActivatePreviousPane, ActivatePane,
+            // * CloseAllItemsAndPanes, CloseInactiveTabsAndPanes, SwapPaneInDirection,
+            // * SwapItemLeft, SwapItemRight, SplitLeft, SplitUp, SplitRight, SplitDown, SplitHorizontal, SplitVertical,
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
@@ -293,13 +297,16 @@ impl TerminalPanel {
             pane::Event::ActivateItem { .. } => self.serialize(cx),
             pane::Event::RemovedItem { .. } => self.serialize(cx),
             pane::Event::Remove { focus_on_pane } => {
-                let panes_before_removal = self.center.panes().len();
+                let pane_count_before_removal = self.center.panes().len();
                 let _removal_result = self.center.remove(&pane);
-                if let Some(focus_on_pane) = focus_on_pane {
-                    focus_on_pane.focus_handle(cx).focus(cx);
-                }
-                if panes_before_removal == 1 {
+                if pane_count_before_removal == 1 {
                     cx.emit(PanelEvent::Close);
+                } else {
+                    if let Some(focus_on_pane) =
+                        focus_on_pane.as_ref().or_else(|| self.center.panes().pop())
+                    {
+                        focus_on_pane.focus_handle(cx).focus(cx);
+                    }
                 }
             }
             pane::Event::ZoomIn => {
@@ -776,7 +783,7 @@ fn new_terminal_pane(
                 if let Some(item) = item {
                     // TODO kb need to "move" terminals instead of splitting them + create new terminal in the old pane, if the task terminal was the last one
                     if item.downcast::<TerminalView>().is_some() {
-                        match pane.drag_split_direction {
+                        match pane.drag_split_direction() {
                             Some(drag_split_direction) => {
                                 cx.emit(pane::Event::Split(drag_split_direction));
                                 return ControlFlow::Break(());
