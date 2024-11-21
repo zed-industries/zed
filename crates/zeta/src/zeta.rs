@@ -86,6 +86,28 @@ impl Zeta {
     }
 
     fn push_event(&mut self, event: Event) {
+        // Coalesce edits for the same buffer when they happen one after the other.
+        if let Event::BufferChange {
+            old_snapshot,
+            new_snapshot,
+        } = &event
+        {
+            if let Some(last_entry) = self.events.last_entry() {
+                if let Event::BufferChange {
+                    new_snapshot: last_new_snapshot,
+                    ..
+                } = last_entry.get_mut()
+                {
+                    if old_snapshot.remote_id() == last_new_snapshot.remote_id()
+                        && old_snapshot.version == last_new_snapshot.version
+                    {
+                        *last_new_snapshot = new_snapshot.clone();
+                        return;
+                    }
+                }
+            }
+        }
+
         // Filter out an edit event that occurs when an inline completion is accepted
         if let Event::Edit {
             old_text,
@@ -390,69 +412,15 @@ impl Zeta {
             .unwrap();
         let new_snapshot = buffer.read(cx).snapshot();
 
-        if new_snapshot.version == registered_buffer.snapshot.version {
-            new_snapshot
-        } else {
+        if new_snapshot.version != registered_buffer.snapshot.version {
             let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
-
-            let old_path = old_snapshot.file().map(|f| f.path().clone());
-            let new_path = new_snapshot.file().map(|f| f.path().clone());
-            if old_path != new_path {
-                self.push_event(Event::Rename { old_path, new_path });
-            }
-
-            let mut edits = new_snapshot
-                .edits_since::<Point>(&old_snapshot.version)
-                .peekable();
-            while let Some(edit) = edits.next() {
-                let mut old_start = edit.old.start.row;
-                let mut old_end = edit.old.end.row;
-                let mut new_start = edit.new.start.row;
-                let mut new_end = edit.new.end.row;
-
-                old_start = old_start.saturating_sub(2);
-                old_end = cmp::max(old_end + 2, old_snapshot.max_point().row + 1);
-
-                // Peek at further edits and merge if they overlap
-                while let Some(next_edit) = edits.peek() {
-                    if next_edit.old.start.row <= old_end {
-                        old_end =
-                            cmp::max(next_edit.old.end.row + 2, old_snapshot.max_point().row + 1);
-                        new_end = next_edit.new.end.row;
-                        edits.next();
-                    } else {
-                        break;
-                    }
-                }
-
-                new_start = new_start.saturating_sub(2);
-                new_end = cmp::max(new_end + 2, new_snapshot.max_point().row + 1);
-
-                // Report the merged edit
-                self.push_event(Event::Edit {
-                    path: new_snapshot.file().map_or_else(
-                        || Arc::from(Path::new("untitled")),
-                        |file| file.path().clone(),
-                    ),
-                    old_text: old_snapshot
-                        .text_for_range(
-                            Point::new(old_start, 0)
-                                ..Point::new(old_end, old_snapshot.line_len(old_end)),
-                        )
-                        .collect::<String>()
-                        .into(),
-                    new_text: new_snapshot
-                        .text_for_range(
-                            Point::new(new_start, 0)
-                                ..Point::new(new_end, new_snapshot.line_len(new_end)),
-                        )
-                        .collect::<String>()
-                        .into(),
-                });
-            }
-            drop(edits);
-            new_snapshot
+            self.push_event(Event::BufferChange {
+                old_snapshot,
+                new_snapshot: new_snapshot.clone(),
+            });
         }
+
+        new_snapshot
     }
 }
 
@@ -473,17 +441,12 @@ enum Event {
     Save {
         path: Arc<Path>,
     },
-    Rename {
-        old_path: Option<Arc<Path>>,
-        new_path: Option<Arc<Path>>,
+    BufferChange {
+        old_snapshot: BufferSnapshot,
+        new_snapshot: BufferSnapshot,
     },
     Close {
         path: Arc<Path>,
-    },
-    Edit {
-        path: Arc<Path>,
-        old_text: Arc<str>,
-        new_text: Arc<str>,
     },
     InlineCompletion {
         id: InlineCompletionId,
@@ -502,23 +465,81 @@ impl Event {
         match self {
             Event::Open { path } => format!("User opened file: {:?}", path),
             Event::Save { path } => format!("User saved file: {:?}", path),
-            Event::Rename { old_path, new_path } => format!(
-                "User renamed file: {:?} -> {:?}",
-                old_path.as_deref().unwrap_or(Path::new("untitled")),
-                new_path.as_deref().unwrap_or(Path::new("untitled"))
-            ),
-            Event::Close { path } => format!("User closed file: {:?}", path),
-            Event::Edit {
-                path,
-                old_text,
-                new_text,
+            Event::BufferChange {
+                old_snapshot,
+                new_snapshot,
             } => {
-                format!(
-                    "User edited file: {:?}\n\n{}",
-                    path,
-                    format_edit(old_text, new_text)
-                )
+                let mut prompt = String::new();
+
+                // let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
+
+                let old_path = old_snapshot
+                    .file()
+                    .map(|f| f.path().as_ref())
+                    .unwrap_or(Path::new("untitled"));
+                let new_path = new_snapshot
+                    .file()
+                    .map(|f| f.path().as_ref())
+                    .unwrap_or(Path::new("untitled"));
+                if old_path != new_path {
+                    writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
+                }
+
+                let mut edits = new_snapshot
+                    .edits_since::<Point>(&old_snapshot.version)
+                    .peekable();
+
+                if edits.peek().is_some() {
+                    writeln!(prompt, "User edited {:?}:\n", new_path).unwrap();
+                }
+
+                while let Some(edit) = edits.next() {
+                    let mut old_start = edit.old.start.row;
+                    let mut old_end = edit.old.end.row;
+                    let mut new_start = edit.new.start.row;
+                    let mut new_end = edit.new.end.row;
+
+                    old_start = old_start.saturating_sub(2);
+                    old_end = cmp::max(old_end + 2, old_snapshot.max_point().row + 1);
+
+                    // Peek at further edits and merge if they overlap
+                    while let Some(next_edit) = edits.peek() {
+                        if next_edit.old.start.row <= old_end {
+                            old_end = cmp::max(
+                                next_edit.old.end.row + 2,
+                                old_snapshot.max_point().row + 1,
+                            );
+                            new_end = next_edit.new.end.row;
+                            edits.next();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    new_start = new_start.saturating_sub(2);
+                    new_end = cmp::max(new_end + 2, new_snapshot.max_point().row + 1);
+
+                    // Report the merged edit
+                    let edit = format_edit(
+                        &old_snapshot
+                            .text_for_range(
+                                Point::new(old_start, 0)
+                                    ..Point::new(old_end, old_snapshot.line_len(old_end)),
+                            )
+                            .collect::<String>(),
+                        &new_snapshot
+                            .text_for_range(
+                                Point::new(new_start, 0)
+                                    ..Point::new(new_end, new_snapshot.line_len(new_end)),
+                            )
+                            .collect::<String>(),
+                    );
+                    writeln!(prompt, "{}\n\n", edit).unwrap();
+                }
+
+                prompt
             }
+            Event::Close { path } => format!("User closed file: {:?}", path),
             Event::InlineCompletion {
                 old_text,
                 new_text,
