@@ -140,11 +140,7 @@ impl PlatformAtlas for BladeAtlas {
             return;
         };
 
-        let Some(texture_slot) = lock
-            .storage
-            .get(id.kind)
-            .and_then(|storage| storage.get_mut(id.index as usize))
-        else {
+        let Some(texture_slot) = lock.storage[id.kind].get_mut(id.index as usize) else {
             return;
         };
 
@@ -352,7 +348,7 @@ struct BladeAtlasTexture {
     raw: gpu::Texture,
     raw_view: gpu::TextureView,
     format: gpu::TextureFormat,
-    allocations: u32,
+    live_atlas_keys: u32,
 }
 
 impl BladeAtlasTexture {
@@ -371,7 +367,7 @@ impl BladeAtlasTexture {
                 size,
             },
         };
-        self.allocations += 1;
+        self.live_atlas_keys += 1;
         Some(tile)
     }
 
@@ -385,11 +381,11 @@ impl BladeAtlasTexture {
     }
 
     fn decrement_ref_count(&mut self) {
-        self.allocations -= 1;
+        self.live_atlas_keys -= 1;
     }
 
     fn is_unreferenced(&mut self) -> bool {
-        self.allocations == 0
+        self.live_atlas_keys == 0
     }
 }
 
