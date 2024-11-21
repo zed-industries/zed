@@ -109,7 +109,7 @@ pub struct TerminalView {
     blink_epoch: usize,
     can_navigate_to_selected_word: bool,
     workspace_id: Option<WorkspaceId>,
-    show_title: bool,
+    show_breadcrumbs: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
     scroll_top: Pixels,
     _subscriptions: Vec<Subscription>,
@@ -189,7 +189,7 @@ impl TerminalView {
             blink_epoch: 0,
             can_navigate_to_selected_word: false,
             workspace_id,
-            show_title: TerminalSettings::get_global(cx).toolbar.title,
+            show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
             _subscriptions: vec![
@@ -259,7 +259,7 @@ impl TerminalView {
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         let settings = TerminalSettings::get_global(cx);
-        self.show_title = settings.toolbar.title;
+        self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
         let new_cursor_shape = settings.cursor_shape.unwrap_or_default();
         let old_cursor_shape = self.cursor_shape;
@@ -1145,8 +1145,8 @@ impl Item for TerminalView {
         Some(Box::new(handle.clone()))
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        if self.show_title {
+    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {
+        if self.show_breadcrumbs && !self.terminal().read(cx).breadcrumb_text.trim().is_empty() {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
