@@ -12651,9 +12651,8 @@ impl Editor {
             multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {
                 cx.emit(EditorEvent::TitleChanged)
             }
-            multi_buffer::Event::DiffBaseChanged { buffer } => {
+            multi_buffer::Event::DiffBaseChanged => {
                 self.scrollbar_marker_state.dirty = true;
-                self.sync_expanded_diff_hunks(buffer.clone(), cx);
                 cx.emit(EditorEvent::DiffBaseChanged);
                 cx.notify();
             }
