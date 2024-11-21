@@ -341,6 +341,18 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 chars_ignoring_modifiers = chars_with_cmd;
             }
 
+            if !control && !command && !function {
+                let mut mods = NO_MOD;
+                if shift {
+                    mods |= SHIFT_MOD;
+                }
+                if alt {
+                    mods |= OPTION_MOD;
+                }
+
+                key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
+            }
+
             let mut key = if shift
                 && chars_ignoring_modifiers
                     .chars()
@@ -353,18 +365,6 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             } else {
                 chars_ignoring_modifiers
             };
-
-            if !control && !command && !function {
-                let mut mods = NO_MOD;
-                if shift {
-                    mods |= SHIFT_MOD;
-                }
-                if alt {
-                    mods |= OPTION_MOD;
-                }
-
-                key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
-            }
 
             key
         }
