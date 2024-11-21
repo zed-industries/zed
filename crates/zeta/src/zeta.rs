@@ -5,7 +5,7 @@ use collections::{BTreeMap, HashMap};
 use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
 use http_client::HttpClient;
 use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset, ToPoint};
-use std::{borrow::Cow, cmp, fmt::Write, mem, ops::Range, path::Path, sync::Arc};
+use std::{borrow::Cow, cmp, fmt::Write, mem, ops::Range, path::Path, sync::Arc, time::Duration};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 struct InlineCompletionId(usize);
@@ -586,6 +586,8 @@ pub struct ZetaInlineCompletionProvider {
 }
 
 impl ZetaInlineCompletionProvider {
+    pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
+
     pub fn new(zeta: Model<Zeta>) -> Self {
         Self {
             zeta,
@@ -613,14 +615,25 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
         &mut self,
         buffer: Model<Buffer>,
         position: language::Anchor,
-        _debounce: bool,
+        debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        let completion = self.zeta.update(cx, |zeta, cx| {
-            zeta.request_inline_completion(&buffer, position, cx)
-        });
         self.pending_refresh = cx.spawn(|this, mut cx| async move {
-            let completion = completion.await.ok().and_then(|r| r);
+            if debounce {
+                cx.background_executor().timer(Self::DEBOUNCE_TIMEOUT).await;
+            }
+
+            let completion_request = this.update(&mut cx, |this, cx| {
+                this.zeta.update(cx, |zeta, cx| {
+                    zeta.request_inline_completion(&buffer, position, cx)
+                })
+            });
+
+            let mut completion = None;
+            if let Ok(completion_request) = completion_request {
+                completion = completion_request.await.ok().flatten();
+            }
+
             this.update(&mut cx, |this, cx| {
                 this.current_completion = completion;
                 cx.notify();
