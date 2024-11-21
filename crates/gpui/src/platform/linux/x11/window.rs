@@ -846,9 +846,9 @@ impl X11WindowStatePtr {
         if let PlatformInput::KeyDown(event) = input {
             let mut state = self.state.borrow_mut();
             if let Some(mut input_handler) = state.input_handler.take() {
-                if let Some(ime_key) = &event.keystroke.ime_key {
+                if let Some(key_char) = &event.keystroke.key_char {
                     drop(state);
-                    input_handler.replace_text_in_range(None, ime_key);
+                    input_handler.replace_text_in_range(None, key_char);
                     state = self.state.borrow_mut();
                 }
                 state.input_handler = Some(input_handler);
