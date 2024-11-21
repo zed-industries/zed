@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, TypedEnvelope};
 use collections::{HashMap, HashSet};
-use extension::ExtensionManifest;
+use extension::{Extension, ExtensionManifest};
 use fs::{Fs, RemoveOptions, RenameOptions};
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
 use http_client::HttpClient;
@@ -13,7 +13,7 @@ use node_runtime::NodeRuntime;
 
 use crate::{
     extension_lsp_adapter::ExtensionLspAdapter,
-    wasm_host::{wit, WasmExtension, WasmHost},
+    wasm_host::{WasmExtension, WasmHost},
     ExtensionRegistrationHooks,
 };
 
@@ -174,8 +174,8 @@ impl HeadlessExtensionStore {
             return Ok(());
         }
 
-        let wasm_extension =
-            WasmExtension::load(extension_dir, &manifest, wasm_host.clone(), &cx).await?;
+        let wasm_extension: Arc<dyn Extension> =
+            Arc::new(WasmExtension::load(extension_dir, &manifest, wasm_host.clone(), &cx).await?);
 
         for (language_server_name, language_server_config) in &manifest.language_servers {
             for language in language_server_config.languages() {
@@ -188,12 +188,8 @@ impl HeadlessExtensionStore {
                         language.clone(),
                         ExtensionLspAdapter {
                             extension: wasm_extension.clone(),
-                            host: wasm_host.clone(),
                             language_server_id: language_server_name.clone(),
-                            config: wit::LanguageServerConfig {
-                                name: language_server_name.0.to_string(),
-                                language_name: language.to_string(),
-                            },
+                            language_name: language,
                         },
                     );
                 })?;
