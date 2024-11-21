@@ -60,8 +60,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct TerminalPanel {
-    // TODO kb remove?
-    pane: View<Pane>,
+    active_pane: View<Pane>,
     center: PaneGroup,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
@@ -88,7 +87,7 @@ impl TerminalPanel {
         let enabled = project.supports_terminal(cx);
         let terminal_panel = Self {
             center,
-            pane,
+            active_pane: pane,
             fs: workspace.app_state().fs.clone(),
             workspace: workspace.weak_handle(),
             pending_serialization: Task::ready(None),
@@ -101,7 +100,7 @@ impl TerminalPanel {
             assistant_enabled: false,
             assistant_tab_bar_button: None,
         };
-        terminal_panel.apply_tab_bar_buttons(&terminal_panel.pane, cx);
+        terminal_panel.apply_tab_bar_buttons(&terminal_panel.active_pane, cx);
         terminal_panel
     }
 
@@ -109,7 +108,7 @@ impl TerminalPanel {
         self.assistant_enabled = enabled;
         if enabled {
             let focus_handle = self
-                .pane
+                .active_pane
                 .read(cx)
                 .active_item()
                 .map(|item| item.focus_handle(cx))
@@ -121,8 +120,9 @@ impl TerminalPanel {
         } else {
             self.assistant_tab_bar_button = None;
         }
-        // TODO kb wrong, need to update all of them
-        self.apply_tab_bar_buttons(&self.pane, cx);
+        for pane in self.center.panes() {
+            self.apply_tab_bar_buttons(pane, cx);
+        }
     }
 
     fn apply_tab_bar_buttons(&self, terminal_pane: &View<Pane>, cx: &mut ViewContext<Self>) {
@@ -213,7 +213,8 @@ impl TerminalPanel {
                     cx.notify();
                     panel.height = serialized_panel.height.map(|h| h.round());
                     panel.width = serialized_panel.width.map(|w| w.round());
-                    panel.pane.update(cx, |_, cx| {
+                    // TODO kb (de)serialization of the center pane
+                    panel.active_pane.update(cx, |_, cx| {
                         serialized_panel
                             .items
                             .iter()
@@ -232,7 +233,7 @@ impl TerminalPanel {
             } else {
                 Vec::new()
             };
-            let pane = panel.read(cx).pane.clone();
+            let pane = panel.read(cx).active_pane.clone();
             (panel, pane, items)
         })?;
 
@@ -311,13 +312,24 @@ impl TerminalPanel {
                 }
                 // TODO kb this won't restore pane if the central one got closed
             }
-            pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
-            pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
+            pane::Event::ZoomIn => {
+                if pane == self.active_pane {
+                    // TODO kb render zoomed panel over everything else
+                    pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
+                    cx.notify();
+                }
+                cx.emit(PanelEvent::ZoomIn)
+            }
+            pane::Event::ZoomOut => {
+                pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+                cx.emit(PanelEvent::ZoomOut)
+            }
 
             pane::Event::AddItem { item } => {
                 if let Some(workspace) = self.workspace.upgrade() {
-                    let pane = self.pane.clone();
-                    workspace.update(cx, |workspace, cx| item.added_to_pane(workspace, pane, cx))
+                    workspace.update(cx, |workspace, cx| {
+                        item.added_to_pane(workspace, pane.clone(), cx)
+                    })
                 }
             }
 
@@ -326,6 +338,10 @@ impl TerminalPanel {
                     return;
                 };
                 self.center.split(&pane, &new_pane, *direction).log_err();
+            }
+
+            pane::Event::Focus => {
+                self.active_pane = pane.clone();
             }
 
             _ => {}
@@ -355,9 +371,6 @@ impl TerminalPanel {
         // self.panes.push(pane.clone());
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         cx.focus_view(&pane);
-        workspace.update(cx, |_, cx| {
-            cx.emit(workspace::Event::PaneAdded(pane.clone()))
-        });
 
         Some(pane)
     }
@@ -546,8 +559,9 @@ impl TerminalPanel {
         &self,
         label: &str,
         cx: &mut AppContext,
+        // TODO kb need to return pane also
     ) -> Vec<(usize, View<TerminalView>)> {
-        self.pane
+        self.active_pane
             .read(cx)
             .items()
             .enumerate()
@@ -564,7 +578,7 @@ impl TerminalPanel {
     }
 
     fn activate_terminal_view(&self, item_index: usize, focus: bool, cx: &mut WindowContext) {
-        self.pane.update(cx, |pane, cx| {
+        self.active_pane.update(cx, |pane, cx| {
             pane.activate_item(item_index, true, focus, cx)
         })
     }
@@ -585,7 +599,7 @@ impl TerminalPanel {
         self.pending_terminals_to_add += 1;
 
         cx.spawn(|terminal_panel, mut cx| async move {
-            let pane = terminal_panel.update(&mut cx, |this, _| this.pane.clone())?;
+            let pane = terminal_panel.update(&mut cx, |this, _| this.active_pane.clone())?;
             let result = workspace.update(&mut cx, |workspace, cx| {
                 let window = cx.window_handle();
                 let terminal = workspace
@@ -626,7 +640,7 @@ impl TerminalPanel {
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
         let mut items_to_serialize = HashSet::default();
         let items = self
-            .pane
+            .active_pane
             .read(cx)
             .items()
             .filter_map(|item| {
@@ -641,7 +655,7 @@ impl TerminalPanel {
             })
             .collect::<Vec<_>>();
         let active_item_id = self
-            .pane
+            .active_pane
             .read(cx)
             .active_item()
             .map(|item| item.item_id().as_u64())
@@ -718,7 +732,7 @@ impl TerminalPanel {
     }
 
     fn has_no_terminals(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
+        self.active_pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
     }
 
     pub fn assistant_enabled(&self) -> bool {
@@ -784,6 +798,7 @@ fn new_terminal_pane(workspace: &Workspace, cx: &mut WindowContext) -> View<Pane
                                     let destination = cx.view().clone();
                                     let item_id_to_move = item.item_id();
                                     let destination_index = pane.active_item_index();
+
                                     // Destination pane is currently updated, so defer the move.
                                     cx.spawn(|_, mut cx| async move {
                                         cx.update(|cx| {
@@ -881,7 +896,7 @@ impl Render for TerminalPanel {
         let mut registrar = DivRegistrar::new(
             |panel, cx| {
                 panel
-                    .pane
+                    .active_pane
                     .read(cx)
                     .toolbar()
                     .read(cx)
@@ -897,7 +912,7 @@ impl Render for TerminalPanel {
                     workspace.project(),
                     &HashMap::default(),
                     None,
-                    &self.pane,
+                    &self.active_pane,
                     workspace.zoomed.as_ref(),
                     workspace.app_state(),
                     cx,
@@ -910,7 +925,7 @@ impl Render for TerminalPanel {
 
 impl FocusableView for TerminalPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.pane.focus_handle(cx)
+        self.active_pane.focus_handle(cx)
     }
 }
 
@@ -962,11 +977,12 @@ impl Panel for TerminalPanel {
     }
 
     fn is_zoomed(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).is_zoomed()
+        self.active_pane.read(cx).is_zoomed()
     }
 
     fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
-        self.pane.update(cx, |pane, cx| pane.set_zoomed(zoomed, cx));
+        self.active_pane
+            .update(cx, |pane, cx| pane.set_zoomed(zoomed, cx));
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
@@ -986,7 +1002,12 @@ impl Panel for TerminalPanel {
     }
 
     fn icon_label(&self, cx: &WindowContext) -> Option<String> {
-        let count = self.pane.read(cx).items_len();
+        let count = self
+            .center
+            .panes()
+            .into_iter()
+            .map(|pane| pane.read(cx).items_len())
+            .sum::<usize>();
         if count == 0 {
             None
         } else {
@@ -1015,7 +1036,7 @@ impl Panel for TerminalPanel {
     }
 
     fn pane(&self) -> Option<View<Pane>> {
-        Some(self.pane.clone())
+        Some(self.active_pane.clone())
     }
 }
 
