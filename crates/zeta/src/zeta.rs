@@ -237,67 +237,11 @@ impl Zeta {
         self.next_inline_completion_id.0 += 1;
 
         let mut events = String::new();
-        // let mut first_edit_event = None;
-        // let mut last_edit_event = None;
         for event in self.events.values() {
-            // match event {
-            //     Event::Edit { .. } => {
-            //         if first_edit_event.is_none() {
-            //             first_edit_event = Some(event);
-            //         }
-            //         last_edit_event = Some(event);
-            //         continue;
-            //     }
-            //     _ => {
-            //         if let Some((
-            //             Event::Edit {
-            //                 old_text: first_old_text,
-            //                 ..
-            //             },
-            //             Event::Edit {
-            //                 path,
-            //                 new_text: last_new_text,
-            //                 ..
-            //             },
-            //         )) = first_edit_event.take().zip(last_edit_event.take())
-            //         {
-            //             let coalesced_edit = Event::Edit {
-            //                 old_text: first_old_text.clone(),
-            //                 new_text: last_new_text.clone(),
-            //                 path: path.clone(),
-            //             };
-            //             events.push_str(&coalesced_edit.to_prompt());
-            //             events.push('\n');
-            //             events.push('\n');
-            //         }
-            //     }
-            // }
             events.push_str(&event.to_prompt());
             events.push('\n');
             events.push('\n');
         }
-
-        // if let Some((
-        //     Event::Edit {
-        //         old_text: first_old_text,
-        //         ..
-        //     },
-        //     Event::Edit {
-        //         path,
-        //         new_text: last_new_text,
-        //         ..
-        //     },
-        // )) = first_edit_event.take().zip(last_edit_event.take())
-        // {
-        //     let coalesced_edit = Event::Edit {
-        //         old_text: first_old_text.clone(),
-        //         new_text: last_new_text.clone(),
-        //         path: path.clone(),
-        //     };
-        //     events.push_str(&coalesced_edit.to_prompt());
-        //     events.push('\n');
-        //     events.push('\n');
-        // }
 
         let excerpt = inline_completion_excerpt(&snapshot, &position);
         let prompt = include_str!("./complete_prompt.md")
