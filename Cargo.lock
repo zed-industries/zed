@@ -12624,7 +12624,6 @@ dependencies = [
  "call",
  "client",
  "collections",
- "editor",
  "feature_flags",
  "gpui",
  "http_client",
