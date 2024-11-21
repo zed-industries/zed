@@ -1,6 +1,6 @@
 use gpui::{
-    div, linear_color_stop, linear_gradient, prelude::*, App, AppContext, Render, ViewContext,
-    WindowOptions,
+    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, App, AppContext,
+    Bounds, Half, Render, ViewContext, WindowOptions,
 };
 struct GradientViewer {}
 
@@ -134,6 +134,37 @@ impl Render for GradientViewer {
                         linear_color_stop(yellow, 0.5),
                     ))),
             )
+            .child(div().h_24().child(canvas(
+                move |_, _| {},
+                move |bounds, _, cx| {
+                    let size = size(bounds.size.width * 0.8, px(80.));
+                    let square_bounds = Bounds {
+                        origin: point(
+                            bounds.size.width.half() - size.width.half(),
+                            bounds.origin.y,
+                        ),
+                        size,
+                    };
+                    let height = square_bounds.size.height;
+                    let horizontal_offset = height;
+                    let vertical_offset = px(30.);
+                    let mut path = gpui::Path::new(square_bounds.lower_left());
+                    path.line_to(square_bounds.origin + point(horizontal_offset, vertical_offset));
+                    path.line_to(
+                        square_bounds.upper_right() + point(-horizontal_offset, vertical_offset),
+                    );
+                    path.line_to(square_bounds.lower_right());
+                    path.line_to(square_bounds.lower_left());
+                    cx.paint_path(
+                        path,
+                        linear_gradient(
+                            180.,
+                            linear_color_stop(red, 0.),
+                            linear_color_stop(blue, 1.),
+                        ),
+                    );
+                },
+            )))
     }
 }
 

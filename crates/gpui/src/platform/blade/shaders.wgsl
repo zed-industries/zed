@@ -118,6 +118,16 @@ fn linear_to_srgb(linear: vec3<f32>) -> vec3<f32> {
     return select(higher, lower, cutoff);
 }
 
+/// Convert a linear color to sRGBA space.
+fn linear_to_srgba(color: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(linear_to_srgb(color.rgb), color.a);
+}
+
+/// Convert a sRGBA color to linear space.
+fn srgba_to_linear(color: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(srgb_to_linear(color.rgb), color.a);
+}
+
 fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
     let h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
     let s = hsla.s;
@@ -219,6 +229,46 @@ fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
     return vec4<f32>(color.rgb * multiplier, alpha);
 }
 
+fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
+    sold_color: vec4<f32>, color0: vec4<f32>, color1: vec4<f32>) -> vec4<f32> {
+    var background_color = vec4<f32>(0.0);
+
+    if (background.tag == 0u) {
+        return sold_color;
+    } else if (background.tag == 1u) {
+        let linear_gradient = background.linear_gradient;
+        // Linear gradient background.
+        // -90 degrees to match the CSS gradient angle.
+        let radians = (linear_gradient.angle % 360.0 - 90.0) * M_PI_F / 180.0;
+        let direction = vec2<f32>(cos(radians), sin(radians));
+        let stop0_percentage = linear_gradient.stops[0].percentage;
+        let stop1_percentage = linear_gradient.stops[1].percentage;
+
+        // Get the t value for the linear gradient with the color stop percentages.
+        let half_size = bounds.size / 2.0;
+        let center = bounds.origin + half_size;
+        let center_to_point = position - center;
+        var t = dot(center_to_point, direction) / length(direction);
+        // Check the direct to determine the use x or y
+        if (abs(direction.x) > abs(direction.y)) {
+            t = (t + half_size.x) / bounds.size.x;
+        } else {
+            t = (t + half_size.y) / bounds.size.y;
+        }
+
+        // Adjust t based on the stop percentages
+        t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
+        t = clamp(t, 0.0, 1.0);
+
+        let color = mix(color0, color1, t);
+        // Convert back to linear space for blending.
+        background_color = srgba_to_linear(color);
+    }
+
+    return background_color;
+}
+
+
 // --- quads --- //
 struct Quad {
     order: u32,
@@ -240,11 +290,8 @@ struct QuadVarying {
     //TODO: use `clip_distance` once Naga supports it
     @location(3) clip_distances: vec4<f32>,
     @location(4) @interpolate(flat) background_solid: vec4<f32>,
-    @location(5) @interpolate(flat) background_angle: f32,
-    @location(6) @interpolate(flat) background_stop0_percentage: f32,
-    @location(7) @interpolate(flat) background_stop0_color: vec4<f32>,
-    @location(8) @interpolate(flat) background_stop1_percentage: f32,
-    @location(9) @interpolate(flat) background_stop1_color: vec4<f32>,
+    @location(5) @interpolate(flat) background_color0: vec4<f32>,
+    @location(6) @interpolate(flat) background_color1: vec4<f32>,
 }
 
 @vertex
@@ -256,13 +303,10 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.position = to_device_position(unit_vertex, quad.bounds);
     out.background_tag = quad.background.tag;
     if (out.background_tag == 0u) {
-        out.background_solid = hsla_to_rgba(quad.background.solid);
+        out.background_solid = linear_to_srgba(hsla_to_rgba(quad.background.solid));
     } else if (out.background_tag == 1u) {
-      out.background_angle = quad.background.linear_gradient.angle;
-      out.background_stop0_percentage = quad.background.linear_gradient.stops[0].percentage;
-      out.background_stop0_color = hsla_to_rgba(quad.background.linear_gradient.stops[0].color);
-      out.background_stop1_percentage = quad.background.linear_gradient.stops[1].percentage;
-      out.background_stop1_color = hsla_to_rgba(quad.background.linear_gradient.stops[1].color);
+        out.background_color0 = linear_to_srgba(hsla_to_rgba(quad.background.linear_gradient.stops[0].color));
+        out.background_color1 = linear_to_srgba(hsla_to_rgba(quad.background.linear_gradient.stops[1].color));
     }
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
@@ -282,41 +326,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let center = quad.bounds.origin + half_size;
     let center_to_point = input.position.xy - center;
 
-    var background_color = vec4<f32>(0.0);
-    if (input.background_tag == 0u) {
-        background_color = input.background_solid;
-    } else if (input.background_tag == 1u) {
-        // Linear gradient background.
-        let position = input.position.xy;
-        // -90 degrees to match the CSS gradient angle.
-        let radians = (input.background_angle % 360.0 - 90.0) * M_PI_F / 180.0;
-        let direction = vec2<f32>(cos(radians), sin(radians));
-        let stop0_percentage = input.background_stop0_percentage;
-        let stop1_percentage = input.background_stop1_percentage;
-
-        // Get the t value for the linear gradient with the color stop percentages.
-        var t = dot(center_to_point, direction) / length(direction);
-        // Check the direct to determine the use x or y
-        if (abs(direction.x) > abs(direction.y)) {
-            t = (t + half_size.x) / quad.bounds.size.x;
-        } else {
-            t = (t + half_size.y) / quad.bounds.size.y;
-        }
-
-        // Adjust t based on the stop percentages
-        t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
-        t = clamp(t, 0.0, 1.0);
-
-        var color0 = input.background_stop0_color;
-        var color1 = input.background_stop1_color;
-
-        // Convert back to sRGB space, the mix function will interpolate in linear space.
-        color0 = vec4<f32>(linear_to_srgb(color0.rgb), color0.a);
-        color1 = vec4<f32>(linear_to_srgb(color1.rgb), color1.a);
-        let color = mix(color0, color1, t);
-        // Convert back to linear space for blending.
-        background_color = vec4<f32>(srgb_to_linear(color.rgb), color.a);
-    }
+    let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
+        input.background_solid, input.background_color0, input.background_color1);
 
     // Fast path when the quad is not rounded and doesn't have any border.
     if (quad.corner_radii.top_left == 0.0 && quad.corner_radii.bottom_left == 0.0 &&
@@ -479,7 +490,7 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) f32 {
 
 struct PathSprite {
     bounds: Bounds,
-    color: Hsla,
+    color: Background,
     tile: AtlasTile,
 }
 var<storage, read> b_path_sprites: array<PathSprite>;
@@ -487,7 +498,10 @@ var<storage, read> b_path_sprites: array<PathSprite>;
 struct PathVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
-    @location(1) color: vec4<f32>,
+    @location(1) @interpolate(flat) instance_id: u32,
+    @location(2) @interpolate(flat) color_solid: vec4<f32>,
+    @location(3) @interpolate(flat) color0: vec4<f32>,
+    @location(4) @interpolate(flat) color1: vec4<f32>,
 }
 
 @vertex
@@ -499,7 +513,13 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     var out = PathVarying();
     out.position = to_device_position(unit_vertex, sprite.bounds);
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
-    out.color = hsla_to_rgba(sprite.color);
+    out.instance_id = instance_id;
+    if (sprite.color.tag == 0u) {
+        out.color_solid = linear_to_srgba(hsla_to_rgba(sprite.color.solid));
+    } else if (sprite.color.tag == 1u) {
+        out.color0 = linear_to_srgba(hsla_to_rgba(sprite.color.linear_gradient.stops[0].color));
+        out.color1 = linear_to_srgba(hsla_to_rgba(sprite.color.linear_gradient.stops[1].color));
+    }
     return out;
 }
 
@@ -507,7 +527,11 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
     let mask = 1.0 - abs(1.0 - sample % 2.0);
-    return blend_color(input.color, mask);
+    let sprite = b_path_sprites[input.instance_id];
+    let background = sprite.color;
+    let color = gradient_color(background, input.position.xy, sprite.bounds,
+        input.color_solid, input.color0, input.color1);
+    return blend_color(color, mask);
 }
 
 // --- underlines --- //

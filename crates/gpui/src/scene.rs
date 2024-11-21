@@ -748,7 +748,7 @@ pub struct Path<P: Clone + Default + Debug> {
     pub(crate) bounds: Bounds<P>,
     pub(crate) content_mask: ContentMask<P>,
     pub(crate) vertices: Vec<PathVertex<P>>,
-    pub(crate) color: Hsla,
+    pub(crate) color: Background,
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,

@@ -2321,7 +2321,7 @@ impl<'a> WindowContext<'a> {
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
+    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Background>) {
         debug_assert_eq!(
             self.window.draw_phase,
             DrawPhase::Paint,
@@ -2332,7 +2332,8 @@ impl<'a> WindowContext<'a> {
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         path.content_mask = content_mask;
-        path.color = color.into().opacity(opacity);
+        let color: Background = color.into();
+        path.color = color.opacity(opacity);
         self.window
             .next_frame
             .scene
