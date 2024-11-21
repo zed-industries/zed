@@ -346,7 +346,6 @@ impl TerminalPanel {
             TerminalView::new(terminal.clone(), self.workspace.clone(), database_id, cx)
         }));
         let pane = workspace.update(cx, |workspace, cx| new_terminal_pane(workspace, cx));
-        // TODO kb new panes have a blank space on top where the search buffer should be
         self.apply_tab_bar_buttons(&pane, cx);
         pane.update(cx, |pane, cx| {
             pane.add_item(terminal_view, true, true, None, cx);
@@ -757,8 +756,11 @@ fn new_terminal_pane(workspace: &Workspace, cx: &mut WindowContext) -> View<Pane
         })));
 
         let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
-        pane.toolbar()
-            .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
+        let breadcrumbs = cx.new_view(|_| Breadcrumbs::new());
+        pane.toolbar().update(cx, |toolbar, cx| {
+            toolbar.add_item(buffer_search_bar, cx);
+            toolbar.add_item(breadcrumbs, cx);
+        });
 
         pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
             if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
