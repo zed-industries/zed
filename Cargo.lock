@@ -9427,24 +9427,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quick_action_bar"
-version = "0.1.0"
-dependencies = [
- "assistant",
- "editor",
- "gpui",
- "markdown_preview",
- "picker",
- "repl",
- "search",
- "settings",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "quinn"
 version = "0.11.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15541,12 +15523,12 @@ dependencies = [
  "outline_panel",
  "parking_lot",
  "paths",
+ "picker",
  "profiling",
  "project",
  "project_panel",
  "project_symbols",
  "proto",
- "quick_action_bar",
  "recent_projects",
  "release_channel",
  "remote",
