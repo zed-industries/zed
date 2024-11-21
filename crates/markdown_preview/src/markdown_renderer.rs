@@ -206,7 +206,7 @@ fn render_markdown_list_item(
                 let secondary_modifier = Keystroke {
                     key: "".to_string(),
                     modifiers: Modifiers::secondary_key(),
-                    ime_key: None,
+                    key_char: None,
                 };
                 Tooltip::text(
                     format!("{}-click to toggle the checkbox", secondary_modifier),

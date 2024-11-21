@@ -742,14 +742,14 @@ impl Keystroke {
             }
         }
 
-        // Ignore control characters (and DEL) for the purposes of ime_key
-        let ime_key =
+        // Ignore control characters (and DEL) for the purposes of key_char
+        let key_char =
             (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
         Keystroke {
             modifiers,
             key,
-            ime_key,
+            key_char,
         }
     }
 
