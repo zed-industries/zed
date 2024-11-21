@@ -129,6 +129,7 @@ members = [
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
+    "crates/vim_mode_setting",
     "crates/welcome",
     "crates/workspace",
     "crates/worktree",
@@ -304,6 +305,7 @@ ui_macros = { path = "crates/ui_macros" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
+vim_mode_setting = { path = "crates/vim_mode_setting" }
 welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }

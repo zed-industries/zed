@@ -12,7 +12,7 @@ use gpui::{
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{prelude::*, CheckboxWithLabel};
-use vim::VimModeSetting;
+use vim_mode_setting::VimModeSetting;
 use workspace::{
     dock::DockPosition,
     item::{Item, ItemEvent},

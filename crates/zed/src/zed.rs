@@ -9,7 +9,9 @@ mod open_listener;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
+use anyhow::Context as _;
 pub use app_menus::*;
+use assets::Assets;
 use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
@@ -18,17 +20,15 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
+use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem,
     PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, View, ViewContext,
     VisualContext, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
-
-use anyhow::Context as _;
-use assets::Assets;
-use futures::{channel::mpsc, select_biased, StreamExt};
 use outline_panel::OutlinePanel;
+use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use project::{DirectoryLister, Item};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -43,16 +43,14 @@ use settings::{
 use std::any::TypeId;
 use std::path::PathBuf;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use theme::ActiveTheme;
-use workspace::notifications::NotificationId;
-use workspace::CloseIntent;
-
-use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use terminal_view::terminal_panel::{self, TerminalPanel};
+use theme::ActiveTheme;
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
-use vim::VimModeSetting;
+use vim_mode_setting::VimModeSetting;
 use welcome::{BaseKeymap, MultibufferHint};
+use workspace::notifications::NotificationId;
+use workspace::CloseIntent;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,

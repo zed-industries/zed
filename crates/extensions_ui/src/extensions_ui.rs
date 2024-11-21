@@ -27,7 +27,7 @@ use release_channel::ReleaseChannel;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
-use vim::VimModeSetting;
+use vim_mode_setting::VimModeSetting;
 use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
