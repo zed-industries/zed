@@ -16,10 +16,11 @@ use util::RangeExt;
 use workspace::Item;
 
 use crate::{
-    editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyAllDiffHunks,
-    ApplySelectedDiffHunks, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId,
-    DiffRowHighlight, DisplayRow, DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs,
-    GoToHunk, GoToPrevHunk, RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, is_hunk_selected,
+    ApplyAllDiffHunks, ApplySelectedDiffHunks, BlockPlacement, BlockProperties, BlockStyle,
+    CustomBlockId, DiffRowHighlight, DisplayRow, DisplaySnapshot, Editor, EditorElement,
+    ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk, RevertSelectedHunks, ToDisplayPoint,
+    ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -373,12 +374,8 @@ impl Editor {
         _: &ApplySelectedDiffHunks,
         cx: &mut ViewContext<Self>,
     ) {
-        dbg!("apply_selected_diff_hunks");
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let hunks = dbg!(hunks_for_selections(
-            &snapshot,
-            &self.selections.disjoint_anchors()
-        ));
+        let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
 
         self.transact(cx, |editor, cx| {
             if hunks.is_empty() {
@@ -390,7 +387,6 @@ impl Editor {
                 let mut ranges_by_buffer = HashMap::default();
 
                 for hunk in hunks {
-                    dbg!(&hunk);
                     if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
                         ranges_by_buffer
                             .entry(buffer.clone())
@@ -440,15 +436,14 @@ impl Editor {
                 let hunk = hunk.clone();
 
                 move |cx| {
-                    let hunk_controls_menu_handle =
-                        editor.read(cx).hunk_controls_menu_handle.clone();
-                    let is_first_hunk = editor
-                        .read(cx)
-                        .expanded_hunks
-                        .hunks
-                        .first()
-                        .map(|first_hunk| first_hunk.hunk_range == hunk.multi_buffer_range)
-                        .unwrap_or(false);
+                    let is_hunk_selected = editor.update(&mut **cx, |editor, cx| {
+                        let snapshot = editor.buffer.read(cx).snapshot(cx);
+                        if let Some(hunk) = to_diff_hunk(&hunk, &snapshot) {
+                            is_hunk_selected(&hunk, &editor.selections.all(cx))
+                        } else {
+                            false
+                        }
+                    });
 
                     let focus_handle = editor.focus_handle(cx);
 
@@ -561,7 +556,7 @@ impl Editor {
                                                 }
                                             }
                                         });
-                                    if is_first_hunk {
+                                    if is_hunk_selected {
                                         button.key_binding(KeyBinding::for_action_in(
                                             &RevertSelectedHunks,
                                             &focus_handle,
@@ -588,7 +583,7 @@ impl Editor {
                                                     });
                                                 }
                                             });
-                                        if is_first_hunk {
+                                        if is_hunk_selected {
                                             button.key_binding(KeyBinding::for_action_in(
                                                 &ApplySelectedDiffHunks,
                                                 &focus_handle,

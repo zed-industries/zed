@@ -13603,20 +13603,24 @@ fn test_wrap_with_prefix() {
     );
 }
 
+fn is_hunk_selected(hunk: &MultiBufferDiffHunk, selections: &[Selection<Point>]) -> bool {
+    let mut buffer_rows_for_selections = selections.iter().map(|selection| {
+        let start = MultiBufferRow(selection.start.row);
+        let end = MultiBufferRow(selection.end.row);
+        start..end
+    });
+
+    buffer_rows_for_selections.any(|range| does_selection_touch_hunk(&range, hunk))
+}
+
 fn hunks_for_selections(
     multi_buffer_snapshot: &MultiBufferSnapshot,
     selections: &[Selection<Anchor>],
 ) -> Vec<MultiBufferDiffHunk> {
     let buffer_rows_for_selections = selections.iter().map(|selection| {
-        let head = selection.head();
-        let tail = selection.tail();
-        let start = MultiBufferRow(tail.to_point(multi_buffer_snapshot).row);
-        let end = MultiBufferRow(head.to_point(multi_buffer_snapshot).row);
-        if start > end {
-            end..start
-        } else {
-            start..end
-        }
+        let start = MultiBufferRow(selection.start.to_point(multi_buffer_snapshot).row);
+        let end = MultiBufferRow(selection.end.to_point(multi_buffer_snapshot).row);
+        start..end
     });
 
     hunks_for_rows(buffer_rows_for_selections, multi_buffer_snapshot)
@@ -13633,19 +13637,8 @@ pub fn hunks_for_rows(
         let query_rows =
             selected_multi_buffer_rows.start..selected_multi_buffer_rows.end.next_row();
         for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
-            // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
-            // when the caret is just above or just below the deleted hunk.
-            let allow_adjacent = hunk_status(&hunk) == DiffHunkStatus::Removed;
-            let related_to_selection = if allow_adjacent {
-                hunk.row_range.overlaps(&query_rows)
-                    || hunk.row_range.start == query_rows.end
-                    || hunk.row_range.end == query_rows.start
-            } else {
-                // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
-                // `hunk.row_range` is exclusive (e.g. [2..3] means 2nd row is selected)
-                hunk.row_range.overlaps(&selected_multi_buffer_rows)
-                    || selected_multi_buffer_rows.end == hunk.row_range.start
-            };
+            let related_to_selection =
+                does_selection_touch_hunk(&selected_multi_buffer_rows, &hunk);
             if related_to_selection {
                 if !processed_buffer_rows
                     .entry(hunk.buffer_id)
@@ -13660,6 +13653,26 @@ pub fn hunks_for_rows(
     }
 
     hunks
+}
+
+fn does_selection_touch_hunk(
+    selected_multi_buffer_rows: &Range<MultiBufferRow>,
+    hunk: &MultiBufferDiffHunk,
+) -> bool {
+    let query_rows = selected_multi_buffer_rows.start..selected_multi_buffer_rows.end.next_row();
+    // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
+    // when the caret is just above or just below the deleted hunk.
+    let allow_adjacent = hunk_status(hunk) == DiffHunkStatus::Removed;
+    if allow_adjacent {
+        hunk.row_range.overlaps(&query_rows)
+            || hunk.row_range.start == query_rows.end
+            || hunk.row_range.end == query_rows.start
+    } else {
+        // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
+        // `hunk.row_range` is exclusive (e.g. [2..3] means 2nd row is selected)
+        hunk.row_range.overlaps(selected_multi_buffer_rows)
+            || selected_multi_buffer_rows.end == hunk.row_range.start
+    }
 }
 
 pub trait CollaborationHub {
