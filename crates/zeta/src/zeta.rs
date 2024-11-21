@@ -24,7 +24,6 @@ pub struct Zeta {
     api_key: Arc<str>,
     model: Arc<str>,
     events: BTreeMap<EventId, Event>,
-    event_ids_by_inline_completion_id: HashMap<InlineCompletionId, EventId>,
     next_inline_completion_id: InlineCompletionId,
     next_event_id: EventId,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -33,7 +32,9 @@ pub struct Zeta {
 #[derive(Debug)]
 pub struct InlineCompletion {
     id: InlineCompletionId,
+    path: Arc<Path>,
     range: Range<Anchor>,
+    old_text: Arc<str>,
     new_text: Arc<str>,
 }
 
@@ -78,7 +79,6 @@ impl Zeta {
             api_key,
             model,
             events: BTreeMap::new(),
-            event_ids_by_inline_completion_id: HashMap::default(),
             next_inline_completion_id: InlineCompletionId(0),
             next_event_id: EventId(0),
             registered_buffers: HashMap::default(),
@@ -108,57 +108,12 @@ impl Zeta {
             }
         }
 
-        // Filter out an edit event that occurs when an inline completion is accepted
-        // if let Event::Edit {
-        //     old_text,
-        //     new_text,
-        //     path,
-        // } = &event
-        // {
-        //     if let Some(last_entry) = self.events.last_entry() {
-        //         if let Event::InlineCompletion {
-        //             old_text: old_text_completion,
-        //             new_text: new_text_completion,
-        //             path: path_completion,
-        //             accepted: Some(true),
-        //             ..
-        //         } = last_entry.get()
-        //         {
-        //             if path == path_completion
-        //                 && old_text_completion == old_text
-        //                 && new_text_completion == new_text
-        //             {
-        //                 return;
-        //             }
-        //         }
-        //     }
-        // }
-
         let id = self.next_event_id;
         self.next_event_id.0 += 1;
 
-        if let Event::InlineCompletion {
-            id: inline_completion_id,
-            ..
-        } = &event
-        {
-            self.event_ids_by_inline_completion_id
-                .insert(*inline_completion_id, id);
-        }
         self.events.insert(id, event);
-
         if self.events.len() > 100 {
-            if let Some((
-                _,
-                Event::InlineCompletion {
-                    id: inline_completion_id,
-                    ..
-                },
-            )) = self.events.pop_first()
-            {
-                self.event_ids_by_inline_completion_id
-                    .remove(&inline_completion_id);
-            }
+            self.events.pop_first();
         }
     }
 
@@ -292,20 +247,12 @@ impl Zeta {
                 let new_text: Arc<str> = content[new_start..upd_end + 1].into();
                 let range = fuzzy::search(&snapshot, &old_text);
 
-                this.update(&mut cx, |this, _cx| {
-                    this.push_event(Event::InlineCompletion {
-                        id,
-                        path,
-                        old_text,
-                        new_text: new_text.clone(),
-                        accepted: None,
-                    })
-                })?;
-
                 Ok(Some(InlineCompletion {
                     id,
+                    path,
                     range,
                     new_text,
+                    old_text,
                 }))
             } else {
                 this.update(&mut cx, |this, _cx| {
@@ -319,15 +266,10 @@ impl Zeta {
 
     pub fn accept_inline_completion(
         &mut self,
-        completion: &InlineCompletion,
+        _completion: &InlineCompletion,
         cx: &mut ModelContext<Self>,
     ) {
-        if let Some(&event_id) = self.event_ids_by_inline_completion_id.get(&completion.id) {
-            if let Some(Event::InlineCompletion { accepted, .. }) = self.events.get_mut(&event_id) {
-                *accepted = Some(true);
-                cx.notify();
-            }
-        }
+        cx.notify();
     }
 
     pub fn reject_inline_completion(
@@ -335,12 +277,8 @@ impl Zeta {
         completion: InlineCompletion,
         cx: &mut ModelContext<Self>,
     ) {
-        if let Some(&event_id) = self.event_ids_by_inline_completion_id.get(&completion.id) {
-            if let Some(Event::InlineCompletion { accepted, .. }) = self.events.get_mut(&event_id) {
-                *accepted = Some(false);
-                cx.notify();
-            }
-        }
+        self.push_event(Event::InlineCompletionRejected(completion));
+        cx.notify();
     }
 
     fn report_changes_for_buffer(
@@ -392,13 +330,7 @@ enum Event {
     Close {
         path: Arc<Path>,
     },
-    InlineCompletion {
-        id: InlineCompletionId,
-        path: Arc<Path>,
-        old_text: Arc<str>,
-        new_text: Arc<str>,
-        accepted: Option<bool>,
-    },
+    InlineCompletionRejected(InlineCompletion),
     NoInlineCompletion {
         id: InlineCompletionId,
     },
@@ -484,23 +416,11 @@ impl Event {
                 prompt
             }
             Event::Close { path } => format!("User closed file: {:?}", path),
-            Event::InlineCompletion {
-                old_text,
-                new_text,
-                accepted,
-                ..
-            } => {
-                let acceptance = accepted
-                    .map(|a| {
-                        let action = if a { "accepted" } else { "rejected" };
-                        format!(". User {}", action)
-                    })
-                    .unwrap_or_default();
-
+            Event::InlineCompletionRejected(completion) => {
                 format!(
-                    "Completion response{}.\n{}",
-                    acceptance,
-                    format_edit(old_text, new_text)
+                    "User rejected this suggested edit you provided for file {:?}:\n{}",
+                    completion.path,
+                    format_edit(&completion.old_text, &completion.new_text)
                 )
             }
             Event::NoInlineCompletion { .. } => "<|DONE|>".into(),
