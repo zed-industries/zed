@@ -2464,6 +2464,19 @@ impl Project {
             Task::ready(None)
         }
     }
+
+    pub async fn toolchain_term(
+        languages: Arc<LanguageRegistry>,
+        language_name: LanguageName,
+    ) -> Option<SharedString> {
+        languages
+            .language_for_name(&language_name.0)
+            .await
+            .ok()?
+            .toolchain_lister()
+            .map(|lister| lister.term())
+    }
+
     pub fn activate_toolchain(
         &self,
         worktree_id: WorktreeId,
