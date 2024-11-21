@@ -8,19 +8,19 @@ use crate::{prelude::*, IconButtonShape};
 pub struct NumericStepper {
     id: ElementId,
     value: SharedString,
-    on_decrement: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
-    on_increment: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
+    on_decrement: Box<dyn Fn(&ClickEvent, &mut WindowContext) + Send + Sync + 'static>,
+    on_increment: Box<dyn Fn(&ClickEvent, &mut WindowContext) + Send + Sync + 'static>,
     /// Whether to reserve space for the reset button.
     reserve_space_for_reset: bool,
-    on_reset: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_reset: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + Send + Sync + 'static>>,
 }
 
 impl NumericStepper {
     pub fn new(
         id: impl Into<ElementId>,
         value: impl Into<SharedString>,
-        on_decrement: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
-        on_increment: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        on_decrement: impl Fn(&ClickEvent, &mut WindowContext) + Send + Sync + 'static,
+        on_increment: impl Fn(&ClickEvent, &mut WindowContext) + Send + Sync + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -39,7 +39,7 @@ impl NumericStepper {
 
     pub fn on_reset(
         mut self,
-        on_reset: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        on_reset: impl Fn(&ClickEvent, &mut WindowContext) + Send + Sync + 'static,
     ) -> Self {
         self.on_reset = Some(Box::new(on_reset));
         self

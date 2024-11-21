@@ -10,7 +10,7 @@ pub struct RadioWithLabel {
     id: ElementId,
     label: Label,
     selected: bool,
-    on_click: Arc<dyn Fn(&bool, &mut WindowContext) + 'static>,
+    on_click: Arc<dyn Fn(&bool, &mut WindowContext) + Send + Sync + 'static>,
 }
 
 impl RadioWithLabel {
@@ -18,7 +18,7 @@ impl RadioWithLabel {
         id: impl Into<ElementId>,
         label: Label,
         selected: bool,
-        on_click: impl Fn(&bool, &mut WindowContext) + 'static,
+        on_click: impl Fn(&bool, &mut WindowContext) + Send + Sync + 'static,
     ) -> Self {
         Self {
             id: id.into(),

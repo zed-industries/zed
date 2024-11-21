@@ -83,7 +83,7 @@ impl SelectableButton for IconButton {
 impl Clickable for IconButton {
     fn on_click(
         mut self,
-        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static + Send + Sync,
     ) -> Self {
         self.base = self.base.on_click(handler);
         self
@@ -122,7 +122,10 @@ impl ButtonCommon for IconButton {
         self
     }
 
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static + Send + Sync,
+    ) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }

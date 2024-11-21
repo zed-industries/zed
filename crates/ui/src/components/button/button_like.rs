@@ -33,7 +33,10 @@ pub trait ButtonCommon: Clickable + Disableable {
     ///
     /// Nearly all interactable elements should have a tooltip. Some example
     /// exceptions might a scroll bar, or a slider.
-    fn tooltip(self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self;
+    fn tooltip(
+        self,
+        tooltip: impl Fn(&mut WindowContext) -> AnyView + Send + Sync + 'static,
+    ) -> Self;
 
     fn layer(self, elevation: ElevationIndex) -> Self;
 }
@@ -347,9 +350,9 @@ pub struct ButtonLike {
     pub(super) layer: Option<ElevationIndex>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
-    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
+    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + Send + Sync>>,
     cursor_style: CursorStyle,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + Send + Sync + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -415,7 +418,10 @@ impl SelectableButton for ButtonLike {
 }
 
 impl Clickable for ButtonLike {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+    fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut WindowContext) + Send + Sync + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -453,7 +459,10 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut WindowContext) -> AnyView + Send + Sync + 'static,
+    ) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }

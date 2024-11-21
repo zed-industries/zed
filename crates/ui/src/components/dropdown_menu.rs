@@ -57,7 +57,7 @@ struct DropdownMenuTrigger {
     selected: bool,
     disabled: bool,
     cursor_style: CursorStyle,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static + Send + Sync>>,
 }
 
 impl DropdownMenuTrigger {
@@ -93,7 +93,10 @@ impl Selectable for DropdownMenuTrigger {
 }
 
 impl Clickable for DropdownMenuTrigger {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+    fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static + Send + Sync,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }

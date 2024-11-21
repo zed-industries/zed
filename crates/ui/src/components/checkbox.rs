@@ -15,7 +15,7 @@ pub struct Checkbox {
     id: ElementId,
     checked: Selection,
     disabled: bool,
-    on_click: Option<Box<dyn Fn(&Selection, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&Selection, &mut WindowContext) + Send + Sync + 'static>>,
 }
 
 impl Checkbox {
@@ -33,7 +33,10 @@ impl Checkbox {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&Selection, &mut WindowContext) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&Selection, &mut WindowContext) + Send + Sync + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -169,7 +172,7 @@ pub struct CheckboxWithLabel {
     id: ElementId,
     label: Label,
     checked: Selection,
-    on_click: Arc<dyn Fn(&Selection, &mut WindowContext) + 'static>,
+    on_click: Arc<dyn Fn(&Selection, &mut WindowContext) + Send + Sync + 'static>,
 }
 
 impl CheckboxWithLabel {
@@ -177,7 +180,7 @@ impl CheckboxWithLabel {
         id: impl Into<ElementId>,
         label: Label,
         checked: Selection,
-        on_click: impl Fn(&Selection, &mut WindowContext) + 'static,
+        on_click: impl Fn(&Selection, &mut WindowContext) + Send + Sync + 'static,
     ) -> Self {
         Self {
             id: id.into(),

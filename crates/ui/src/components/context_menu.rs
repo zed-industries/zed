@@ -9,7 +9,7 @@ use gpui::{
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use settings::Settings;
-use std::{rc::Rc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use theme::ThemeSettings;
 
 enum ContextMenuItem {
@@ -21,13 +21,13 @@ enum ContextMenuItem {
         label: SharedString,
         icon: Option<IconName>,
         icon_size: IconSize,
-        handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
+        handler: Arc<dyn Fn(Option<&FocusHandle>, &mut WindowContext) + Send + Sync>,
         action: Option<Box<dyn Action>>,
         disabled: bool,
     },
     CustomEntry {
         entry_render: Box<dyn Fn(&mut WindowContext) -> AnyElement>,
-        handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
+        handler: Arc<dyn Fn(Option<&FocusHandle>, &mut WindowContext) + Send + Sync>,
         selectable: bool,
     },
 }
@@ -97,12 +97,12 @@ impl ContextMenu {
         mut self,
         label: impl Into<SharedString>,
         action: Option<Box<dyn Action>>,
-        handler: impl Fn(&mut WindowContext) + 'static,
+        handler: impl Fn(&mut WindowContext) + Send + Sync + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry {
             toggle: None,
             label: label.into(),
-            handler: Rc::new(move |_, cx| handler(cx)),
+            handler: Arc::new(move |_, cx| handler(cx)),
             icon: None,
             icon_size: IconSize::Small,
             action,
@@ -117,12 +117,12 @@ impl ContextMenu {
         toggled: bool,
         position: IconPosition,
         action: Option<Box<dyn Action>>,
-        handler: impl Fn(&mut WindowContext) + 'static,
+        handler: impl Fn(&mut WindowContext) + Send + Sync + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry {
             toggle: Some((position, toggled)),
             label: label.into(),
-            handler: Rc::new(move |_, cx| handler(cx)),
+            handler: Arc::new(move |_, cx| handler(cx)),
             icon: None,
             icon_size: IconSize::Small,
             action,
@@ -137,7 +137,7 @@ impl ContextMenu {
     ) -> Self {
         self.items.push(ContextMenuItem::CustomEntry {
             entry_render: Box::new(entry_render),
-            handler: Rc::new(|_, _| {}),
+            handler: Arc::new(|_, _| {}),
             selectable: false,
         });
         self
@@ -145,12 +145,12 @@ impl ContextMenu {
 
     pub fn custom_entry(
         mut self,
-        entry_render: impl Fn(&mut WindowContext) -> AnyElement + 'static,
-        handler: impl Fn(&mut WindowContext) + 'static,
+        entry_render: impl Fn(&mut WindowContext) -> AnyElement + Send + Sync + 'static,
+        handler: impl Fn(&mut WindowContext) + Send + Sync + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::CustomEntry {
             entry_render: Box::new(entry_render),
-            handler: Rc::new(move |_, cx| handler(cx)),
+            handler: Arc::new(move |_, cx| handler(cx)),
             selectable: true,
         });
         self
@@ -167,7 +167,7 @@ impl ContextMenu {
             label: label.into(),
             action: Some(action.boxed_clone()),
 
-            handler: Rc::new(move |context, cx| {
+            handler: Arc::new(move |context, cx| {
                 if let Some(context) = &context {
                     cx.focus(context);
                 }
@@ -190,7 +190,7 @@ impl ContextMenu {
             label: label.into(),
             action: Some(action.boxed_clone()),
 
-            handler: Rc::new(move |context, cx| {
+            handler: Arc::new(move |context, cx| {
                 if let Some(context) = &context {
                     cx.focus(context);
                 }
@@ -209,7 +209,7 @@ impl ContextMenu {
             label: label.into(),
 
             action: Some(action.boxed_clone()),
-            handler: Rc::new(move |_, cx| cx.dispatch_action(action.boxed_clone())),
+            handler: Arc::new(move |_, cx| cx.dispatch_action(action.boxed_clone())),
             icon: Some(IconName::ArrowUpRight),
             icon_size: IconSize::XSmall,
             disabled: false,

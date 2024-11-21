@@ -271,7 +271,7 @@ impl Clickable for Button {
     /// Sets the click event handler for the button.
     fn on_click(
         mut self,
-        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + Send + Sync + 'static,
     ) -> Self {
         self.base = self.base.on_click(handler);
         self
@@ -368,7 +368,10 @@ impl ButtonCommon for Button {
     /// ```
     ///
     /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut WindowContext) -> AnyView + Send + Sync + 'static,
+    ) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }

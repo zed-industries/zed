@@ -10,7 +10,7 @@ pub struct Disclosure {
     id: ElementId,
     is_open: bool,
     selected: bool,
-    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static + Send + Sync>>,
     cursor_style: CursorStyle,
 }
 
@@ -27,7 +27,7 @@ impl Disclosure {
 
     pub fn on_toggle(
         mut self,
-        handler: impl Into<Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>>,
+        handler: impl Into<Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static + Send + Sync>>>,
     ) -> Self {
         self.on_toggle = handler.into();
         self
@@ -42,7 +42,10 @@ impl Selectable for Disclosure {
 }
 
 impl Clickable for Disclosure {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+    fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static + Send + Sync,
+    ) -> Self {
         self.on_toggle = Some(Arc::new(handler));
         self
     }

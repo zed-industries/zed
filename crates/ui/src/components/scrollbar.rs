@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
-use std::{cell::Cell, ops::Range, rc::Rc};
+use parking_lot::Mutex;
+use std::{ops::Range, sync::Arc};
 
 use crate::{prelude::*, px, relative, IntoElement};
 use gpui::{
@@ -32,7 +33,7 @@ impl ScrollableHandle {
     fn content_size(&self) -> Option<ContentSize> {
         match self {
             ScrollableHandle::Uniform(handle) => Some(ContentSize {
-                size: handle.0.borrow().last_item_size.map(|size| size.contents)?,
+                size: handle.0.lock().last_item_size.map(|size| size.contents)?,
                 scroll_adjustment: None,
             }),
             ScrollableHandle::NonUniform(handle) => {
@@ -59,21 +60,21 @@ impl ScrollableHandle {
     }
     fn set_offset(&self, point: Point<Pixels>) {
         let base_handle = match self {
-            ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
+            ScrollableHandle::Uniform(handle) => &handle.0.lock().base_handle,
             ScrollableHandle::NonUniform(handle) => &handle,
         };
         base_handle.set_offset(point);
     }
     fn offset(&self) -> Point<Pixels> {
         let base_handle = match self {
-            ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
+            ScrollableHandle::Uniform(handle) => &handle.0.lock().base_handle,
             ScrollableHandle::NonUniform(handle) => &handle,
         };
         base_handle.offset()
     }
     fn viewport(&self) -> Bounds<Pixels> {
         let base_handle = match self {
-            ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
+            ScrollableHandle::Uniform(handle) => &handle.0.lock().base_handle,
             ScrollableHandle::NonUniform(handle) => &handle,
         };
         base_handle.bounds()
@@ -95,7 +96,7 @@ impl From<ScrollHandle> for ScrollableHandle {
 #[derive(Clone, Debug)]
 pub struct ScrollbarState {
     // If Some(), there's an active drag, offset by percentage from the origin of a thumb.
-    drag: Rc<Cell<Option<f32>>>,
+    drag: Arc<Mutex<Option<f32>>>,
     parent_id: Option<EntityId>,
     scroll_handle: ScrollableHandle,
 }
@@ -120,7 +121,7 @@ impl ScrollbarState {
     }
 
     pub fn is_dragging(&self) -> bool {
-        self.drag.get().is_some()
+        self.drag.lock().is_some()
     }
 
     fn thumb_range(&self, axis: ScrollbarAxis) -> Option<Range<f32>> {
@@ -302,7 +303,7 @@ impl Element for Scrollbar {
                         let thumb_offset = (event.position.along(axis)
                             - thumb_bounds.origin.along(axis))
                             / bounds.size.along(axis);
-                        state.drag.set(Some(thumb_offset));
+                        state.drag.lock() = Some(thumb_offset);
                     } else if let Some(ContentSize {
                         size: item_size, ..
                     }) = scroll.content_size()
@@ -341,7 +342,7 @@ impl Element for Scrollbar {
             let state = self.state.clone();
             let kind = self.kind;
             cx.on_mouse_event(move |event: &MouseMoveEvent, _, cx| {
-                if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
+                if let Some(drag_state) = state.drag.lock().filter(|_| event.dragging()) {
                     if let Some(ContentSize {
                         size: item_size, ..
                     }) = scroll.content_size()
@@ -374,7 +375,7 @@ impl Element for Scrollbar {
                         }
                     }
                 } else {
-                    state.drag.set(None);
+                    state.drag.lock().state.drag.set(None);
                 }
             });
             let state = self.state.clone();

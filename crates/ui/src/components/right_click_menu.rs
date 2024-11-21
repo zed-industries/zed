@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use gpui::{
     anchored, deferred, div, px, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase,
@@ -11,19 +11,22 @@ use gpui::{
 
 pub struct RightClickMenu<M: ManagedView> {
     id: ElementId,
-    child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement + 'static>>,
-    menu_builder: Option<Rc<dyn Fn(&mut WindowContext) -> View<M> + 'static>>,
+    child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement + Send + Sync + 'static>>,
+    menu_builder: Option<Arc<dyn Fn(&mut WindowContext) -> View<M> + Send + Sync + 'static>>,
     anchor: Option<AnchorCorner>,
     attach: Option<AnchorCorner>,
 }
 
 impl<M: ManagedView> RightClickMenu<M> {
-    pub fn menu(mut self, f: impl Fn(&mut WindowContext) -> View<M> + 'static) -> Self {
-        self.menu_builder = Some(Rc::new(f));
+    pub fn menu(
+        mut self,
+        f: impl Fn(&mut WindowContext) -> View<M> + Send + Sync + 'static,
+    ) -> Self {
+        self.menu_builder = Some(Arc::new(f));
         self
     }
 
-    pub fn trigger<E: IntoElement + 'static>(mut self, e: E) -> Self {
+    pub fn trigger<E: IntoElement + Sync + 'static>(mut self, e: E) -> Self {
         self.child_builder = Some(Box::new(move |_| e.into_any_element()));
         self
     }

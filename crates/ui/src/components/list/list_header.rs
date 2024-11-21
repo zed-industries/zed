@@ -20,7 +20,7 @@ pub struct ListHeader {
     /// It will obscure the `end_slot` when visible.
     end_hover_slot: Option<AnyElement>,
     toggle: Option<bool>,
-    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + Send + Sync + 'static>>,
     inset: bool,
     selected: bool,
 }
@@ -46,7 +46,7 @@ impl ListHeader {
 
     pub fn on_toggle(
         mut self,
-        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + Send + Sync + 'static,
     ) -> Self {
         self.on_toggle = Some(Arc::new(on_toggle));
         self

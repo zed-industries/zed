@@ -13108,6 +13108,7 @@ dependencies = [
  "gpui",
  "itertools 0.13.0",
  "menu",
+ "parking_lot",
  "serde",
  "settings",
  "smallvec",

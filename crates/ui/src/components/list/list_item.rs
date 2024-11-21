@@ -32,10 +32,11 @@ pub struct ListItem {
     end_hover_slot: Option<AnyElement>,
     toggle: Option<bool>,
     inset: bool,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
-    on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static + Send + Sync>>,
+    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static + Send + Sync>>,
+    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static + Send + Sync>>,
+    on_secondary_mouse_down:
+        Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static + Send + Sync>>,
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
     overflow_x: bool,
@@ -75,20 +76,26 @@ impl ListItem {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static + Send + Sync,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
 
     pub fn on_secondary_mouse_down(
         mut self,
-        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static + Send + Sync,
     ) -> Self {
         self.on_secondary_mouse_down = Some(Box::new(handler));
         self
     }
 
-    pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    pub fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static + Send + Sync,
+    ) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
@@ -115,7 +122,7 @@ impl ListItem {
 
     pub fn on_toggle(
         mut self,
-        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static + Send + Sync,
     ) -> Self {
         self.on_toggle = Some(Arc::new(on_toggle));
         self

@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use std::{cmp::Ordering, ops::Range, rc::Rc};
+use std::{cmp::Ordering, ops::Range, sync::Arc};
 
 use gpui::{
     fill, point, size, AnyElement, AppContext, Bounds, Hsla, Point, UniformListDecoration, View,
@@ -33,16 +33,19 @@ impl IndentGuideColors {
 pub struct IndentGuides {
     colors: IndentGuideColors,
     indent_size: Pixels,
-    compute_indents_fn: Box<dyn Fn(Range<usize>, &mut WindowContext) -> SmallVec<[usize; 64]>>,
+    compute_indents_fn:
+        Box<dyn Fn(Range<usize>, &mut WindowContext) -> SmallVec<[usize; 64]> + Send + Sync>,
     render_fn: Option<
         Box<
             dyn Fn(
-                RenderIndentGuideParams,
-                &mut WindowContext,
-            ) -> SmallVec<[RenderedIndentGuide; 12]>,
+                    RenderIndentGuideParams,
+                    &mut WindowContext,
+                ) -> SmallVec<[RenderedIndentGuide; 12]>
+                + Send
+                + Sync,
         >,
     >,
-    on_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>>,
+    on_click: Option<Arc<dyn Fn(&IndentGuideLayout, &mut WindowContext) + Send + Sync>>,
 }
 
 pub fn indent_guides<V: Render>(
@@ -50,6 +53,8 @@ pub fn indent_guides<V: Render>(
     indent_size: Pixels,
     colors: IndentGuideColors,
     compute_indents_fn: impl Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> SmallVec<[usize; 64]>
+        + Send
+        + Sync
         + 'static,
 ) -> IndentGuides {
     let compute_indents_fn = Box::new(move |range, cx: &mut WindowContext| {
@@ -68,9 +73,9 @@ impl IndentGuides {
     /// Sets the callback that will be called when the user clicks on an indent guide.
     pub fn on_click(
         mut self,
-        on_click: impl Fn(&IndentGuideLayout, &mut WindowContext) + 'static,
+        on_click: impl Fn(&IndentGuideLayout, &mut WindowContext) + Send + Sync + 'static,
     ) -> Self {
-        self.on_click = Some(Rc::new(on_click));
+        self.on_click = Some(Arc::new(on_click));
         self
     }
 
@@ -83,7 +88,9 @@ impl IndentGuides {
                 RenderIndentGuideParams,
                 &mut WindowContext,
             ) -> SmallVec<[RenderedIndentGuide; 12]>
-            + 'static,
+            + 'static
+            + Send
+            + Sync,
     ) -> Self {
         let render_fn = move |params, cx: &mut WindowContext| {
             view.update(cx, |this, cx| render_fn(this, params, cx))
@@ -130,6 +137,8 @@ pub struct IndentGuideLayout {
 
 /// Implements the necessary functionality for rendering indent guides inside a uniform list.
 mod uniform_list {
+    use std::sync::Arc;
+
     use gpui::{DispatchPhase, Hitbox, MouseButton, MouseDownEvent, MouseMoveEvent};
 
     use super::*;
@@ -189,7 +198,7 @@ mod uniform_list {
             }
 
             let indent_guides = IndentGuidesElement {
-                indent_guides: Rc::new(indent_guides),
+                indent_guides: Arc::new(indent_guides),
                 colors: self.colors.clone(),
                 on_hovered_indent_guide_click: self.on_click.clone(),
             };
@@ -199,15 +208,17 @@ mod uniform_list {
 
     struct IndentGuidesElement {
         colors: IndentGuideColors,
-        indent_guides: Rc<SmallVec<[RenderedIndentGuide; 12]>>,
-        on_hovered_indent_guide_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>>,
+        indent_guides: Arc<SmallVec<[RenderedIndentGuide; 12]>>,
+        on_hovered_indent_guide_click:
+            Option<Arc<dyn Fn(&IndentGuideLayout, &mut WindowContext) + Send + Sync>>,
     }
 
     enum IndentGuidesElementPrepaintState {
         Static,
         Interactive {
-            hitboxes: Rc<SmallVec<[Hitbox; 12]>>,
-            on_hovered_indent_guide_click: Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>,
+            hitboxes: Arc<SmallVec<[Hitbox; 12]>>,
+            on_hovered_indent_guide_click:
+                Arc<dyn Fn(&IndentGuideLayout, &mut WindowContext) + Send + Sync>,
         },
     }
 
@@ -243,7 +254,7 @@ mod uniform_list {
                     .map(|guide| cx.insert_hitbox(guide.hitbox.unwrap_or(guide.bounds), false))
                     .collect();
                 Self::PrepaintState::Interactive {
-                    hitboxes: Rc::new(hitboxes),
+                    hitboxes: Arc::new(hitboxes),
                     on_hovered_indent_guide_click,
                 }
             } else {
