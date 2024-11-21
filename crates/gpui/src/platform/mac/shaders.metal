@@ -737,10 +737,6 @@ float4 gradient_color(Background background,
                       float4 solid_color, float4 color0, float4 color1) {
   float4 color;
 
-  float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
-  float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
-  float2 center_to_point = position - center;
-
   switch (background.tag) {
       case 0:
         color = solid_color;
@@ -750,7 +746,17 @@ float4 gradient_color(Background background,
         float radians = (fmod(background.angle, 360.0) - 90.0) * (M_PI_F / 180.0);
         float2 direction = float2(cos(radians), sin(radians));
 
+        // Expand the short side to be the same as the long side
+        if (bounds.size.width > bounds.size.height) {
+          direction.y *= bounds.size.height / bounds.size.width;
+        } else {
+          direction.x *=  bounds.size.width / bounds.size.height;
+        }
+
         // Get the t value for the linear gradient with the color stop percentages.
+        float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
+        float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
+        float2 center_to_point = position - center;
         float t = dot(center_to_point, direction) / length(direction);
         // Check the direct to determine the use x or y
         if (abs(direction.x) > abs(direction.y)) {

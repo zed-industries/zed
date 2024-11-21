@@ -15,38 +15,40 @@ struct Bounds {
     origin: vec2<f32>,
     size: vec2<f32>,
 }
+
 struct Corners {
     top_left: f32,
     top_right: f32,
     bottom_right: f32,
     bottom_left: f32,
 }
+
 struct Edges {
     top: f32,
     right: f32,
     bottom: f32,
     left: f32,
 }
+
 struct Hsla {
     h: f32,
     s: f32,
     l: f32,
     a: f32,
 }
+
 struct LinearColorStop {
     color: Hsla,
     percentage: f32,
 }
-struct LinearGradient {
-    angle: f32,
-    stops: array<LinearColorStop, 2>,
-}
+
 struct Background {
     // 0u is Solid
     // 1u is LinearGradient
     tag: u32,
     solid: Hsla,
-    linear_gradient: LinearGradient,
+    angle: f32,
+    colors: array<LinearColorStop, 2>,
 }
 
 struct AtlasTextureId {
@@ -58,6 +60,7 @@ struct AtlasBounds {
     origin: vec2<i32>,
     size: vec2<i32>,
 }
+
 struct AtlasTile {
     texture_id: AtlasTextureId,
     tile_id: u32,
@@ -236,13 +239,19 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
     if (background.tag == 0u) {
         return sold_color;
     } else if (background.tag == 1u) {
-        let linear_gradient = background.linear_gradient;
         // Linear gradient background.
         // -90 degrees to match the CSS gradient angle.
-        let radians = (linear_gradient.angle % 360.0 - 90.0) * M_PI_F / 180.0;
-        let direction = vec2<f32>(cos(radians), sin(radians));
-        let stop0_percentage = linear_gradient.stops[0].percentage;
-        let stop1_percentage = linear_gradient.stops[1].percentage;
+        let radians = (background.angle % 360.0 - 90.0) * M_PI_F / 180.0;
+        var direction = vec2<f32>(cos(radians), sin(radians));
+        let stop0_percentage = background.colors[0].percentage;
+        let stop1_percentage = background.colors[1].percentage;
+
+        // Expand the short side to be the same as the long side
+        if (bounds.size.x > bounds.size.y) {
+            direction.y *= bounds.size.y / bounds.size.x;
+        } else {
+            direction.x *= bounds.size.x / bounds.size.y;
+        }
 
         // Get the t value for the linear gradient with the color stop percentages.
         let half_size = bounds.size / 2.0;
@@ -268,8 +277,8 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
     return background_color;
 }
 
-
 // --- quads --- //
+
 struct Quad {
     order: u32,
     pad: u32,
@@ -284,14 +293,13 @@ var<storage, read> b_quads: array<Quad>;
 
 struct QuadVarying {
     @builtin(position) position: vec4<f32>,
-    @location(0) @interpolate(flat) background_tag: u32,
-    @location(1) @interpolate(flat) border_color: vec4<f32>,
-    @location(2) @interpolate(flat) quad_id: u32,
-    //TODO: use `clip_distance` once Naga supports it
-    @location(3) clip_distances: vec4<f32>,
-    @location(4) @interpolate(flat) background_solid: vec4<f32>,
-    @location(5) @interpolate(flat) background_color0: vec4<f32>,
-    @location(6) @interpolate(flat) background_color1: vec4<f32>,
+    @location(0) @interpolate(flat) border_color: vec4<f32>,
+    @location(1) @interpolate(flat) quad_id: u32,
+    // TODO: use `clip_distance` once Naga supports it
+    @location(2) clip_distances: vec4<f32>,
+    @location(3) @interpolate(flat) background_solid: vec4<f32>,
+    @location(4) @interpolate(flat) background_color0: vec4<f32>,
+    @location(5) @interpolate(flat) background_color1: vec4<f32>,
 }
 
 @vertex
@@ -301,12 +309,11 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 
     var out = QuadVarying();
     out.position = to_device_position(unit_vertex, quad.bounds);
-    out.background_tag = quad.background.tag;
-    if (out.background_tag == 0u) {
+    if (quad.background.tag == 0u) {
         out.background_solid = linear_to_srgba(hsla_to_rgba(quad.background.solid));
-    } else if (out.background_tag == 1u) {
-        out.background_color0 = linear_to_srgba(hsla_to_rgba(quad.background.linear_gradient.stops[0].color));
-        out.background_color1 = linear_to_srgba(hsla_to_rgba(quad.background.linear_gradient.stops[1].color));
+    } else if (quad.background.tag == 1u) {
+        out.background_color0 = linear_to_srgba(hsla_to_rgba(quad.background.colors[0].color));
+        out.background_color1 = linear_to_srgba(hsla_to_rgba(quad.background.colors[1].color));
     }
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
@@ -517,8 +524,8 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     if (sprite.color.tag == 0u) {
         out.color_solid = linear_to_srgba(hsla_to_rgba(sprite.color.solid));
     } else if (sprite.color.tag == 1u) {
-        out.color0 = linear_to_srgba(hsla_to_rgba(sprite.color.linear_gradient.stops[0].color));
-        out.color1 = linear_to_srgba(hsla_to_rgba(sprite.color.linear_gradient.stops[1].color));
+        out.color0 = linear_to_srgba(hsla_to_rgba(sprite.color.colors[0].color));
+        out.color1 = linear_to_srgba(hsla_to_rgba(sprite.color.colors[1].color));
     }
     return out;
 }
