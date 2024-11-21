@@ -844,7 +844,9 @@ impl Platform for MacPlatform {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            app.setMainMenu_(self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap));
+            let menu = self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap);
+            drop(state);
+            app.setMainMenu_(menu);
         }
     }
 
