@@ -144,6 +144,10 @@ pub struct RevealInProjectPanel {
     pub entry_id: Option<u64>,
 }
 
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RevealInFileManager {}
+
 #[derive(Default, PartialEq, Clone, Deserialize)]
 pub struct DeploySearch {
     #[serde(default)]
@@ -161,6 +165,7 @@ impl_actions!(
         CloseInactiveItems,
         ActivateItem,
         RevealInProjectPanel,
+        RevealInFileManager,
         DeploySearch,
     ]
 );
@@ -2255,6 +2260,21 @@ impl Pane {
                                                 ProjectEntryId::from_proto(entry_id),
                                             ))
                                         });
+                                    }),
+                                )
+                            })
+                            .when_some(parent_abs_path.clone(), |menu, parent_abs_path| {
+                                let reveal_in_finder_label = if cfg!(target_os = "macos") {
+                                    "Reveal in Finder"
+                                } else {
+                                    "Reveal in File Manager"
+                                };
+
+                                menu.entry(
+                                    reveal_in_finder_label,
+                                    Some(Box::new(RevealInFileManager {})),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.reveal_path(&parent_abs_path);
                                     }),
                                 )
                             })
