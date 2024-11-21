@@ -183,7 +183,7 @@ impl ToolchainSelectorDelegate {
                 Some(())
             }
         });
-        let placeholder_text = format!("Select a toolchain…").into();
+        let placeholder_text = "Select a toolchain…".to_string().into();
         Self {
             toolchain_selector: language_selector,
             candidates: Default::default(),
