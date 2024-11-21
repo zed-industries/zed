@@ -178,7 +178,7 @@ pub struct X11ClientState {
     pub(crate) compose_state: Option<xkbc::compose::State>,
     pub(crate) pre_edit_text: Option<String>,
     pub(crate) composing: bool,
-    pub(crate) pre_ime_key_down: Option<Keystroke>,
+    pub(crate) pre_key_char_down: Option<Keystroke>,
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
     pub(crate) cursor_cache: HashMap<CursorStyle, xproto::Cursor>,
@@ -446,7 +446,7 @@ impl X11Client {
 
             compose_state,
             pre_edit_text: None,
-            pre_ime_key_down: None,
+            pre_key_char_down: None,
             composing: false,
 
             cursor_handle,
@@ -858,7 +858,7 @@ impl X11Client {
 
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
-                state.pre_ime_key_down.take();
+                state.pre_key_char_down.take();
                 let keystroke = {
                     let code = event.detail.into();
                     let xkb_state = state.previous_xkb_state.clone();
@@ -880,13 +880,13 @@ impl X11Client {
                         match compose_state.status() {
                             xkbc::Status::Composed => {
                                 state.pre_edit_text.take();
-                                keystroke.ime_key = compose_state.utf8();
+                                keystroke.key_char = compose_state.utf8();
                                 if let Some(keysym) = compose_state.keysym() {
                                     keystroke.key = xkbc::keysym_get_name(keysym);
                                 }
                             }
                             xkbc::Status::Composing => {
-                                keystroke.ime_key = None;
+                                keystroke.key_char = None;
                                 state.pre_edit_text = compose_state
                                     .utf8()
                                     .or(crate::Keystroke::underlying_dead_key(keysym));
@@ -1156,7 +1156,7 @@ impl X11Client {
         match event {
             Event::KeyPress(event) | Event::KeyRelease(event) => {
                 let mut state = self.0.borrow_mut();
-                state.pre_ime_key_down = Some(Keystroke::from_xkb(
+                state.pre_key_char_down = Some(Keystroke::from_xkb(
                     &state.xkb,
                     state.modifiers,
                     event.detail.into(),
@@ -1187,11 +1187,11 @@ impl X11Client {
     fn xim_handle_commit(&self, window: xproto::Window, text: String) -> Option<()> {
         let window = self.get_window(window).unwrap();
         let mut state = self.0.borrow_mut();
-        let keystroke = state.pre_ime_key_down.take();
+        let keystroke = state.pre_key_char_down.take();
         state.composing = false;
         drop(state);
         if let Some(mut keystroke) = keystroke {
-            keystroke.ime_key = Some(text.clone());
+            keystroke.key_char = Some(text.clone());
             window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                 keystroke,
                 is_held: false,
