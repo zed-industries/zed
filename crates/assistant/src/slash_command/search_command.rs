@@ -1,10 +1,8 @@
-use super::{
-    create_label_for_command,
-    file_command::{build_entry_output_section, codeblock_fence_for_path},
-    SlashCommand, SlashCommandOutput,
-};
 use anyhow::Result;
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
@@ -16,10 +14,17 @@ use std::{
 use ui::{prelude::*, IconName};
 use workspace::Workspace;
 
+use crate::slash_command::create_label_for_command;
+use crate::slash_command::file_command::{build_entry_output_section, codeblock_fence_for_path};
+
 pub(crate) struct SearchSlashCommandFeatureFlag;
 
 impl FeatureFlag for SearchSlashCommandFeatureFlag {
     const NAME: &'static str = "search-slash-command";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 
 pub(crate) struct SearchSlashCommand;
@@ -35,6 +40,10 @@ impl SlashCommand for SearchSlashCommand {
 
     fn description(&self) -> String {
         "Search your project semantically".into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::SearchCode
     }
 
     fn menu_text(&self) -> String {
@@ -63,7 +72,7 @@ impl SlashCommand for SearchSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
@@ -129,6 +138,7 @@ impl SlashCommand for SearchSlashCommand {
                         sections,
                         run_commands_in_text: false,
                     }
+                    .to_event_stream()
                 })
                 .await;
 

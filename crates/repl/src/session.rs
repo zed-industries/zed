@@ -1,14 +1,15 @@
 use crate::components::KernelListItem;
-use crate::KernelStatus;
+use crate::setup_editor_session_actions;
 use crate::{
-    kernels::{Kernel, KernelSpecification, RunningKernel},
+    kernels::{Kernel, KernelSpecification, NativeRunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
+    KernelStatus,
 };
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, CustomBlockId,
+        BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId,
         RenderBlock,
     },
     scroll::Autoscroll,
@@ -17,8 +18,7 @@ use editor::{
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt as _, FutureExt as _, StreamExt as _};
 use gpui::{
-    div, prelude::*, EntityId, EventEmitter, Model, Render, Subscription, Task, View, ViewContext,
-    WeakView,
+    div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
 };
 use language::Point;
 use project::Fs;
@@ -91,12 +91,11 @@ impl EditorBlock {
 
             let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
             let block = BlockProperties {
-                position: code_range.end,
+                placement: BlockPlacement::Below(code_range.end),
                 // Take up at least one height for status, allow the editor to determine the real height based on the content from render
                 height: 1,
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
-                disposition: BlockDisposition::Below,
                 priority: 0,
             };
 
@@ -122,7 +121,7 @@ impl EditorBlock {
         execution_view: View<ExecutionView>,
         on_close: CloseBlockFn,
     ) -> RenderBlock {
-        let render = move |cx: &mut BlockContext| {
+        Arc::new(move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
             let text_style = crate::outputs::plain::text_style(cx);
 
@@ -149,23 +148,22 @@ impl EditorBlock {
                 .w(text_line_height)
                 .h(text_line_height)
                 .child(
-                    IconButton::new(
-                        ("close_output_area", EntityId::from(cx.block_id)),
-                        IconName::Close,
-                    )
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::Compact)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| Tooltip::text("Close output area", cx))
-                    .on_click(move |_, cx| {
-                        if let BlockId::Custom(block_id) = block_id {
-                            (on_close)(block_id, cx)
-                        }
-                    }),
+                    IconButton::new("close_output_area", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::Compact)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(|cx| Tooltip::text("Close output area", cx))
+                        .on_click(move |_, cx| {
+                            if let BlockId::Custom(block_id) = block_id {
+                                (on_close)(block_id, cx)
+                            }
+                        }),
                 );
 
             div()
+                .id(cx.block_id)
+                .block_mouse_down()
                 .flex()
                 .items_start()
                 .min_h(text_line_height)
@@ -189,9 +187,7 @@ impl EditorBlock {
                         .child(execution_view),
                 )
                 .into_any_element()
-        };
-
-        Box::new(render)
+        })
     }
 }
 
@@ -211,6 +207,14 @@ impl Session {
             None => Subscription::new(|| {}),
         };
 
+        let editor_handle = editor.clone();
+
+        editor
+            .update(cx, |editor, _cx| {
+                setup_editor_session_actions(editor, editor_handle);
+            })
+            .ok();
+
         let mut session = Self {
             fs,
             editor,
@@ -228,7 +232,7 @@ impl Session {
     }
 
     fn start_kernel(&mut self, cx: &mut ViewContext<Self>) {
-        let kernel_language = self.kernel_specification.kernelspec.language.clone();
+        let kernel_language = self.kernel_specification.language();
         let entity_id = self.editor.entity_id();
         let working_directory = self
             .editor
@@ -237,18 +241,24 @@ impl Session {
             .unwrap_or_else(temp_dir);
 
         self.telemetry.report_repl_event(
-            kernel_language.clone(),
+            kernel_language.into(),
             KernelStatus::Starting.to_string(),
             cx.entity_id().to_string(),
         );
 
-        let kernel = RunningKernel::new(
-            self.kernel_specification.clone(),
-            entity_id,
-            working_directory,
-            self.fs.clone(),
-            cx,
-        );
+        let kernel = match self.kernel_specification.clone() {
+            KernelSpecification::Jupyter(kernel_specification)
+            | KernelSpecification::PythonEnv(kernel_specification) => NativeRunningKernel::new(
+                kernel_specification,
+                entity_id,
+                working_directory,
+                self.fs.clone(),
+                cx,
+            ),
+            KernelSpecification::Remote(_remote_kernel_specification) => {
+                unimplemented!()
+            }
+        };
 
         let pending_kernel = cx
             .spawn(|this, mut cx| async move {
@@ -287,7 +297,7 @@ impl Session {
                             .detach();
 
                             let status = kernel.process.status();
-                            session.kernel(Kernel::RunningKernel(kernel), cx);
+                            session.kernel(Kernel::RunningKernel(Box::new(kernel)), cx);
 
                             let process_status_task = cx.spawn(|session, mut cx| async move {
                                 let error_message = match status.await {
@@ -412,7 +422,7 @@ impl Session {
 
     fn send(&mut self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
         if let Kernel::RunningKernel(kernel) = &mut self.kernel {
-            kernel.request_tx.try_send(message).ok();
+            kernel.request_tx().try_send(message).ok();
         }
 
         anyhow::Ok(())
@@ -560,7 +570,7 @@ impl Session {
                 self.kernel.set_execution_state(&status.execution_state);
 
                 self.telemetry.report_repl_event(
-                    self.kernel_specification.kernelspec.language.clone(),
+                    self.kernel_specification.language().into(),
                     KernelStatus::from(&self.kernel).to_string(),
                     cx.entity_id().to_string(),
                 );
@@ -611,7 +621,7 @@ impl Session {
         }
 
         let kernel_status = KernelStatus::from(&kernel).to_string();
-        let kernel_language = self.kernel_specification.kernelspec.language.clone();
+        let kernel_language = self.kernel_specification.language().into();
 
         self.telemetry.report_repl_event(
             kernel_language,
@@ -627,7 +637,7 @@ impl Session {
 
         match kernel {
             Kernel::RunningKernel(mut kernel) => {
-                let mut request_tx = kernel.request_tx.clone();
+                let mut request_tx = kernel.request_tx().clone();
 
                 cx.spawn(|this, mut cx| async move {
                     let message: JupyterMessage = ShutdownRequest { restart: false }.into();
@@ -642,7 +652,7 @@ impl Session {
                     })
                     .ok();
 
-                    kernel.process.kill().ok();
+                    kernel.force_shutdown().ok();
 
                     this.update(&mut cx, |session, cx| {
                         session.clear_outputs(cx);
@@ -670,7 +680,7 @@ impl Session {
                 // Do nothing if already restarting
             }
             Kernel::RunningKernel(mut kernel) => {
-                let mut request_tx = kernel.request_tx.clone();
+                let mut request_tx = kernel.request_tx().clone();
 
                 cx.spawn(|this, mut cx| async move {
                     // Send shutdown request with restart flag
@@ -688,7 +698,7 @@ impl Session {
                     cx.background_executor().timer(Duration::from_secs(1)).await;
 
                     // Force kill the kernel if it hasn't shut down
-                    kernel.process.kill().ok();
+                    kernel.force_shutdown().ok();
 
                     // Start a new kernel
                     this.update(&mut cx, |session, cx| {
@@ -723,7 +733,7 @@ impl Render for Session {
         let (status_text, interrupt_button) = match &self.kernel {
             Kernel::RunningKernel(kernel) => (
                 kernel
-                    .kernel_info
+                    .kernel_info()
                     .as_ref()
                     .map(|info| info.language_info.name.clone()),
                 Some(
@@ -743,7 +753,7 @@ impl Render for Session {
 
         KernelListItem::new(self.kernel_specification.clone())
             .status_color(match &self.kernel {
-                Kernel::RunningKernel(kernel) => match kernel.execution_state {
+                Kernel::RunningKernel(kernel) => match kernel.execution_state() {
                     ExecutionState::Idle => Color::Success,
                     ExecutionState::Busy => Color::Modified,
                 },
@@ -753,7 +763,7 @@ impl Render for Session {
                 Kernel::Shutdown => Color::Disabled,
                 Kernel::Restarting => Color::Modified,
             })
-            .child(Label::new(self.kernel_specification.name.clone()))
+            .child(Label::new(self.kernel_specification.name()))
             .children(status_text.map(|status_text| Label::new(format!("({status_text})"))))
             .button(
                 Button::new("shutdown", "Shutdown")

@@ -15,7 +15,7 @@ TBD: Add settings documentation about how settings are merged as overlays. E.g. 
 
 Your settings file can be opened with {#kb zed::OpenSettings}. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
 
-This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenLocalSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
+This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenProjectSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
@@ -29,15 +29,65 @@ Extensions that provide language servers may also provide default settings for t
 
 # Settings
 
-## Active Pane Magnification
+## Active Pane Modifiers
+
+Styling settings applied to the active pane.
+
+### Magnification
 
 - Description: Scale by which to zoom the active pane. When set to `1.0`, the active pane has the same size as others, but when set to a larger value, the active pane takes up more space.
-- Setting: `active_pane_magnification`
+- Setting: `magnification`
+- Default: `1.0`
+
+### Border size
+
+- Description: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
+- Setting: `border_size`
+- Default: `0.0`
+
+### Inactive Opacity
+
+- Description: Opacity of inactive panels. When set to 1.0, the inactive panes have the same opacity as the active one. If set to 0, the inactive panes content will not be visible at all. Values are clamped to the [0.0, 1.0] range.
+- Setting: `inactive_opacity`
 - Default: `1.0`
 
 **Options**
 
 `float` values
+
+## Auto Install extensions
+
+- Description: Define extensions to be autoinstalled or never be installed.
+- Setting: `auto_install_extension`
+- Default: `{"html": true}`
+
+**Options**
+
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions#installation-location):
+
+On MacOS:
+
+```sh
+ls ~/Library/Application\ Support/Zed/extensions/installed/
+```
+
+On Linux:
+
+```sh
+ls ~/.local/share/zed/extensions/installed
+```
+
+Define extensions which should be installed (`true`) or never installed (`false`).
+
+```json
+{
+  "auto_install_extensions": {
+    "html": true,
+    "dockerfile": true,
+    "docker-compose": false
+  }
+}
+```
 
 ## Autosave
 
@@ -309,6 +359,40 @@ There are two options to choose from:
 
 List of `string` values
 
+## Inline Completions Disabled in
+
+- Description: A list of language scopes in which inline completions should be disabled.
+- Setting: `inline_completions_disabled_in`
+- Default: `[]`
+
+**Options**
+
+List of `string` values
+
+1. Don't show inline completions in comments:
+
+```json
+"disabled_in": ["comment"]
+```
+
+2. Don't show inline completions in strings and comments:
+
+```json
+"disabled_in": ["comment", "string"]
+```
+
+3. Only in Go, don't show inline completions in strings and comments:
+
+```json
+{
+  "languages": {
+    "Go": {
+      "inline_completions_disabled_in": ["comment", "string"]
+    }
+  }
+}
+```
+
 ## Current Line Highlight
 
 - Description: How to highlight the current line in the editor.
@@ -371,10 +455,10 @@ List of `string` values
 "cursor_shape": "block"
 ```
 
-3. An underscore that runs along the following character:
+3. An underline / underscore that runs along the following character:
 
 ```json
-"cursor_shape": "underscore"
+"cursor_shape": "underline"
 ```
 
 4. An box drawn around the following character:
@@ -539,7 +623,8 @@ List of `string` values
 "tabs": {
   "close_position": "right",
   "file_icons": false,
-  "git_status": false
+  "git_status": false,
+  "activate_on_close": "history"
 },
 ```
 
@@ -578,6 +663,30 @@ List of `string` values
 - Description: Whether or not to show Git file status in tab.
 - Setting: `git_status`
 - Default: `false`
+
+### Activate on close
+
+- Description: What to do after closing the current tab.
+- Setting: `activate_on_close`
+- Default: `history`
+
+**Options**
+
+1.  Activate the tab that was open previously:
+
+```json
+{
+  "activate_on_close": "history"
+}
+```
+
+2. Activate the neighbour tab (prefers the right one, if present):
+
+```json
+{
+  "activate_on_close": "neighbour"
+}
+```
 
 ## Editor Toolbar
 
@@ -714,7 +823,20 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-3. Or to use code actions provided by the connected language servers, use `"code_actions"`:
+3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like prettier support receiving the file path via a command line argument which can then used to impact formatting decisions.
+
+WARNING: `{buffer_path}` should not be used to direct your formatter to read from a filename. Your formatter should only read from standard input and should not read or write files directly.
+
+```json
+  "formatter": {
+    "external": {
+      "command": "prettier",
+      "arguments": ["--stdin-filepath", "{buffer_path}"]
+    }
+  }
+```
+
+4. Or to use code actions provided by the connected language servers, use `"code_actions"`:
 
 ```json
 {
@@ -729,7 +851,7 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-4. Or to use multiple formatters consecutively, use an array of formatters:
+5. Or to use multiple formatters consecutively, use an array of formatters:
 
 ```json
 {
@@ -968,6 +1090,32 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline_blame": {
       "enabled": true,
       "delay_ms": 500
+    }
+  }
+}
+```
+
+3. Show a commit summary next to the commit date and author:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "show_commit_summary": true
+    }
+  }
+}
+```
+
+4. Use this as the minimum column at which to display inline blame information:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "min_column": 80
     }
   }
 }
@@ -1268,6 +1416,14 @@ Or to set a `socks5` proxy:
 
 `boolean` values
 
+## File Finder
+
+### Modal Max Width
+
+- Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
+- Setting: `max_modal_width`
+- Default: `small`
+
 ## Preferred Line Length
 
 - Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled.
@@ -1462,13 +1618,13 @@ List of `integer` column numbers
         "directories": [".env", "env", ".venv", "venv"],
         "activate_script": "default"
       }
-    }
+    },
     "env": {},
     "font_family": null,
     "font_features": null,
     "font_size": null,
     "line_height": "comfortable",
-    "option_as_meta": true,
+    "option_as_meta": false,
     "button": false,
     "shell": {},
     "toolbar": {
@@ -1696,7 +1852,7 @@ See Buffer Font Features
 
 - Description: Re-interprets the option keys to act like a 'meta' key, like in Emacs.
 - Setting: `option_as_meta`
-- Default: `true`
+- Default: `false`
 
 **Options**
 
@@ -1763,7 +1919,7 @@ See Buffer Font Features
 
 ```json
 {
-  "terminal":
+  "terminal": {
     "detect_venv": {
       "on": {
         // Default directories to search for virtual environments, relative
@@ -1782,7 +1938,7 @@ Disable with:
 
 ```json
 {
-  "terminal":
+  "terminal": {
     "detect_venv": "off"
   }
 }
@@ -1972,10 +2128,14 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "folder_icons": true,
     "git_status": true,
     "indent_size": 20,
+    "indent_guides": true,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
     "scrollbar": {
       "show": null
+    },
+    "indent_guides": {
+      "show": "always"
     }
   }
 }
@@ -2093,21 +2253,54 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Setting: `indent_size`
 - Default: `20`
 
-### Scrollbar
+### Indent Guides: Show
 
-- Description: Scrollbar related settings. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
-- Setting: `scrollbar`
-- Default:
+- Description: Whether to show indent guides in the project panel. Possible values: "always", "never".
+- Setting: `indent_guides`
 
 ```json
-"scrollbar": {
-    "show": null
+"indent_guides": {
+  "show": "always"
 }
 ```
 
 **Options**
 
-1. Show scrollbar in project panel
+1. Show indent guides in the project panel
+
+```json
+{
+  "indent_guides": {
+    "show": "always"
+  }
+}
+```
+
+2. Hide indent guides in the project panel
+
+```json
+{
+  "indent_guides": {
+    "show": "never"
+  }
+}
+```
+
+### Scrollbar: Show
+
+- Description: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- Setting: `scrollbar`
+- Default:
+
+```json
+"scrollbar": {
+  "show": null
+}
+```
+
+**Options**
+
+1. Show scrollbar in the project panel
 
 ```json
 {
@@ -2117,7 +2310,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
-2. Hide scrollbar in project panel
+2. Hide scrollbar in the project panel
 
 ```json
 {
@@ -2134,15 +2327,18 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Default:
 
 ```json
-"assistant": {
-  "enabled": true,
-  "button": true,
-  "dock": "right",
-  "default_width": 640,
-  "default_height": 320,
-  "provider": "openai",
-  "version": "1",
-},
+{
+  "assistant": {
+    "enabled": true,
+    "button": true,
+    "dock": "right",
+    "default_width": 640,
+    "default_height": 320,
+    "provider": "openai",
+    "version": "1",
+    "show_hints": true
+  }
+}
 ```
 
 ## Outline Panel
@@ -2162,6 +2358,12 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "indent_size": 20,
   "auto_reveal_entries": true,
   "auto_fold_dirs": true,
+  "indent_guides": {
+    "show": "always"
+  },
+  "scrollbar": {
+    "show": null
+  }
 }
 ```
 

@@ -13,17 +13,26 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu {
-                    name: "Preferences".into(),
+                    name: "Settings".into(),
                     items: vec![
                         MenuItem::action("Open Settings", super::OpenSettings),
                         MenuItem::action("Open Key Bindings", zed_actions::OpenKeymap),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
-                        MenuItem::action("Open Default Key Bindings", super::OpenDefaultKeymap),
-                        MenuItem::action("Open Local Settings", super::OpenLocalSettings),
+                        MenuItem::action(
+                            "Open Default Key Bindings",
+                            zed_actions::OpenDefaultKeymap,
+                        ),
+                        MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action("Select Theme...", theme_selector::Toggle::default()),
                     ],
                 }),
-                MenuItem::action("Extensions", extensions_ui::Extensions),
+                MenuItem::separator(),
+                MenuItem::submenu(Menu {
+                    name: "Services".into(),
+                    items: vec![],
+                }),
+                MenuItem::separator(),
+                MenuItem::action("Extensions", zed_actions::Extensions),
                 MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
                 MenuItem::action("Hide Zed", super::Hide),
@@ -41,7 +50,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Open…", workspace::Open),
                 MenuItem::action(
                     "Open Recent...",
-                    recent_projects::OpenRecent {
+                    zed_actions::OpenRecent {
                         create_new_window: true,
                     },
                 ),

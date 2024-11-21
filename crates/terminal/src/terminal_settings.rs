@@ -134,7 +134,7 @@ pub struct TerminalSettingsContent {
     /// Default: {}
     pub env: Option<HashMap<String, String>>,
     /// Default cursor shape for the terminal.
-    /// Can be "bar", "block", "underscore", or "hollow".
+    /// Can be "bar", "block", "underline", or "hollow".
     ///
     /// Default: None
     pub cursor_shape: Option<CursorShape>,
@@ -151,7 +151,7 @@ pub struct TerminalSettingsContent {
     pub alternate_scroll: Option<AlternateScroll>,
     /// Sets whether the option key behaves as the meta key.
     ///
-    /// Default: true
+    /// Default: false
     pub option_as_meta: Option<bool>,
     /// Whether or not selecting text in the terminal will automatically
     /// copy to the system clipboard.

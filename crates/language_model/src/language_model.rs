@@ -1,22 +1,19 @@
 mod model;
-pub mod provider;
 mod rate_limiter;
 mod registry;
 mod request;
 mod role;
-pub mod settings;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake_provider;
 
 use anyhow::Result;
-use client::{Client, UserStore};
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
-use gpui::{
-    AnyElement, AnyView, AppContext, AsyncAppContext, Model, SharedString, Task, WindowContext,
-};
+use gpui::{AnyElement, AnyView, AppContext, AsyncAppContext, SharedString, Task, WindowContext};
 pub use model::*;
-use project::Fs;
 use proto::Plan;
-pub(crate) use rate_limiter::*;
+pub use rate_limiter::*;
 pub use registry::*;
 pub use request::*;
 pub use role::*;
@@ -26,14 +23,10 @@ use std::fmt;
 use std::{future::Future, sync::Arc};
 use ui::IconName;
 
-pub fn init(
-    user_store: Model<UserStore>,
-    client: Arc<Client>,
-    fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
-) {
-    settings::init(fs, cx);
-    registry::init(user_store, client, cx);
+pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
+
+pub fn init(cx: &mut AppContext) {
+    registry::init(cx);
 }
 
 /// The availability of a [`LanguageModel`].
@@ -59,6 +52,7 @@ pub enum LanguageModelCompletionEvent {
     Stop(StopReason),
     Text(String),
     ToolUse(LanguageModelToolUse),
+    StartMessage { message_id: String },
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -76,6 +70,20 @@ pub struct LanguageModelToolUse {
     pub input: serde_json::Value,
 }
 
+pub struct LanguageModelTextStream {
+    pub message_id: Option<String>,
+    pub stream: BoxStream<'static, Result<String>>,
+}
+
+impl Default for LanguageModelTextStream {
+    fn default() -> Self {
+        Self {
+            message_id: None,
+            stream: Box::pin(futures::stream::empty()),
+        }
+    }
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -86,6 +94,10 @@ pub trait LanguageModel: Send + Sync {
     fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
+
+    fn api_key(&self, _cx: &AppContext) -> Option<String> {
+        None
+    }
 
     /// Returns the availability of this language model.
     fn availability(&self) -> LanguageModelAvailability {
@@ -113,21 +125,39 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
         let events = self.stream_completion(request, cx);
 
         async move {
-            Ok(events
-                .await?
-                .filter_map(|result| async move {
+            let mut events = events.await?;
+            let mut message_id = None;
+            let mut first_item_text = None;
+
+            if let Some(first_event) = events.next().await {
+                match first_event {
+                    Ok(LanguageModelCompletionEvent::StartMessage { message_id: id }) => {
+                        message_id = Some(id.clone());
+                    }
+                    Ok(LanguageModelCompletionEvent::Text(text)) => {
+                        first_item_text = Some(text);
+                    }
+                    _ => (),
+                }
+            }
+
+            let stream = futures::stream::iter(first_item_text.map(Ok))
+                .chain(events.filter_map(|result| async move {
                     match result {
+                        Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                         Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                         Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                         Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                         Err(err) => Some(Err(err)),
                     }
-                })
-                .boxed())
+                }))
+                .boxed();
+
+            Ok(LanguageModelTextStream { message_id, stream })
         }
         .boxed()
     }
@@ -146,7 +176,7 @@ pub trait LanguageModel: Send + Sync {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &provider::fake::FakeLanguageModel {
+    fn as_fake(&self) -> &fake_provider::FakeLanguageModel {
         unimplemented!()
     }
 }

@@ -4,7 +4,7 @@ use crate::{
     },
     task_context::ContextProvider,
     with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, PLAIN_TEXT,
+    LanguageServerName, LspAdapter, ToolchainLister, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context, Result};
 use collections::{hash_map, HashMap, HashSet};
@@ -75,6 +75,13 @@ impl<'a> From<&'a str> for LanguageName {
     }
 }
 
+impl From<LanguageName> for String {
+    fn from(value: LanguageName) -> Self {
+        let value: &str = &value.0;
+        Self::from(value)
+    }
+}
+
 pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,
@@ -123,16 +130,7 @@ pub struct AvailableLanguage {
     name: LanguageName,
     grammar: Option<Arc<str>>,
     matcher: LanguageMatcher,
-    load: Arc<
-        dyn Fn() -> Result<(
-                LanguageConfig,
-                LanguageQueries,
-                Option<Arc<dyn ContextProvider>>,
-            )>
-            + 'static
-            + Send
-            + Sync,
-    >,
+    load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     loaded: bool,
 }
 
@@ -198,6 +196,13 @@ pub struct LanguageQueries {
 #[derive(Clone, Default)]
 struct LspBinaryStatusSender {
     txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, LanguageServerBinaryStatus)>>>>,
+}
+
+pub struct LoadedLanguage {
+    pub config: LanguageConfig,
+    pub queries: LanguageQueries,
+    pub context_provider: Option<Arc<dyn ContextProvider>>,
+    pub toolchain_provider: Option<Arc<dyn ToolchainLister>>,
 }
 
 impl LanguageRegistry {
@@ -283,7 +288,14 @@ impl LanguageRegistry {
             config.name.clone(),
             config.grammar.clone(),
             config.matcher.clone(),
-            move || Ok((config.clone(), Default::default(), None)),
+            Arc::new(move || {
+                Ok(LoadedLanguage {
+                    config: config.clone(),
+                    queries: Default::default(),
+                    toolchain_provider: None,
+                    context_provider: None,
+                })
+            }),
         )
     }
 
@@ -424,16 +436,8 @@ impl LanguageRegistry {
         name: LanguageName,
         grammar_name: Option<Arc<str>>,
         matcher: LanguageMatcher,
-        load: impl Fn() -> Result<(
-                LanguageConfig,
-                LanguageQueries,
-                Option<Arc<dyn ContextProvider>>,
-            )>
-            + 'static
-            + Send
-            + Sync,
+        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     ) {
-        let load = Arc::new(load);
         let state = &mut *self.state.write();
 
         for existing_language in &mut state.available_languages {
@@ -726,16 +730,18 @@ impl LanguageRegistry {
                 self.executor
                     .spawn(async move {
                         let language = async {
-                            let (config, queries, provider) = (language_load)()?;
-
-                            if let Some(grammar) = config.grammar.clone() {
+                            let loaded_language = (language_load)()?;
+                            if let Some(grammar) = loaded_language.config.grammar.clone() {
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
-                                Language::new_with_id(id, config, grammar)
-                                    .with_context_provider(provider)
-                                    .with_queries(queries)
+
+                                Language::new_with_id(id, loaded_language.config, grammar)
+                                    .with_context_provider(loaded_language.context_provider)
+                                    .with_toolchain_lister(loaded_language.toolchain_provider)
+                                    .with_queries(loaded_language.queries)
                             } else {
-                                Ok(Language::new_with_id(id, config, None)
-                                    .with_context_provider(provider))
+                                Ok(Language::new_with_id(id, loaded_language.config, None)
+                                    .with_context_provider(loaded_language.context_provider)
+                                    .with_toolchain_lister(loaded_language.toolchain_provider))
                             }
                         }
                         .await;
@@ -958,6 +964,7 @@ impl LanguageRegistryState {
                 tab_size: language.config.tab_size,
                 hard_tabs: language.config.hard_tabs,
                 soft_wrap: language.config.soft_wrap,
+                auto_indent_on_paste: language.config.auto_indent_on_paste,
                 ..Default::default()
             }
             .clone(),

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use copilot::{Copilot, CopilotCodeVerification, Status};
+use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
 use fs::Fs;
 use gpui::{
@@ -15,7 +15,6 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use supermaven::{AccountStatus, Supermaven};
-use util::ResultExt;
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -28,8 +27,6 @@ use workspace::{
 use zed_actions::OpenBrowser;
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
-
-struct CopilotStartingToast;
 
 struct CopilotErrorToast;
 
@@ -62,7 +59,7 @@ impl Render for InlineCompletionButton {
                 let status = copilot.read(cx).status();
 
                 let enabled = self.editor_enabled.unwrap_or_else(|| {
-                    all_language_settings.inline_completions_enabled(None, None)
+                    all_language_settings.inline_completions_enabled(None, None, cx)
                 });
 
                 let icon = match status {
@@ -221,7 +218,7 @@ impl InlineCompletionButton {
     pub fn build_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(cx, |menu, _| {
-            menu.entry("Sign In", None, initiate_sign_in)
+            menu.entry("Sign In", None, copilot::initiate_sign_in)
                 .entry("Disable Copilot", None, {
                     let fs = fs.clone();
                     move |cx| hide_copilot(fs.clone(), cx)
@@ -248,8 +245,9 @@ impl InlineCompletionButton {
 
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
-            let language_enabled = language_settings::language_settings(Some(&language), None, cx)
-                .show_inline_completions;
+            let language_enabled =
+                language_settings::language_settings(Some(language.name()), None, cx)
+                    .show_inline_completions;
 
             menu = menu.entry(
                 format!(
@@ -292,7 +290,7 @@ impl InlineCompletionButton {
             );
         }
 
-        let globally_enabled = settings.inline_completions_enabled(None, None);
+        let globally_enabled = settings.inline_completions_enabled(None, None, cx);
         menu.entry(
             if globally_enabled {
                 "Hide Inline Completions for All Files"
@@ -340,6 +338,7 @@ impl InlineCompletionButton {
                     && all_language_settings(file, cx).inline_completions_enabled(
                         language,
                         file.map(|file| file.path().as_ref()),
+                        cx,
                     ),
             )
         };
@@ -442,7 +441,7 @@ async fn configure_disabled_globs(
 
 fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(None, None);
+        all_language_settings(None, cx).inline_completions_enabled(None, None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_inline_completions = Some(!show_inline_completions)
     });
@@ -466,7 +465,7 @@ fn toggle_inline_completions_for_language(
     cx: &mut AppContext,
 ) {
     let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(Some(&language), None);
+        all_language_settings(None, cx).inline_completions_enabled(Some(&language), None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
             .entry(language.name())
@@ -481,69 +480,4 @@ fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
             .get_or_insert(Default::default())
             .inline_completion_provider = Some(InlineCompletionProvider::None);
     });
-}
-
-pub fn initiate_sign_in(cx: &mut WindowContext) {
-    let Some(copilot) = Copilot::global(cx) else {
-        return;
-    };
-    let status = copilot.read(cx).status();
-    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
-        return;
-    };
-    match status {
-        Status::Starting { task } => {
-            let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
-                return;
-            };
-
-            let Ok(workspace) = workspace.update(cx, |workspace, cx| {
-                workspace.show_toast(
-                    Toast::new(
-                        NotificationId::unique::<CopilotStartingToast>(),
-                        "Copilot is starting...",
-                    ),
-                    cx,
-                );
-                workspace.weak_handle()
-            }) else {
-                return;
-            };
-
-            cx.spawn(|mut cx| async move {
-                task.await;
-                if let Some(copilot) = cx.update(|cx| Copilot::global(cx)).ok().flatten() {
-                    workspace
-                        .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
-                            Status::Authorized => workspace.show_toast(
-                                Toast::new(
-                                    NotificationId::unique::<CopilotStartingToast>(),
-                                    "Copilot has started!",
-                                ),
-                                cx,
-                            ),
-                            _ => {
-                                workspace.dismiss_toast(
-                                    &NotificationId::unique::<CopilotStartingToast>(),
-                                    cx,
-                                );
-                                copilot
-                                    .update(cx, |copilot, cx| copilot.sign_in(cx))
-                                    .detach_and_log_err(cx);
-                            }
-                        })
-                        .log_err();
-                }
-            })
-            .detach();
-        }
-        _ => {
-            copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
-            workspace
-                .update(cx, |this, cx| {
-                    this.toggle_modal(cx, |cx| CopilotCodeVerification::new(&copilot, cx));
-                })
-                .ok();
-        }
-    }
 }

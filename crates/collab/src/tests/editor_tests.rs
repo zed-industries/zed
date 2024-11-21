@@ -12,6 +12,7 @@ use editor::{
     test::editor_test_context::{AssertionContextManager, EditorTestContext},
     Editor,
 };
+use fs::Fs;
 use futures::StreamExt;
 use gpui::{TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
@@ -30,7 +31,7 @@ use serde_json::json;
 use settings::SettingsStore;
 use std::{
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{self, AtomicBool, AtomicUsize},
         Arc,
@@ -60,7 +61,7 @@ async fn test_host_disconnect(
         .fs()
         .insert_tree(
             "/a",
-            serde_json::json!({
+            json!({
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
             }),
@@ -114,7 +115,7 @@ async fn test_host_disconnect(
 
     project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
 
-    project_b.read_with(cx_b, |project, _| project.is_read_only());
+    project_b.read_with(cx_b, |project, cx| project.is_read_only(cx));
 
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.has_update_observer()));
 
@@ -379,75 +380,51 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .next()
         .await
         .unwrap();
+    cx_a.executor().finish_waiting();
+
     // Open the buffer on the host.
     let buffer_a = project_a
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
+    cx_a.executor().run_until_parked();
 
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.text(), "fn main() { a. }")
+    });
+
+    // Confirm a completion on the guest.
+    editor_b.update(cx_b, |editor, cx| {
+        assert!(editor.context_menu_visible());
+        editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx);
+        assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
     });
 
     // Return a resolved completion from the host's language server.
     // The resolved completion has an additional text edit.
     fake_language_server.handle_request::<lsp::request::ResolveCompletionItem, _, _>(
         |params, _| async move {
-            Ok(match params.label.as_str() {
-                "first_method(…)" => lsp::CompletionItem {
-                    label: "first_method(…)".into(),
-                    detail: Some("fn(&mut self, B) -> C".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "first_method($1)".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    additional_text_edits: Some(vec![lsp::TextEdit {
-                        new_text: "use d::SomeTrait;\n".to_string(),
-                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-                    }]),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-                "second_method(…)" => lsp::CompletionItem {
-                    label: "second_method(…)".into(),
-                    detail: Some("fn(&mut self, C) -> D<E>".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "second_method()".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    additional_text_edits: Some(vec![lsp::TextEdit {
-                        new_text: "use d::SomeTrait;\n".to_string(),
-                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-                    }]),
-                    ..Default::default()
-                },
-                _ => panic!("unexpected completion label: {:?}", params.label),
+            assert_eq!(params.label, "first_method(…)");
+            Ok(lsp::CompletionItem {
+                label: "first_method(…)".into(),
+                detail: Some("fn(&mut self, B) -> C".into()),
+                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                    new_text: "first_method($1)".to_string(),
+                    range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
+                })),
+                additional_text_edits: Some(vec![lsp::TextEdit {
+                    new_text: "use d::SomeTrait;\n".to_string(),
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                }]),
+                insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                ..Default::default()
             })
         },
     );
-    cx_a.executor().finish_waiting();
-    cx_a.executor().run_until_parked();
-
-    // Confirm a completion on the guest.
-    editor_b
-        .update(cx_b, |editor, cx| {
-            assert!(editor.context_menu_visible());
-            editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx)
-        })
-        .unwrap()
-        .await
-        .unwrap();
-    cx_a.executor().run_until_parked();
-    cx_b.executor().run_until_parked();
 
     // The additional edit is applied.
+    cx_a.executor().run_until_parked();
+
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(
             buffer.text(),
@@ -540,15 +517,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     cx_b.executor().run_until_parked();
 
     // When accepting the completion, the snippet is insert.
-    editor_b
-        .update(cx_b, |editor, cx| {
-            assert!(editor.context_menu_visible());
-            editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx)
-        })
-        .unwrap()
-        .await
-        .unwrap();
     editor_b.update(cx_b, |editor, cx| {
+        assert!(editor.context_menu_visible());
+        editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx);
         assert_eq!(
             editor.text(cx),
             "use d::SomeTrait;\nfn main() { a.first_method(); a.third_method(, , ) }"
@@ -2007,6 +1978,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         enabled: false,
         delay_ms: None,
         min_column: None,
+        show_commit_summary: false,
     });
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
@@ -2180,6 +2152,295 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             ]
         );
     });
+}
+
+#[gpui::test(iterations = 30)]
+async fn test_collaborating_with_editorconfig(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_b.update(editor::init);
+
+    // Set up a fake language server.
+    client_a.language_registry().add(rust_lang());
+    client_a
+        .fs()
+        .insert_tree(
+            "/a",
+            json!({
+                "src": {
+                    "main.rs": "mod other;\nfn main() { let foo = other::foo(); }",
+                    "other_mod": {
+                        "other.rs": "pub fn foo() -> usize {\n    4\n}",
+                        ".editorconfig": "",
+                    },
+                },
+                ".editorconfig": "[*]\ntab_width = 2\n",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let main_buffer_a = project_a
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, "src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let other_buffer_a = project_a
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, "src/other_mod/other.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let cx_a = cx_a.add_empty_window();
+    let main_editor_a =
+        cx_a.new_view(|cx| Editor::for_buffer(main_buffer_a, Some(project_a.clone()), cx));
+    let other_editor_a =
+        cx_a.new_view(|cx| Editor::for_buffer(other_buffer_a, Some(project_a), cx));
+    let mut main_editor_cx_a = EditorTestContext {
+        cx: cx_a.clone(),
+        window: cx_a.handle(),
+        editor: main_editor_a,
+        assertion_cx: AssertionContextManager::new(),
+    };
+    let mut other_editor_cx_a = EditorTestContext {
+        cx: cx_a.clone(),
+        window: cx_a.handle(),
+        editor: other_editor_a,
+        assertion_cx: AssertionContextManager::new(),
+    };
+
+    // Join the project as client B.
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let main_buffer_b = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, "src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let other_buffer_b = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, "src/other_mod/other.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let cx_b = cx_b.add_empty_window();
+    let main_editor_b =
+        cx_b.new_view(|cx| Editor::for_buffer(main_buffer_b, Some(project_b.clone()), cx));
+    let other_editor_b =
+        cx_b.new_view(|cx| Editor::for_buffer(other_buffer_b, Some(project_b.clone()), cx));
+    let mut main_editor_cx_b = EditorTestContext {
+        cx: cx_b.clone(),
+        window: cx_b.handle(),
+        editor: main_editor_b,
+        assertion_cx: AssertionContextManager::new(),
+    };
+    let mut other_editor_cx_b = EditorTestContext {
+        cx: cx_b.clone(),
+        window: cx_b.handle(),
+        editor: other_editor_b,
+        assertion_cx: AssertionContextManager::new(),
+    };
+
+    let initial_main = indoc! {"
+ˇmod other;
+fn main() { let foo = other::foo(); }"};
+    let initial_other = indoc! {"
+ˇpub fn foo() -> usize {
+    4
+}"};
+
+    let first_tabbed_main = indoc! {"
+  ˇmod other;
+fn main() { let foo = other::foo(); }"};
+    tab_undo_assert(
+        &mut main_editor_cx_a,
+        &mut main_editor_cx_b,
+        initial_main,
+        first_tabbed_main,
+        true,
+    );
+    tab_undo_assert(
+        &mut main_editor_cx_a,
+        &mut main_editor_cx_b,
+        initial_main,
+        first_tabbed_main,
+        false,
+    );
+
+    let first_tabbed_other = indoc! {"
+  ˇpub fn foo() -> usize {
+    4
+}"};
+    tab_undo_assert(
+        &mut other_editor_cx_a,
+        &mut other_editor_cx_b,
+        initial_other,
+        first_tabbed_other,
+        true,
+    );
+    tab_undo_assert(
+        &mut other_editor_cx_a,
+        &mut other_editor_cx_b,
+        initial_other,
+        first_tabbed_other,
+        false,
+    );
+
+    client_a
+        .fs()
+        .atomic_write(
+            PathBuf::from("/a/src/.editorconfig"),
+            "[*]\ntab_width = 3\n".to_owned(),
+        )
+        .await
+        .unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let second_tabbed_main = indoc! {"
+   ˇmod other;
+fn main() { let foo = other::foo(); }"};
+    tab_undo_assert(
+        &mut main_editor_cx_a,
+        &mut main_editor_cx_b,
+        initial_main,
+        second_tabbed_main,
+        true,
+    );
+    tab_undo_assert(
+        &mut main_editor_cx_a,
+        &mut main_editor_cx_b,
+        initial_main,
+        second_tabbed_main,
+        false,
+    );
+
+    let second_tabbed_other = indoc! {"
+   ˇpub fn foo() -> usize {
+    4
+}"};
+    tab_undo_assert(
+        &mut other_editor_cx_a,
+        &mut other_editor_cx_b,
+        initial_other,
+        second_tabbed_other,
+        true,
+    );
+    tab_undo_assert(
+        &mut other_editor_cx_a,
+        &mut other_editor_cx_b,
+        initial_other,
+        second_tabbed_other,
+        false,
+    );
+
+    let editorconfig_buffer_b = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, "src/other_mod/.editorconfig"), cx)
+        })
+        .await
+        .unwrap();
+    editorconfig_buffer_b.update(cx_b, |buffer, cx| {
+        buffer.set_text("[*.rs]\ntab_width = 6\n", cx);
+    });
+    project_b
+        .update(cx_b, |project, cx| {
+            project.save_buffer(editorconfig_buffer_b.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    tab_undo_assert(
+        &mut main_editor_cx_a,
+        &mut main_editor_cx_b,
+        initial_main,
+        second_tabbed_main,
+        true,
+    );
+    tab_undo_assert(
+        &mut main_editor_cx_a,
+        &mut main_editor_cx_b,
+        initial_main,
+        second_tabbed_main,
+        false,
+    );
+
+    let third_tabbed_other = indoc! {"
+      ˇpub fn foo() -> usize {
+    4
+}"};
+    tab_undo_assert(
+        &mut other_editor_cx_a,
+        &mut other_editor_cx_b,
+        initial_other,
+        third_tabbed_other,
+        true,
+    );
+
+    tab_undo_assert(
+        &mut other_editor_cx_a,
+        &mut other_editor_cx_b,
+        initial_other,
+        third_tabbed_other,
+        false,
+    );
+}
+
+#[track_caller]
+fn tab_undo_assert(
+    cx_a: &mut EditorTestContext,
+    cx_b: &mut EditorTestContext,
+    expected_initial: &str,
+    expected_tabbed: &str,
+    a_tabs: bool,
+) {
+    cx_a.assert_editor_state(expected_initial);
+    cx_b.assert_editor_state(expected_initial);
+
+    if a_tabs {
+        cx_a.update_editor(|editor, cx| {
+            editor.tab(&editor::actions::Tab, cx);
+        });
+    } else {
+        cx_b.update_editor(|editor, cx| {
+            editor.tab(&editor::actions::Tab, cx);
+        });
+    }
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    cx_a.assert_editor_state(expected_tabbed);
+    cx_b.assert_editor_state(expected_tabbed);
+
+    if a_tabs {
+        cx_a.update_editor(|editor, cx| {
+            editor.undo(&editor::actions::Undo, cx);
+        });
+    } else {
+        cx_b.update_editor(|editor, cx| {
+            editor.undo(&editor::actions::Undo, cx);
+        });
+    }
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    cx_a.assert_editor_state(expected_initial);
+    cx_b.assert_editor_state(expected_initial);
 }
 
 fn extract_hint_labels(editor: &Editor) -> Vec<String> {

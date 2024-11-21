@@ -169,8 +169,12 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut now = Instant::now();
-    let buffer = cx.new_model(|cx| language::Buffer::local("123456", cx));
-    let group_interval = buffer.update(cx, |buffer, _| buffer.transaction_group_interval());
+    let group_interval = Duration::from_millis(1);
+    let buffer = cx.new_model(|cx| {
+        let mut buf = language::Buffer::local("123456", cx);
+        buf.set_group_interval(group_interval);
+        buf
+    });
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let editor = cx.add_window(|cx| build_editor(buffer.clone(), cx));
 
@@ -592,10 +596,10 @@ fn test_clone(cx: &mut TestAppContext) {
 
     _ = editor.update(cx, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges(selection_ranges.clone()));
-        editor.fold_ranges(
-            [
-                (Point::new(1, 0)..Point::new(2, 0), FoldPlaceholder::test()),
-                (Point::new(3, 0)..Point::new(4, 0), FoldPlaceholder::test()),
+        editor.fold_creases(
+            vec![
+                Crease::simple(Point::new(1, 0)..Point::new(2, 0), FoldPlaceholder::test()),
+                Crease::simple(Point::new(3, 0)..Point::new(4, 0), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -1081,6 +1085,112 @@ fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_fold_at_level(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple(
+            &"
+                class Foo:
+                    # Hello!
+
+                    def a():
+                        print(1)
+
+                    def b():
+                        print(2)
+
+
+                class Bar:
+                    # World!
+
+                    def a():
+                        print(1)
+
+                    def b():
+                        print(2)
+
+
+            "
+            .unindent(),
+            cx,
+        );
+        build_editor(buffer.clone(), cx)
+    });
+
+    _ = view.update(cx, |view, cx| {
+        view.fold_at_level(&FoldAtLevel { level: 2 }, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:
+                    # Hello!
+
+                    def a():⋯
+
+                    def b():⋯
+
+
+                class Bar:
+                    # World!
+
+                    def a():⋯
+
+                    def b():⋯
+
+
+            "
+            .unindent(),
+        );
+
+        view.fold_at_level(&FoldAtLevel { level: 1 }, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:⋯
+
+
+                class Bar:⋯
+
+
+            "
+            .unindent(),
+        );
+
+        view.unfold_all(&UnfoldAll, cx);
+        view.fold_at_level(&FoldAtLevel { level: 0 }, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:
+                    # Hello!
+
+                    def a():
+                        print(1)
+
+                    def b():
+                        print(2)
+
+
+                class Bar:
+                    # World!
+
+                    def a():
+                        print(1)
+
+                    def b():
+                        print(2)
+
+
+            "
+            .unindent(),
+        );
+
+        assert_eq!(view.display_text(cx), view.buffer.read(cx).read(cx).text());
+    });
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -1173,11 +1283,11 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     assert_eq!('α'.len_utf8(), 2);
 
     _ = view.update(cx, |view, cx| {
-        view.fold_ranges(
+        view.fold_creases(
             vec![
-                (Point::new(0, 6)..Point::new(0, 12), FoldPlaceholder::test()),
-                (Point::new(1, 2)..Point::new(1, 4), FoldPlaceholder::test()),
-                (Point::new(2, 4)..Point::new(2, 8), FoldPlaceholder::test()),
+                Crease::simple(Point::new(0, 6)..Point::new(0, 12), FoldPlaceholder::test()),
+                Crease::simple(Point::new(1, 2)..Point::new(1, 4), FoldPlaceholder::test()),
+                Crease::simple(Point::new(2, 4)..Point::new(2, 8), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -1288,6 +1398,15 @@ fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([empty_range(0, "ⓐⓑⓒⓓⓔ".len())]);
         });
+
+        // moving above start of document should move selection to start of document,
+        // but the next move down should still be at the original goal_x
+        view.move_up(&MoveUp, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(0, "".len())]
+        );
+
         view.move_down(&MoveDown, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -1307,6 +1426,25 @@ fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
         );
 
         view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]
+        );
+
+        // moving past end of document should not change goal_x
+        view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(5, "".len())]
+        );
+
+        view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(5, "".len())]
+        );
+
+        view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]
@@ -3765,11 +3903,11 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
         build_editor(buffer, cx)
     });
     _ = view.update(cx, |view, cx| {
-        view.fold_ranges(
+        view.fold_creases(
             vec![
-                (Point::new(0, 2)..Point::new(1, 2), FoldPlaceholder::test()),
-                (Point::new(2, 3)..Point::new(4, 1), FoldPlaceholder::test()),
-                (Point::new(7, 0)..Point::new(8, 4), FoldPlaceholder::test()),
+                Crease::simple(Point::new(0, 2)..Point::new(1, 2), FoldPlaceholder::test()),
+                Crease::simple(Point::new(2, 3)..Point::new(4, 1), FoldPlaceholder::test()),
+                Crease::simple(Point::new(7, 0)..Point::new(8, 4), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -3868,10 +4006,9 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
         editor.insert_blocks(
             [BlockProperties {
                 style: BlockStyle::Fixed,
-                position: snapshot.anchor_after(Point::new(2, 0)),
-                disposition: BlockDisposition::Below,
+                placement: BlockPlacement::Below(snapshot.anchor_after(Point::new(2, 0))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             }],
             Some(Autoscroll::fit()),
@@ -3882,6 +4019,76 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
         });
         editor.move_line_down(&MoveLineDown, cx);
     });
+}
+
+#[gpui::test]
+async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        &"
+            ˇzero
+            one
+            two
+            three
+            four
+            five
+        "
+        .unindent(),
+    );
+
+    // Create a four-line block that replaces three lines of text.
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let snapshot = &snapshot.buffer_snapshot;
+        let placement = BlockPlacement::Replace(
+            snapshot.anchor_after(Point::new(1, 0))..snapshot.anchor_after(Point::new(3, 0)),
+        );
+        editor.insert_blocks(
+            [BlockProperties {
+                placement,
+                height: 4,
+                style: BlockStyle::Sticky,
+                render: Arc::new(|_| gpui::div().into_any_element()),
+                priority: 0,
+            }],
+            None,
+            cx,
+        );
+    });
+
+    // Move down so that the cursor touches the block.
+    cx.update_editor(|editor, cx| {
+        editor.move_down(&Default::default(), cx);
+    });
+    cx.assert_editor_state(
+        &"
+            zero
+            «one
+            two
+            threeˇ»
+            four
+            five
+        "
+        .unindent(),
+    );
+
+    // Move down past the block.
+    cx.update_editor(|editor, cx| {
+        editor.move_down(&Default::default(), cx);
+    });
+    cx.assert_editor_state(
+        &"
+            zero
+            one
+            two
+            three
+            ˇfour
+            five
+        "
+        .unindent(),
+    );
 }
 
 #[gpui::test]
@@ -3984,22 +4191,49 @@ async fn test_rewrap(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    {
-        let language = Arc::new(Language::new(
-            LanguageConfig {
-                line_comments: vec!["// ".into()],
-                ..LanguageConfig::default()
-            },
-            None,
-        ));
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    let language_with_c_comments = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into()],
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+    let language_with_pound_comments = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["# ".into()],
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+    let language_with_doc_comments = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into(), "/// ".into()],
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
 
-        let unwrapped_text = indoc! {"
+    let plaintext_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Plain Text".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    assert_rewrap(
+        indoc! {"
             // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
-        "};
-
-        let wrapped_text = indoc! {"
-            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+        "},
+        indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
             // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
             // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
             // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
@@ -4008,31 +4242,19 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
             // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
             // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.ˇ
-        "};
-
-        cx.set_state(unwrapped_text);
-        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
-        cx.assert_editor_state(wrapped_text);
-    }
+            // porttitor id. Aliquam id accumsan eros.
+        "},
+        language_with_c_comments.clone(),
+        &mut cx,
+    );
 
     // Test that rewrapping works inside of a selection
-    {
-        let language = Arc::new(Language::new(
-            LanguageConfig {
-                line_comments: vec!["// ".into()],
-                ..LanguageConfig::default()
-            },
-            None,
-        ));
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-
-        let unwrapped_text = indoc! {"
+    assert_rewrap(
+        indoc! {"
             «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.ˇ»
-        "};
-
-        let wrapped_text = indoc! {"
-            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+        "},
+        indoc! {"
+            «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
             // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
             // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
             // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
@@ -4041,105 +4263,69 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
             // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
             // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.ˇ
-        "};
-
-        cx.set_state(unwrapped_text);
-        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
-        cx.assert_editor_state(wrapped_text);
-    }
+            // porttitor id. Aliquam id accumsan eros.ˇ»
+        "},
+        language_with_c_comments.clone(),
+        &mut cx,
+    );
 
     // Test that cursors that expand to the same region are collapsed.
-    {
-        let language = Arc::new(Language::new(
-            LanguageConfig {
-                line_comments: vec!["// ".into()],
-                ..LanguageConfig::default()
-            },
-            None,
-        ));
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-
-        let unwrapped_text = indoc! {"
+    assert_rewrap(
+        indoc! {"
             // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit.
             // ˇVivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque.
             // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
             // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
-        "};
-
-        let wrapped_text = indoc! {"
-            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+        "},
+        indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. ˇVivamus mollis elit
             // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
-            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
+            // auctor, eu lacinia sapien scelerisque. ˇVivamus sit amet neque et quam
             // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
-            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
+            // Pellentesque odio lectus, iaculis ac volutpat et, ˇblandit quis urna. Sed
             // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
             // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
             // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
             // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.ˇˇˇˇ
-        "};
-
-        cx.set_state(unwrapped_text);
-        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
-        cx.assert_editor_state(wrapped_text);
-    }
+            // porttitor id. Aliquam id accumsan eros.
+        "},
+        language_with_c_comments.clone(),
+        &mut cx,
+    );
 
     // Test that non-contiguous selections are treated separately.
-    {
-        let language = Arc::new(Language::new(
-            LanguageConfig {
-                line_comments: vec!["// ".into()],
-                ..LanguageConfig::default()
-            },
-            None,
-        ));
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-
-        let unwrapped_text = indoc! {"
+    assert_rewrap(
+        indoc! {"
             // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit.
             // ˇVivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque.
             //
             // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
             // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
-        "};
-
-        let wrapped_text = indoc! {"
-            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+        "},
+        indoc! {"
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. ˇVivamus mollis elit
             // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
-            // auctor, eu lacinia sapien scelerisque.ˇˇ
+            // auctor, eu lacinia sapien scelerisque.
             //
-            // Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
+            // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
             // tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
-            // blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec
+            // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec
             // molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque
             // nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas
             // porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id
-            // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇˇ
-        "};
-
-        cx.set_state(unwrapped_text);
-        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
-        cx.assert_editor_state(wrapped_text);
-    }
+            // vulputate turpis porttitor id. Aliquam id accumsan eros.
+        "},
+        language_with_c_comments.clone(),
+        &mut cx,
+    );
 
     // Test that different comment prefixes are supported.
-    {
-        let language = Arc::new(Language::new(
-            LanguageConfig {
-                line_comments: vec!["# ".into()],
-                ..LanguageConfig::default()
-            },
-            None,
-        ));
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-
-        let unwrapped_text = indoc! {"
+    assert_rewrap(
+        indoc! {"
             # ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
-        "};
-
-        let wrapped_text = indoc! {"
-            # Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+        "},
+        indoc! {"
+            # ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
             # purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
             # eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
             # hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
@@ -4148,119 +4334,74 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             # in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur
             # adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis.
             # Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id
-            # accumsan eros.ˇ
-        "};
-
-        cx.set_state(unwrapped_text);
-        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
-        cx.assert_editor_state(wrapped_text);
-    }
+            # accumsan eros.
+        "},
+        language_with_pound_comments.clone(),
+        &mut cx,
+    );
 
     // Test that rewrapping is ignored outside of comments in most languages.
-    {
-        let language = Arc::new(Language::new(
-            LanguageConfig {
-                line_comments: vec!["// ".into(), "/// ".into()],
-                ..LanguageConfig::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        ));
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-
-        let unwrapped_text = indoc! {"
+    assert_rewrap(
+        indoc! {"
             /// Adds two numbers.
             /// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ
             fn add(a: u32, b: u32) -> u32 {
                 a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + bˇ
             }
-        "};
-
-        let wrapped_text = indoc! {"
+        "},
+        indoc! {"
             /// Adds two numbers. Lorem ipsum dolor sit amet, consectetur adipiscing elit.
             /// Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ
             fn add(a: u32, b: u32) -> u32 {
                 a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + bˇ
             }
-        "};
-
-        cx.set_state(unwrapped_text);
-        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
-        cx.assert_editor_state(wrapped_text);
-    }
+        "},
+        language_with_doc_comments.clone(),
+        &mut cx,
+    );
 
     // Test that rewrapping works in Markdown and Plain Text languages.
-    {
-        let markdown_language = Arc::new(Language::new(
-            LanguageConfig {
-                name: "Markdown".into(),
-                ..LanguageConfig::default()
-            },
-            None,
-        ));
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
-
-        let unwrapped_text = indoc! {"
+    assert_rewrap(
+        indoc! {"
             # Hello
 
             Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
-        "};
-
-        let wrapped_text = indoc! {"
+        "},
+        indoc! {"
             # Hello
 
-            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit
             purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
             eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
             hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
             lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
             nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
-            Integer sit amet scelerisque nisi.ˇ
-        "};
+            Integer sit amet scelerisque nisi.
+        "},
+        markdown_language,
+        &mut cx,
+    );
 
-        cx.set_state(unwrapped_text);
-        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
-        cx.assert_editor_state(wrapped_text);
-
-        let plaintext_language = Arc::new(Language::new(
-            LanguageConfig {
-                name: "Plain Text".into(),
-                ..LanguageConfig::default()
-            },
-            None,
-        ));
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(plaintext_language), cx));
-
-        let unwrapped_text = indoc! {"
+    assert_rewrap(
+        indoc! {"
             Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
-        "};
-
-        let wrapped_text = indoc! {"
-            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+        "},
+        indoc! {"
+            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit
             purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
             eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
             hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
             lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
             nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
-            Integer sit amet scelerisque nisi.ˇ
-        "};
-
-        cx.set_state(unwrapped_text);
-        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
-        cx.assert_editor_state(wrapped_text);
-    }
+            Integer sit amet scelerisque nisi.
+        "},
+        plaintext_language,
+        &mut cx,
+    );
 
     // Test rewrapping unaligned comments in a selection.
-    {
-        let language = Arc::new(Language::new(
-            LanguageConfig {
-                line_comments: vec!["// ".into(), "/// ".into()],
-                ..LanguageConfig::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        ));
-        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-
-        let unwrapped_text = indoc! {"
+    assert_rewrap(
+        indoc! {"
             fn foo() {
                 if true {
             «        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
@@ -4270,26 +4411,25 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                     //
                 }
             }
-        "};
-
-        let wrapped_text = indoc! {"
+        "},
+        indoc! {"
             fn foo() {
                 if true {
-                    // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
+            «        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
                     // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
-                    // egestas tellus id dignissim.ˇ
+                    // egestas tellus id dignissim.ˇ»
                     do_something();
                 } else {
                     //
                 }
             }
-        "};
+        "},
+        language_with_doc_comments.clone(),
+        &mut cx,
+    );
 
-        cx.set_state(unwrapped_text);
-        cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
-        cx.assert_editor_state(wrapped_text);
-
-        let unwrapped_text = indoc! {"
+    assert_rewrap(
+        indoc! {"
             fn foo() {
                 if true {
             «ˇ        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
@@ -4300,22 +4440,32 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                 }
 
             }
-        "};
-
-        let wrapped_text = indoc! {"
+        "},
+        indoc! {"
             fn foo() {
                 if true {
-                    // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
+            «ˇ        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
                     // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
-                    // egestas tellus id dignissim.ˇ
+                    // egestas tellus id dignissim.»
                     do_something();
                 } else {
                     //
                 }
 
             }
-        "};
+        "},
+        language_with_doc_comments.clone(),
+        &mut cx,
+    );
 
+    #[track_caller]
+    fn assert_rewrap(
+        unwrapped_text: &str,
+        wrapped_text: &str,
+        language: Arc<Language>,
+        cx: &mut EditorTestContext,
+    ) {
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
         cx.update_editor(|e, cx| e.rewrap(&Rewrap, cx));
         cx.assert_editor_state(wrapped_text);
@@ -4595,11 +4745,11 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
         build_editor(buffer, cx)
     });
     _ = view.update(cx, |view, cx| {
-        view.fold_ranges(
+        view.fold_creases(
             vec![
-                (Point::new(0, 2)..Point::new(1, 2), FoldPlaceholder::test()),
-                (Point::new(2, 3)..Point::new(4, 1), FoldPlaceholder::test()),
-                (Point::new(7, 0)..Point::new(8, 4), FoldPlaceholder::test()),
+                Crease::simple(Point::new(0, 2)..Point::new(1, 2), FoldPlaceholder::test()),
+                Crease::simple(Point::new(2, 3)..Point::new(4, 1), FoldPlaceholder::test()),
+                Crease::simple(Point::new(7, 0)..Point::new(8, 4), FoldPlaceholder::test()),
             ],
             true,
             cx,
@@ -5276,13 +5426,13 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     // Ensure that we keep expanding the selection if the larger selection starts or ends within
     // a fold.
     editor.update(cx, |view, cx| {
-        view.fold_ranges(
+        view.fold_creases(
             vec![
-                (
+                Crease::simple(
                     Point::new(0, 21)..Point::new(0, 24),
                     FoldPlaceholder::test(),
                 ),
-                (
+                Crease::simple(
                     Point::new(3, 20)..Point::new(3, 22),
                     FoldPlaceholder::test(),
                 ),
@@ -6430,6 +6580,45 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_snippet_placeholder_choices(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (text, insertion_ranges) = marked_text_ranges(
+        indoc! {"
+            ˇ
+        "},
+        false,
+    );
+
+    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+
+    _ = editor.update(cx, |editor, cx| {
+        let snippet = Snippet::parse("type ${1|,i32,u32|} = $2").unwrap();
+
+        editor
+            .insert_snippet(&insertion_ranges, snippet, cx)
+            .unwrap();
+
+        fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text: &str) {
+            let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
+            assert_eq!(editor.text(cx), expected_text);
+            assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
+        }
+
+        assert(
+            editor,
+            cx,
+            indoc! {"
+            type «» =•
+            "},
+        );
+
+        assert!(editor.context_menu_visible(), "There should be a matches");
+    });
+}
+
+#[gpui::test]
 async fn test_snippets(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -7076,7 +7265,12 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
 
     let format = editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffer,
+                cx,
+            )
         })
         .unwrap();
     fake_server
@@ -7112,7 +7306,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     });
     let format = editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project, FormatTrigger::Manual, cx)
+            editor.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffer, cx)
         })
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
@@ -7996,7 +8190,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
             .unwrap()
     });
     cx.assert_editor_state(indoc! {"
-        one.ˇ
+        one.second_completionˇ
         two
         three
     "});
@@ -8029,9 +8223,9 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state(indoc! {"
         one.second_completionˇ
         two
-        thoverlapping additional editree
-
-        additional edit"});
+        three
+        additional edit
+    "});
 
     cx.set_state(indoc! {"
         one.second_completion
@@ -8091,8 +8285,8 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(indoc! {"
         one.second_completion
-        two siˇ
-        three siˇ
+        two sixth_completionˇ
+        three sixth_completionˇ
         additional edit
     "});
 
@@ -8133,11 +8327,9 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
             .confirm_completion(&ConfirmCompletion::default(), cx)
             .unwrap()
     });
-    cx.assert_editor_state("editor.cloˇ");
+    cx.assert_editor_state("editor.closeˇ");
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
-    cx.assert_editor_state(indoc! {"
-    editor.closeˇ"});
 }
 
 #[gpui::test]
@@ -8203,6 +8395,74 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
             );
         } else {
             panic!("expected completion menu to stay open after PageUp");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.lsp
+        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "Range".into(),
+                    sort_text: Some("a".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "r".into(),
+                    sort_text: Some("b".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "ret".into(),
+                    sort_text: Some("c".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "return".into(),
+                    sort_text: Some("d".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "slice".into(),
+                    sort_text: Some("d".into()),
+                    ..Default::default()
+                },
+            ])))
+        });
+    cx.set_state("rˇ");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, cx| {
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: Some("r".into()),
+            },
+            cx,
+        );
+    });
+    cx.executor().run_until_parked();
+
+    cx.update_editor(|editor, _| {
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+            assert_eq!(
+                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                &["r", "ret", "Range", "return"]
+            );
+        } else {
+            panic!("expected completion menu to be open");
         }
     });
 }
@@ -8426,6 +8686,131 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_comment_ignore_indent(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into(), "//! ".into(), "/// ".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let toggle_comments = &ToggleComments {
+        advance_downwards: false,
+        ignore_indent: true,
+    };
+
+    // If multiple selections intersect a line, the line is only toggled once.
+    cx.set_state(indoc! {"
+        fn a() {
+        //    «b();
+        //    c();
+        //    ˇ» d();
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            «b();
+            c();
+            ˇ» d();
+        }
+    "});
+
+    // The comment prefix is inserted at the beginning of each line
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //    «b();
+        //    c();
+        //    ˇ» d();
+        }
+    "});
+
+    // If a selection ends at the beginning of a line, that line is not toggled.
+    cx.set_selections_state(indoc! {"
+        fn a() {
+        //    b();
+        //    «c();
+        ˇ»//     d();
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //    b();
+            «c();
+        ˇ»//     d();
+        }
+    "});
+
+    // If a selection span a single line and is empty, the line is toggled.
+    cx.set_state(indoc! {"
+        fn a() {
+            a();
+            b();
+        ˇ
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            a();
+            b();
+        //ˇ
+        }
+    "});
+
+    // If a selection span multiple lines, empty lines are not toggled.
+    cx.set_state(indoc! {"
+        fn a() {
+            «a();
+
+            c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //    «a();
+
+        //    c();ˇ»
+        }
+    "});
+
+    // If a selection includes multiple comment prefixes, all lines are uncommented.
+    cx.set_state(indoc! {"
+        fn a() {
+        //    «a();
+        ///    b();
+        //!    c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            «a();
+            b();
+            c();ˇ»
+        }
+    "});
+}
+
+#[gpui::test]
 async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -8446,6 +8831,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
 
     let toggle_comments = &ToggleComments {
         advance_downwards: true,
+        ignore_indent: false,
     };
 
     // Single cursor on one line -> advance
@@ -10142,7 +10528,7 @@ async fn test_completions_with_additional_edits(cx: &mut gpui::TestAppContext) {
             .confirm_completion(&ConfirmCompletion::default(), cx)
             .unwrap()
     });
-    cx.assert_editor_state(indoc! {"fn main() { let a = 2.ˇ; }"});
+    cx.assert_editor_state(indoc! {"fn main() { let a = 2.Some(2)ˇ; }"});
 
     cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
         let task_completion_item = completion_item.clone();
@@ -10311,7 +10697,12 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
 
     editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffer,
+                cx,
+            )
         })
         .unwrap()
         .await;
@@ -10325,7 +10716,12 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         settings.defaults.formatter = Some(language_settings::SelectedFormatter::Auto)
     });
     let format = editor.update(cx, |editor, cx| {
-        editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+        editor.perform_format(
+            project.clone(),
+            FormatTrigger::Manual,
+            FormatTarget::Buffer,
+            cx,
+        )
     });
     format.await.unwrap();
     assert_eq!(
@@ -12810,7 +13206,7 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
                 callback: Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
             }
 
-            let crease = Crease::new(
+            let crease = Crease::inline(
                 range,
                 FoldPlaceholder::test(),
                 {
@@ -12829,7 +13225,8 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
 
             editor.insert_creases(Some(crease), cx);
             let snapshot = editor.snapshot(cx);
-            let _div = snapshot.render_fold_toggle(MultiBufferRow(1), false, cx.view().clone(), cx);
+            let _div =
+                snapshot.render_crease_toggle(MultiBufferRow(1), false, cx.view().clone(), cx);
             snapshot
         })
         .unwrap();
@@ -13083,6 +13480,89 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut gpui::T
             references_fallback_text, "fn one() {\n    let mut a = two();\n}",
             "Should use the range from the references response and not the GoToDefinition one"
         );
+    });
+}
+
+#[gpui::test]
+async fn test_find_enclosing_node_with_task(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let text = r#"
+        #[cfg(test)]
+        mod tests() {
+            #[test]
+            fn runnable_1() {
+                let a = 1;
+            }
+
+            #[test]
+            fn runnable_2() {
+                let a = 1;
+                let b = 2;
+            }
+        }
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file("/file.rs", Default::default()).await;
+
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+    let editor = cx.new_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            multi_buffer,
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
+
+    editor.update(cx, |editor, cx| {
+        editor.tasks.insert(
+            (buffer.read(cx).remote_id(), 3),
+            RunnableTasks {
+                templates: vec![],
+                offset: MultiBufferOffset(43),
+                column: 0,
+                extra_variables: HashMap::default(),
+                context_range: BufferOffset(43)..BufferOffset(85),
+            },
+        );
+        editor.tasks.insert(
+            (buffer.read(cx).remote_id(), 8),
+            RunnableTasks {
+                templates: vec![],
+                offset: MultiBufferOffset(86),
+                column: 0,
+                extra_variables: HashMap::default(),
+                context_range: BufferOffset(86)..BufferOffset(191),
+            },
+        );
+
+        // Test finding task when cursor is inside function body
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
+        });
+        let (_, row, _) = editor.find_enclosing_node_task(cx).unwrap();
+        assert_eq!(row, 3, "Should find task for cursor inside runnable_1");
+
+        // Test finding task when cursor is on function name
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(8, 4)..Point::new(8, 4)])
+        });
+        let (_, row, _) = editor.find_enclosing_node_task(cx).unwrap();
+        assert_eq!(row, 8, "Should find task when cursor is on function name");
     });
 }
 

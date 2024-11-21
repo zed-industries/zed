@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.158.0"
+version = "0.164.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -15,6 +15,7 @@ name = "zed"
 path = "src/main.rs"
 
 [dependencies]
+assistant_slash_command.workspace = true
 activity_indicator.workspace = true
 anyhow.workspace = true
 assets.workspace = true
@@ -34,13 +35,13 @@ collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
 command_palette_hooks.workspace = true
+context_servers.workspace = true
 copilot.workspace = true
 db.workspace = true
-dev_server_projects.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
 env_logger.workspace = true
-extension.workspace = true
+extension_host.workspace = true
 extensions_ui.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
@@ -51,16 +52,16 @@ futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
 go_to_line.workspace = true
-gpui.workspace = true
-headless.workspace = true
+gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
 http_client.workspace = true
 image_viewer.workspace = true
+indexed_docs.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
-isahc_http_client.workspace = true
 journal.workspace = true
 language.workspace = true
 language_model.workspace = true
+language_models.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
@@ -80,6 +81,7 @@ profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
+proto.workspace = true
 quick_action_bar.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
@@ -107,7 +109,9 @@ terminal_view.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
 time.workspace = true
+toolchain_selector.workspace = true
 ui.workspace = true
+reqwest_client.workspace = true
 url.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true
@@ -123,7 +127,7 @@ windows.workspace = true
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
 
 [dev-dependencies]
@@ -169,4 +173,4 @@ osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
 [package.metadata.cargo-machete]
-ignored = ["profiling"]
+ignored = ["profiling", "zstd"]

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use chrono::Local;
 use gpui::{Task, WeakView};
@@ -48,7 +49,7 @@ impl SlashCommand for NowSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let now = Local::now();
         let text = format!("Today is {now}.", now = now.to_rfc2822());
         let range = 0..text.len();
@@ -62,6 +63,7 @@ impl SlashCommand for NowSlashCommand {
                 metadata: None,
             }],
             run_commands_in_text: false,
-        }))
+        }
+        .to_event_stream()))
     }
 }

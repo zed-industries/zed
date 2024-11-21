@@ -7,7 +7,7 @@
             (attribute (identifier) @_superclass)]
         )
         (#eq? @_superclass "TestCase")
-    ) @python-unittest-class
+    ) @_python-unittest-class
     (#set! tag python-unittest-class)
 )
 
@@ -24,8 +24,47 @@
                 (function_definition
                     name: (identifier) @run @_unittest_method_name
                     (#match? @_unittest_method_name "^test.*")
-                ) @python-unittest-method
+                ) @_python-unittest-method
                 (#set! tag python-unittest-method)
             )
         )
+)
+
+; pytest functions
+(
+    (module
+        (function_definition
+            name: (identifier) @run @_pytest_method_name
+            (#match? @_pytest_method_name "^test_")
+        ) @python-pytest-method
+    )
+    (#set! tag python-pytest-method)
+)
+
+; pytest classes
+(
+    (module
+        (class_definition
+            name: (identifier) @run @_pytest_class_name
+            (#match? @_pytest_class_name "^Test")
+        )
+        (#set! tag python-pytest-class)
+    )
+)
+
+; pytest class methods
+(
+    (module
+        (class_definition
+            name: (identifier) @_pytest_class_name
+            (#match? @_pytest_class_name "^Test")
+            body: (block
+                    (function_definition
+                        name: (identifier) @run @_pytest_method_name
+                        (#match? @_pytest_method_name "^test")
+                    ) @python-pytest-method
+                    (#set! tag python-pytest-method)
+            )
+        )
+    )
 )

@@ -5,17 +5,17 @@ use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
     language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
-    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
+    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, DiskState, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
 use lsp::{DiagnosticSeverity, NumberOrString};
 use parking_lot::Mutex;
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
 
-use std::{mem, ops::Range, task::Poll};
+use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree, TryFutureExt as _};
@@ -92,6 +92,96 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let dir = temp_tree(json!({
+        ".editorconfig": r#"
+        root = true
+        [*.rs]
+            indent_style = tab
+            indent_size = 3
+            end_of_line = lf
+            insert_final_newline = true
+            trim_trailing_whitespace = true
+        [*.js]
+            tab_width = 10
+        "#,
+        ".zed": {
+            "settings.json": r#"{
+                "tab_size": 8,
+                "hard_tabs": false,
+                "ensure_final_newline_on_save": false,
+                "remove_trailing_whitespace_on_save": false,
+                "soft_wrap": "editor_width"
+            }"#,
+        },
+        "a.rs": "fn a() {\n    A\n}",
+        "b": {
+            ".editorconfig": r#"
+            [*.rs]
+                indent_size = 2
+            "#,
+            "b.rs": "fn b() {\n    B\n}",
+        },
+        "c.js": "def c\n  C\nend",
+        "README.json": "tabs are better\n",
+    }));
+
+    let path = dir.path();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree_from_real_fs(path, path).await;
+    let project = Project::test(fs, [path], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(js_lang());
+    language_registry.add(json_lang());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let settings_for = |path: &str| {
+            let file_entry = tree.entry_for_path(path).unwrap().clone();
+            let file = File::for_entry(file_entry, worktree.clone());
+            let file_language = project
+                .read(cx)
+                .languages()
+                .language_for_file_path(file.path.as_ref());
+            let file_language = cx
+                .background_executor()
+                .block(file_language)
+                .expect("Failed to get file language");
+            let file = file as _;
+            language_settings(Some(file_language.name()), Some(&file), cx).into_owned()
+        };
+
+        let settings_a = settings_for("a.rs");
+        let settings_b = settings_for("b/b.rs");
+        let settings_c = settings_for("c.js");
+        let settings_readme = settings_for("README.json");
+
+        // .editorconfig overrides .zed/settings
+        assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
+        assert_eq!(settings_a.hard_tabs, true);
+        assert_eq!(settings_a.ensure_final_newline_on_save, true);
+        assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+
+        // .editorconfig in b/ overrides .editorconfig in root
+        assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
+
+        // "indent_size" is not set, so "tab_width" is used
+        assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
+
+        // README.md should not be affected by .editorconfig's globe "*.rs"
+        assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
+    });
+}
+
+#[gpui::test]
 async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     TaskStore::init(None);
@@ -146,26 +236,16 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .update(|cx| {
             let tree = worktree.read(cx);
 
-            let settings_a = language_settings(
-                None,
-                Some(
-                    &(File::for_entry(
-                        tree.entry_for_path("a/a.rs").unwrap().clone(),
-                        worktree.clone(),
-                    ) as _),
-                ),
-                cx,
-            );
-            let settings_b = language_settings(
-                None,
-                Some(
-                    &(File::for_entry(
-                        tree.entry_for_path("b/b.rs").unwrap().clone(),
-                        worktree.clone(),
-                    ) as _),
-                ),
-                cx,
-            );
+            let file_a = File::for_entry(
+                tree.entry_for_path("a/a.rs").unwrap().clone(),
+                worktree.clone(),
+            ) as _;
+            let settings_a = language_settings(None, Some(&file_a), cx);
+            let file_b = File::for_entry(
+                tree.entry_for_path("b/b.rs").unwrap().clone(),
+                worktree.clone(),
+            ) as _;
+            let settings_b = language_settings(None, Some(&file_b), cx);
 
             assert_eq!(settings_a.tab_size.get(), 8);
             assert_eq!(settings_b.tab_size.get(), 2);
@@ -385,34 +465,6 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // A server is started up, and it is notified about Rust files.
     let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
-    fake_rust_server
-        .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
-            registrations: vec![lsp::Registration {
-                id: Default::default(),
-                method: "workspace/didChangeWatchedFiles".to_string(),
-                register_options: serde_json::to_value(
-                    lsp::DidChangeWatchedFilesRegistrationOptions {
-                        watchers: vec![
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    "/the-root/Cargo.toml".to_string(),
-                                ),
-                                kind: None,
-                            },
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    "/the-root/*.rs".to_string(),
-                                ),
-                                kind: None,
-                            },
-                        ],
-                    },
-                )
-                .ok(),
-            }],
-        })
-        .await
-        .unwrap();
     assert_eq!(
         fake_rust_server
             .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -429,7 +481,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // The buffer is configured based on the language server's capabilities.
     rust_buffer.update(cx, |buffer, _| {
         assert_eq!(
-            buffer.completion_triggers(),
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
         );
     });
@@ -460,24 +516,6 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // A json language server is started up and is only notified about the json buffer.
     let mut fake_json_server = fake_json_servers.next().await.unwrap();
-    fake_json_server
-        .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
-            registrations: vec![lsp::Registration {
-                id: Default::default(),
-                method: "workspace/didChangeWatchedFiles".to_string(),
-                register_options: serde_json::to_value(
-                    lsp::DidChangeWatchedFilesRegistrationOptions {
-                        watchers: vec![lsp::FileSystemWatcher {
-                            glob_pattern: lsp::GlobPattern::String("/the-root/*.json".to_string()),
-                            kind: None,
-                        }],
-                    },
-                )
-                .ok(),
-            }],
-        })
-        .await
-        .unwrap();
     assert_eq!(
         fake_json_server
             .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -494,7 +532,14 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // This buffer is configured based on the second language server's
     // capabilities.
     json_buffer.update(cx, |buffer, _| {
-        assert_eq!(buffer.completion_triggers(), &[":".to_string()]);
+        assert_eq!(
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            &[":".to_string()]
+        );
     });
 
     // When opening another buffer whose language server is already running,
@@ -507,7 +552,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         .unwrap();
     rust_buffer2.update(cx, |buffer, _| {
         assert_eq!(
-            buffer.completion_triggers(),
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
         );
     });
@@ -528,13 +577,20 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         )
     );
 
-    // Save notifications are reported only to servers that signed up for a given extension.
+    // Save notifications are reported to all servers.
     project
         .update(cx, |project, cx| project.save_buffer(toml_buffer, cx))
         .await
         .unwrap();
     assert_eq!(
         fake_rust_server
+            .receive_notification::<lsp::notification::DidSaveTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap())
+    );
+    assert_eq!(
+        fake_json_server
             .receive_notification::<lsp::notification::DidSaveTextDocument>()
             .await
             .text_document,
@@ -1185,7 +1241,11 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
     assert_eq!(
         events.next().await.unwrap(),
-        Event::LanguageServerAdded(LanguageServerId(0)),
+        Event::LanguageServerAdded(
+            LanguageServerId(0),
+            fake_server.server.name(),
+            Some(worktree_id)
+        ),
     );
 
     fake_server
@@ -1295,6 +1355,8 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         },
     );
 
+    let worktree_id = project.update(cx, |p, cx| p.worktrees(cx).next().unwrap().read(cx).id());
+
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
         .await
@@ -1314,7 +1376,11 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     let fake_server = fake_servers.next().await.unwrap();
     assert_eq!(
         events.next().await.unwrap(),
-        Event::LanguageServerAdded(LanguageServerId(1))
+        Event::LanguageServerAdded(
+            LanguageServerId(1),
+            fake_server.server.name(),
+            Some(worktree_id)
+        )
     );
     fake_server.start_progress(progress_token).await;
     assert_eq!(
@@ -3173,10 +3239,22 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
             Path::new("b/c/file5")
         );
 
-        assert!(!buffer2.read(cx).file().unwrap().is_deleted());
-        assert!(!buffer3.read(cx).file().unwrap().is_deleted());
-        assert!(!buffer4.read(cx).file().unwrap().is_deleted());
-        assert!(buffer5.read(cx).file().unwrap().is_deleted());
+        assert_matches!(
+            buffer2.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_matches!(
+            buffer3.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_matches!(
+            buffer4.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_eq!(
+            buffer5.read(cx).file().unwrap().disk_state(),
+            DiskState::Deleted
+        );
     });
 
     // Update the remote worktree. Check that it becomes consistent with the
@@ -3350,7 +3428,11 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
             ]
         );
         events.lock().clear();
-        buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), cx);
+        buffer.did_save(
+            buffer.version(),
+            buffer.file().unwrap().disk_state().mtime(),
+            cx,
+        );
     });
 
     // after saving, the buffer is not dirty, and emits a saved event.
@@ -4589,61 +4671,6 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_search_ordering(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.background_executor.clone());
-    fs.insert_tree(
-        "/dir",
-        json!({
-            ".git": {},
-            ".gitignore": "**/target\n/node_modules\n",
-            "aaa.txt": "key:value",
-            "bbb": {
-                "index.txt": "index_key:index_value"
-            },
-            "node_modules": {
-                "10 eleven": "key",
-                "1 two": "key"
-            },
-        }),
-    )
-    .await;
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-
-    let mut search = project.update(cx, |project, cx| {
-        project.search(
-            SearchQuery::text(
-                "key",
-                false,
-                false,
-                true,
-                Default::default(),
-                Default::default(),
-                None,
-            )
-            .unwrap(),
-            cx,
-        )
-    });
-
-    fn file_name(search_result: Option<SearchResult>, cx: &mut gpui::TestAppContext) -> String {
-        match search_result.unwrap() {
-            SearchResult::Buffer { buffer, .. } => buffer.read_with(cx, |buffer, _| {
-                buffer.file().unwrap().path().to_string_lossy().to_string()
-            }),
-            _ => panic!("Expected buffer"),
-        }
-    }
-
-    assert_eq!(file_name(search.next().await, cx), "bbb/index.txt");
-    assert_eq!(file_name(search.next().await, cx), "node_modules/1 two");
-    assert_eq!(file_name(search.next().await, cx), "node_modules/10 eleven");
-    assert_eq!(file_name(search.next().await, cx), "aaa.txt");
-    assert!(search.next().await.is_none())
-}
-
-#[gpui::test]
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -4799,11 +4826,10 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         });
         let new_server_name = new_server.server.name();
         assert!(
-            !servers_with_hover_requests.contains_key(new_server_name),
+            !servers_with_hover_requests.contains_key(&new_server_name),
             "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
         );
-        let new_server_name = new_server_name.to_string();
-        match new_server_name.as_str() {
+        match new_server_name.as_ref() {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
@@ -5023,11 +5049,10 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         let new_server_name = new_server.server.name();
 
         assert!(
-            !servers_with_actions_requests.contains_key(new_server_name),
+            !servers_with_actions_requests.contains_key(&new_server_name),
             "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
         );
-        let new_server_name = new_server_name.to_string();
-        match new_server_name.as_str() {
+        match new_server_name.0.as_ref() {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_actions_requests.insert(
                     new_server_name.clone(),

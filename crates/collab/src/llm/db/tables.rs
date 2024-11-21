@@ -1,3 +1,4 @@
+pub mod billing_event;
 pub mod lifetime_usage;
 pub mod model;
 pub mod monthly_usage;

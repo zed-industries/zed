@@ -79,11 +79,13 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
             crate::Operation::UpdateCompletionTriggers {
                 triggers,
                 lamport_timestamp,
+                server_id,
             } => proto::operation::Variant::UpdateCompletionTriggers(
                 proto::operation::UpdateCompletionTriggers {
                     replica_id: lamport_timestamp.replica_id as u32,
                     lamport_timestamp: lamport_timestamp.value,
-                    triggers: triggers.clone(),
+                    triggers: triggers.iter().cloned().collect(),
+                    language_server_id: server_id.to_proto(),
                 },
             ),
         }),
@@ -175,7 +177,7 @@ pub fn serialize_cursor_shape(cursor_shape: &CursorShape) -> proto::CursorShape 
     match cursor_shape {
         CursorShape::Bar => proto::CursorShape::CursorBar,
         CursorShape::Block => proto::CursorShape::CursorBlock,
-        CursorShape::Underscore => proto::CursorShape::CursorUnderscore,
+        CursorShape::Underline => proto::CursorShape::CursorUnderscore,
         CursorShape::Hollow => proto::CursorShape::CursorHollow,
     }
 }
@@ -185,7 +187,7 @@ pub fn deserialize_cursor_shape(cursor_shape: proto::CursorShape) -> CursorShape
     match cursor_shape {
         proto::CursorShape::CursorBar => CursorShape::Bar,
         proto::CursorShape::CursorBlock => CursorShape::Block,
-        proto::CursorShape::CursorUnderscore => CursorShape::Underscore,
+        proto::CursorShape::CursorUnderscore => CursorShape::Underline,
         proto::CursorShape::CursorHollow => CursorShape::Hollow,
     }
 }
@@ -326,6 +328,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                         replica_id: message.replica_id as ReplicaId,
                         value: message.lamport_timestamp,
                     },
+                    server_id: LanguageServerId::from_proto(message.language_server_id),
                 }
             }
         },

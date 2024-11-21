@@ -79,7 +79,6 @@ id_type!(ChannelChatParticipantId);
 id_type!(ChannelId);
 id_type!(ChannelMemberId);
 id_type!(ContactId);
-id_type!(DevServerId);
 id_type!(ExtensionId);
 id_type!(FlagId);
 id_type!(FollowerId);
@@ -89,7 +88,6 @@ id_type!(NotificationId);
 id_type!(NotificationKindId);
 id_type!(ProjectCollaboratorId);
 id_type!(ProjectId);
-id_type!(DevServerProjectId);
 id_type!(ReplicaId);
 id_type!(RoomId);
 id_type!(RoomParticipantId);
@@ -275,12 +273,6 @@ impl From<ChannelVisibility> for i32 {
         let proto: proto::ChannelVisibility = val.into();
         proto.into()
     }
-}
-
-#[derive(Copy, Clone, Debug, Serialize, PartialEq)]
-pub enum PrincipalId {
-    UserId(UserId),
-    DevServerId(DevServerId),
 }
 
 /// Indicate whether a [Buffer] has permissions to edit.

@@ -1,7 +1,9 @@
-use super::{SlashCommand, SlashCommandOutput};
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Context, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
@@ -17,6 +19,10 @@ impl SlashCommand for PromptSlashCommand {
 
     fn description(&self) -> String {
         "Insert prompt from library".into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Library
     }
 
     fn menu_text(&self) -> String {
@@ -61,7 +67,7 @@ impl SlashCommand for PromptSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let title = arguments.to_owned().join(" ");
         if title.trim().is_empty() {
             return Task::ready(Err(anyhow!("missing prompt name")));
@@ -100,7 +106,8 @@ impl SlashCommand for PromptSlashCommand {
                     metadata: None,
                 }],
                 run_commands_in_text: true,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

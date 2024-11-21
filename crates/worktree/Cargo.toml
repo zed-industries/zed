@@ -29,6 +29,7 @@ fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
+git_hosting_providers.workspace = true
 gpui.workspace = true
 ignore.workspace = true
 language.workspace = true

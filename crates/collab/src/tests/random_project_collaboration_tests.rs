@@ -1168,7 +1168,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             Some((project, cx))
                         });
 
-                        if !guest_project.is_disconnected() {
+                        if !guest_project.is_disconnected(cx) {
                             if let Some((host_project, host_cx)) = host_project {
                                 let host_worktree_snapshots =
                                     host_project.read_with(host_cx, |host_project, cx| {
@@ -1254,8 +1254,8 @@ impl RandomizedTest for ProjectCollaborationTest {
 
             let buffers = client.buffers().clone();
             for (guest_project, guest_buffers) in &buffers {
-                let project_id = if guest_project.read_with(client_cx, |project, _| {
-                    project.is_local() || project.is_disconnected()
+                let project_id = if guest_project.read_with(client_cx, |project, cx| {
+                    project.is_local() || project.is_disconnected(cx)
                 }) {
                     continue;
                 } else {
@@ -1323,11 +1323,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                     match (host_file, guest_file) {
                         (Some(host_file), Some(guest_file)) => {
                             assert_eq!(guest_file.path(), host_file.path());
-                            assert_eq!(guest_file.is_deleted(), host_file.is_deleted());
-                            assert_eq!(
-                                guest_file.mtime(),
-                                host_file.mtime(),
-                                "guest {} mtime does not match host {} for path {:?} in project {}",
+                            assert_eq!(guest_file.disk_state(), host_file.disk_state(),
+                                "guest {} disk_state does not match host {} for path {:?} in project {}",
                                 guest_user_id,
                                 host_user_id,
                                 guest_file.path(),

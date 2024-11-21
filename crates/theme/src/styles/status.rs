@@ -5,7 +5,7 @@ use refineable::Refineable;
 
 use crate::{blue, grass, neutral, red, yellow};
 
-#[derive(Refineable, Clone, Debug)]
+#[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug, serde::Deserialize)]
 pub struct StatusColors {
     /// Indicates some kind of conflict, like a file changed on disk while it was open, or

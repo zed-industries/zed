@@ -29,7 +29,7 @@ pub struct LineLayout {
 }
 
 /// A run of text that has been shaped .
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ShapedRun {
     /// The font id for this run
     pub font_id: FontId,

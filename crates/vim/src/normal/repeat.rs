@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     insert::NormalBefore,
     motion::Motion,
+    normal::InsertBefore,
     state::{Mode, Operator, RecordedSelection, ReplayableAction, VimGlobals},
     Vim,
 };
@@ -308,6 +309,11 @@ impl Vim {
 
         actions.push(ReplayableAction::Action(EndRepeat.boxed_clone()));
 
+        if self.temp_mode {
+            self.temp_mode = false;
+            actions.push(ReplayableAction::Action(InsertBefore.boxed_clone()));
+        }
+
         let globals = Vim::globals(cx);
         globals.dot_replaying = true;
         let mut replayer = globals.replayer.get_or_insert_with(Replayer::new).clone();
@@ -387,7 +393,7 @@ mod test {
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
-                    resolve_provider: Some(false),
+                    resolve_provider: Some(true),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -432,9 +438,7 @@ mod test {
         request.next().await;
         cx.condition(|editor, _| editor.context_menu_visible())
             .await;
-        cx.simulate_keystrokes("down enter");
-        cx.run_until_parked();
-        cx.simulate_keystrokes("! escape");
+        cx.simulate_keystrokes("down enter ! escape");
 
         cx.assert_state(
             indoc! {"

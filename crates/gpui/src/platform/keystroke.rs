@@ -34,6 +34,7 @@ impl Keystroke {
         {
             let ime_modifiers = Modifiers {
                 control: self.modifiers.control,
+                platform: self.modifiers.platform,
                 ..Default::default()
             };
 
@@ -121,6 +122,35 @@ impl Keystroke {
         })
     }
 
+    /// Produces a representation of this key that Parse can understand.
+    pub fn unparse(&self) -> String {
+        let mut str = String::new();
+        if self.modifiers.function {
+            str.push_str("fn-");
+        }
+        if self.modifiers.control {
+            str.push_str("ctrl-");
+        }
+        if self.modifiers.alt {
+            str.push_str("alt-");
+        }
+        if self.modifiers.platform {
+            #[cfg(target_os = "macos")]
+            str.push_str("cmd-");
+
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            str.push_str("super-");
+
+            #[cfg(target_os = "windows")]
+            str.push_str("win-");
+        }
+        if self.modifiers.shift {
+            str.push_str("shift-");
+        }
+        str.push_str(&self.key);
+        str
+    }
+
     /// Returns true if this keystroke left
     /// the ime system in an incomplete state.
     pub fn is_ime_in_progress(&self) -> bool {
@@ -146,7 +176,7 @@ impl Keystroke {
                 "space" => Some(" ".into()),
                 "tab" => Some("\t".into()),
                 "enter" => Some("\n".into()),
-                key if !is_printable_key(key) => None,
+                key if !is_printable_key(key) || key.is_empty() => None,
                 key => {
                     if self.modifiers.shift {
                         Some(key.to_uppercase())
@@ -192,6 +222,8 @@ fn is_printable_key(key: &str) -> bool {
             | "insert"
             | "home"
             | "end"
+            | "back"
+            | "forward"
             | "escape"
     )
 }
@@ -208,7 +240,7 @@ impl std::fmt::Display for Keystroke {
             #[cfg(target_os = "macos")]
             f.write_char('⌘')?;
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             f.write_char('❖')?;
 
             #[cfg(target_os = "windows")]

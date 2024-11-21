@@ -306,6 +306,7 @@ where
         self.borrow_mut().set_global(global)
     }
 
+    #[track_caller]
     fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
         G: Global,

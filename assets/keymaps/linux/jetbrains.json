@@ -1,6 +1,7 @@
 [
   {
     "bindings": {
+      "ctrl-alt-s": "zed::OpenSettings",
       "ctrl-shift-[": "pane::ActivatePrevItem",
       "ctrl-shift-]": "pane::ActivateNextItem"
     }
@@ -25,8 +26,8 @@
       "alt-j": ["editor::SelectNext", { "replace_newest": false }],
       "alt-shift-j": ["editor::SelectPrevious", { "replace_newest": false }],
       "ctrl-/": ["editor::ToggleComments", { "advance_downwards": true }],
-      "alt-up": "editor::SelectLargerSyntaxNode",
-      "alt-down": "editor::SelectSmallerSyntaxNode",
+      "ctrl-w": "editor::SelectLargerSyntaxNode",
+      "ctrl-shift-w": "editor::SelectSmallerSyntaxNode",
       "shift-alt-up": "editor::MoveLineUp",
       "shift-alt-down": "editor::MoveLineDown",
       "ctrl-alt-l": "editor::Format",
@@ -43,6 +44,7 @@
       "shift-f2": "editor::GoToPrevDiagnostic",
       "ctrl-alt-shift-down": "editor::GoToHunk",
       "ctrl-alt-shift-up": "editor::GoToPrevHunk",
+      "ctrl-alt-z": "editor::RevertSelectedHunks",
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-end": "editor::MoveToEnd",
       "ctrl-shift-home": "editor::SelectToBeginning",

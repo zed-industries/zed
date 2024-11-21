@@ -40,6 +40,7 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
+    pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
 }
 
@@ -58,13 +59,12 @@ pub enum ClosePosition {
     Right,
 }
 
-impl ClosePosition {
-    pub fn right(&self) -> bool {
-        match self {
-            ClosePosition::Left => false,
-            ClosePosition::Right => true,
-        }
-    }
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ActivateOnClose {
+    #[default]
+    History,
+    Neighbour,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -81,6 +81,10 @@ pub struct ItemSettingsContent {
     ///
     /// Default: false
     file_icons: Option<bool>,
+    /// What to do after closing the current tab.
+    ///
+    /// Default: history
+    pub activate_on_close: Option<ActivateOnClose>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -222,6 +226,9 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
     fn is_dirty(&self, _: &AppContext) -> bool {
+        false
+    }
+    fn has_deleted_file(&self, _: &AppContext) -> bool {
         false
     }
     fn has_conflict(&self, _: &AppContext) -> bool {
@@ -401,6 +408,7 @@ pub trait ItemHandle: 'static + Send {
     fn item_id(&self) -> EntityId;
     fn to_any(&self) -> AnyView;
     fn is_dirty(&self, cx: &AppContext) -> bool;
+    fn has_deleted_file(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
     fn save(
@@ -762,6 +770,10 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
         self.read(cx).is_dirty(cx)
+    }
+
+    fn has_deleted_file(&self, cx: &AppContext) -> bool {
+        self.read(cx).has_deleted_file(cx)
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
@@ -1169,8 +1181,8 @@ pub mod test {
     }
 
     impl Render for TestItem {
-        fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-            gpui::div().track_focus(&self.focus_handle)
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+            gpui::div().track_focus(&self.focus_handle(cx))
         }
     }
 

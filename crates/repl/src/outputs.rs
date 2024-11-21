@@ -56,7 +56,7 @@ use table::TableView;
 pub mod plain;
 use plain::TerminalOutput;
 
-mod user_error;
+pub(crate) mod user_error;
 use user_error::ErrorView;
 use workspace::Workspace;
 
@@ -201,7 +201,7 @@ impl Output {
         )
     }
 
-    fn render(
+    pub fn render(
         &self,
 
         workspace: WeakView<Workspace>,

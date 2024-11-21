@@ -4,7 +4,7 @@
     declarator: (function_declarator
       declarator: (identifier) @run
     )
-  ) @c-main
+  ) @_c-main
   (#eq? @run "main")
   (#set! tag c-main)
 )

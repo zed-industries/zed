@@ -179,7 +179,7 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub cursor_blink: Option<bool>,
     /// Cursor shape for the default editor.
-    /// Can be "bar", "block", "underscore", or "hollow".
+    /// Can be "bar", "block", "underline", or "hollow".
     ///
     /// Default: None
     pub cursor_shape: Option<CursorShape>,
@@ -279,7 +279,7 @@ pub struct EditorSettingsContent {
 
     /// Whether to show the signature help pop-up after completions or bracket pairs inserted.
     ///
-    /// Default: true
+    /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
 
     /// Jupyter REPL settings.

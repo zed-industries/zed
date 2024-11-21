@@ -18,24 +18,26 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::{OpenRemote, RecentProjects};
-use rpc::proto::{self, DevServerStatus};
+use rpc::proto;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
-    IconButtonShape, IconName, IconSize, Indicator, PopoverMenu, Tooltip,
+    h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
+    IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
+use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
 #[cfg(feature = "stories")]
 pub use stories::*;
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
+
+const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
 
 actions!(
     collab,
@@ -75,7 +77,7 @@ impl Render for TitleBar {
         let height = Self::height(cx);
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
-        let titlebar_color = if cfg!(target_os = "linux") {
+        let titlebar_color = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if cx.is_window_active() && !self.should_move {
                 cx.theme().colors().title_bar_background
             } else {
@@ -263,86 +265,76 @@ impl TitleBar {
     }
 
     fn render_ssh_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
-        let host = self.project.read(cx).ssh_connection_string(cx)?;
-        let meta = SharedString::from(format!("Connected to: {host}"));
-        let indicator_color = match self.project.read(cx).ssh_connection_state(cx)? {
+        let options = self.project.read(cx).ssh_connection_options(cx)?;
+        let host: SharedString = options.connection_string().into();
+
+        let nickname = options
+            .nickname
+            .clone()
+            .map(|nick| nick.into())
+            .unwrap_or_else(|| host.clone());
+
+        let (indicator_color, meta) = match self.project.read(cx).ssh_connection_state(cx)? {
+            remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
+            remote::ConnectionState::Connected => (Color::Success, format!("Connected to: {host}")),
+            remote::ConnectionState::HeartbeatMissed => (
+                Color::Warning,
+                format!("Connection attempt to {host} missed. Retrying..."),
+            ),
+            remote::ConnectionState::Reconnecting => (
+                Color::Warning,
+                format!("Lost connection to {host}. Reconnecting..."),
+            ),
+            remote::ConnectionState::Disconnected => {
+                (Color::Error, format!("Disconnected from {host}"))
+            }
+        };
+
+        let icon_color = match self.project.read(cx).ssh_connection_state(cx)? {
             remote::ConnectionState::Connecting => Color::Info,
-            remote::ConnectionState::Connected => Color::Success,
+            remote::ConnectionState::Connected => Color::Default,
             remote::ConnectionState::HeartbeatMissed => Color::Warning,
             remote::ConnectionState::Reconnecting => Color::Warning,
             remote::ConnectionState::Disconnected => Color::Error,
         };
-        let indicator = div()
-            .absolute()
-            .size_1p5()
-            .right_0p5()
-            .bottom_0p5()
-            .rounded_full()
-            .bg(indicator_color.color(cx));
+
+        let meta = SharedString::from(meta);
 
         Some(
-            div()
-                .relative()
+            ButtonLike::new("ssh-server-icon")
                 .child(
-                    IconButton::new("ssh-server-icon", IconName::Server)
-                        .icon_size(IconSize::Small)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(move |cx| {
-                            Tooltip::with_meta(
-                                "Remote Project",
-                                Some(&OpenRemote),
-                                meta.clone(),
-                                cx,
-                            )
-                        })
-                        .on_click(|_, cx| {
-                            cx.dispatch_action(OpenRemote.boxed_clone());
-                        }),
+                    IconWithIndicator::new(
+                        Icon::new(IconName::Server)
+                            .size(IconSize::XSmall)
+                            .color(icon_color),
+                        Some(Indicator::dot().color(indicator_color)),
+                    )
+                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                    .into_any_element(),
                 )
-                .child(indicator)
+                .child(
+                    div()
+                        .max_w_32()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(Label::new(nickname.clone()).size(LabelSize::Small)),
+                )
+                .tooltip(move |cx| {
+                    Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), cx)
+                })
+                .on_click(|_, cx| {
+                    cx.dispatch_action(OpenRemote.boxed_clone());
+                })
                 .into_any_element(),
         )
     }
 
     pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
-        if let Some(dev_server) =
-            self.project
-                .read(cx)
-                .dev_server_project_id()
-                .and_then(|dev_server_project_id| {
-                    dev_server_projects::Store::global(cx)
-                        .read(cx)
-                        .dev_server_for_project(dev_server_project_id)
-                })
-        {
-            return Some(
-                ButtonLike::new("dev_server_trigger")
-                    .child(Indicator::dot().color(
-                        if dev_server.status == DevServerStatus::Online {
-                            Color::Created
-                        } else {
-                            Color::Disabled
-                        },
-                    ))
-                    .child(
-                        Label::new(dev_server.name.clone())
-                            .size(LabelSize::Small)
-                            .line_height_style(LineHeightStyle::UiLabel),
-                    )
-                    .tooltip(move |cx| Tooltip::text("Project is hosted on a dev server", cx))
-                    .on_click(cx.listener(|this, _, cx| {
-                        if let Some(workspace) = this.workspace.upgrade() {
-                            recent_projects::DevServerProjects::open(workspace, cx)
-                        }
-                    }))
-                    .into_any_element(),
-            );
-        }
         if self.project.read(cx).is_via_ssh() {
             return self.render_ssh_project_host(cx);
         }
 
-        if self.project.read(cx).is_disconnected() {
+        if self.project.read(cx).is_disconnected(cx) {
             return Some(
                 Button::new("disconnected", "Disconnected")
                     .disabled(true)
@@ -404,7 +396,6 @@ impl TitleBar {
             "Open recent project".to_string()
         };
 
-        let workspace = self.workspace.clone();
         Button::new("project_name_trigger", name)
             .when(!is_project_selected, |b| b.color(Color::Muted))
             .style(ButtonStyle::Subtle)
@@ -412,18 +403,19 @@ impl TitleBar {
             .tooltip(move |cx| {
                 Tooltip::for_action(
                     "Recent Projects",
-                    &recent_projects::OpenRecent {
+                    &zed_actions::OpenRecent {
                         create_new_window: false,
                     },
                     cx,
                 )
             })
             .on_click(cx.listener(move |_, _, cx| {
-                if let Some(workspace) = workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        RecentProjects::open(workspace, false, cx);
-                    })
-                }
+                cx.dispatch_action(
+                    OpenRecent {
+                        create_new_window: false,
+                    }
+                    .boxed_clone(),
+                );
             }))
     }
 
@@ -457,7 +449,7 @@ impl TitleBar {
                 })
                 .on_click(move |_, cx| {
                     let _ = workspace.update(cx, |this, cx| {
-                        BranchList::open(this, &Default::default(), cx)
+                        BranchList::open(this, &Default::default(), cx);
                     });
                 }),
         )
@@ -588,8 +580,15 @@ impl TitleBar {
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
                         .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
                         .action("Themes…", theme_selector::Toggle::default().boxed_clone())
-                        .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                        .action("Extensions", zed_actions::Extensions.boxed_clone())
                         .separator()
+                        .link(
+                            "Book Onboarding",
+                            OpenBrowser {
+                                url: BOOK_ONBOARDING.to_string(),
+                            }
+                            .boxed_clone(),
+                        )
                         .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -617,7 +616,15 @@ impl TitleBar {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
                             .action("Themes…", theme_selector::Toggle::default().boxed_clone())
-                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                            .action("Extensions", zed_actions::Extensions.boxed_clone())
+                            .separator()
+                            .link(
+                                "Book Onboarding",
+                                OpenBrowser {
+                                    url: BOOK_ONBOARDING.to_string(),
+                                }
+                                .boxed_clone(),
+                            )
                     })
                     .into()
                 })

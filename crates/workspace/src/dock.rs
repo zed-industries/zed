@@ -605,7 +605,7 @@ impl Render for Dock {
             let create_resize_handle = || {
                 let handle = div()
                     .id("resize-handle")
-                    .on_drag(DraggedDock(position), |dock, cx| {
+                    .on_drag(DraggedDock(position), |dock, _, cx| {
                         cx.stop_propagation();
                         cx.new_view(|_| dock.clone())
                     })
@@ -658,7 +658,7 @@ impl Render for Dock {
 
             div()
                 .key_context(dispatch_context)
-                .track_focus(&self.focus_handle)
+                .track_focus(&self.focus_handle(cx))
                 .flex()
                 .bg(cx.theme().colors().panel_background)
                 .border_color(cx.theme().colors().border)
@@ -689,7 +689,7 @@ impl Render for Dock {
         } else {
             div()
                 .key_context(dispatch_context)
-                .track_focus(&self.focus_handle)
+                .track_focus(&self.focus_handle(cx))
         }
     }
 }
@@ -826,8 +826,8 @@ pub mod test {
     }
 
     impl Render for TestPanel {
-        fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-            div().id("test").track_focus(&self.focus_handle)
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+            div().id("test").track_focus(&self.focus_handle(cx))
         }
     }
 

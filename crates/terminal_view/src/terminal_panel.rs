@@ -89,6 +89,7 @@ impl TerminalPanel {
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
 
+            let is_local = workspace.project().read(cx).is_local();
             let workspace = workspace.weak_handle();
             pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
                 if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
@@ -128,8 +129,10 @@ impl TerminalPanel {
                     {
                         add_paths_to_terminal(pane, &[entry_path], cx);
                     }
-                } else if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
-                    add_paths_to_terminal(pane, paths.paths(), cx);
+                } else if is_local {
+                    if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+                        add_paths_to_terminal(pane, paths.paths(), cx);
+                    }
                 }
 
                 ControlFlow::Break(())
@@ -215,7 +218,7 @@ impl TerminalPanel {
                                         // context menu will be gone the moment we spawn the modal.
                                         .action(
                                             "Spawn task",
-                                            tasks_ui::Spawn::modal().boxed_clone(),
+                                            zed_actions::Spawn::modal().boxed_clone(),
                                         )
                                 });
 
@@ -395,9 +398,23 @@ impl TerminalPanel {
         let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
         let Some((shell, mut user_args)) = (match spawn_in_terminal.shell.clone() {
-            Shell::System => retrieve_system_shell().map(|shell| (shell, Vec::new())),
+            Shell::System => {
+                match self
+                    .workspace
+                    .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
+                {
+                    Ok(local) => {
+                        if local {
+                            retrieve_system_shell().map(|shell| (shell, Vec::new()))
+                        } else {
+                            Some(("\"${SHELL:-sh}\"".to_string(), Vec::new()))
+                        }
+                    }
+                    Err(_no_window_e) => return,
+                }
+            }
             Shell::Program(shell) => Some((shell, Vec::new())),
-            Shell::WithArguments { program, args } => Some((program, args)),
+            Shell::WithArguments { program, args, .. } => Some((program, args)),
         }) else {
             return;
         };
@@ -558,9 +575,9 @@ impl TerminalPanel {
             .collect()
     }
 
-    fn activate_terminal_view(&self, item_index: usize, cx: &mut WindowContext) {
+    fn activate_terminal_view(&self, item_index: usize, focus: bool, cx: &mut WindowContext) {
         self.pane.update(cx, |pane, cx| {
-            pane.activate_item(item_index, true, true, cx)
+            pane.activate_item(item_index, true, focus, cx)
         })
     }
 
@@ -599,8 +616,14 @@ impl TerminalPanel {
                     pane.add_item(terminal_view, true, focus, None, cx);
                 });
 
-                if reveal_strategy == RevealStrategy::Always {
-                    workspace.focus_panel::<Self>(cx);
+                match reveal_strategy {
+                    RevealStrategy::Always => {
+                        workspace.focus_panel::<Self>(cx);
+                    }
+                    RevealStrategy::NoFocus => {
+                        workspace.open_panel::<Self>(cx);
+                    }
+                    RevealStrategy::Never => {}
                 }
                 Ok(terminal)
             })?;
@@ -681,11 +704,21 @@ impl TerminalPanel {
 
         match reveal {
             RevealStrategy::Always => {
-                self.activate_terminal_view(terminal_item_index, cx);
+                self.activate_terminal_view(terminal_item_index, true, cx);
                 let task_workspace = self.workspace.clone();
                 cx.spawn(|_, mut cx| async move {
                     task_workspace
                         .update(&mut cx, |workspace, cx| workspace.focus_panel::<Self>(cx))
+                        .ok()
+                })
+                .detach();
+            }
+            RevealStrategy::NoFocus => {
+                self.activate_terminal_view(terminal_item_index, false, cx);
+                let task_workspace = self.workspace.clone();
+                cx.spawn(|_, mut cx| async move {
+                    task_workspace
+                        .update(&mut cx, |workspace, cx| workspace.open_panel::<Self>(cx))
                         .ok()
                 })
                 .detach();

@@ -10,4 +10,4 @@ export GPUProfilerEnabled="YES"
 export METAL_DEBUG_ERROR_MODE=0
 export LD_LIBRARY_PATH="/Applications/Xcode.app/Contents/Developer/../SharedFrameworks/"
 
-cargo run $@
+cargo run "$@"

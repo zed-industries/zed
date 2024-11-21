@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use anyhow::{anyhow, Result};
-use assistant::{ContextStore, PromptBuilder};
+use assistant::{ContextStore, PromptBuilder, SlashCommandWorkingSet, ToolWorkingSet};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -21,19 +21,20 @@ use language::{
     language_settings::{
         AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
     },
-    tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
-    LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
+    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, FakeLspAdapter,
+    Language, LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
+use project::lsp_store::FormatTarget;
 use project::{
     lsp_store::FormatTrigger, search::SearchQuery, search::SearchResult, DiagnosticSummary,
     HoverBlockKind, Project, ProjectPath,
 };
 use rand::prelude::*;
 use serde_json::json;
-use settings::{LocalSettingsKind, SettingsStore};
+use settings::SettingsStore;
 use std::{
     cell::{Cell, RefCell},
     env, future, mem,
@@ -1389,7 +1390,7 @@ async fn test_unshare_project(
         .unwrap();
     executor.run_until_parked();
 
-    assert!(project_b.read_with(cx_b, |project, _| project.is_disconnected()));
+    assert!(project_b.read_with(cx_b, |project, cx| project.is_disconnected(cx)));
 
     // Client C opens the project.
     let project_c = client_c.join_remote_project(project_id, cx_c).await;
@@ -1402,7 +1403,7 @@ async fn test_unshare_project(
 
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.has_update_observer()));
 
-    assert!(project_c.read_with(cx_c, |project, _| project.is_disconnected()));
+    assert!(project_c.read_with(cx_c, |project, cx| project.is_disconnected(cx)));
 
     // Client C can open the project again after client A re-shares.
     let project_id = active_call_a
@@ -1427,8 +1428,8 @@ async fn test_unshare_project(
 
     project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
 
-    project_c2.read_with(cx_c, |project, _| {
-        assert!(project.is_disconnected());
+    project_c2.read_with(cx_c, |project, cx| {
+        assert!(project.is_disconnected(cx));
         assert!(project.collaborators().is_empty());
     });
 }
@@ -1560,8 +1561,8 @@ async fn test_project_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
-    project_b1.read_with(cx_b, |project, _| {
-        assert!(!project.is_disconnected());
+    project_b1.read_with(cx_b, |project, cx| {
+        assert!(!project.is_disconnected(cx));
         assert_eq!(project.collaborators().len(), 1);
     });
 
@@ -1661,7 +1662,7 @@ async fn test_project_reconnect(
     });
 
     project_b1.read_with(cx_b, |project, cx| {
-        assert!(!project.is_disconnected());
+        assert!(!project.is_disconnected(cx));
         assert_eq!(
             project
                 .worktree_for_id(worktree1_id, cx)
@@ -1695,9 +1696,9 @@ async fn test_project_reconnect(
         );
     });
 
-    project_b2.read_with(cx_b, |project, _| assert!(project.is_disconnected()));
+    project_b2.read_with(cx_b, |project, cx| assert!(project.is_disconnected(cx)));
 
-    project_b3.read_with(cx_b, |project, _| assert!(!project.is_disconnected()));
+    project_b3.read_with(cx_b, |project, cx| assert!(!project.is_disconnected(cx)));
 
     buffer_a1.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), "WaZ"));
 
@@ -1754,7 +1755,7 @@ async fn test_project_reconnect(
     executor.run_until_parked();
 
     project_b1.read_with(cx_b, |project, cx| {
-        assert!(!project.is_disconnected());
+        assert!(!project.is_disconnected(cx));
         assert_eq!(
             project
                 .worktree_for_id(worktree1_id, cx)
@@ -1788,7 +1789,7 @@ async fn test_project_reconnect(
         );
     });
 
-    project_b3.read_with(cx_b, |project, _| assert!(project.is_disconnected()));
+    project_b3.read_with(cx_b, |project, cx| assert!(project.is_disconnected(cx)));
 
     buffer_a1.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), "WXaYZ"));
 
@@ -3327,16 +3328,8 @@ async fn test_local_settings(
                 .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
-                (
-                    Path::new("").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{"tab_size":2}"#.to_string()
-                ),
-                (
-                    Path::new("a").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{"tab_size":8}"#.to_string()
-                ),
+                (Path::new("").into(), r#"{"tab_size":2}"#.to_string()),
+                (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
             ]
         )
     });
@@ -3354,16 +3347,8 @@ async fn test_local_settings(
                 .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
-                (
-                    Path::new("").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{}"#.to_string()
-                ),
-                (
-                    Path::new("a").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{"tab_size":8}"#.to_string()
-                ),
+                (Path::new("").into(), r#"{}"#.to_string()),
+                (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
             ]
         )
     });
@@ -3391,16 +3376,8 @@ async fn test_local_settings(
                 .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
             &[
-                (
-                    Path::new("a").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{"tab_size":8}"#.to_string()
-                ),
-                (
-                    Path::new("b").into(),
-                    LocalSettingsKind::Settings,
-                    r#"{"tab_size":4}"#.to_string()
-                ),
+                (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
+                (Path::new("b").into(), r#"{"tab_size":4}"#.to_string()),
             ]
         )
     });
@@ -3430,11 +3407,7 @@ async fn test_local_settings(
             store
                 .local_settings(worktree_b.read(cx).id())
                 .collect::<Vec<_>>(),
-            &[(
-                Path::new("a").into(),
-                LocalSettingsKind::Settings,
-                r#"{"hard_tabs":true}"#.to_string()
-            ),]
+            &[(Path::new("a").into(), r#"{"hard_tabs":true}"#.to_string()),]
         )
     });
 }
@@ -3816,8 +3789,8 @@ async fn test_leaving_project(
         assert_eq!(project.collaborators().len(), 1);
     });
 
-    project_b2.read_with(cx_b, |project, _| {
-        assert!(project.is_disconnected());
+    project_b2.read_with(cx_b, |project, cx| {
+        assert!(project.is_disconnected(cx));
     });
 
     project_c.read_with(cx_c, |project, _| {
@@ -3849,12 +3822,12 @@ async fn test_leaving_project(
         assert_eq!(project.collaborators().len(), 0);
     });
 
-    project_b2.read_with(cx_b, |project, _| {
-        assert!(project.is_disconnected());
+    project_b2.read_with(cx_b, |project, cx| {
+        assert!(project.is_disconnected(cx));
     });
 
-    project_c.read_with(cx_c, |project, _| {
-        assert!(project.is_disconnected());
+    project_c.read_with(cx_c, |project, cx| {
+        assert!(project.is_disconnected(cx));
     });
 }
 
@@ -4417,6 +4390,7 @@ async fn test_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
+                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4450,6 +4424,7 @@ async fn test_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
+                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4486,7 +4461,7 @@ async fn test_prettier_formatting_buffer(
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::LANGUAGE.into()),
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "TypeScript",
@@ -4555,6 +4530,7 @@ async fn test_prettier_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
+                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4574,6 +4550,7 @@ async fn test_prettier_formatting_buffer(
                 HashSet::from_iter([buffer_a.clone()]),
                 true,
                 FormatTrigger::Manual,
+                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -5153,11 +5130,10 @@ async fn test_lsp_hover(
         });
         let new_server_name = new_server.server.name();
         assert!(
-            !servers_with_hover_requests.contains_key(new_server_name),
+            !servers_with_hover_requests.contains_key(&new_server_name),
             "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
         );
-        let new_server_name = new_server_name.to_string();
-        match new_server_name.as_str() {
+        match new_server_name.as_ref() {
             "CrabLang-ls" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
@@ -6510,17 +6486,35 @@ async fn test_context_collaboration_with_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
+    cx_a.update(context_servers::init);
+    cx_b.update(context_servers::init);
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context_store_a = cx_a
-        .update(|cx| ContextStore::new(project_a.clone(), prompt_builder.clone(), cx))
+        .update(|cx| {
+            ContextStore::new(
+                project_a.clone(),
+                prompt_builder.clone(),
+                Arc::new(SlashCommandWorkingSet::default()),
+                Arc::new(ToolWorkingSet::default()),
+                cx,
+            )
+        })
         .await
         .unwrap();
     let context_store_b = cx_b
-        .update(|cx| ContextStore::new(project_b.clone(), prompt_builder.clone(), cx))
+        .update(|cx| {
+            ContextStore::new(
+                project_b.clone(),
+                prompt_builder.clone(),
+                Arc::new(SlashCommandWorkingSet::default()),
+                Arc::new(ToolWorkingSet::default()),
+                cx,
+            )
+        })
         .await
         .unwrap();
 
-    // Client A creates a new context.
+    // Client A creates a new chats.
     let context_a = context_store_a.update(cx_a, |store, cx| store.create(cx));
     executor.run_until_parked();
 
@@ -6597,4 +6591,96 @@ async fn test_context_collaboration_with_reconnect(
     context_b.read_with(cx_b, |context, cx| {
         assert!(context.buffer().read(cx).read_only());
     });
+}
+
+#[gpui::test]
+async fn test_remote_git_branches(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree("/project", serde_json::json!({ ".git":{} }))
+        .await;
+    let branches = ["main", "dev", "feature-1"];
+    client_a
+        .fs()
+        .insert_branches(Path::new("/project/.git"), &branches);
+
+    let (project_a, worktree_id) = client_a.build_local_project("/project", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    let root_path = ProjectPath::root_path(worktree_id);
+    // Client A sees that a guest has joined.
+    executor.run_until_parked();
+
+    let branches_b = cx_b
+        .update(|cx| project_b.update(cx, |project, cx| project.branches(root_path.clone(), cx)))
+        .await
+        .unwrap();
+
+    let new_branch = branches[2];
+
+    let branches_b = branches_b
+        .into_iter()
+        .map(|branch| branch.name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(&branches_b, &branches);
+
+    cx_b.update(|cx| {
+        project_b.update(cx, |project, cx| {
+            project.update_or_create_branch(root_path.clone(), new_branch.to_string(), cx)
+        })
+    })
+    .await
+    .unwrap();
+
+    executor.run_until_parked();
+
+    let host_branch = cx_a.update(|cx| {
+        project_a.update(cx, |project, cx| {
+            project.worktree_store().update(cx, |worktree_store, cx| {
+                worktree_store
+                    .current_branch(root_path.clone(), cx)
+                    .unwrap()
+            })
+        })
+    });
+
+    assert_eq!(host_branch.as_ref(), branches[2]);
+
+    // Also try creating a new branch
+    cx_b.update(|cx| {
+        project_b.update(cx, |project, cx| {
+            project.update_or_create_branch(root_path.clone(), "totally-new-branch".to_string(), cx)
+        })
+    })
+    .await
+    .unwrap();
+
+    executor.run_until_parked();
+
+    let host_branch = cx_a.update(|cx| {
+        project_a.update(cx, |project, cx| {
+            project.worktree_store().update(cx, |worktree_store, cx| {
+                worktree_store.current_branch(root_path, cx).unwrap()
+            })
+        })
+    });
+
+    assert_eq!(host_branch.as_ref(), "totally-new-branch");
 }

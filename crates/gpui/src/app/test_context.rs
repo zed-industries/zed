@@ -431,7 +431,7 @@ impl TestAppContext {
         rx
     }
 
-    /// Retuens a stream of events emitted by the given Model.
+    /// Returns a stream of events emitted by the given Model.
     pub fn events<Evt, T: 'static + EventEmitter<Evt>>(
         &mut self,
         entity: &Model<T>,
@@ -477,6 +477,12 @@ impl TestAppContext {
         .race(timer.map(|_| Err(anyhow!("condition timed out"))))
         .await
         .unwrap();
+    }
+
+    /// Set a name for this App.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_name(&mut self, name: &'static str) {
+        self.update(|cx| cx.name = Some(name))
     }
 }
 

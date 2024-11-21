@@ -20,7 +20,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::anyhow;
-pub use queries::usages::ActiveUserCount;
+pub use queries::usages::{ActiveUserCount, TokenUsage};
 use sea_orm::prelude::*;
 pub use sea_orm::ConnectOptions;
 use sea_orm::{

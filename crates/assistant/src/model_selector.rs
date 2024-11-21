@@ -1,21 +1,17 @@
 use feature_flags::ZedPro;
-use gpui::Action;
-use gpui::DismissEvent;
 
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
 use workspace::ShowConfiguration;
 
 use std::sync::Arc;
-use ui::ListItemSpacing;
 
 use crate::assistant_settings::AssistantSettings;
 use fs::Fs;
-use gpui::SharedString;
-use gpui::Task;
+use gpui::{Action, AnyElement, DismissEvent, SharedString, Task};
 use picker::{Picker, PickerDelegate};
 use settings::update_settings_file;
-use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
@@ -85,14 +81,36 @@ impl PickerDelegate for ModelPickerDelegate {
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         let all_models = self.all_models.clone();
+
+        let llm_registry = LanguageModelRegistry::global(cx);
+
+        let configured_models: Vec<_> = llm_registry
+            .read(cx)
+            .providers()
+            .iter()
+            .filter(|provider| provider.is_authenticated(cx))
+            .map(|provider| provider.id())
+            .collect();
+
         cx.spawn(|this, mut cx| async move {
             let filtered_models = cx
                 .background_executor()
                 .spawn(async move {
-                    if query.is_empty() {
+                    let displayed_models = if configured_models.is_empty() {
                         all_models
                     } else {
                         all_models
+                            .into_iter()
+                            .filter(|model_info| {
+                                configured_models.contains(&model_info.model.provider_id())
+                            })
+                            .collect::<Vec<_>>()
+                    };
+
+                    if query.is_empty() {
+                        displayed_models
+                    } else {
+                        displayed_models
                             .into_iter()
                             .filter(|model_info| {
                                 model_info
@@ -141,6 +159,29 @@ impl PickerDelegate for ModelPickerDelegate {
 
     fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
 
+    fn render_header(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        let configured_models_count = LanguageModelRegistry::global(cx)
+            .read(cx)
+            .providers()
+            .iter()
+            .filter(|provider| provider.is_authenticated(cx))
+            .count();
+
+        if configured_models_count > 0 {
+            Some(
+                Label::new("Configured Models")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .mt_1()
+                    .mb_0p5()
+                    .ml_3()
+                    .into_any_element(),
+            )
+        } else {
+            None
+        }
+    }
+
     fn render_match(
         &self,
         ix: usize,
@@ -148,9 +189,10 @@ impl PickerDelegate for ModelPickerDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         use feature_flags::FeatureFlagAppExt;
-        let model_info = self.filtered_models.get(ix)?;
         let show_badges = cx.has_flag::<ZedPro>();
-        let provider_name: String = model_info.model.provider_name().0.into();
+
+        let model_info = self.filtered_models.get(ix)?;
+        let provider_name: String = model_info.model.provider_name().0.clone().into();
 
         Some(
             ListItem::new(ix)
@@ -158,7 +200,7 @@ impl PickerDelegate for ModelPickerDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .start_slot(
-                    div().pr_1().child(
+                    div().pr_0p5().child(
                         Icon::new(model_info.icon)
                             .color(Color::Muted)
                             .size(IconSize::Medium),
@@ -167,13 +209,13 @@ impl PickerDelegate for ModelPickerDelegate {
                 .child(
                     h_flex()
                         .w_full()
-                        .justify_between()
-                        .font_buffer(cx)
-                        .min_w(px(240.))
+                        .items_center()
+                        .gap_1p5()
+                        .min_w(px(200.))
+                        .child(Label::new(model_info.model.name().0.clone()))
                         .child(
                             h_flex()
-                                .gap_2()
-                                .child(Label::new(model_info.model.name().0.clone()))
+                                .gap_0p5()
                                 .child(
                                     Label::new(provider_name)
                                         .size(LabelSize::XSmall)
@@ -212,13 +254,13 @@ impl PickerDelegate for ModelPickerDelegate {
             h_flex()
                 .w_full()
                 .border_t_1()
-                .border_color(cx.theme().colors().border)
+                .border_color(cx.theme().colors().border_variant)
                 .p_1()
                 .gap_4()
                 .justify_between()
                 .when(cx.has_flag::<ZedPro>(), |this| {
                     this.child(match plan {
-                        // Already a zed pro subscriber
+                        // Already a Zed Pro subscriber
                         Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
                             .icon(IconName::ZedAssistant)
                             .icon_size(IconSize::Small)
@@ -259,6 +301,7 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
         let selected_provider = LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map(|m| m.id());
+
         let selected_model = LanguageModelRegistry::read_global(cx)
             .active_model()
             .map(|m| m.id());

@@ -38,6 +38,11 @@
     "class" @context
     name: (_) @name) @item
 
+(abstract_class_declaration
+    "abstract" @context
+    "class" @context
+    name: (_) @name) @item
+
 (method_definition
     [
         "get"

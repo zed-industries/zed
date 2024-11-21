@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, GPUSpecs,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, ScaledPixels, Size, TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowParams,
+    Point, RequestFrameOptions, ScaledPixels, Size, TestPlatform, TileId, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -221,7 +221,7 @@ impl PlatformWindow for TestWindow {
         self.0.lock().is_fullscreen
     }
 
-    fn on_request_frame(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
 
     fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>) {
         self.0.lock().input_callback = Some(callback)

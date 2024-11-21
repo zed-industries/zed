@@ -1,9 +1,9 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
 use client::telemetry::Telemetry;
-use editor::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
+use inline_completion::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
 use std::{
     ops::{AddAssign, Range},
@@ -121,7 +121,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         let file = buffer.file();
         let language = buffer.language_at(cursor_position);
         let settings = all_language_settings(file, cx);
-        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()))
+        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
     }
 
     fn refresh(

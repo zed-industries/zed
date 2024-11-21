@@ -111,6 +111,23 @@ To build & install the Flatpak package locally follow the steps below:
 3. Run `script/flatpak/bundle-flatpak`.
 4. Now the package has been installed and has a bundle available at `target/release/{app-id}.flatpak`.
 
+## Memory profiling
+
+[`heaptrack`](https://github.com/KDE/heaptrack) is quite useful for diagnosing memory leaks. To install it:
+
+```sh
+$ sudo apt install heaptrack heaptrack-gui
+$ cargo install cargo-heaptrack
+```
+
+Then, to build and run Zed with the profiler attached:
+
+```sh
+$ cargo heaptrack -b zed
+```
+
+When this zed instance is exited, terminal output will include a command to run `heaptrack_interpret` to convert the `*.raw.zst` profile to a `*.zst` file which can be passed to `heaptrack_gui` for viewing.
+
 ## Troubleshooting
 
 ### Can't compile Zed

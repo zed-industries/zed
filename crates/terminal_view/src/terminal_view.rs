@@ -22,7 +22,7 @@ use terminal::{
     terminal_settings::{CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
     ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskStatus, Terminal,
-    TerminalSize,
+    TerminalSize, ToggleViMode,
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
@@ -431,6 +431,11 @@ impl TerminalView {
         cx.notify();
     }
 
+    fn toggle_vi_mode(&mut self, _: &ToggleViMode, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.toggle_vi_mode());
+        cx.notify();
+    }
+
     pub fn should_show_cursor(&self, focused: bool, cx: &mut gpui::ViewContext<Self>) -> bool {
         //Don't blink the cursor when not focused, blinking is disabled, or paused
         if !focused
@@ -793,6 +798,7 @@ fn possible_open_paths_metadata(
     cx.background_executor().spawn(async move {
         let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
 
+        #[cfg(not(target_os = "windows"))]
         let mut fetch_metadata_tasks = potential_paths
             .into_iter()
             .map(|potential_path| async {
@@ -805,6 +811,20 @@ fn possible_open_paths_metadata(
                     },
                     metadata,
                 )
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        #[cfg(target_os = "windows")]
+        let mut fetch_metadata_tasks = potential_paths
+            .iter()
+            .map(|potential_path| async {
+                let metadata = fs.metadata(potential_path).await.ok().flatten();
+                let path = PathBuf::from(
+                    potential_path
+                        .to_string_lossy()
+                        .trim_start_matches("\\\\?\\"),
+                );
+                (PathWithPosition { path, row, column }, metadata)
             })
             .collect::<FuturesUnordered<_>>();
 
@@ -955,7 +975,7 @@ impl Render for TerminalView {
         div()
             .size_full()
             .relative()
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .key_context(self.dispatch_context(cx))
             .on_action(cx.listener(TerminalView::send_text))
             .on_action(cx.listener(TerminalView::send_keystroke))
@@ -968,6 +988,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::scroll_page_down))
             .on_action(cx.listener(TerminalView::scroll_to_top))
             .on_action(cx.listener(TerminalView::scroll_to_bottom))
+            .on_action(cx.listener(TerminalView::toggle_vi_mode))
             .on_action(cx.listener(TerminalView::show_character_palette))
             .on_action(cx.listener(TerminalView::select_all))
             .on_key_down(cx.listener(Self::key_down))
@@ -1023,16 +1044,22 @@ impl Item for TerminalView {
                 .shape(ui::IconButtonShape::Square)
                 .tooltip(|cx| Tooltip::text("Rerun task", cx))
                 .on_click(move |_, cx| {
-                    cx.dispatch_action(Box::new(tasks_ui::Rerun {
-                        task_id: Some(task_id.clone()),
-                        ..tasks_ui::Rerun::default()
+                    cx.dispatch_action(Box::new(zed_actions::Rerun {
+                        task_id: Some(task_id.0.clone()),
+                        allow_concurrent_runs: Some(true),
+                        use_new_terminal: Some(false),
+                        reevaluate_context: false,
                     }));
                 })
         };
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Running => (IconName::Play, Color::Disabled, None),
+                TaskStatus::Running => (
+                    IconName::Play,
+                    Color::Disabled,
+                    Some(rerun_button(terminal_task.id.clone())),
+                ),
                 TaskStatus::Unknown => (
                     IconName::Warning,
                     Color::Warning,
@@ -1110,6 +1137,10 @@ impl Item for TerminalView {
         false
     }
 
+    fn is_singleton(&self, _cx: &AppContext) -> bool {
+        true
+    }
+
     fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
@@ -1171,7 +1202,7 @@ impl SerializableItem for TerminalView {
             return None;
         }
 
-        if let Some((cwd, workspace_id)) = terminal.get_cwd().zip(self.workspace_id) {
+        if let Some((cwd, workspace_id)) = terminal.working_directory().zip(self.workspace_id) {
             Some(cx.background_executor().spawn(async move {
                 TERMINAL_DB
                     .save_working_directory(item_id, workspace_id, cwd)
@@ -1440,7 +1471,7 @@ mod tests {
         });
     }
 
-    // Active entry with a work tree, worktree is a file -> home_dir()
+    // Active entry with a work tree, worktree is a file -> worktree_folder()
     #[gpui::test]
     async fn active_entry_worktree_is_file(cx: &mut TestAppContext) {
         let (project, workspace) = init_test(cx).await;
@@ -1456,7 +1487,7 @@ mod tests {
             assert!(active_entry.is_some());
 
             let res = default_working_directory(workspace, cx);
-            assert_eq!(res, None);
+            assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
         });

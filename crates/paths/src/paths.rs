@@ -5,6 +5,11 @@ use std::sync::OnceLock;
 
 pub use util::paths::home_dir;
 
+/// Returns the relative path to the zed_server directory on the ssh host.
+pub fn remote_server_dir_relative() -> &'static Path {
+    Path::new(".zed_server")
+}
+
 /// Returns the path to the configuration directory used by Zed.
 pub fn config_dir() -> &'static PathBuf {
     static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -15,7 +20,7 @@ pub fn config_dir() -> &'static PathBuf {
                 .join("Zed");
         }
 
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             return if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
                 flatpak_xdg_config.into()
             } else {
@@ -36,7 +41,7 @@ pub fn support_dir() -> &'static PathBuf {
             return home_dir().join("Library/Application Support/Zed");
         }
 
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             return if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
                 flatpak_xdg_data.into()
             } else {
@@ -71,7 +76,7 @@ pub fn temp_dir() -> &'static PathBuf {
                 .join("Zed");
         }
 
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             return if let Ok(flatpak_xdg_cache) = std::env::var("FLATPAK_XDG_CACHE_HOME") {
                 flatpak_xdg_cache.into()
             } else {
@@ -94,6 +99,12 @@ pub fn logs_dir() -> &'static PathBuf {
             support_dir().join("logs")
         }
     })
+}
+
+/// Returns the path to the Zed server directory on this SSH host.
+pub fn remote_server_state_dir() -> &'static PathBuf {
+    static REMOTE_SERVER_STATE: OnceLock<PathBuf> = OnceLock::new();
+    REMOTE_SERVER_STATE.get_or_init(|| support_dir().join("server_state"))
 }
 
 /// Returns the path to the `Zed.log` file.
@@ -152,6 +163,22 @@ pub fn tasks_file() -> &'static PathBuf {
 pub fn extensions_dir() -> &'static PathBuf {
     static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
     EXTENSIONS_DIR.get_or_init(|| support_dir().join("extensions"))
+}
+
+/// Returns the path to the extensions directory.
+///
+/// This is where installed extensions are stored on a remote.
+pub fn remote_extensions_dir() -> &'static PathBuf {
+    static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    EXTENSIONS_DIR.get_or_init(|| support_dir().join("remote_extensions"))
+}
+
+/// Returns the path to the extensions directory.
+///
+/// This is where installed extensions are stored on a remote.
+pub fn remote_extensions_uploads_dir() -> &'static PathBuf {
+    static UPLOAD_DIR: OnceLock<PathBuf> = OnceLock::new();
+    UPLOAD_DIR.get_or_init(|| remote_extensions_dir().join("uploads"))
 }
 
 /// Returns the path to the themes directory.
@@ -282,3 +309,6 @@ pub fn local_tasks_file_relative_path() -> &'static Path {
 pub fn local_vscode_tasks_file_relative_path() -> &'static Path {
     Path::new(".vscode/tasks.json")
 }
+
+/// A default editorconfig file name to use when resolving project settings.
+pub const EDITORCONFIG_NAME: &str = ".editorconfig";

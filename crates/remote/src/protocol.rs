@@ -2,7 +2,6 @@ use anyhow::Result;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use prost::Message as _;
 use rpc::proto::Envelope;
-use std::mem::size_of;
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct MessageId(pub u32);
@@ -30,8 +29,10 @@ pub async fn read_message<S: AsyncRead + Unpin>(
 ) -> Result<Envelope> {
     buffer.resize(MESSAGE_LEN_SIZE, 0);
     stream.read_exact(buffer).await?;
+
     let len = message_len_from_buffer(buffer);
-    read_message_with_len(stream, buffer, len).await
+    let result = read_message_with_len(stream, buffer, len).await;
+    result
 }
 
 pub async fn write_message<S: AsyncWrite + Unpin>(

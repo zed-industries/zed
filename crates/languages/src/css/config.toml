@@ -1,6 +1,6 @@
 name = "CSS"
 grammar = "css"
-path_suffixes = ["css"]
+path_suffixes = ["css", "postcss"]
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

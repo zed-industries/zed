@@ -10,6 +10,8 @@
     Copy,
     derive_more::Add,
     derive_more::AddAssign,
+    derive_more::Sub,
+    derive_more::SubAssign,
 )]
 pub struct Cents(pub u32);
 

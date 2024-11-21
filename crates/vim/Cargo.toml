@@ -17,7 +17,7 @@ neovim = ["nvim-rs", "async-compat", "async-trait", "tokio"]
 
 [dependencies]
 anyhow.workspace = true
-async-compat = { version = "0.2.1", "optional" = true }
+async-compat = { workspace = true, "optional" = true }
 async-trait = { workspace = true, "optional" = true }
 collections.workspace = true
 command_palette.workspace = true
@@ -36,7 +36,7 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-tokio = { version = "1.15", "optional" = true }
+tokio = { version = "1.15", features = ["full"], optional = true }
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

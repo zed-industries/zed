@@ -9,6 +9,6 @@
                 (string_fragment) @run
             )
         )
-    ) @js-test
+    ) @_js-test
     (#set! tag js-test)
 )

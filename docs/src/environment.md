@@ -32,7 +32,7 @@ Starting with Zed 0.152.0, the CLI `zed` will _always_ pass along its environmen
 
 ### Launched via window manager, Dock, or launcher
 
-When Zed has been launched via the macOS Dock, or a GNOME or KDE icon on Linux, or an application launcher like Alfred or Raycats, it has no surrounding shell environment from which to inherit its environment variables.
+When Zed has been launched via the macOS Dock, or a GNOME or KDE icon on Linux, or an application launcher like Alfred or Raycast, it has no surrounding shell environment from which to inherit its environment variables.
 
 In order to still have a useful environment, Zed spawns a login shell in the user's home directory and gets its environment. This environment is then set on the Zed _process_. That means all Zed windows and projects will inherit that home directory environment.
 

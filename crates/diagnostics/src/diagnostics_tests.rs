@@ -800,7 +800,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 
     log::info!("updating mutated diagnostics view");
-    mutated_view.update(cx, |view, _| view.enqueue_update_stale_excerpts(None));
+    mutated_view.update(cx, |view, cx| view.update_stale_excerpts(cx));
     cx.run_until_parked();
 
     log::info!("constructing reference diagnostics view");
@@ -962,7 +962,6 @@ fn random_diagnostic(
 
 const FILE_HEADER: &str = "file header";
 const EXCERPT_HEADER: &str = "excerpt header";
-const EXCERPT_FOOTER: &str = "excerpt footer";
 
 fn editor_blocks(
     editor: &View<Editor>,
@@ -987,6 +986,7 @@ fn editor_blocks(
                                     em_width: px(0.),
                                     max_width: px(0.),
                                     block_id,
+                                    selected: false,
                                     editor_style: &editor::EditorStyle::default(),
                                 });
                                 let element = element.downcast_mut::<Stateful<Div>>().unwrap();
@@ -998,7 +998,7 @@ fn editor_blocks(
                                     .ok()?
                             }
 
-                            Block::ExcerptHeader {
+                            Block::ExcerptBoundary {
                                 starts_new_buffer, ..
                             } => {
                                 if *starts_new_buffer {
@@ -1007,7 +1007,6 @@ fn editor_blocks(
                                     EXCERPT_HEADER.into()
                                 }
                             }
-                            Block::ExcerptFooter { .. } => EXCERPT_FOOTER.into(),
                         };
 
                         Some((row, name))

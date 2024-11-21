@@ -13,7 +13,8 @@ on:
     branches:
       - "**"
     paths-ignore:
-      - "docs/**"
+      - "docs/**/*"
+      - ".github/workflows/community_*"
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
@@ -24,38 +25,31 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings"
 
 jobs:
-  style:
+  migration_checks:
+    name: Check Postgres and Protobuf migrations, mergability
+    if: github.repository_owner == 'zed-industries'
     timeout-minutes: 60
-    name: Check formatting and spelling
     runs-on:
       - self-hosted
       - test
     steps:
       - name: Checkout repo
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
-          fetch-depth: 0
+          fetch-depth: 0 # fetch full history
 
       - name: Remove untracked files
         run: git clean -df
 
-      - name: Check spelling
-        run: script/check-spelling
-
-      - name: Run style checks
-        uses: ./.github/actions/check_style
-
-      - name: Check unused dependencies
-        uses: bnjbvr/cargo-machete@main
-
-      - name: Check licenses are present
-        run: script/check-licenses
-
-      - name: Check license generation
-        run: script/generate-licenses /tmp/zed_licenses_output
+      - name: Find modified migrations
+        shell: bash -euxo pipefail {0}
+        run: |
+          export SQUAWK_GITHUB_TOKEN=${{ github.token }}
+          . ./script/squawk
 
       - name: Ensure fresh merge
         shell: bash -euxo pipefail {0}
@@ -77,20 +71,47 @@ jobs:
           input: "crates/proto/proto/"
           against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
 
+  style:
+    timeout-minutes: 60
+    name: Check formatting and spelling
+    if: github.repository_owner == 'zed-industries'
+    runs-on:
+      - buildjet-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Run style checks
+        uses: ./.github/actions/check_style
+
+      - name: Check for typos
+        uses: crate-ci/typos@8e6a4285bcbde632c5d79900a7779746e8b7ea3f # v1.24.6
+        with:
+          config: ./typos.toml
+
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - test
     steps:
       - name: Checkout repo
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
 
       - name: cargo clippy
         run: ./script/clippy
+
+      - name: Check unused dependencies
+        uses: bnjbvr/cargo-machete@main
+
+      - name: Check licenses
+        run: |
+          script/check-licenses
+          script/generate-licenses /tmp/zed_licenses_output
 
       - name: Run tests
         uses: ./.github/actions/run_tests
@@ -99,11 +120,15 @@ jobs:
         run: cargo build -p collab
 
       - name: Build other binaries and features
-        run: cargo build --workspace --bins --all-features; cargo check -p gpui --features "macos-blade"
+        run: |
+          cargo build --workspace --bins --all-features
+          cargo check -p gpui --features "macos-blade"
+          cargo build -p remote_server
 
   linux_tests:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
@@ -111,12 +136,12 @@ jobs:
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Checkout repo
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2
+        uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
@@ -133,19 +158,50 @@ jobs:
       - name: Build Zed
         run: cargo build -p zed
 
-  # todo(windows): Actually run the tests
-  windows_tests:
+  build_remote_server:
     timeout-minutes: 60
-    name: (Windows) Run Clippy and tests
-    runs-on: hosted-windows-1
+    name: (Linux) Build Remote Server
+    if: github.repository_owner == 'zed-industries'
+    runs-on:
+      - buildjet-16vcpu-ubuntu-2204
     steps:
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
       - name: Checkout repo
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2
+        uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-provider: "buildjet"
+
+      - name: Install Clang & Mold
+        run: ./script/remote-server && ./script/install-mold 2.34.0
+
+      - name: Build Remote Server
+        run: cargo build -p remote_server
+
+  # todo(windows): Actually run the tests
+  windows_tests:
+    timeout-minutes: 60
+    name: (Windows) Run Clippy and tests
+    if: github.repository_owner == 'zed-industries'
+    runs-on: hosted-windows-1
+    steps:
+      # more info here:- https://github.com/rust-lang/cargo/issues/13020
+      - name: Enable longer pathnames for git
+        run: git config --system core.longpaths true
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "github"
@@ -155,7 +211,7 @@ jobs:
         run: cargo xtask clippy
 
       - name: Build Zed
-        run: cargo build -p zed
+        run: cargo build
 
   bundle-mac:
     timeout-minutes: 60
@@ -176,12 +232,12 @@ jobs:
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
         with:
           node-version: "18"
 
       - name: Checkout repo
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           # We need to fetch more than one commit so that `script/draft-release-notes`
           # is able to diff between the current and previous tag.
@@ -189,6 +245,7 @@ jobs:
           # 25 was chosen arbitrarily.
           fetch-depth: 25
           clean: false
+          ref: ${{ github.ref }}
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
@@ -204,7 +261,10 @@ jobs:
         run: |
           mkdir -p target/
           # Ignore any errors that occur while drafting release notes to not fail the build.
-          script/draft-release-notes "$version" "$channel" > target/release-notes.md || true
+          script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md || true
+          script/create-draft-release target/release-notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate license file
         run: script/generate-licenses
@@ -219,20 +279,20 @@ jobs:
           mv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg
 
       - name: Upload app bundle (universal) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}.dmg
           path: target/release/Zed.dmg
       - name: Upload app bundle (aarch64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
           path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
 
       - name: Upload app bundle (x86_64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
@@ -250,7 +310,6 @@ jobs:
             target/aarch64-apple-darwin/release/Zed-aarch64.dmg
             target/x86_64-apple-darwin/release/Zed-x86_64.dmg
             target/release/Zed.dmg
-          body_path: target/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -266,7 +325,7 @@ jobs:
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
 
@@ -283,7 +342,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
@@ -297,7 +356,6 @@ jobs:
           files: |
             target/zed-remote-server-linux-x86_64.gz
             target/release/zed-linux-x86_64.tar.gz
-          body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -313,7 +371,7 @@ jobs:
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
 
@@ -330,7 +388,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
@@ -338,13 +396,11 @@ jobs:
 
       - name: Upload app bundle to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        if: ${{ env.RELEASE_CHANNEL == 'preview' || env.RELEASE_CHANNEL == 'stable' }}
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
           files: |
             target/zed-remote-server-linux-aarch64.gz
             target/release/zed-linux-aarch64.tar.gz
-          body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
