@@ -133,35 +133,28 @@ impl PlatformAtlas for BladeAtlas {
         }
     }
 
-    fn remove(&self, key: &AtlasKey) -> Result<bool> {
+    fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
-        let id = lock.tiles_by_key.get(key).map(|v| v.texture_id);
-        if let Some(id) = id {
-            lock.tiles_by_key
-                .remove(key)
-                .expect("texture should exist in tiles by key");
 
-            let textures = lock.storage[id.kind][id.index as usize].as_mut().unwrap();
+        let Some(id) = lock.tiles_by_key.remove(key).map(|tile| tile.texture_id) else {
+            return;
+        };
 
-            textures.remove_allocation();
+        let Some(texture_slot) = lock
+            .storage
+            .get(id.kind)
+            .and_then(|storage| storage.get_mut(id.index as usize))
+        else {
+            return;
+        };
 
-            if textures.is_empty() {
-                if let Some(mut texture) = lock.storage[id.kind].get_mut(id.index as usize) {
-                    let texture = texture.take();
-
-                    if let Some(mut texture) = texture {
-                        texture.destroy(&lock.gpu);
-                    }
-
-                    Ok(true)
-                } else {
-                    unreachable!()
-                }
+        if let Some(mut texture) = texture_slot.take() {
+            texture.decrement_ref_count();
+            if texture.is_unreferenced() {
+                texture.destroy(&lock.gpu);
             } else {
-                Ok(true)
+                *texture_slot = Some(texture);
             }
-        } else {
-            Ok(false)
         }
     }
 }
@@ -233,29 +226,23 @@ impl BladeAtlasState {
         );
 
         let textures = &mut self.storage[kind];
-        let index = textures
-            .iter()
-            .position(|v| v.is_none())
-            .unwrap_or(textures.len()) as u32;
 
         let atlas_texture = BladeAtlasTexture {
-            id: AtlasTextureId { index, kind },
+            id: AtlasTextureId {
+                index: textures.len() as u32,
+                kind,
+            },
             allocator: etagere::BucketedAtlasAllocator::new(size.into()),
             format,
             raw,
             raw_view,
-            allocations: 0,
+            live_atlas_keys: 0,
         };
 
         self.initializations.push(atlas_texture.id);
 
-        if index == textures.len() as u32 {
-            textures.push(Some(atlas_texture));
-        } else {
-            textures[index as usize] = Some(atlas_texture);
-        }
-
-        textures[index as usize].as_mut().unwrap()
+        textures.push(Some(atlas_texture));
+        textures.last_mut().unwrap().as_mut().unwrap()
     }
 
     fn upload_texture(&mut self, id: AtlasTextureId, bounds: Bounds<DevicePixels>, bytes: &[u8]) {
@@ -397,11 +384,11 @@ impl BladeAtlasTexture {
         self.format.block_info().size
     }
 
-    fn remove_allocation(&mut self) {
+    fn decrement_ref_count(&mut self) {
         self.allocations -= 1;
     }
 
-    fn is_empty(&mut self) -> bool {
+    fn is_unreferenced(&mut self) -> bool {
         self.allocations == 0
     }
 }

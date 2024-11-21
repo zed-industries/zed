@@ -2697,7 +2697,7 @@ impl<'a> WindowContext<'a> {
                 frame_index,
             };
 
-            self.window.sprite_atlas.remove(&params.clone().into())?;
+            self.window.sprite_atlas.remove(&params.clone().into());
         }
 
         Ok(())

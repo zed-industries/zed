@@ -79,40 +79,33 @@ impl PlatformAtlas for MetalAtlas {
         }
     }
 
-    fn remove(&self, key: &AtlasKey) -> Result<bool> {
+    fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
-        let id = lock.tiles_by_key.get(key).map(|v| v.texture_id);
+        let Some(id) = lock.tiles_by_key.get(key).map(|v| v.texture_id) else {
+            return;
+        };
 
-        if let Some(id) = id {
-            let textures = match id.kind {
-                AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
-                AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
-                AtlasTextureKind::Path => &mut lock.polychrome_textures,
-            };
-            let texture_idx = textures.iter().position(|v| {
-                if let Some(texture) = v {
-                    texture.id == id
-                } else {
-                    false
-                }
-            });
+        let textures = match id.kind {
+            AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
+            AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
+            AtlasTextureKind::Path => &mut lock.polychrome_textures,
+        };
 
-            if let Some(idx) = texture_idx {
-                let mut texture = textures[idx].as_mut().unwrap();
-                texture.remove_allocation();
+        let Some(texture_slot) = textures
+            .iter_mut()
+            .find(|texture| texture.as_ref().is_some_and(|v| v.id == id))
+        else {
+            return;
+        };
 
-                if texture.is_empty() {
-                    textures[idx].take();
-                    lock.tiles_by_key.remove(key);
-                    Ok(true)
-                } else {
-                    Ok(true)
-                }
+        if let Some(mut texture) = texture_slot.take() {
+            texture.decrement_ref_count();
+
+            if texture.is_unreferenced() {
+                lock.tiles_by_key.remove(key);
             } else {
-                Ok(false)
+                *texture_slot = Some(texture);
             }
-        } else {
-            Ok(false)
         }
     }
 }
@@ -132,13 +125,7 @@ impl MetalAtlasState {
         textures
             .iter_mut()
             .rev()
-            .find_map(|texture| {
-                if let Some(texture) = texture {
-                    texture.allocate(size)
-                } else {
-                    None
-                }
-            })
+            .find_map(|texture| texture.as_mut().and_then(|texture| texture.allocate(size)))
             .or_else(|| {
                 let texture = self.push_texture(size, texture_kind);
                 texture.allocate(size)
@@ -188,25 +175,19 @@ impl MetalAtlasState {
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
             AtlasTextureKind::Path => &mut self.path_textures,
         };
-        let index = textures
-            .iter()
-            .position(|v| v.is_none())
-            .unwrap_or(textures.len()) as u32;
 
         let atlas_texture = MetalAtlasTexture {
-            id: AtlasTextureId { index, kind },
+            id: AtlasTextureId {
+                index: textures.len() as u32,
+                kind,
+            },
             allocator: etagere::BucketedAtlasAllocator::new(size.into()),
             metal_texture: AssertSend(metal_texture),
-            allocations: 0,
+            live_atlas_keys: 0,
         };
 
-        if index == textures.len() as u32 {
-            textures.push(Some(atlas_texture));
-        } else {
-            textures[index as usize] = Some(atlas_texture);
-        }
-
-        textures[index as usize].as_mut().unwrap()
+        textures.push(Some(atlas_texture));
+        textures.last_mut().unwrap().as_mut().unwrap()
     }
 
     fn texture(&self, id: AtlasTextureId) -> &MetalAtlasTexture {
@@ -223,7 +204,7 @@ struct MetalAtlasTexture {
     id: AtlasTextureId,
     allocator: BucketedAtlasAllocator,
     metal_texture: AssertSend<metal::Texture>,
-    allocations: u32,
+    live_atlas_keys: u32,
 }
 
 impl MetalAtlasTexture {
@@ -242,7 +223,7 @@ impl MetalAtlasTexture {
             },
             padding: 0,
         };
-        self.allocations += 1;
+        self.live_atlas_keys += 1;
         Some(tile)
     }
 
@@ -270,12 +251,12 @@ impl MetalAtlasTexture {
         }
     }
 
-    fn remove_allocation(&mut self) {
-        self.allocations -= 1;
+    fn decrement_ref_count(&mut self) {
+        self.live_atlas_keys -= 1;
     }
 
-    fn is_empty(&mut self) -> bool {
-        self.allocations == 0
+    fn is_unreferenced(&mut self) -> bool {
+        self.live_atlas_keys == 0
     }
 }
 

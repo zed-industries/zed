@@ -548,7 +548,7 @@ pub(crate) trait PlatformAtlas: Send + Sync {
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
-    fn remove(&self, key: &AtlasKey) -> Result<bool>;
+    fn remove(&self, key: &AtlasKey);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
