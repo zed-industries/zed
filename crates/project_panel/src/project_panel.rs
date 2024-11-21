@@ -1431,18 +1431,31 @@ impl ProjectPanel {
                     }
                 })?;
 
-            return ReversibleIterable::<REVERSE_SEARCH, _>::new(entries.iter())
-                .it
-                .find(|ele| predicate(ele, worktree_id))
-                .cloned();
+            return if REVERSE_SEARCH {
+                ReversibleIterable::<true, _>::new(entries.iter())
+                    .into_iter()
+                    .find(|ele| predicate(ele, worktree_id))
+                    .cloned()
+            } else {
+                ReversibleIterable::<false, _>::new(entries.iter())
+                    .into_iter()
+                    .find(|ele| predicate(ele, worktree_id))
+                    .cloned()
+            };
         }
 
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         worktree.update(cx, |tree, _| {
-            ReversibleIterable::<REVERSE_SEARCH, _>::new(tree.entries(true, 0usize))
-                .it
-                .find(|ele| predicate(ele, worktree_id))
-                .cloned()
+            if REVERSE_SEARCH {
+                tree.entries(true, 0usize)
+                    .filter(|ele| predicate(ele, worktree_id))
+                    .last()
+                    .cloned()
+            } else {
+                tree.entries(true, 0usize)
+                    .find(|ele| predicate(ele, worktree_id))
+                    .cloned()
+            }
         })
     }
 
@@ -1582,12 +1595,24 @@ impl ProjectPanel {
 
             let (left, right) = entries.split_at_checked(start_idx)?;
 
-            let first_search = if REVERSE_SEARCH {
-                left.iter()
-                    .rev()
-                    .find(|ele| predicate(ele, start.worktree_id))
+            let (first_search, second_search) = if REVERSE_SEARCH {
+                (
+                    ReversibleIterable::<true, _>::new(left.iter())
+                        .into_iter()
+                        .find(|ele| predicate(ele, start.worktree_id)),
+                    ReversibleIterable::<true, _>::new(right.iter())
+                        .into_iter()
+                        .find(|ele| predicate(ele, start.worktree_id)),
+                )
             } else {
-                right.iter().find(|ele| predicate(ele, start.worktree_id))
+                (
+                    ReversibleIterable::<false, _>::new(right.iter())
+                        .into_iter()
+                        .find(|ele| predicate(ele, start.worktree_id)),
+                    ReversibleIterable::<false, _>::new(left.iter())
+                        .into_iter()
+                        .find(|ele| predicate(ele, start.worktree_id)),
+                )
             };
 
             if first_search.is_some() {
@@ -1597,15 +1622,7 @@ impl ProjectPanel {
                 });
             }
 
-            last_found = if REVERSE_SEARCH {
-                right
-                    .iter()
-                    .rev()
-                    .find(|ele| predicate(ele, start.worktree_id))
-            } else {
-                left.iter().find(|ele| predicate(ele, start.worktree_id))
-            }
-            .map(|entry| SelectedEntry {
+            last_found = second_search.map(|entry| SelectedEntry {
                 worktree_id: start.worktree_id,
                 entry_id: entry.id,
             });
