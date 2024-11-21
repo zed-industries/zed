@@ -2455,6 +2455,8 @@ impl Pane {
                         to_pane = workspace.split_pane(to_pane, split_direction, cx);
                     }
                     let old_ix = from_pane.read(cx).index_for_item_id(item_id);
+                    let old_len = to_pane.read(cx).items.len();
+                    move_item(&from_pane, &to_pane, item_id, ix, cx);
                     if to_pane == from_pane {
                         if let Some(old_index) = old_ix {
                             to_pane.update(cx, |this, _| {
@@ -2472,7 +2474,10 @@ impl Pane {
                         }
                     } else {
                         to_pane.update(cx, |this, _| {
-                            if this.has_pinned_tabs() && ix < this.pinned_tab_count {
+                            if this.items.len() > old_len // Did we not deduplicate on drag?
+                                && this.has_pinned_tabs()
+                                && ix < this.pinned_tab_count
+                            {
                                 this.pinned_tab_count += 1;
                             }
                         });
@@ -2484,7 +2489,6 @@ impl Pane {
                             }
                         })
                     }
-                    move_item(&from_pane, &to_pane, item_id, ix, cx);
                 });
             })
             .log_err();

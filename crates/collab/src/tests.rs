@@ -1,6 +1,3 @@
-// todo(windows): Actually run the tests
-#![cfg(not(target_os = "windows"))]
-
 use std::sync::Arc;
 
 use call::Room;

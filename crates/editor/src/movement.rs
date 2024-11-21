@@ -3,7 +3,7 @@
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, RowExt, ToOffset, ToPoint};
-use gpui::{px, Pixels, WindowTextSystem};
+use gpui::{Pixels, WindowTextSystem};
 use language::Point;
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
@@ -120,7 +120,7 @@ pub(crate) fn up_by_rows(
     preserve_column_at_start: bool,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
-    let mut goal_x = match goal {
+    let goal_x = match goal {
         SelectionGoal::HorizontalPosition(x) => x.into(),
         SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
         SelectionGoal::HorizontalRange { end, .. } => end.into(),
@@ -138,7 +138,6 @@ pub(crate) fn up_by_rows(
         return (start, goal);
     } else {
         point = DisplayPoint::new(DisplayRow(0), 0);
-        goal_x = px(0.);
     }
 
     let mut clipped_point = map.clip_point(point, Bias::Left);
@@ -159,7 +158,7 @@ pub(crate) fn down_by_rows(
     preserve_column_at_end: bool,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
-    let mut goal_x = match goal {
+    let goal_x = match goal {
         SelectionGoal::HorizontalPosition(x) => x.into(),
         SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
         SelectionGoal::HorizontalRange { end, .. } => end.into(),
@@ -174,7 +173,6 @@ pub(crate) fn down_by_rows(
         return (start, goal);
     } else {
         point = map.max_point();
-        goal_x = map.x_for_display_point(point, text_layout_details)
     }
 
     let mut clipped_point = map.clip_point(point, Bias::Right);
@@ -610,7 +608,7 @@ mod tests {
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
         Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, MultiBuffer,
     };
-    use gpui::{font, Context as _};
+    use gpui::{font, px, Context as _};
     use language::Capability;
     use project::Project;
     use settings::SettingsStore;
@@ -977,7 +975,7 @@ mod tests {
                 ),
                 (
                     DisplayPoint::new(DisplayRow(2), 0),
-                    SelectionGoal::HorizontalPosition(0.0)
+                    SelectionGoal::HorizontalPosition(col_2_x.0),
                 ),
             );
             assert_eq!(
@@ -990,7 +988,7 @@ mod tests {
                 ),
                 (
                     DisplayPoint::new(DisplayRow(2), 0),
-                    SelectionGoal::HorizontalPosition(0.0)
+                    SelectionGoal::HorizontalPosition(0.0),
                 ),
             );
 
@@ -1059,7 +1057,7 @@ mod tests {
             let max_point_x = snapshot
                 .x_for_display_point(DisplayPoint::new(DisplayRow(7), 2), &text_layout_details);
 
-            // Can't move down off the end
+            // Can't move down off the end, and attempting to do so leaves the selection goal unchanged
             assert_eq!(
                 down(
                     &snapshot,
@@ -1070,7 +1068,7 @@ mod tests {
                 ),
                 (
                     DisplayPoint::new(DisplayRow(7), 2),
-                    SelectionGoal::HorizontalPosition(max_point_x.0)
+                    SelectionGoal::HorizontalPosition(0.0)
                 ),
             );
             assert_eq!(

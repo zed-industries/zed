@@ -5,9 +5,78 @@ use gpui::{
     Styled, Subscription, ViewContext,
 };
 use ui::{prelude::*, Button, Label, Vector, VectorName};
-use workspace::ModalView;
+use util::ResultExt as _;
+use workspace::notifications::NotificationId;
+use workspace::{ModalView, Toast, Workspace};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
+
+struct CopilotStartingToast;
+
+pub fn initiate_sign_in(cx: &mut WindowContext) {
+    let Some(copilot) = Copilot::global(cx) else {
+        return;
+    };
+    let status = copilot.read(cx).status();
+    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+        return;
+    };
+    match status {
+        Status::Starting { task } => {
+            let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+                return;
+            };
+
+            let Ok(workspace) = workspace.update(cx, |workspace, cx| {
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<CopilotStartingToast>(),
+                        "Copilot is starting...",
+                    ),
+                    cx,
+                );
+                workspace.weak_handle()
+            }) else {
+                return;
+            };
+
+            cx.spawn(|mut cx| async move {
+                task.await;
+                if let Some(copilot) = cx.update(|cx| Copilot::global(cx)).ok().flatten() {
+                    workspace
+                        .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
+                            Status::Authorized => workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<CopilotStartingToast>(),
+                                    "Copilot has started!",
+                                ),
+                                cx,
+                            ),
+                            _ => {
+                                workspace.dismiss_toast(
+                                    &NotificationId::unique::<CopilotStartingToast>(),
+                                    cx,
+                                );
+                                copilot
+                                    .update(cx, |copilot, cx| copilot.sign_in(cx))
+                                    .detach_and_log_err(cx);
+                            }
+                        })
+                        .log_err();
+                }
+            })
+            .detach();
+        }
+        _ => {
+            copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
+            workspace
+                .update(cx, |this, cx| {
+                    this.toggle_modal(cx, |cx| CopilotCodeVerification::new(&copilot, cx));
+                })
+                .ok();
+        }
+    }
+}
 
 pub struct CopilotCodeVerification {
     status: Status,

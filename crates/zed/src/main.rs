@@ -66,7 +66,7 @@ use zed::{
     OpenRequest,
 };
 
-use crate::zed::inline_completion_registry;
+use crate::zed::{assistant_hints, inline_completion_registry};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -387,7 +387,8 @@ fn main() {
             cx,
         );
         supermaven::init(app_state.client.clone(), cx);
-        language_model::init(
+        language_model::init(cx);
+        language_models::init(
             app_state.user_store.clone(),
             app_state.client.clone(),
             app_state.fs.clone(),
@@ -401,6 +402,7 @@ fn main() {
             stdout_is_a_pty(),
             cx,
         );
+        assistant_hints::init(cx);
         repl::init(
             app_state.fs.clone(),
             app_state.client.telemetry().clone(),

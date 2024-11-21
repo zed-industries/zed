@@ -10,7 +10,7 @@ pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
 use editor::{scroll::Autoscroll, Bias, Editor};
-use file_finder_settings::FileFinderSettings;
+use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
@@ -244,6 +244,22 @@ impl FileFinder {
             }
         })
     }
+
+    pub fn modal_max_width(
+        width_setting: Option<FileFinderWidth>,
+        cx: &mut ViewContext<Self>,
+    ) -> Pixels {
+        let window_width = cx.viewport_size().width;
+        let small_width = Pixels(545.);
+
+        match width_setting {
+            None | Some(FileFinderWidth::Small) => small_width,
+            Some(FileFinderWidth::Full) => window_width,
+            Some(FileFinderWidth::XLarge) => (window_width - Pixels(512.)).max(small_width),
+            Some(FileFinderWidth::Large) => (window_width - Pixels(768.)).max(small_width),
+            Some(FileFinderWidth::Medium) => (window_width - Pixels(1024.)).max(small_width),
+        }
+    }
 }
 
 impl EventEmitter<DismissEvent> for FileFinder {}
@@ -258,13 +274,12 @@ impl Render for FileFinder {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let key_context = self.picker.read(cx).delegate.key_context(cx);
 
-        let window_max_width: Pixels = cx.viewport_size().width;
-        let modal_choice = FileFinderSettings::get_global(cx).modal_width;
-        let width = modal_choice.calc_width(window_max_width);
+        let file_finder_settings = FileFinderSettings::get_global(cx);
+        let modal_max_width = Self::modal_max_width(file_finder_settings.modal_max_width, cx);
 
         v_flex()
             .key_context(key_context)
-            .w(width)
+            .w(modal_max_width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_select_prev))
             .on_action(cx.listener(Self::handle_open_menu))

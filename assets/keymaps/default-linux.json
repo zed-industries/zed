@@ -251,6 +251,8 @@
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-shift-pageup": "pane::SwapItemLeft",
       "ctrl-shift-pagedown": "pane::SwapItemRight",
+      "back": "pane::GoBack",
+      "forward": "pane::GoForward",
       "ctrl-w": "pane::CloseActiveItem",
       "ctrl-f4": "pane::CloseActiveItem",
       "alt-ctrl-t": ["pane::CloseInactiveItems", { "close_pinned": false }],

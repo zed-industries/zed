@@ -1277,7 +1277,7 @@ fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<
 
     let client = cx.update(|cx| {
         Client::new(
-            Arc::new(FakeSystemClock::default()),
+            Arc::new(FakeSystemClock::new()),
             FakeHttpClient::with_404_response(),
             cx,
         )

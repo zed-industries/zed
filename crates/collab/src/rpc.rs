@@ -4030,12 +4030,18 @@ async fn get_llm_api_token(
         Err(anyhow!("terms of service not accepted"))?
     }
 
-    let mut account_created_at = user.created_at;
-    if let Some(github_created_at) = user.github_user_created_at {
-        account_created_at = account_created_at.min(github_created_at);
-    }
-    if Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
-        Err(anyhow!("account too young"))?
+    let has_llm_subscription = session.has_llm_subscription(&db).await?;
+
+    let bypass_account_age_check =
+        has_llm_subscription || flags.iter().any(|flag| flag == "bypass-account-age-check");
+    if !bypass_account_age_check {
+        let mut account_created_at = user.created_at;
+        if let Some(github_created_at) = user.github_user_created_at {
+            account_created_at = account_created_at.min(github_created_at);
+        }
+        if Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
+            Err(anyhow!("account too young"))?
+        }
     }
 
     let billing_preferences = db.get_billing_preferences(user.id).await?;
@@ -4045,7 +4051,7 @@ async fn get_llm_api_token(
         session.is_staff(),
         billing_preferences,
         has_llm_closed_beta_feature_flag,
-        session.has_llm_subscription(&db).await?,
+        has_llm_subscription,
         session.current_plan(&db).await?,
         &session.app_state.config,
     )?;

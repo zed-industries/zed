@@ -38,12 +38,12 @@ use crate::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
 
-actions!(zed, [Extensions, InstallDevExtension]);
+actions!(zed, [InstallDevExtension]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         workspace
-            .register_action(move |workspace, _: &Extensions, cx| {
+            .register_action(move |workspace, _: &zed_actions::Extensions, cx| {
                 let existing = workspace
                     .active_pane()
                     .read(cx)

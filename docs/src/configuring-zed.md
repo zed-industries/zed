@@ -1418,11 +1418,11 @@ Or to set a `socks5` proxy:
 
 ## File Finder
 
-### Modal Width
+### Modal Max Width
 
-- Description: Width of the file finder modal. Can take one of a few values: `small`, `medium`, `large`, `xlarge`, and `full`.
-- Setting: `modal_width`
-- Default: `medium`
+- Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
+- Setting: `max_modal_width`
+- Default: `small`
 
 ## Preferred Line Length
 
@@ -2327,15 +2327,18 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Default:
 
 ```json
-"assistant": {
-  "enabled": true,
-  "button": true,
-  "dock": "right",
-  "default_width": 640,
-  "default_height": 320,
-  "provider": "openai",
-  "version": "1",
-},
+{
+  "assistant": {
+    "enabled": true,
+    "button": true,
+    "dock": "right",
+    "default_width": 640,
+    "default_height": 320,
+    "provider": "openai",
+    "version": "1",
+    "show_hints": true
+  }
+}
 ```
 
 ## Outline Panel

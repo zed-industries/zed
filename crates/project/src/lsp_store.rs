@@ -611,12 +611,7 @@ impl LocalLspStore {
             Some(worktree_path)
         })?;
 
-        let mut child = smol::process::Command::new(command);
-        #[cfg(target_os = "windows")]
-        {
-            use smol::process::windows::CommandExt;
-            child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-        }
+        let mut child = util::command::new_smol_command(command);
 
         if let Some(buffer_env) = buffer.env.as_ref() {
             child.envs(buffer_env);
@@ -7935,7 +7930,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         };
 
         let env = self.shell_env().await;
-        let output = smol::process::Command::new(&npm)
+        let output = util::command::new_smol_command(&npm)
             .args(["root", "-g"])
             .envs(env)
             .current_dir(local_package_directory)
@@ -7969,7 +7964,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
         let working_dir = self.worktree_root_path();
-        let output = smol::process::Command::new(&command.path)
+        let output = util::command::new_smol_command(&command.path)
             .args(command.arguments)
             .envs(command.env.clone().unwrap_or_default())
             .current_dir(working_dir)
