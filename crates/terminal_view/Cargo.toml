@@ -24,7 +24,6 @@ itertools.workspace = true
 language.workspace = true
 project.workspace = true
 task.workspace = true
-tasks_ui.workspace = true
 search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
