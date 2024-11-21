@@ -23,7 +23,10 @@ pub fn app_menus() -> Vec<Menu> {
                             zed_actions::OpenDefaultKeymap,
                         ),
                         MenuItem::action("Open Project Settings", super::OpenProjectSettings),
-                        MenuItem::action("Select Theme...", theme_selector::Toggle::default()),
+                        MenuItem::action(
+                            "Select Theme...",
+                            zed_actions::theme_selector::Toggle::default(),
+                        ),
                     ],
                 }),
                 MenuItem::separator(),
