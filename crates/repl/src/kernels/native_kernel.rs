@@ -1,10 +1,11 @@
 use anyhow::{Context as _, Result};
 use futures::{
     channel::mpsc::{self},
+    io::BufReader,
     stream::{SelectAll, StreamExt},
-    SinkExt as _,
+    AsyncBufReadExt as _, SinkExt as _,
 };
-use gpui::{AppContext, EntityId, Task};
+use gpui::{EntityId, Task, View, WindowContext};
 use jupyter_protocol::{JupyterMessage, JupyterMessageContent, KernelInfoReply};
 use project::Fs;
 use runtimelib::{dirs, ConnectionInfo, ExecutionState, JupyterKernelspec};
@@ -18,7 +19,9 @@ use std::{
 };
 use uuid::Uuid;
 
-use super::{JupyterMessageChannel, RunningKernel};
+use crate::Session;
+
+use super::RunningKernel;
 
 #[derive(Debug, Clone)]
 pub struct LocalKernelSpecification {
@@ -83,10 +86,10 @@ async fn peek_ports(ip: IpAddr) -> Result<[u16; 5]> {
 pub struct NativeRunningKernel {
     pub process: smol::process::Child,
     _shell_task: Task<Result<()>>,
-    _iopub_task: Task<Result<()>>,
     _control_task: Task<Result<()>>,
     _routing_task: Task<Result<()>>,
     connection_path: PathBuf,
+    _process_status_task: Option<Task<()>>,
     pub working_directory: PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
@@ -107,8 +110,10 @@ impl NativeRunningKernel {
         entity_id: EntityId,
         working_directory: PathBuf,
         fs: Arc<dyn Fs>,
-        cx: &mut AppContext,
-    ) -> Task<Result<(Self, JupyterMessageChannel)>> {
+        // todo: convert to weak view
+        session: View<Session>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<Box<dyn RunningKernel>>> {
         cx.spawn(|cx| async move {
             let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
             let ports = peek_ports(ip).await?;
@@ -136,7 +141,7 @@ impl NativeRunningKernel {
 
             let mut cmd = kernel_specification.command(&connection_path)?;
 
-            let process = cmd
+            let mut process = cmd
                 .current_dir(&working_directory)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -155,8 +160,6 @@ impl NativeRunningKernel {
             let mut control_socket =
                 runtimelib::create_client_control_connection(&connection_info, &session_id).await?;
 
-            let (mut iopub, iosub) = futures::channel::mpsc::channel(100);
-
             let (request_tx, mut request_rx) =
                 futures::channel::mpsc::channel::<JupyterMessage>(100);
 
@@ -164,18 +167,41 @@ impl NativeRunningKernel {
             let (mut shell_reply_tx, shell_reply_rx) = futures::channel::mpsc::channel(100);
 
             let mut messages_rx = SelectAll::new();
-            messages_rx.push(iosub);
             messages_rx.push(control_reply_rx);
             messages_rx.push(shell_reply_rx);
 
-            let iopub_task = cx.background_executor().spawn({
-                async move {
-                    while let Ok(message) = iopub_socket.read().await {
-                        iopub.send(message).await?;
+            cx.spawn({
+                let session = session.clone();
+
+                |mut cx| async move {
+                    while let Some(message) = messages_rx.next().await {
+                        session
+                            .update(&mut cx, |session, cx| {
+                                session.route(&message, cx);
+                            })
+                            .ok();
                     }
                     anyhow::Ok(())
                 }
-            });
+            })
+            .detach();
+
+            // iopub task
+            cx.spawn({
+                let session = session.clone();
+
+                |mut cx| async move {
+                    while let Ok(message) = iopub_socket.read().await {
+                        session
+                            .update(&mut cx, |session, cx| {
+                                session.route(&message, cx);
+                            })
+                            .ok();
+                    }
+                    anyhow::Ok(())
+                }
+            })
+            .detach();
 
             let (mut control_request_tx, mut control_request_rx) =
                 futures::channel::mpsc::channel(100);
@@ -221,21 +247,74 @@ impl NativeRunningKernel {
                 }
             });
 
-            anyhow::Ok((
-                Self {
-                    process,
-                    request_tx,
-                    working_directory,
-                    _shell_task: shell_task,
-                    _iopub_task: iopub_task,
-                    _control_task: control_task,
-                    _routing_task: routing_task,
-                    connection_path,
-                    execution_state: ExecutionState::Idle,
-                    kernel_info: None,
-                },
-                messages_rx,
-            ))
+            let stderr = process.stderr.take();
+
+            cx.spawn(|mut _cx| async move {
+                if stderr.is_none() {
+                    return;
+                }
+                let reader = BufReader::new(stderr.unwrap());
+                let mut lines = reader.lines();
+                while let Some(Ok(line)) = lines.next().await {
+                    log::error!("kernel: {}", line);
+                }
+            })
+            .detach();
+
+            let stdout = process.stdout.take();
+
+            cx.spawn(|mut _cx| async move {
+                if stdout.is_none() {
+                    return;
+                }
+                let reader = BufReader::new(stdout.unwrap());
+                let mut lines = reader.lines();
+                while let Some(Ok(line)) = lines.next().await {
+                    log::info!("kernel: {}", line);
+                }
+            })
+            .detach();
+
+            let status = process.status();
+
+            let process_status_task = cx.spawn(|mut cx| async move {
+                let error_message = match status.await {
+                    Ok(status) => {
+                        if status.success() {
+                            log::info!("kernel process exited successfully");
+                            return;
+                        }
+
+                        format!("kernel process exited with status: {:?}", status)
+                    }
+                    Err(err) => {
+                        format!("kernel process exited with error: {:?}", err)
+                    }
+                };
+
+                log::error!("{}", error_message);
+
+                session
+                    .update(&mut cx, |session, cx| {
+                        session.kernel_errored(error_message, cx);
+
+                        cx.notify();
+                    })
+                    .ok();
+            });
+
+            anyhow::Ok(Box::new(Self {
+                process,
+                request_tx,
+                working_directory,
+                _process_status_task: Some(process_status_task),
+                _shell_task: shell_task,
+                _control_task: control_task,
+                _routing_task: routing_task,
+                connection_path,
+                execution_state: ExecutionState::Idle,
+                kernel_info: None,
+            }) as Box<dyn RunningKernel>)
         })
     }
 }
@@ -265,14 +344,17 @@ impl RunningKernel for NativeRunningKernel {
         self.kernel_info = Some(info);
     }
 
-    fn force_shutdown(&mut self) -> anyhow::Result<()> {
-        match self.process.kill() {
+    fn force_shutdown(&mut self, _cx: &mut WindowContext) -> Task<anyhow::Result<()>> {
+        self._process_status_task.take();
+        self.request_tx.close_channel();
+
+        Task::ready(match self.process.kill() {
             Ok(_) => Ok(()),
             Err(error) => Err(anyhow::anyhow!(
                 "Failed to kill the kernel process: {}",
                 error
             )),
-        }
+        })
     }
 }
 
