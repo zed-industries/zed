@@ -668,7 +668,7 @@
   },
   // Add files or globs of files that will be excluded by Zed entirely:
   // they will be skipped during FS scan(s), file tree and file search
-  // will lack the corresponding file entries.
+  // will lack the corresponding file entries. Overrides `file_scan_inclusions`.
   "file_scan_exclusions": [
     "**/.git",
     "**/.svn",
@@ -678,6 +678,14 @@
     "**/Thumbs.db",
     "**/.classpath",
     "**/.settings"
+  ],
+  // Add files or globs of files that will be included by Zed, even when
+  // ignored by git. This is useful for files that are not tracked by git,
+  // but are still important to your project. Note that globs that are
+  // overly broad can slow down Zed's file scanning. Overridden by `file_scan_exclusions`.
+  "file_scan_inclusions": [
+    ".env*",
+    "docker-compose.*.yml"
   ],
   // Git gutter behavior configuration.
   "git": {
