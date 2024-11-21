@@ -92,7 +92,7 @@ impl Zeta {
             new_snapshot,
         } = &event
         {
-            if let Some(last_entry) = self.events.last_entry() {
+            if let Some(mut last_entry) = self.events.last_entry() {
                 if let Event::BufferChange {
                     new_snapshot: last_new_snapshot,
                     ..
@@ -109,30 +109,30 @@ impl Zeta {
         }
 
         // Filter out an edit event that occurs when an inline completion is accepted
-        if let Event::Edit {
-            old_text,
-            new_text,
-            path,
-        } = &event
-        {
-            if let Some(last_entry) = self.events.last_entry() {
-                if let Event::InlineCompletion {
-                    old_text: old_text_completion,
-                    new_text: new_text_completion,
-                    path: path_completion,
-                    accepted: Some(true),
-                    ..
-                } = last_entry.get()
-                {
-                    if path == path_completion
-                        && old_text_completion == old_text
-                        && new_text_completion == new_text
-                    {
-                        return;
-                    }
-                }
-            }
-        }
+        // if let Event::Edit {
+        //     old_text,
+        //     new_text,
+        //     path,
+        // } = &event
+        // {
+        //     if let Some(last_entry) = self.events.last_entry() {
+        //         if let Event::InlineCompletion {
+        //             old_text: old_text_completion,
+        //             new_text: new_text_completion,
+        //             path: path_completion,
+        //             accepted: Some(true),
+        //             ..
+        //         } = last_entry.get()
+        //         {
+        //             if path == path_completion
+        //                 && old_text_completion == old_text
+        //                 && new_text_completion == new_text
+        //             {
+        //                 return;
+        //             }
+        //         }
+        //     }
+        // }
 
         let id = self.next_event_id;
         self.next_event_id.0 += 1;
@@ -1035,8 +1035,8 @@ mod tests {
     ) {
         assertions.insert(0, "Must be similar to the expected output");
         assert_open_edit_complete_full(filename, initial, edited, expected, &assertions, cx).await;
-        // assert_open_edit_complete_incremental(filename, initial, edited, expected, &assertions, cx)
-        //     .await;
+        assert_open_edit_complete_incremental(filename, initial, edited, expected, &assertions, cx)
+            .await;
     }
 
     async fn assert_autocompleted(
