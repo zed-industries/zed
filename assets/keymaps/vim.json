@@ -202,6 +202,8 @@
       "ctrl-r": "vim::Redo",
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
+      "z": ["vim::PushOperator", { "Sneak": {} }],
+      "Z": ["vim::PushOperator", { "SneakBackward": {} }],
       "shift-s": "vim::SubstituteLine",
       ">": ["vim::PushOperator", "Indent"],
       "<": ["vim::PushOperator", "Outdent"],
