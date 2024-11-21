@@ -27,7 +27,6 @@ use ui::{
     IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
-use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
@@ -442,14 +441,14 @@ impl TitleBar {
                 .tooltip(move |cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
-                        Some(&ToggleVcsMenu),
+                        Some(&zed_actions::branches::OpenRecent),
                         "Local branches only",
                         cx,
                     )
                 })
                 .on_click(move |_, cx| {
-                    let _ = workspace.update(cx, |this, cx| {
-                        BranchList::open(this, &Default::default(), cx);
+                    let _ = workspace.update(cx, |_this, cx| {
+                        cx.dispatch_action(zed_actions::branches::OpenRecent.boxed_clone());
                     });
                 }),
         )

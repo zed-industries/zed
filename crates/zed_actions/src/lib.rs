@@ -44,6 +44,12 @@ actions!(
     ]
 );
 
+pub mod branches {
+    use gpui::actions;
+
+    actions!(branches, [OpenRecent]);
+}
+
 pub mod command_palette {
     use gpui::actions;
 
