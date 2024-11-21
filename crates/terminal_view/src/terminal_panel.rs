@@ -28,9 +28,9 @@ use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::SerializableItem,
-    pane,
+    move_item, pane,
     ui::IconName,
-    DraggedTab, ItemId, NewTerminal, Pane, PaneGroup, SplitDirection, ToggleZoom, Workspace,
+    DraggedTab, ItemId, NewTerminal, Pane, PaneGroup, ToggleZoom, Workspace,
 };
 
 use anyhow::Result;
@@ -118,19 +118,43 @@ impl TerminalPanel {
         pane.update(cx, |pane, cx| {
             pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
                 if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
-                    let item = if &tab.pane == cx.view() {
+                    let belongs_to_this_pane = &tab.pane == cx.view();
+                    let item = if belongs_to_this_pane {
                         pane.item_for_index(tab.ix)
                     } else {
                         tab.pane.read(cx).item_for_index(tab.ix)
                     };
                     if let Some(item) = item {
                         // TODO kb need to "move" task terminals instead of splitting them + create new terminal in the old pane, if the task terminal was the last one
-                        // TODO kb when the entire pane is hovered, no split should happen.
                         if item.downcast::<TerminalView>().is_some() {
-                            cx.emit(pane::Event::Split(
-                                pane.drag_split_direction.unwrap_or(SplitDirection::Right),
-                            ));
-                            return ControlFlow::Break(());
+                            match pane.drag_split_direction {
+                                Some(drag_split_direction) => {
+                                    cx.emit(pane::Event::Split(drag_split_direction));
+                                    return ControlFlow::Break(());
+                                }
+                                None => {
+                                    if !belongs_to_this_pane {
+                                        let source = tab.pane.clone();
+                                        let destination = cx.view().clone();
+                                        let item_id_to_move = item.item_id();
+                                        let destination_index = pane.active_item_index();
+                                        // Destination pane is currently updated, so defer the move.
+                                        cx.spawn(|_, mut cx| async move {
+                                            cx.update(|cx| {
+                                                move_item(
+                                                    &source,
+                                                    &destination,
+                                                    item_id_to_move,
+                                                    destination_index,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                        })
+                                        .detach();
+                                    }
+                                }
+                            }
                         } else if let Some(project_path) = item.project_path(cx) {
                             if let Some(entry_path) = workspace_handle
                                 .update(cx, |workspace, cx| {
@@ -419,6 +443,7 @@ impl TerminalPanel {
             .update(cx, |project, cx| project.create_terminal(kind, window, cx))
             .log_err()?;
         // TODO kb deduplicate + store panes and new subscriptions somewhere
+        // TODO kb also remove panes that have no terminals (if there are splits)
         let pane = cx.new_view(|cx| {
             let mut pane = Pane::new(
                 workspace.clone(),
