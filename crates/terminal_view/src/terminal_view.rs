@@ -1145,8 +1145,8 @@ impl Item for TerminalView {
         Some(Box::new(handle.clone()))
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        if self.show_title {
+    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {
+        if self.show_title && !self.terminal().read(cx).breadcrumb_text.trim().is_empty() {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
