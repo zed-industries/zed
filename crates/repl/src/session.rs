@@ -564,7 +564,7 @@ impl Session {
                     let message: JupyterMessage = ShutdownRequest { restart: false }.into();
                     request_tx.try_send(message).ok();
 
-                    forced.await;
+                    forced.await.log_err();
 
                     // Give the kernel a bit of time to clean up
                     cx.background_executor().timer(Duration::from_secs(3)).await;
