@@ -3038,7 +3038,7 @@ impl<'a> WindowContext<'a> {
             return true;
         }
 
-        if let Some(input) = keystroke.with_simulated_ime().ime_key {
+        if let Some(input) = keystroke.key_char {
             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
                 input_handler.dispatch_input(&input, self);
                 self.window.platform_window.set_input_handler(input_handler);
@@ -3267,7 +3267,7 @@ impl<'a> WindowContext<'a> {
                 if let Some(key) = key {
                     keystroke = Some(Keystroke {
                         key: key.to_string(),
-                        ime_key: None,
+                        key_char: None,
                         modifiers: Modifiers::default(),
                     });
                 }
@@ -3482,13 +3482,7 @@ impl<'a> WindowContext<'a> {
             if !self.propagate_event {
                 continue 'replay;
             }
-            if let Some(input) = replay
-                .keystroke
-                .with_simulated_ime()
-                .ime_key
-                .as_ref()
-                .cloned()
-            {
+            if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
                 if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
                     input_handler.dispatch_input(&input, self);
                     self.window.platform_window.set_input_handler(input_handler)

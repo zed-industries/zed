@@ -1283,18 +1283,17 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     }
 
     if event.is_held {
-        let handled = with_input_handler(&this, |input_handler| {
-            if !input_handler.apple_press_and_hold_enabled() {
-                input_handler.replace_text_in_range(
-                    None,
-                    &event.keystroke.ime_key.unwrap_or(event.keystroke.key),
-                );
+        if let Some(key_char) = event.keystroke.key_char.as_ref() {
+            let handled = with_input_handler(&this, |input_handler| {
+                if !input_handler.apple_press_and_hold_enabled() {
+                    input_handler.replace_text_in_range(None, &key_char);
+                    return YES;
+                }
+                NO
+            });
+            if handled == Some(YES) {
                 return YES;
             }
-            NO
-        });
-        if handled == Some(YES) {
-            return YES;
         }
     }
 
@@ -1437,7 +1436,7 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
     let keystroke = Keystroke {
         modifiers: Default::default(),
         key: ".".into(),
-        ime_key: None,
+        key_char: None,
     };
     let event = PlatformInput::KeyDown(KeyDownEvent {
         keystroke: keystroke.clone(),

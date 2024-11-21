@@ -12,9 +12,10 @@ pub struct Keystroke {
     /// e.g. for option-s, key is "s"
     pub key: String,
 
-    /// ime_key is the character inserted by the IME engine when that key was pressed.
-    /// e.g. for option-s, ime_key is "ß"
-    pub ime_key: Option<String>,
+    /// key_char is the character that could have been typed when
+    /// this binding was pressed.
+    /// e.g. for s this is "s", for option-s "ß", and cmd-s None
+    pub key_char: Option<String>,
 }
 
 impl Keystroke {
@@ -28,7 +29,7 @@ impl Keystroke {
     /// both possibilities for self against the target.
     pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
         if let Some(ime_key) = self
-            .ime_key
+            .key_char
             .as_ref()
             .filter(|ime_key| ime_key != &&self.key)
         {
@@ -118,7 +119,7 @@ impl Keystroke {
                 function,
             },
             key,
-            ime_key,
+            key_char: ime_key,
         })
     }
 
@@ -154,7 +155,7 @@ impl Keystroke {
     /// Returns true if this keystroke left
     /// the ime system in an incomplete state.
     pub fn is_ime_in_progress(&self) -> bool {
-        self.ime_key.is_none()
+        self.key_char.is_none()
             && (is_printable_key(&self.key) || self.key.is_empty())
             && !(self.modifiers.platform
                 || self.modifiers.control
@@ -166,13 +167,13 @@ impl Keystroke {
     /// This is used for dispatch_keystroke where we want users to
     /// be able to simulate typing "space", etc.
     pub fn with_simulated_ime(mut self) -> Self {
-        if self.ime_key.is_none()
+        if self.key_char.is_none()
             && !self.modifiers.platform
             && !self.modifiers.control
             && !self.modifiers.function
             && !self.modifiers.alt
         {
-            self.ime_key = match self.key.as_str() {
+            self.key_char = match self.key.as_str() {
                 "space" => Some(" ".into()),
                 "tab" => Some("\t".into()),
                 "enter" => Some("\n".into()),
