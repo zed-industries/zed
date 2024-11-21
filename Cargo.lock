@@ -4233,7 +4233,6 @@ dependencies = [
  "smallvec",
  "snippet_provider",
  "theme",
- "theme_selector",
  "ui",
  "util",
  "vim_mode_setting",

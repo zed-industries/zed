@@ -17,9 +17,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, InteractiveElement,
-    KeyContext, ParentElement, Render, Styled, Task, TextStyle, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    actions, uniform_list, Action, AppContext, EventEmitter, Flatten, FocusableView,
+    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -254,14 +254,13 @@ impl ExtensionsPage {
             .collect::<Vec<_>>();
         if !themes.is_empty() {
             workspace
-                .update(cx, |workspace, cx| {
-                    theme_selector::toggle(
-                        workspace,
-                        &zed_actions::theme_selector::Toggle {
+                .update(cx, |_workspace, cx| {
+                    cx.dispatch_action(
+                        zed_actions::theme_selector::Toggle {
                             themes_filter: Some(themes),
-                        },
-                        cx,
-                    )
+                        }
+                        .boxed_clone(),
+                    );
                 })
                 .ok();
         }
