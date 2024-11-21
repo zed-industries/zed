@@ -1014,23 +1014,38 @@ dependencies = [
  "anyhow",
  "client",
  "db",
- "editor",
  "gpui",
  "http_client",
  "log",
- "markdown_preview",
- "menu",
  "paths",
  "release_channel",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "smol",
  "tempfile",
- "util",
  "which 6.0.3",
+ "workspace",
+]
+
+[[package]]
+name = "auto_update_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "auto_update",
+ "client",
+ "editor",
+ "gpui",
+ "http_client",
+ "markdown_preview",
+ "menu",
+ "release_channel",
+ "serde",
+ "serde_json",
+ "smol",
+ "util",
  "workspace",
 ]
 
@@ -15464,6 +15479,7 @@ dependencies = [
  "async-watch",
  "audio",
  "auto_update",
+ "auto_update_ui",
  "backtrace",
  "breadcrumbs",
  "call",

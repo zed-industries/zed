@@ -9,6 +9,7 @@ members = [
     "crates/assistant_tool",
     "crates/audio",
     "crates/auto_update",
+    "crates/auto_update_ui",
     "crates/breadcrumbs",
     "crates/call",
     "crates/channel",
@@ -187,6 +188,7 @@ assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tool = { path = "crates/assistant_tool" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
+auto_update_ui = { path = "crates/auto_update_ui" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
