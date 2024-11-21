@@ -4347,6 +4347,7 @@ dependencies = [
  "urlencoding",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12625,7 +12626,6 @@ dependencies = [
  "collections",
  "editor",
  "feature_flags",
- "feedback",
  "gpui",
  "http_client",
  "notifications",

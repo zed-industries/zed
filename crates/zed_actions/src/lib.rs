@@ -56,6 +56,12 @@ pub mod command_palette {
     actions!(command_palette, [Toggle]);
 }
 
+pub mod feedback {
+    use gpui::actions;
+
+    actions!(feedback, [GiveFeedback]);
+}
+
 pub mod theme_selector {
     use gpui::impl_actions;
     use serde::Deserialize;

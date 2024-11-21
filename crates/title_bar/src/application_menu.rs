@@ -116,7 +116,10 @@ impl Render for ApplicationMenu {
                                 url: "https://zed.dev/docs".into(),
                             }),
                         )
-                        .action("Give Feedback", Box::new(feedback::GiveFeedback))
+                        .action(
+                            "Give Feedback",
+                            Box::new(zed_actions::feedback::GiveFeedback),
+                        )
                         .action("Check for Updates", Box::new(auto_update::Check))
                         .action("View Telemetry", Box::new(zed_actions::OpenTelemetryLog))
                         .action(
