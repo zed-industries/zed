@@ -245,7 +245,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         .charactersIgnoringModifiers()
         .to_str()
         .to_string();
-    let mut ime_key = None;
+    let mut key_char = None;
     let first_char = characters.chars().next().map(|ch| ch as u16);
     let modifiers = native_event.modifierFlags();
 
@@ -261,13 +261,19 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     #[allow(non_upper_case_globals)]
     let key = match first_char {
         Some(SPACE_KEY) => {
-            ime_key = Some(" ".to_string());
+            key_char = Some(" ".to_string());
             "space".to_string()
         }
+        Some(TAB_KEY) => {
+            key_char = Some("\t".to_string());
+            "tab".to_string()
+        }
+        Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => {
+            key_char = Some("\n".to_string());
+            "enter".to_string()
+        }
         Some(BACKSPACE_KEY) => "backspace".to_string(),
-        Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter".to_string(),
         Some(ESCAPE_KEY) => "escape".to_string(),
-        Some(TAB_KEY) => "tab".to_string(),
         Some(SHIFT_TAB_KEY) => "tab".to_string(),
         Some(NSUpArrowFunctionKey) => "up".to_string(),
         Some(NSDownArrowFunctionKey) => "down".to_string(),
@@ -348,7 +354,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 chars_ignoring_modifiers
             };
 
-            if always_use_cmd_layout || alt {
+            if !control && !command && !function {
                 let mut mods = NO_MOD;
                 if shift {
                     mods |= SHIFT_MOD;
@@ -356,11 +362,9 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 if alt {
                     mods |= OPTION_MOD;
                 }
-                let alt_key = chars_for_modified_key(native_event.keyCode(), mods);
-                if alt_key != key {
-                    ime_key = Some(alt_key);
-                }
-            };
+
+                key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
+            }
 
             key
         }
@@ -375,7 +379,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             function,
         },
         key,
-        ime_key,
+        key_char,
     }
 }
 
