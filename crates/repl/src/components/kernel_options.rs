@@ -39,9 +39,8 @@ fn truncate_path(path: &SharedString, max_length: usize) -> SharedString {
     if path.len() <= max_length {
         path.to_string().into()
     } else {
-        let mut truncated = path.chars().take(max_length - 3).collect::<String>();
-        truncated.push_str("...");
-        truncated.into()
+        let truncated = path.chars().rev().take(max_length - 3).collect::<String>();
+        format!("...{}", truncated.chars().rev().collect::<String>()).into()
     }
 }
 
@@ -138,12 +137,12 @@ impl PickerDelegate for KernelPickerDelegate {
             KernelSpecification::PythonEnv(_) => (
                 kernelspec.name(),
                 "Python Env",
-                Some(truncate_path(&kernelspec.path(), 30)),
+                Some(truncate_path(&kernelspec.path(), 42)),
             ),
             KernelSpecification::Remote(_) => (
                 kernelspec.name(),
                 "Remote",
-                Some(truncate_path(&kernelspec.path(), 20)),
+                Some(truncate_path(&kernelspec.path(), 42)),
             ),
         };
 
@@ -156,53 +155,44 @@ impl PickerDelegate for KernelPickerDelegate {
                     h_flex()
                         .w_full()
                         .gap_3()
+                        .child(icon.color(Color::Default).size(IconSize::Medium))
                         .child(
-                            h_flex()
-                                .gap_3()
-                                .child(icon.color(Color::Default).size(IconSize::Medium))
+                            v_flex()
+                                .flex_grow()
+                                .gap_0p5()
                                 .child(
-                                    v_flex()
-                                        .gap_0p5()
+                                    h_flex()
+                                        .justify_between()
                                         .child(
-                                            Label::new(name)
-                                                .weight(FontWeight::MEDIUM)
-                                                .size(LabelSize::Default),
+                                            div().w_48().text_ellipsis().child(
+                                                Label::new(name)
+                                                    .weight(FontWeight::MEDIUM)
+                                                    .size(LabelSize::Default),
+                                            ),
                                         )
-                                        .child(
-                                            h_flex()
-                                                .gap_1()
-                                                .child(
-                                                    Label::new(kernelspec.language())
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
-                                                )
-                                                .child(
-                                                    Label::new(kernel_type)
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
-                                                ),
-                                        ),
-                                ),
-                        )
-                        .when_some(path_or_url, |flex, path| {
-                            flex.child(
-                                div().flex_grow().justify_end().child(
+                                        .when_some(path_or_url.clone(), |flex, path| {
+                                            flex.text_ellipsis().child(
+                                                Label::new(path)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        }),
+                                )
+                                .child(
                                     h_flex()
                                         .gap_1()
                                         .child(
-                                            div()
-                                                .w(px(1.))
-                                                .h(rems(2.))
-                                                .bg(cx.theme().colors().border_variant),
+                                            Label::new(kernelspec.language())
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
                                         )
                                         .child(
-                                            Label::new(path)
+                                            Label::new(kernel_type)
                                                 .size(LabelSize::Small)
                                                 .color(Color::Muted),
                                         ),
                                 ),
-                            )
-                        }),
+                        ),
                 )
                 .when(is_selected, |item| {
                     item.end_slot(
