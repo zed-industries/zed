@@ -14,8 +14,9 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-db.workspace = true
+breadcrumbs.workspace = true
 collections.workspace = true
+db.workspace = true
 dirs.workspace = true
 editor.workspace = true
 futures.workspace = true

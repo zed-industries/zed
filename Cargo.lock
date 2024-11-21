@@ -12282,6 +12282,7 @@ name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "breadcrumbs",
  "client",
  "collections",
  "db",
