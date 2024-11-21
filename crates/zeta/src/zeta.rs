@@ -4,7 +4,10 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
 use http_client::HttpClient;
-use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset, ToPoint};
+use language::{
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, DiagnosticEntry,
+    DiagnosticSeverity, OffsetRangeExt as _, Point, Rope, ToOffset, ToPoint,
+};
 use std::{borrow::Cow, cmp, fmt::Write, mem, ops::Range, path::Path, sync::Arc, time::Duration};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -148,10 +151,10 @@ impl Zeta {
                 ],
             });
 
+            let text = buffer.read(cx).snapshot().text();
             let path = buffer.read(cx).snapshot().file().map(|f| f.path().clone());
-            self.push_event(Event::Open {
-                path: path.unwrap_or_else(|| Arc::from(Path::new("untitled"))),
-            });
+            let path = path.unwrap_or_else(|| Arc::from(Path::new("untitled")));
+            self.push_event(Event::Open { path });
         };
     }
 
@@ -162,7 +165,7 @@ impl Zeta {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::BufferEvent::Edited if buffer.read(cx).file().is_some() => {
+            language::BufferEvent::Edited => {
                 self.report_changes_for_buffer(&buffer, cx);
             }
             language::BufferEvent::Saved => {
@@ -198,10 +201,13 @@ impl Zeta {
             events.push('\n');
         }
 
-        let excerpt = inline_completion_excerpt(&snapshot, &position);
+        let point = position.to_point(&snapshot);
+        let offset = point.to_offset(&snapshot);
+        let excerpt_range = excerpt_range_for_position(point, &snapshot);
+        let prompt_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
         let prompt = include_str!("./complete_prompt.md")
             .replace("<events>", &events)
-            .replace("<excerpt>", &excerpt);
+            .replace("<excerpt>", &prompt_excerpt);
         log::debug!("requesting completion: {}", prompt);
 
         let api_url = self.api_url.clone();
@@ -245,12 +251,14 @@ impl Zeta {
 
                 let old_text: Arc<str> = content[old_start..sep + 1].into();
                 let new_text: Arc<str> = content[new_start..upd_end + 1].into();
-                let range = fuzzy::search(&snapshot, &old_text);
+                let range =
+                    fuzzy::search(&snapshot.as_rope().slice(excerpt_range.clone()), &old_text);
 
                 Ok(Some(InlineCompletion {
                     id,
                     path,
-                    range,
+                    range: snapshot.anchor_after(excerpt_range.start + range.start)
+                        ..snapshot.anchor_before(excerpt_range.start + range.end),
                     new_text,
                     old_text,
                 }))
@@ -304,6 +312,55 @@ impl Zeta {
 
         new_snapshot
     }
+}
+
+fn prompt_for_excerpt(
+    snapshot: &BufferSnapshot,
+    excerpt_range: &Range<usize>,
+    offset: usize,
+) -> String {
+    let mut prompt_excerpt = String::new();
+    writeln!(
+        prompt_excerpt,
+        "```{}",
+        snapshot
+            .file()
+            .map_or(Cow::Borrowed("untitled"), |file| file
+                .path()
+                .to_string_lossy())
+    )
+    .unwrap();
+    for chunk in snapshot.text_for_range(excerpt_range.start..offset) {
+        prompt_excerpt.push_str(chunk);
+    }
+    prompt_excerpt.push_str(CURSOR_MARKER);
+    for chunk in snapshot.text_for_range(offset..excerpt_range.end) {
+        prompt_excerpt.push_str(chunk);
+    }
+    prompt_excerpt.push_str("\n```");
+    prompt_excerpt
+}
+
+fn excerpt_range_for_position(point: Point, snapshot: &BufferSnapshot) -> Range<usize> {
+    const CONTEXT_LINES: u32 = 16;
+
+    let mut context_lines_before = CONTEXT_LINES;
+    let mut context_lines_after = CONTEXT_LINES;
+    if point.row < CONTEXT_LINES {
+        context_lines_after += CONTEXT_LINES - point.row;
+    } else if point.row + CONTEXT_LINES > snapshot.max_point().row {
+        context_lines_before += (point.row + CONTEXT_LINES) - snapshot.max_point().row;
+    }
+
+    let excerpt_start =
+        Point::new(point.row.saturating_sub(context_lines_before), 0).to_offset(snapshot);
+    let excerpt_end = cmp::min(
+        Point::new(point.row + context_lines_after, 0),
+        snapshot.max_point(),
+    )
+    .to_offset(snapshot);
+
+    excerpt_start..excerpt_end
 }
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
@@ -428,48 +485,6 @@ impl Event {
     }
 }
 
-fn inline_completion_excerpt(snapshot: &BufferSnapshot, position: &Anchor) -> String {
-    const CONTEXT_LINES: u32 = 16;
-
-    let position = position.to_point(snapshot);
-
-    let mut context_lines_before = CONTEXT_LINES;
-    let mut context_lines_after = CONTEXT_LINES;
-    if position.row < CONTEXT_LINES {
-        context_lines_after += CONTEXT_LINES - position.row;
-    } else if position.row + CONTEXT_LINES > snapshot.max_point().row {
-        context_lines_before += (position.row + CONTEXT_LINES) - snapshot.max_point().row;
-    }
-
-    let start = Point::new(position.row.saturating_sub(context_lines_before), 0);
-    let end = cmp::min(
-        Point::new(position.row + context_lines_after, 0),
-        snapshot.max_point(),
-    );
-
-    let mut content = String::new();
-    writeln!(
-        content,
-        "```{}",
-        snapshot
-            .file()
-            .map_or(Cow::Borrowed("untitled"), |file| file
-                .path()
-                .to_string_lossy())
-    )
-    .unwrap();
-
-    for chunk in snapshot.text_for_range(start..position) {
-        content.push_str(chunk);
-    }
-    content.push_str(CURSOR_MARKER);
-    for chunk in snapshot.text_for_range(position..end) {
-        content.push_str(chunk);
-    }
-    content.push_str("\n```");
-    content
-}
-
 fn format_edit(old_text: &str, new_text: &str) -> String {
     format!(
         "{}{}{}{}{}",
@@ -502,11 +517,15 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
 
     fn is_enabled(
         &self,
-        _buffer: &Model<Buffer>,
-        _cursor_position: language::Anchor,
-        _cx: &AppContext,
+        buffer: &Model<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &AppContext,
     ) -> bool {
-        true
+        let buffer = buffer.read(cx);
+        let file = buffer.file();
+        let language = buffer.language_at(cursor_position);
+        let settings = all_language_settings(file, cx);
+        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
     }
 
     fn refresh(
@@ -610,7 +629,6 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
             }
         }
 
-        println!("text={:?}", &completion.new_text);
         Some(editor::CompletionProposal {
             inlays,
             text: language::Rope::from(completion.new_text.as_ref()),
