@@ -399,10 +399,10 @@ impl PatchStore {
 
             located_edit.input_ix = input_edit_ix;
 
-            match new_buffer
-                .edits
-                .binary_search_by_key(&&located_edit.range.start, |edit| &edit.range.start)
-            {
+            match new_buffer.edits.binary_search_by_key(
+                &(located_edit.range.start, located_edit.range.end),
+                |edit| (edit.range.start, edit.range.end),
+            ) {
                 Ok(ix) => new_buffer.edits[ix] = located_edit,
                 Err(ix) => new_buffer.edits.insert(ix, located_edit),
             }
