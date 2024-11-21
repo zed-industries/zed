@@ -44,6 +44,12 @@ actions!(
     ]
 );
 
+pub mod command_palette {
+    use gpui::actions;
+
+    actions!(command_palette, [Toggle]);
+}
+
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct InlineAssist {
     pub prompt: Option<String>,
