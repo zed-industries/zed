@@ -1074,7 +1074,7 @@ impl SshRemoteClient {
                 c.connections.insert(
                     opts.clone(),
                     ConnectionPoolEntry::Connecting(
-                        cx.foreground_executor()
+                        cx.background_executor()
                             .spawn({
                                 let connection = connection.clone();
                                 async move { Ok(connection.clone()) }
