@@ -44,7 +44,7 @@ jobs:
         rustup target add wasm32-wasip1
     - name: Build
       run:
-        cargo run --release
+        cargo build --release
       continue-on-error: true
 
     - name: Upload Artifact
