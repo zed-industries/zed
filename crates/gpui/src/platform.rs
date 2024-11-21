@@ -643,9 +643,13 @@ impl PlatformInputHandler {
     }
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
-    fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String> {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        adjusted: &mut Option<Range<usize>>,
+    ) -> Option<String> {
         self.cx
-            .update(|cx| self.handler.text_for_range(range_utf16, cx))
+            .update(|cx| self.handler.text_for_range(range_utf16, adjusted, cx))
             .ok()
             .flatten()
     }
@@ -712,6 +716,7 @@ impl PlatformInputHandler {
 
 /// A struct representing a selection in a text buffer, in UTF16 characters.
 /// This is different from a range because the head may be before the tail.
+#[derive(Debug)]
 pub struct UTF16Selection {
     /// The range of text in the document this selection corresponds to
     /// in UTF16 characters.
@@ -749,6 +754,7 @@ pub trait InputHandler: 'static {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
         cx: &mut WindowContext,
     ) -> Option<String>;
 

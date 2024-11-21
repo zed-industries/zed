@@ -14428,15 +14428,16 @@ impl ViewInputHandler for Editor {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
         cx: &mut ViewContext<Self>,
     ) -> Option<String> {
-        Some(
-            self.buffer
-                .read(cx)
-                .read(cx)
-                .text_for_range(OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end))
-                .collect(),
-        )
+        let snapshot = self.buffer.read(cx).read(cx);
+        let start = snapshot.clip_offset_utf16(OffsetUtf16(range_utf16.start), Bias::Left);
+        let end = snapshot.clip_offset_utf16(OffsetUtf16(range_utf16.end), Bias::Right);
+        if (start.0..end.0) != range_utf16 {
+            adjusted_range.replace(start.0..end.0);
+        }
+        Some(snapshot.text_for_range(start..end).collect())
     }
 
     fn selected_text_range(
