@@ -917,13 +917,17 @@ impl LspAdapter for PyLspAdapter {
                     .unwrap_or_else(|| {
                         json!({
                             "plugins": {
-                                "rope_autoimport": {"enabled": true},
-                                "mypy": {"enabled": true}
-                            }
+                                "pycodestyle": {"enabled": false},
+                                "rope_autoimport": {"enabled": true, "memory": true},
+                                "mypy": {"enabled": false}
+                            },
+                            "rope": {
+                                "ropeFolder": null
+                            },
                         })
                     });
 
-            // If python.pythonPath is not set in user config, do so using our toolchain picker.
+            // If user did not explicitly modify their python venv, use one from picker.
             if let Some(toolchain) = toolchain {
                 if user_settings.is_null() {
                     user_settings = Value::Object(serde_json::Map::default());
@@ -939,23 +943,22 @@ impl LspAdapter for PyLspAdapter {
                         .or_insert(Value::Object(serde_json::Map::default()))
                         .as_object_mut()
                     {
-                        jedi.insert(
-                            "environment".to_string(),
-                            Value::String(toolchain.path.clone().into()),
-                        );
+                        jedi.entry("environment".to_string())
+                            .or_insert_with(|| Value::String(toolchain.path.clone().into()));
                     }
                     if let Some(pylint) = python
                         .entry("mypy")
                         .or_insert(Value::Object(serde_json::Map::default()))
                         .as_object_mut()
                     {
-                        pylint.insert(
-                            "overrides".to_string(),
+                        pylint.entry("overrides".to_string()).or_insert_with(|| {
                             Value::Array(vec![
                                 Value::String("--python-executable".into()),
                                 Value::String(toolchain.path.into()),
-                            ]),
-                        );
+                                Value::String("--cache-dir=/dev/null".into()),
+                                Value::Bool(true),
+                            ])
+                        });
                     }
                 }
             }
