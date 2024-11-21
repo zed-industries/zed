@@ -31,6 +31,8 @@ pub trait ToolchainLister: Send + Sync {
         worktree_root: PathBuf,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList;
+    // Returns a term which we should use in UI to refer to a toolchain.
+    fn term(&self) -> SharedString;
 }
 
 #[async_trait(?Send)]
