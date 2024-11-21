@@ -23,6 +23,7 @@ assistant.workspace = true
 async-watch.workspace = true
 audio.workspace = true
 auto_update.workspace = true
+auto_update_ui.workspace = true
 backtrace = "0.3"
 breadcrumbs.workspace = true
 call.workspace = true

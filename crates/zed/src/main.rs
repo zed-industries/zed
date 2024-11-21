@@ -367,6 +367,7 @@ fn main() {
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
         auto_update::init(client.http_client(), cx);
+        auto_update_ui::init(cx);
         reliability::init(
             client.http_client(),
             system_id.as_ref().map(|id| id.to_string()),

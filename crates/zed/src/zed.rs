@@ -223,7 +223,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(cursor_position, cx);
         });
 
-        auto_update::notify_of_any_new_update(cx);
+        auto_update_ui::notify_of_any_new_update(cx);
 
         let handle = cx.view().downgrade();
         cx.on_window_should_close(move |cx| {
