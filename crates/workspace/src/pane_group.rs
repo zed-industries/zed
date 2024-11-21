@@ -144,7 +144,7 @@ impl PaneGroup {
         )
     }
 
-    pub(crate) fn panes(&self) -> Vec<&View<Pane>> {
+    pub fn panes(&self) -> Vec<&View<Pane>> {
         let mut panes = Vec::new();
         self.root.collect_panes(&mut panes);
         panes

@@ -298,8 +298,19 @@ impl TerminalPanel {
     ) {
         match event {
             pane::Event::ActivateItem { .. } => self.serialize(cx),
+            // TODO kb other panes seem to ignore ctrl-d and do not close the terminals??
             pane::Event::RemovedItem { .. } => self.serialize(cx),
-            pane::Event::Remove { .. } => cx.emit(PanelEvent::Close),
+            pane::Event::Remove { focus_on_pane } => {
+                let panes_before_removal = self.center.panes().len();
+                let _removal_result = self.center.remove(&pane);
+                if let Some(focus_on_pane) = focus_on_pane {
+                    focus_on_pane.focus_handle(cx).focus(cx);
+                }
+                if panes_before_removal == 1 {
+                    cx.emit(PanelEvent::Close);
+                }
+                // TODO kb this won't restore pane if the central one got closed
+            }
             pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
             pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
 
@@ -342,7 +353,6 @@ impl TerminalPanel {
         });
 
         // TODO store panes and new subscriptions somewhere
-        // TODO kb also remove panes that have no terminals (if there are splits) + do not close the dock when the last terminal is closed but more than one pane is open
         // self.panes.push(pane.clone());
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         cx.focus_view(&pane);
@@ -759,7 +769,7 @@ fn new_terminal_pane(workspace: &Workspace, cx: &mut WindowContext) -> View<Pane
                     tab.pane.read(cx).item_for_index(tab.ix)
                 };
                 if let Some(item) = item {
-                    // TODO kb need to "move" task terminals instead of splitting them + create new terminal in the old pane, if the task terminal was the last one
+                    // TODO kb need to "move" terminals instead of splitting them + create new terminal in the old pane, if the task terminal was the last one
                     if item.downcast::<TerminalView>().is_some() {
                         match pane.drag_split_direction {
                             Some(drag_split_direction) => {
