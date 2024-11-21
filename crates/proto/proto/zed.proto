@@ -2473,6 +2473,7 @@ message ListToolchains {
 message Toolchain {
     string name = 1;
     string path = 2;
+    string raw_json = 3;
 }
 
 message ToolchainGroup {
