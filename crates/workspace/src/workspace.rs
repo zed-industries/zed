@@ -44,6 +44,7 @@ pub use item::{
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
+use language::language_settings::InlayHintSettings;
 use language::{LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
@@ -318,6 +319,7 @@ pub fn init_settings(cx: &mut AppContext) {
     ItemSettings::register(cx);
     PreviewTabsSettings::register(cx);
     TabBarSettings::register(cx);
+    InlayHintSettings::register(cx);
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {

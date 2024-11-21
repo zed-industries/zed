@@ -802,6 +802,24 @@ pub struct InlayHintSettings {
     pub scroll_debounce_ms: u64,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct InlayHintSettingsContent {
+    /// Whether or not to enable inlay hints in the editor.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+}
+
+impl Settings for InlayHintSettings {
+    const KEY: Option<&'static str> = Some("inlay_hints");
+
+    type FileContent = InlayHintSettingsContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
+    }
+}
+
 fn edit_debounce_ms() -> u64 {
     700
 }

@@ -4259,6 +4259,15 @@ impl Editor {
             InlayHintRefreshReason::Toggle(!self.inlay_hint_cache.enabled),
             cx,
         );
+
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+        let fs = workspace.read(cx).app_state().fs.clone();
+        let current_enabled = self.inlay_hint_cache.enabled;
+        update_settings_file::<InlayHintSettings>(fs, cx, move |setting, _| {
+            setting.enabled = Some(current_enabled);
+        });
     }
 
     pub fn inlay_hints_enabled(&self) -> bool {
