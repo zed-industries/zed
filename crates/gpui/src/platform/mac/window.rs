@@ -38,6 +38,7 @@ use std::{
     cell::Cell,
     ffi::{c_void, CStr},
     mem,
+    ops::Range,
     path::PathBuf,
     ptr::{self, NonNull},
     rc::Rc,
@@ -1754,15 +1755,21 @@ extern "C" fn attributed_substring_for_proposed_range(
     this: &Object,
     _: Sel,
     range: NSRange,
-    _actual_range: *mut c_void,
+    actual_range: *mut c_void,
 ) -> id {
     with_input_handler(this, |input_handler| {
         let range = range.to_range()?;
         if range.is_empty() {
             return None;
         }
+        let mut adjusted: Option<Range<usize>> = None;
 
-        let selected_text = input_handler.text_for_range(range.clone())?;
+        let selected_text = input_handler.text_for_range(range.clone(), &mut adjusted)?;
+        if let Some(adjusted) = adjusted {
+            if adjusted != range {
+                unsafe { (actual_range as *mut NSRange).write(NSRange::from(adjusted)) };
+            }
+        }
         unsafe {
             let string: id = msg_send![class!(NSAttributedString), alloc];
             let string: id = msg_send![string, initWithString: ns_string(&selected_text)];
