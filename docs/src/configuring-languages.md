@@ -149,6 +149,22 @@ Many language servers accept custom configuration options. You can set these in 
   }
 ```
 
+### Custom Language Server Configuration
+
+Some language server might not be supported out of the box at the moment, but it still possible to configure it manually. Following configuration in `settings.json` allows one to set up `clangd` with custom arguments:
+
+```json
+  "lsp": {
+    "clangd": {
+      "binary": {
+        "path_lookup": true,
+        "path": "clangd",
+        "arguments": ["--header-insertion=never"]
+      }
+    }
+  }
+```
+
 This example configures the Rust Analyzer to use Clippy for additional linting when saving files.
 
 #### Nested objects
