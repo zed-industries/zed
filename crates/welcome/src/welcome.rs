@@ -73,6 +73,7 @@ impl Render for WelcomePage {
         h_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
+            .key_context("Welcome")
             .track_focus(&self.focus_handle(cx))
             .child(
                 v_flex()
@@ -177,7 +178,7 @@ impl Render for WelcomePage {
                                                 this.telemetry.report_app_event(
                                                     "welcome page: sign in to copilot".to_string(),
                                                 );
-                                                inline_completion_button::initiate_sign_in(cx);
+                                                copilot::initiate_sign_in(cx);
                                             }),
                                         ),
                                     )
@@ -250,7 +251,7 @@ impl Render for WelcomePage {
                                                     "welcome page: open extensions".to_string(),
                                                 );
                                                 cx.dispatch_action(Box::new(
-                                                    extensions_ui::Extensions,
+                                                    zed_actions::Extensions,
                                                 ));
                                             })),
                                     )

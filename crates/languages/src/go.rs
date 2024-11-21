@@ -8,7 +8,7 @@ pub use language::*;
 use lsp::{LanguageServerBinary, LanguageServerName};
 use regex::Regex;
 use serde_json::json;
-use smol::{fs, process};
+use smol::fs;
 use std::{
     any::Any,
     borrow::Cow,
@@ -138,8 +138,8 @@ impl super::LspAdapter for GoLspAdapter {
 
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
-        let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
-        let install_output = process::Command::new(go)
+
+        let install_output = util::command::new_smol_command("go")
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
             .args(["install", "golang.org/x/tools/gopls@latest"])
@@ -157,7 +157,7 @@ impl super::LspAdapter for GoLspAdapter {
         }
 
         let installed_binary_path = gobin_dir.join("gopls");
-        let version_output = process::Command::new(&installed_binary_path)
+        let version_output = util::command::new_smol_command(&installed_binary_path)
             .arg("version")
             .output()
             .await

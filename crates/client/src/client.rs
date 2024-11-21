@@ -1780,7 +1780,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -1821,7 +1821,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -1900,7 +1900,7 @@ mod tests {
         let dropped_auth_count = Arc::new(Mutex::new(0));
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -1943,7 +1943,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -2003,7 +2003,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -2038,7 +2038,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )

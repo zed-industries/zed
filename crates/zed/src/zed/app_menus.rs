@@ -32,7 +32,7 @@ pub fn app_menus() -> Vec<Menu> {
                     items: vec![],
                 }),
                 MenuItem::separator(),
-                MenuItem::action("Extensions", extensions_ui::Extensions),
+                MenuItem::action("Extensions", zed_actions::Extensions),
                 MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
                 MenuItem::action("Hide Zed", super::Hide),
@@ -50,7 +50,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Open…", workspace::Open),
                 MenuItem::action(
                     "Open Recent...",
-                    recent_projects::OpenRecent {
+                    zed_actions::OpenRecent {
                         create_new_window: true,
                     },
                 ),

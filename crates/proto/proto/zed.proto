@@ -276,6 +276,7 @@ message Envelope {
 
         LanguageServerPromptRequest language_server_prompt_request = 268;
         LanguageServerPromptResponse language_server_prompt_response = 269;
+
         GitBranches git_branches = 270;
         GitBranchesResponse git_branches_response = 271;
 
@@ -293,7 +294,14 @@ message Envelope {
         GetPanicFiles get_panic_files = 280;
         GetPanicFilesResponse get_panic_files_response = 281;
 
-        CancelLanguageServerWork cancel_language_server_work = 282; // current max
+        CancelLanguageServerWork cancel_language_server_work = 282;
+
+        LspExtOpenDocs lsp_ext_open_docs = 283;
+        LspExtOpenDocsResponse lsp_ext_open_docs_response = 284;
+
+        SyncExtensions sync_extensions = 285;
+        SyncExtensionsResponse sync_extensions_response = 286;
+        InstallExtension install_extension = 287; // current max
     }
 
     reserved 87 to 88;
@@ -2024,6 +2032,17 @@ message LspExtExpandMacroResponse {
     string expansion = 2;
 }
 
+message LspExtOpenDocs {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message LspExtOpenDocsResponse {
+    optional string web = 1;
+    optional string local = 2;
+}
+
 message LspExtSwitchSourceHeader {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
@@ -2454,6 +2473,7 @@ message ListToolchains {
 message Toolchain {
     string name = 1;
     string path = 2;
+    string raw_json = 3;
 }
 
 message ToolchainGroup {
@@ -2528,4 +2548,24 @@ message CancelLanguageServerWork {
         uint64 language_server_id = 1;
         optional string token = 2;
     }
+}
+
+message Extension {
+    string id = 1;
+    string version = 2;
+    bool dev = 3;
+}
+
+message SyncExtensions {
+    repeated Extension extensions = 1;
+}
+
+message SyncExtensionsResponse {
+    string tmp_dir = 1;
+    repeated Extension missing_extensions = 2;
+}
+
+message InstallExtension {
+    Extension extension = 1;
+    string tmp_dir = 2;
 }

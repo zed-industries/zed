@@ -5,8 +5,8 @@ use collections::{BTreeMap, HashMap};
 use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
 use http_client::HttpClient;
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, DiagnosticEntry,
-    DiagnosticSeverity, OffsetRangeExt as _, Point, Rope, ToOffset, ToPoint,
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, Point, ToOffset,
+    ToPoint,
 };
 use std::{borrow::Cow, cmp, fmt::Write, mem, ops::Range, path::Path, sync::Arc, time::Duration};
 
@@ -151,9 +151,12 @@ impl Zeta {
                 ],
             });
 
-            let text = buffer.read(cx).snapshot().text();
-            let path = buffer.read(cx).snapshot().file().map(|f| f.path().clone());
-            let path = path.unwrap_or_else(|| Arc::from(Path::new("untitled")));
+            let path = buffer
+                .read(cx)
+                .snapshot()
+                .file()
+                .map(|f| f.path().clone())
+                .unwrap_or_else(|| Arc::from(Path::new("untitled")));
             self.push_event(Event::Open { path });
         };
     }
@@ -510,7 +513,7 @@ impl ZetaInlineCompletionProvider {
     }
 }
 
-impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
+impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvider {
     fn name() -> &'static str {
         "Zeta"
     }
@@ -563,7 +566,7 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
         &mut self,
         _buffer: Model<Buffer>,
         _cursor_position: language::Anchor,
-        _direction: editor::Direction,
+        _direction: inline_completion::Direction,
         _cx: &mut ModelContext<Self>,
     ) {
         // todo!()
@@ -593,7 +596,7 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
         buffer: &Model<Buffer>,
         _cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<editor::CompletionProposal> {
+    ) -> Option<inline_completion::CompletionProposal> {
         let completion = self.current_completion.as_ref()?;
 
         let snapshot = buffer.read(cx).snapshot();
@@ -621,7 +624,7 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
                     ix += value.len();
                 }
                 similar::ChangeTag::Insert => {
-                    inlays.push(editor::InlayProposal::Suggestion(
+                    inlays.push(inline_completion::InlayProposal::Suggestion(
                         snapshot.anchor_after(ix),
                         language::Rope::from(value),
                     ));
@@ -629,7 +632,7 @@ impl editor::InlineCompletionProvider for ZetaInlineCompletionProvider {
             }
         }
 
-        Some(editor::CompletionProposal {
+        Some(inline_completion::CompletionProposal {
             inlays,
             text: language::Rope::from(completion.new_text.as_ref()),
             delete_range: Some(completion.range.clone()),
@@ -1113,8 +1116,8 @@ mod tests {
             None
         }
 
-        fn mtime(&self) -> Option<std::time::SystemTime> {
-            None
+        fn disk_state(&self) -> language::DiskState {
+            language::DiskState::New
         }
 
         fn path(&self) -> &Arc<Path> {
@@ -1131,10 +1134,6 @@ mod tests {
 
         fn worktree_id(&self, _cx: &AppContext) -> worktree::WorktreeId {
             unimplemented!()
-        }
-
-        fn is_deleted(&self) -> bool {
-            false
         }
 
         fn as_any(&self) -> &dyn std::any::Any {

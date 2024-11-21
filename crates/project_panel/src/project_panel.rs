@@ -2033,6 +2033,7 @@ impl ProjectPanel {
                         is_ignored: entry.is_ignored,
                         is_external: false,
                         is_private: false,
+                        is_always_included: entry.is_always_included,
                         git_status: entry.git_status,
                         canonical_path: entry.canonical_path.clone(),
                         char_bag: entry.char_bag,

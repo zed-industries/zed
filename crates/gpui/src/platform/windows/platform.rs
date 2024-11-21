@@ -292,7 +292,7 @@ impl Platform for WindowsPlatform {
             pid,
             app_path.display(),
         );
-        let restart_process = std::process::Command::new("powershell.exe")
+        let restart_process = util::command::new_std_command("powershell.exe")
             .arg("-command")
             .arg(script)
             .spawn();
@@ -323,14 +323,6 @@ impl Platform for WindowsPlatform {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
-    }
-
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        let (mut tx, rx) = oneshot::channel();
-        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
-        rx
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

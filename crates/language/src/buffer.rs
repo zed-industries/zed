@@ -104,6 +104,7 @@ pub struct Buffer {
     text: TextBuffer,
     diff_base: Option<BufferDiffBase>,
     git_diff: git::diff::BufferDiff,
+    /// Filesystem state, `None` when there is no path.
     file: Option<Arc<dyn File>>,
     /// The mtime of the file when this buffer was last loaded from
     /// or saved to disk.
@@ -371,8 +372,9 @@ pub trait File: Send + Sync {
         self.as_local().is_some()
     }
 
-    /// Returns the file's mtime.
-    fn mtime(&self) -> Option<SystemTime>;
+    /// Returns whether the file is new, exists in storage, or has been deleted. Includes metadata
+    /// only available in some states, such as modification time.
+    fn disk_state(&self) -> DiskState;
 
     /// Returns the path of this file relative to the worktree's root directory.
     fn path(&self) -> &Arc<Path>;
@@ -390,14 +392,6 @@ pub trait File: Send + Sync {
     /// This is needed for looking up project-specific settings.
     fn worktree_id(&self, cx: &AppContext) -> WorktreeId;
 
-    /// Returns whether the file has been deleted.
-    fn is_deleted(&self) -> bool;
-
-    /// Returns whether the file existed on disk at one point
-    fn is_created(&self) -> bool {
-        self.mtime().is_some()
-    }
-
     /// Converts this file into an [`Any`] trait object.
     fn as_any(&self) -> &dyn Any;
 
@@ -406,6 +400,34 @@ pub trait File: Send + Sync {
 
     /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
+}
+
+/// The file's storage status - whether it's stored (`Present`), and if so when it was last
+/// modified. In the case where the file is not stored, it can be either `New` or `Deleted`. In the
+/// UI these two states are distinguished. For example, the buffer tab does not display a deletion
+/// indicator for new files.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DiskState {
+    /// File created in Zed that has not been saved.
+    New,
+    /// File present on the filesystem.
+    Present {
+        /// Last known mtime (modification time).
+        mtime: SystemTime,
+    },
+    /// Deleted file that was previously present.
+    Deleted,
+}
+
+impl DiskState {
+    /// Returns the file's last known modification time on disk.
+    pub fn mtime(self) -> Option<SystemTime> {
+        match self {
+            DiskState::New => None,
+            DiskState::Present { mtime } => Some(mtime),
+            DiskState::Deleted => None,
+        }
+    }
 }
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
@@ -750,7 +772,7 @@ impl Buffer {
         file: Option<Arc<dyn File>>,
         capability: Capability,
     ) -> Self {
-        let saved_mtime = file.as_ref().and_then(|file| file.mtime());
+        let saved_mtime = file.as_ref().and_then(|file| file.disk_state().mtime());
         let snapshot = buffer.snapshot();
         let git_diff = git::diff::BufferDiff::new(&snapshot);
         let syntax_map = Mutex::new(SyntaxMap::new(&snapshot));
@@ -1014,7 +1036,7 @@ impl Buffer {
         self.reload_task = Some(cx.spawn(|this, mut cx| async move {
             let Some((new_mtime, new_text)) = this.update(&mut cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
-                Some((file.mtime(), file.load(cx)))
+                Some((file.disk_state().mtime(), file.load(cx)))
             })?
             else {
                 return Ok(());
@@ -1070,6 +1092,7 @@ impl Buffer {
     /// Updates the [`File`] backing this buffer. This should be called when
     /// the file has changed or has been deleted.
     pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
+        let was_dirty = self.is_dirty();
         let mut file_changed = false;
 
         if let Some(old_file) = self.file.as_ref() {
@@ -1077,21 +1100,12 @@ impl Buffer {
                 file_changed = true;
             }
 
-            if new_file.is_deleted() {
-                if !old_file.is_deleted() {
-                    file_changed = true;
-                    if !self.is_dirty() {
-                        cx.emit(BufferEvent::DirtyChanged);
-                    }
-                }
-            } else {
-                let new_mtime = new_file.mtime();
-                if new_mtime != old_file.mtime() {
-                    file_changed = true;
-
-                    if !self.is_dirty() {
-                        cx.emit(BufferEvent::ReloadNeeded);
-                    }
+            let old_state = old_file.disk_state();
+            let new_state = new_file.disk_state();
+            if old_state != new_state {
+                file_changed = true;
+                if !was_dirty && matches!(new_state, DiskState::Present { .. }) {
+                    cx.emit(BufferEvent::ReloadNeeded)
                 }
             }
         } else {
@@ -1101,6 +1115,9 @@ impl Buffer {
         self.file = Some(new_file);
         if file_changed {
             self.non_text_state_update_count += 1;
+            if was_dirty != self.is_dirty() {
+                cx.emit(BufferEvent::DirtyChanged);
+            }
             cx.emit(BufferEvent::FileHandleChanged);
             cx.notify();
         }
@@ -1742,15 +1759,10 @@ impl Buffer {
     pub fn is_dirty(&self) -> bool {
         self.capability != Capability::ReadOnly
             && (self.has_conflict
-                || self.has_unsaved_edits()
-                || self
-                    .file
-                    .as_ref()
-                    .map_or(false, |file| file.is_deleted() || !file.is_created()))
-    }
-
-    pub fn is_deleted(&self) -> bool {
-        self.file.as_ref().map_or(false, |file| file.is_deleted())
+                || self.file.as_ref().map_or(false, |file| {
+                    matches!(file.disk_state(), DiskState::New | DiskState::Deleted)
+                })
+                || self.has_unsaved_edits())
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
@@ -1762,7 +1774,14 @@ impl Buffer {
         let Some(file) = self.file.as_ref() else {
             return false;
         };
-        file.is_deleted() || (file.mtime() > self.saved_mtime && self.has_unsaved_edits())
+        match file.disk_state() {
+            DiskState::New => false,
+            DiskState::Present { mtime } => match self.saved_mtime {
+                Some(saved_mtime) => mtime > saved_mtime && self.has_unsaved_edits(),
+                None => true,
+            },
+            DiskState::Deleted => true,
+        }
     }
 
     /// Gets a [`Subscription`] that tracks all of the changes to the buffer's text.
@@ -4403,7 +4422,7 @@ impl File for TestFile {
         None
     }
 
-    fn mtime(&self) -> Option<SystemTime> {
+    fn disk_state(&self) -> DiskState {
         unimplemented!()
     }
 
@@ -4413,10 +4432,6 @@ impl File for TestFile {
 
     fn worktree_id(&self, _: &AppContext) -> WorktreeId {
         WorktreeId::from_usize(0)
-    }
-
-    fn is_deleted(&self) -> bool {
-        unimplemented!()
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

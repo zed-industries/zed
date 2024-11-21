@@ -3038,7 +3038,7 @@ impl<'a> WindowContext<'a> {
             return true;
         }
 
-        if let Some(input) = keystroke.ime_key {
+        if let Some(input) = keystroke.key_char {
             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
                 input_handler.dispatch_input(&input, self);
                 self.window.platform_window.set_input_handler(input_handler);
@@ -3050,8 +3050,28 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Represent this action as a key binding string, to display in the UI.
-    pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
+    pub fn keystroke_text_for_action(&self, action: &dyn Action) -> String {
         self.bindings_for_action(action)
+            .into_iter()
+            .next()
+            .map(|binding| {
+                binding
+                    .keystrokes()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_else(|| action.name().to_string())
+    }
+
+    /// Represent this action as a key binding string, to display in the UI.
+    pub fn keystroke_text_for_action_in(
+        &self,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+    ) -> String {
+        self.bindings_for_action_in(action, focus_handle)
             .into_iter()
             .next()
             .map(|binding| {
@@ -3247,7 +3267,7 @@ impl<'a> WindowContext<'a> {
                 if let Some(key) = key {
                     keystroke = Some(Keystroke {
                         key: key.to_string(),
-                        ime_key: None,
+                        key_char: None,
                         modifiers: Modifiers::default(),
                     });
                 }
@@ -3462,7 +3482,7 @@ impl<'a> WindowContext<'a> {
             if !self.propagate_event {
                 continue 'replay;
             }
-            if let Some(input) = replay.keystroke.ime_key.as_ref().cloned() {
+            if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
                 if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
                     input_handler.dispatch_input(&input, self);
                     self.window.platform_window.set_input_handler(input_handler)

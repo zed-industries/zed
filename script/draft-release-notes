@@ -64,10 +64,6 @@ async function main() {
   }
 
   console.log(releaseNotes.join("\n") + "\n");
-  console.log("<!-- ");
-  console.log(missing.join("\n"));
-  console.log(skipped.join("\n"));
-  console.log("-->");
 }
 
 function getCommits(oldTag, newTag) {

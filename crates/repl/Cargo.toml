@@ -25,6 +25,8 @@ feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 image.workspace = true
+jupyter-websocket-client.workspace = true
+jupyter-protocol.workspace = true
 language.workspace = true
 log.workspace = true
 markdown_preview.workspace = true
@@ -46,9 +48,6 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

@@ -25,12 +25,14 @@ use gpui::{
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    logging::report_assistant_event,
-    provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
     StopReason,
+};
+use language_models::{
+    provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
+    report_assistant_event,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -380,10 +382,6 @@ pub enum ContextEvent {
     },
     SlashCommandOutputSectionAdded {
         section: SlashCommandOutputSection<language::Anchor>,
-    },
-    SlashCommandFinished {
-        output_range: Range<language::Anchor>,
-        run_commands_in_ranges: Vec<Range<language::Anchor>>,
     },
     UsePendingTools,
     ToolFinished {
@@ -916,6 +914,7 @@ impl Context {
                         InvokedSlashCommand {
                             name: name.into(),
                             range: output_range,
+                            run_commands_in_ranges: Vec::new(),
                             status: InvokedSlashCommandStatus::Running(Task::ready(())),
                             transaction: None,
                             timestamp: id.0,
@@ -1914,7 +1913,6 @@ impl Context {
                 }
 
                 let mut pending_section_stack: Vec<PendingSection> = Vec::new();
-                let mut run_commands_in_ranges: Vec<Range<language::Anchor>> = Vec::new();
                 let mut last_role: Option<Role> = None;
                 let mut last_section_range = None;
 
@@ -1980,7 +1978,13 @@ impl Context {
 
                                 let end = this.buffer.read(cx).anchor_before(insert_position);
                                 if run_commands_in_text {
-                                    run_commands_in_ranges.push(start..end);
+                                    if let Some(invoked_slash_command) =
+                                        this.invoked_slash_commands.get_mut(&command_id)
+                                    {
+                                        invoked_slash_command
+                                            .run_commands_in_ranges
+                                            .push(start..end);
+                                    }
                                 }
                             }
                             SlashCommandEvent::EndSection => {
@@ -2100,6 +2104,7 @@ impl Context {
             InvokedSlashCommand {
                 name: name.to_string().into(),
                 range: command_range.clone(),
+                run_commands_in_ranges: Vec::new(),
                 status: InvokedSlashCommandStatus::Running(insert_output_task),
                 transaction: Some(first_transaction),
                 timestamp: command_id.0,
@@ -2891,7 +2896,7 @@ impl Context {
             request.messages.push(LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![
-                    "Generate a concise 3-7 word title for this conversation, omitting punctuation"
+                    "Generate a concise 3-7 word title for this conversation, omitting punctuation. Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`"
                         .into(),
                 ],
                 cache: false,
@@ -3176,6 +3181,7 @@ pub struct ParsedSlashCommand {
 pub struct InvokedSlashCommand {
     pub name: SharedString,
     pub range: Range<language::Anchor>,
+    pub run_commands_in_ranges: Vec<Range<language::Anchor>>,
     pub status: InvokedSlashCommandStatus,
     pub transaction: Option<language::TransactionId>,
     timestamp: clock::Lamport,
