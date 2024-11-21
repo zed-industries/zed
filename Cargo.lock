@@ -12410,6 +12410,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12637,7 +12638,6 @@ dependencies = [
  "smallvec",
  "story",
  "theme",
- "theme_selector",
  "tree-sitter-md",
  "ui",
  "util",

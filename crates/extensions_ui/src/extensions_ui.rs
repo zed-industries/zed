@@ -257,7 +257,7 @@ impl ExtensionsPage {
                 .update(cx, |workspace, cx| {
                     theme_selector::toggle(
                         workspace,
-                        &theme_selector::Toggle {
+                        &zed_actions::theme_selector::Toggle {
                             themes_filter: Some(themes),
                         },
                         cx,

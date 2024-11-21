@@ -42,7 +42,6 @@ serde.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
 theme.workspace = true
-theme_selector.workspace = true
 ui.workspace = true
 util.workspace = true
 vcs_menu.workspace = true
