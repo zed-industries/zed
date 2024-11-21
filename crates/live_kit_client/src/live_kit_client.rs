@@ -254,7 +254,7 @@ pub fn capture_local_audio_track(
             let source = source.clone();
             async move {
                 while let Some(frame) = frame_rx.next().await {
-                    source.capture_frame(&frame).await.ok();
+                    source.capture_frame(&frame).await.log_err();
                 }
                 Ok(Some(()))
             }
@@ -302,7 +302,7 @@ pub fn play_remote_audio_track(
                 if stream_config.as_ref().map_or(true, |c| *c != frame_config) {
                     buffer.resize(buffer_size as usize, 0);
                     stream_config = Some(frame_config.clone());
-                    stream_config_tx.send(frame_config).ok();
+                    stream_config_tx.send(frame_config).log_err();
                 }
 
                 if frame.data.len() == buffer.len() {
@@ -327,7 +327,7 @@ pub fn play_remote_audio_track(
                 .context("no audio output device available")?;
 
             let mut _output_stream = None;
-            while let Some(config) = stream_config_rx.recv().ok() {
+            while let Some(config) = stream_config_rx.recv().log_err() {
                 _output_stream = Some(device.build_output_stream(
                     &config,
                     {
