@@ -74,6 +74,15 @@ pub struct TerminalPanel {
     assistant_tab_bar_button: Option<AnyView>,
 }
 
+/// A group of terminals that can be arranged horizontally or vertically.
+/// A pane may have multiple terminal groups, each created on `workspace::NewTerminal`.
+/// TODO(dennis): I am adopting VSCode's TerminalGroup idea.
+pub struct TerminalGroup {
+    instances: Vec<TerminalView>,
+    // VSCode has an orientation feature, but to be quick here, we'll only support horizontal for now.
+    // orientation: Orientation,
+}
+
 impl TerminalPanel {
     fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         let pane = cx.new_view(|cx| {
@@ -569,6 +578,7 @@ impl TerminalPanel {
         terminal_panel
             .update(cx, |this, cx| {
                 println!("Splitting terminal");
+
                 this.add_terminal(kind, RevealStrategy::Always, cx)
             })
             .detach_and_log_err(cx);
@@ -617,6 +627,7 @@ impl TerminalPanel {
         })
     }
 
+    /// TODO(dennis): Adding a new terminal should instead add a new TerminalGroup.
     fn add_terminal(
         &mut self,
         kind: TerminalKind,
