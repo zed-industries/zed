@@ -14422,7 +14422,6 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
- "theme_selector",
  "ui",
  "util",
  "vim_mode_setting",
