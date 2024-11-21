@@ -2712,7 +2712,6 @@ dependencies = [
  "tree-sitter-md",
  "ui",
  "util",
- "vcs_menu",
  "workspace",
 ]
 
@@ -15574,6 +15573,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "vcs_menu",
  "vim",
  "welcome",
  "windows 0.58.0",
