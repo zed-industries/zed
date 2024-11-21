@@ -213,27 +213,6 @@ impl Session {
             })
             .ok();
 
-        // Creating a baked in kernel specification to see if remoting is working
-        let kernel_specification = KernelSpecification::Remote(RemoteKernelSpecification {
-            name: "todo".to_string(),
-            url: "http://localhost:8888/".to_string(),
-            token: std::env::var("JUPYTER_TOKEN").expect("JUPYTER_TOKEN not set"),
-            kernelspec: JupyterKernelspec {
-                argv: vec![
-                    "python".to_string(),
-                    "-m".to_string(),
-                    "ipykernel_launcher".to_string(),
-                    "-f".to_string(),
-                    "{connection_file}".to_string(),
-                ],
-                env: None,
-                display_name: "Python 3 (ipykernel)".to_string(),
-                language: "python".to_string(),
-                interrupt_mode: Some("signal".to_string()),
-                metadata: None,
-            },
-        });
-
         let mut session = Self {
             fs,
             editor,

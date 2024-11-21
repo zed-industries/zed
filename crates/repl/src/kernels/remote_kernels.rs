@@ -1,6 +1,6 @@
 use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
 use gpui::{Task, View, WindowContext};
-use http_client::{AsyncBody, HttpClientWithUrl, Request};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl, Request};
 use jupyter_protocol::{ExecutionState, JupyterMessage, KernelInfoReply};
 use runtimelib::JupyterKernelspec;
 
@@ -26,8 +26,8 @@ pub struct RemoteKernelSpecification {
 
 pub async fn list_remote_kernelspecs(
     remote_server: RemoteServer,
-    http_client: Arc<HttpClientWithUrl>,
-) -> Result<KernelSpecsResponse> {
+    http_client: Arc<dyn HttpClient>,
+) -> Result<Vec<RemoteKernelSpecification>> {
     let url = remote_server.api_url("/kernelspecs");
 
     let request = Request::builder()
@@ -45,7 +45,35 @@ pub async fn list_remote_kernelspecs(
         body.read_to_end(&mut body_bytes).await?;
 
         let kernel_specs: KernelSpecsResponse = serde_json::from_slice(&body_bytes)?;
-        Ok(kernel_specs)
+
+        let remote_kernelspecs = kernel_specs
+            .kernelspecs
+            .into_iter()
+            .map(|(name, spec)| RemoteKernelSpecification {
+                name: name.clone(),
+                url: remote_server.base_url.clone(),
+                token: remote_server.token.clone(),
+                // todo: line up the jupyter kernelspec from runtimelib with
+                //       the kernelspec pulled from the API
+                //
+                //        There are _small_ differences, so we may just want a impl `From`
+                kernelspec: JupyterKernelspec {
+                    argv: spec.spec.argv,
+                    display_name: spec.spec.display_name,
+                    language: spec.spec.language,
+                    // todo: fix up mismatch in types here
+                    metadata: None,
+                    interrupt_mode: None,
+                    env: None,
+                },
+            })
+            .collect::<Vec<RemoteKernelSpecification>>();
+
+        if remote_kernelspecs.is_empty() {
+            Err(anyhow::anyhow!("No kernel specs found"))
+        } else {
+            Ok(remote_kernelspecs.clone())
+        }
     } else {
         Err(anyhow::anyhow!(
             "Failed to fetch kernel specs: {}",

@@ -7,11 +7,14 @@ use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
 };
+use jupyter_websocket_client::RemoteServer;
 use language::Language;
 use project::{Fs, Project, WorktreeId};
 use settings::{Settings, SettingsStore};
 
-use crate::kernels::{local_kernel_specifications, python_env_kernel_specifications};
+use crate::kernels::{
+    list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
+};
 use crate::{JupyterSettings, KernelSpecification, Session};
 
 struct GlobalReplStore(Model<ReplStore>);
@@ -121,11 +124,6 @@ impl ReplStore {
         cx.notify();
     }
 
-    pub fn refresh_remote_kernelspecs() -> Task<Result<()>> {
-        //
-        todo!()
-    }
-
     pub fn refresh_python_kernelspecs(
         &mut self,
         worktree_id: WorktreeId,
@@ -149,16 +147,32 @@ impl ReplStore {
     pub fn refresh_kernelspecs(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
 
-        cx.spawn(|this, mut cx| async move {
-            let local_kernel_specifications = local_kernel_specifications.await?;
+        // todo: iterate over all remote servers user has configured
+        let remote_server = RemoteServer {
+            base_url: std::env::var("JUPYTER_SERVER").expect("JUPYTER_TOKEN not set"),
+            token: std::env::var("JUPYTER_TOKEN").expect("JUPYTER_TOKEN not set"),
+        };
 
-            let mut kernel_options = Vec::new();
-            for kernel_specification in local_kernel_specifications {
-                kernel_options.push(KernelSpecification::Jupyter(kernel_specification));
-            }
+        let http_client = cx.http_client();
+
+        let remote_kernel_specifications =
+            list_remote_kernelspecs(remote_server, http_client.clone());
+
+        cx.spawn(|this, mut cx| async move {
+            let local_kernel_specifications = local_kernel_specifications
+                .await?
+                .into_iter()
+                .map(KernelSpecification::Jupyter);
+
+            let remote_kernel_specifications = remote_kernel_specifications
+                .await?
+                .into_iter()
+                .map(KernelSpecification::Remote);
 
             this.update(&mut cx, |this, cx| {
-                this.kernel_specifications = kernel_options;
+                this.kernel_specifications = local_kernel_specifications
+                    .chain(remote_kernel_specifications)
+                    .collect();
                 cx.notify();
             })
         })
