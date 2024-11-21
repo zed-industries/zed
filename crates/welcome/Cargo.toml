@@ -27,7 +27,6 @@ project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
-theme_selector.workspace = true
 ui.workspace = true
 util.workspace = true
 vim_mode_setting.workspace = true
