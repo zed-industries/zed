@@ -8,10 +8,10 @@ use futures::future::join_all;
 use gpui::{
     actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, Entity, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
-    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use project::{terminals::TerminalKind, Fs, ProjectEntryId};
+use project::{terminals::TerminalKind, Fs, Project, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -68,7 +68,6 @@ pub struct TerminalPanel {
     height: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     pending_terminals_to_add: usize,
-    _subscriptions: Vec<Subscription>,
     deferred_tasks: HashMap<TaskId, Task<()>>,
     enabled: bool,
     assistant_enabled: bool,
@@ -77,14 +76,10 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let pane = new_terminal_pane(workspace, cx);
-        let subscriptions = vec![
-            cx.observe(&pane, |_, _, cx| cx.notify()),
-            cx.subscribe(&pane, Self::handle_pane_event),
-        ];
+        let project = workspace.project();
+        let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), cx);
         let center = PaneGroup::new(pane.clone());
-        let project = workspace.project().read(cx);
-        let enabled = project.supports_terminal(cx);
+        let enabled = project.read(cx).supports_terminal(cx);
         let terminal_panel = Self {
             center,
             active_pane: pane,
@@ -95,7 +90,6 @@ impl TerminalPanel {
             height: None,
             pending_terminals_to_add: 0,
             deferred_tasks: HashMap::default(),
-            _subscriptions: subscriptions,
             enabled,
             assistant_enabled: false,
             assistant_tab_bar_button: None,
@@ -239,15 +233,13 @@ impl TerminalPanel {
 
         if let Some(workspace) = workspace.upgrade() {
             panel
-                .update(&mut cx, |panel, cx| {
-                    panel._subscriptions.push(cx.subscribe(
-                        &workspace,
-                        |terminal_panel, _, e, cx| {
-                            if let workspace::Event::SpawnTask(spawn_in_terminal) = e {
-                                terminal_panel.spawn_task(spawn_in_terminal, cx);
-                            };
-                        },
-                    ))
+                .update(&mut cx, |_, cx| {
+                    cx.subscribe(&workspace, |terminal_panel, _, e, cx| {
+                        if let workspace::Event::SpawnTask(spawn_in_terminal) = e {
+                            terminal_panel.spawn_task(spawn_in_terminal, cx);
+                        };
+                    })
+                    .detach();
                 })
                 .ok();
         }
@@ -299,7 +291,6 @@ impl TerminalPanel {
     ) {
         match event {
             pane::Event::ActivateItem { .. } => self.serialize(cx),
-            // TODO kb other panes seem to ignore ctrl-d and do not close the terminals??
             pane::Event::RemovedItem { .. } => self.serialize(cx),
             pane::Event::Remove { focus_on_pane } => {
                 let panes_before_removal = self.center.panes().len();
@@ -310,7 +301,6 @@ impl TerminalPanel {
                 if panes_before_removal == 1 {
                     cx.emit(PanelEvent::Close);
                 }
-                // TODO kb this won't restore pane if the central one got closed
             }
             pane::Event::ZoomIn => {
                 if pane == self.active_pane {
@@ -361,15 +351,11 @@ impl TerminalPanel {
         let terminal_view = Box::new(cx.new_view(|cx| {
             TerminalView::new(terminal.clone(), self.workspace.clone(), database_id, cx)
         }));
-        let pane = workspace.update(cx, |workspace, cx| new_terminal_pane(workspace, cx));
+        let pane = new_terminal_pane(self.workspace.clone(), project, cx);
         self.apply_tab_bar_buttons(&pane, cx);
         pane.update(cx, |pane, cx| {
             pane.add_item(terminal_view, true, true, None, cx);
         });
-
-        // TODO store panes and new subscriptions somewhere
-        // self.panes.push(pane.clone());
-        cx.subscribe(&pane, Self::handle_pane_event).detach();
         cx.focus_view(&pane);
 
         Some(pane)
@@ -740,13 +726,16 @@ impl TerminalPanel {
     }
 }
 
-fn new_terminal_pane(workspace: &Workspace, cx: &mut WindowContext) -> View<Pane> {
-    let is_local = workspace.project().read(cx).is_local();
-    let workspace_handle = workspace.weak_handle();
-    cx.new_view(|cx| {
+fn new_terminal_pane(
+    workspace: WeakView<Workspace>,
+    project: Model<Project>,
+    cx: &mut ViewContext<TerminalPanel>,
+) -> View<Pane> {
+    let is_local = project.read(cx).is_local();
+    let pane = cx.new_view(|cx| {
         let mut pane = Pane::new(
-            workspace.weak_handle(),
-            workspace.project().clone(),
+            workspace,
+            project.clone(),
             Default::default(),
             None,
             NewTerminal.boxed_clone(),
@@ -817,30 +806,17 @@ fn new_terminal_pane(workspace: &Workspace, cx: &mut WindowContext) -> View<Pane
                             }
                         }
                     } else if let Some(project_path) = item.project_path(cx) {
-                        if let Some(entry_path) = workspace_handle
-                            .update(cx, |workspace, cx| {
-                                workspace
-                                    .project()
-                                    .read(cx)
-                                    .absolute_path(&project_path, cx)
-                            })
-                            .log_err()
-                            .flatten()
+                        if let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
                         {
                             add_paths_to_terminal(pane, &[entry_path], cx);
                         }
                     }
                 }
             } else if let Some(&entry_id) = dropped_item.downcast_ref::<ProjectEntryId>() {
-                if let Some(entry_path) = workspace_handle
-                    .update(cx, |workspace, cx| {
-                        let project = workspace.project().read(cx);
-                        project
-                            .path_for_entry(entry_id, cx)
-                            .and_then(|project_path| project.absolute_path(&project_path, cx))
-                    })
-                    .log_err()
-                    .flatten()
+                if let Some(entry_path) = project
+                    .read(cx)
+                    .path_for_entry(entry_id, cx)
+                    .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx))
                 {
                     add_paths_to_terminal(pane, &[entry_path], cx);
                 }
@@ -854,7 +830,13 @@ fn new_terminal_pane(workspace: &Workspace, cx: &mut WindowContext) -> View<Pane
         });
 
         pane
-    })
+    });
+
+    cx.subscribe(&pane, TerminalPanel::handle_pane_event)
+        .detach();
+    cx.observe(&pane, |_, _, cx| cx.notify()).detach();
+
+    pane
 }
 
 async fn wait_for_terminals_tasks(
@@ -913,7 +895,7 @@ impl Render for TerminalPanel {
                     &HashMap::default(),
                     None,
                     &self.active_pane,
-                    workspace.zoomed.as_ref(),
+                    workspace.zoomed_item(),
                     workspace.app_state(),
                     cx,
                 ))

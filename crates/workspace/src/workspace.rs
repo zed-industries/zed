@@ -729,8 +729,7 @@ type PromptForOpenPath = Box<
 pub struct Workspace {
     weak_self: WeakView<Self>,
     workspace_actions: Vec<Box<dyn Fn(Div, &mut ViewContext<Self>) -> Div>>,
-    // TODO kb revert
-    pub zoomed: Option<AnyWeakView>,
+    zoomed: Option<AnyWeakView>,
     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
     left_dock: View<Dock>,
@@ -4595,6 +4594,10 @@ impl Workspace {
     pub fn for_window(cx: &mut WindowContext) -> Option<View<Workspace>> {
         let window = cx.window_handle().downcast::<Workspace>()?;
         cx.read_window(&window, |workspace, _| workspace).ok()
+    }
+
+    pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
+        self.zoomed.as_ref()
     }
 }
 
