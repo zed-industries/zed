@@ -49,7 +49,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry::{AssistantEvent, AssistantKind, AssistantPhase};
 use text::{BufferSnapshot, ToPoint};
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;

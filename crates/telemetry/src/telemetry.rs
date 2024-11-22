@@ -1,8 +1,15 @@
 //! See [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional information.
 
+use futures::channel::mpsc;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, sync::Arc, time::Duration};
+pub use serde_json;
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EventRequestBody {
@@ -32,14 +39,14 @@ impl EventRequestBody {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct EventWrapper {
     pub signed_in: bool,
     /// Duration between this event's timestamp and the timestamp of the first event in the current batch
     pub milliseconds_since_first_event: i64,
     /// The event itself
     #[serde(flatten)]
-    pub event: Event,
+    pub event: EventBody,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -90,7 +97,8 @@ impl Display for AssistantPhase {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum Event {
+pub enum EventBody {
+    Event(Event),
     Editor(EditorEvent),
     InlineCompletion(InlineCompletionEvent),
     Call(CallEvent),
@@ -265,3 +273,60 @@ pub struct Panic {
 pub struct PanicRequest {
     pub panic: Panic,
 }
+/// Macro to create telemetry events and send them to the telemetry queue.
+///
+/// By convention, the name should be "Noun Verbed", e.g. "Keymap Changed"
+/// or "Project Diagnostics Opened".
+///
+/// The properties can be any value that implements serde::Serialize.
+///
+/// ```
+/// telemetry::event!("Keymap Changed", version = "1.0.0");
+/// telemetry::event!("Documentation Viewed", url, source = "Extension Upsell");
+/// ```
+#[macro_export]
+macro_rules! event {
+    ($name:expr, $($key:ident $(= $value:expr)?),+ $(,)?) => {{
+        let event = $crate::Event {
+            name: $name.to_string(),
+            properties: std::collections::HashMap::from([
+                $(
+                    (stringify!($key).to_string(),
+                        $crate::serde_json::value::to_value(&$crate::serialize_property!($key $(= $value)?))
+                            .unwrap_or_else(|_| $crate::serde_json::to_value(&()).unwrap())
+                    ),
+                )+
+            ]),
+        };
+        $crate::send_event(event);
+    }};
+}
+
+#[macro_export]
+macro_rules! serialize_property {
+    ($key:ident) => {
+        $key
+    };
+    ($key:ident = $value:expr) => {
+        $value
+    };
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct Event {
+    pub name: String,
+    pub properties: HashMap<String, serde_json::Value>,
+}
+
+pub fn send_event(event: Event) {
+    if let Some(queue) = TELEMETRY_QUEUE.get() {
+        queue.unbounded_send(event).ok();
+        return;
+    }
+}
+
+pub fn init(tx: mpsc::UnboundedSender<Event>) {
+    TELEMETRY_QUEUE.set(tx).ok();
+}
+
+static TELEMETRY_QUEUE: OnceLock<mpsc::UnboundedSender<Event>> = OnceLock::new();

@@ -434,7 +434,7 @@ dependencies = [
  "smallvec",
  "smol",
  "strum 0.25.0",
- "telemetry_events",
+ "telemetry",
  "terminal",
  "terminal_view",
  "text",
@@ -2472,7 +2472,7 @@ dependencies = [
  "settings",
  "sha2",
  "smol",
- "telemetry_events",
+ "telemetry",
  "text",
  "thiserror 1.0.69",
  "time",
@@ -2653,7 +2653,7 @@ dependencies = [
  "strum 0.25.0",
  "subtle",
  "supermaven_api",
- "telemetry_events",
+ "telemetry",
  "text",
  "theme",
  "thiserror 1.0.69",
@@ -3366,9 +3366,9 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.2.9"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
+checksum = "edb49164822f3ee45b17acd4a208cfc1251410cf0cad9a833234c9890774dd9f"
 dependencies = [
  "quote",
  "syn 2.0.87",
@@ -4233,6 +4233,7 @@ dependencies = [
  "settings",
  "smallvec",
  "snippet_provider",
+ "telemetry",
  "theme",
  "ui",
  "util",
@@ -6556,6 +6557,7 @@ dependencies = [
  "serde_json",
  "smol",
  "strum 0.25.0",
+ "telemetry",
  "ui",
  "util",
 ]
@@ -6588,7 +6590,7 @@ dependencies = [
  "settings",
  "smol",
  "strum 0.25.0",
- "telemetry_events",
+ "telemetry",
  "theme",
  "thiserror 1.0.69",
  "tiktoken-rs",
@@ -6719,9 +6721,9 @@ checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 
 [[package]]
 name = "libc"
-version = "0.2.164"
+version = "0.2.162"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "433bfe06b8c75da9b2e3fbea6e5329ff87748f0b144ef75306e674c3f6f7c13f"
+checksum = "18d287de67fe55fd7e1581fe933d965a5a9477b38e949cfa9f8574ef01506398"
 
 [[package]]
 name = "libdbus-sys"
@@ -9881,7 +9883,7 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "sysinfo",
- "telemetry_events",
+ "telemetry",
  "toml 0.8.19",
  "util",
  "worktree",
@@ -10885,9 +10887,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.133"
+version = "1.0.132"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7fceb2473b9166b2294ef05efcb65a3db80803f0b03ef86a5fc88a2b85ee377"
+checksum = "d726bfaff4b320266d395898905d0eba0345aae23b54aee3a737e260fd46db03"
 dependencies = [
  "indexmap 2.6.0",
  "itoa",
@@ -12199,11 +12201,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "telemetry_events"
+name = "telemetry"
 version = "0.1.0"
 dependencies = [
+ "futures 0.3.31",
  "semantic_version",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -15553,7 +15557,7 @@ dependencies = [
  "tab_switcher",
  "task",
  "tasks_ui",
- "telemetry_events",
+ "telemetry",
  "terminal_view",
  "theme",
  "theme_selector",

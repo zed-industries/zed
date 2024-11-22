@@ -64,7 +64,7 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "json"
 strum.workspace = true
 subtle.workspace = true
 supermaven_api.workspace = true
-telemetry_events.workspace = true
+telemetry.workspace = true
 text.workspace = true
 thiserror.workspace = true
 time.workspace = true

@@ -5,7 +5,7 @@ use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use std::env;
 use std::sync::Arc;
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry::{AssistantEvent, AssistantKind, AssistantPhase};
 use util::ResultExt;
 
 use crate::provider::anthropic::PROVIDER_ID as ANTHROPIC_PROVIDER_ID;

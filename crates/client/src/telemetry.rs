@@ -4,7 +4,8 @@ use crate::{ChannelId, TelemetrySettings};
 use anyhow::Result;
 use clock::SystemClock;
 use collections::{HashMap, HashSet};
-use futures::Future;
+use futures::channel::mpsc;
+use futures::{Future, StreamExt};
 use gpui::{AppContext, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use once_cell::sync::Lazy;
@@ -16,8 +17,8 @@ use std::fs::File;
 use std::io::Write;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, EditorEvent, Event,
+use telemetry::{
+    ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, EditorEvent, EventBody,
     EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, ReplEvent, SettingEvent,
 };
 use util::{ResultExt, TryFutureExt};
@@ -287,12 +288,29 @@ impl Telemetry {
         session_id: String,
         cx: &AppContext,
     ) {
+        let (tx, mut rx) = mpsc::unbounded();
+
         let mut state = self.state.lock();
         state.system_id = system_id.map(|id| id.into());
         state.installation_id = installation_id.map(|id| id.into());
         state.session_id = Some(session_id);
         state.app_version = release_channel::AppVersion::global(cx).to_string();
         state.os_name = os_name();
+        drop(state);
+
+        let this = Arc::downgrade(&self);
+
+        ::telemetry::init(tx);
+        cx.background_executor()
+            .spawn(async move {
+                while let Some(event) = rx.next().await {
+                    let Some(this) = this.upgrade() else {
+                        break;
+                    };
+                    this.report_event(EventBody::Event(event));
+                }
+            })
+            .detach();
     }
 
     pub fn metrics_enabled(self: &Arc<Self>) -> bool {
@@ -328,7 +346,7 @@ impl Telemetry {
         copilot_enabled_for_language: bool,
         is_via_ssh: bool,
     ) {
-        let event = Event::Editor(EditorEvent {
+        let event = EventBody::Editor(EditorEvent {
             file_extension,
             vim_mode,
             operation: operation.into(),
@@ -346,7 +364,7 @@ impl Telemetry {
         suggestion_accepted: bool,
         file_extension: Option<String>,
     ) {
-        let event = Event::InlineCompletion(InlineCompletionEvent {
+        let event = EventBody::InlineCompletion(InlineCompletionEvent {
             provider,
             suggestion_accepted,
             file_extension,
@@ -356,7 +374,7 @@ impl Telemetry {
     }
 
     pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEvent) {
-        self.report_event(Event::Assistant(event));
+        self.report_event(EventBody::Assistant(event));
     }
 
     pub fn report_call_event(
@@ -365,7 +383,7 @@ impl Telemetry {
         room_id: Option<u64>,
         channel_id: Option<ChannelId>,
     ) {
-        let event = Event::Call(CallEvent {
+        let event = EventBody::Call(CallEvent {
             operation: operation.to_string(),
             room_id,
             channel_id: channel_id.map(|cid| cid.0),
@@ -374,8 +392,8 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_app_event(self: &Arc<Self>, operation: String) -> Event {
-        let event = Event::App(AppEvent { operation });
+    pub fn report_app_event(self: &Arc<Self>, operation: String) -> EventBody {
+        let event = EventBody::App(AppEvent { operation });
 
         self.report_event(event.clone());
 
@@ -383,7 +401,7 @@ impl Telemetry {
     }
 
     pub fn report_setting_event(self: &Arc<Self>, setting: &'static str, value: String) {
-        let event = Event::Setting(SettingEvent {
+        let event = EventBody::Setting(SettingEvent {
             setting: setting.to_string(),
             value,
         });
@@ -392,7 +410,7 @@ impl Telemetry {
     }
 
     pub fn report_extension_event(self: &Arc<Self>, extension_id: Arc<str>, version: Arc<str>) {
-        self.report_event(Event::Extension(ExtensionEvent {
+        self.report_event(EventBody::Extension(ExtensionEvent {
             extension_id,
             version,
         }))
@@ -404,7 +422,7 @@ impl Telemetry {
         drop(state);
 
         if let Some((start, end, environment)) = period_data {
-            let event = Event::Edit(EditEvent {
+            let event = EventBody::Edit(EditEvent {
                 duration: end
                     .saturating_duration_since(start)
                     .min(Duration::from_secs(60 * 60 * 24))
@@ -418,7 +436,7 @@ impl Telemetry {
     }
 
     pub fn report_action_event(self: &Arc<Self>, source: &'static str, action: String) {
-        let event = Event::Action(ActionEvent {
+        let event = EventBody::Action(ActionEvent {
             source: source.to_string(),
             action,
         });
@@ -478,7 +496,7 @@ impl Telemetry {
         kernel_status: String,
         repl_session_id: String,
     ) {
-        let event = Event::Repl(ReplEvent {
+        let event = EventBody::Repl(ReplEvent {
             kernel_language,
             kernel_status,
             repl_session_id,
@@ -487,7 +505,7 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    fn report_event(self: &Arc<Self>, event: Event) {
+    fn report_event(self: &Arc<Self>, event: EventBody) {
         let mut state = self.state.lock();
 
         if !state.settings.metrics {
@@ -669,7 +687,7 @@ mod tests {
             let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
                 event,
-                Event::App(AppEvent {
+                EventBody::App(AppEvent {
                     operation: operation.clone(),
                 })
             );
@@ -685,7 +703,7 @@ mod tests {
             let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
                 event,
-                Event::App(AppEvent {
+                EventBody::App(AppEvent {
                     operation: operation.clone(),
                 })
             );
@@ -701,7 +719,7 @@ mod tests {
             let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
                 event,
-                Event::App(AppEvent {
+                EventBody::App(AppEvent {
                     operation: operation.clone(),
                 })
             );
@@ -718,7 +736,7 @@ mod tests {
             let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
                 event,
-                Event::App(AppEvent {
+                EventBody::App(AppEvent {
                     operation: operation.clone(),
                 })
             );
@@ -752,7 +770,7 @@ mod tests {
             let event = telemetry.report_app_event(operation.clone());
             assert_eq!(
                 event,
-                Event::App(AppEvent {
+                EventBody::App(AppEvent {
                     operation: operation.clone(),
                 })
             );
