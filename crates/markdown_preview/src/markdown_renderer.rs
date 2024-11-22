@@ -1,29 +1,33 @@
 use crate::markdown_elements::{
-    HeadingLevel, Link, ParsedMarkdown, ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock,
-    ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem,
-    ParsedMarkdownListItemType, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
-    ParsedMarkdownTableRow, ParsedMarkdownText,
+    HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
+    ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
+    ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
+    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow, ParsedMarkdownText,
 };
 use gpui::{
-    div, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
-    ElementId, HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Length, Modifiers,
-    ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
+    div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
+    ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length,
+    Modifiers, ParentElement, Resource, SharedString, Styled, StyledText, TextStyle, WeakView,
+    WindowContext,
 };
 use settings::Settings;
 use std::{
     ops::{Mul, Range},
+    path::Path,
     sync::Arc,
+    vec,
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
     h_flex, relative, v_flex, Checkbox, Clickable, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, LinkPreview, Selection, StatefulInteractiveElement, StyledExt, Tooltip,
-    VisibleOnHover,
+    InteractiveElement, LinkPreview, Selection, StatefulInteractiveElement, StyledExt, StyledImage,
+    Tooltip, VisibleOnHover,
 };
 use workspace::Workspace;
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowContext)>>;
 
+#[derive(Clone)]
 pub struct RenderContext {
     workspace: Option<WeakView<Workspace>>,
     next_id: usize,
@@ -153,7 +157,7 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .text_color(color)
         .pt(rems(0.15))
         .pb_1()
-        .child(render_markdown_text(&parsed.contents, cx))
+        .children(render_markdown_text(&parsed.contents, cx))
         .whitespace_normal()
         .into_any()
 }
@@ -231,17 +235,29 @@ fn render_markdown_list_item(
     cx.with_common_p(item).into_any()
 }
 
+fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
+    paragraphs
+        .iter()
+        .map(|paragraph| match paragraph {
+            MarkdownParagraphChunk::Text(text) => text.contents.len(),
+            // TODO: Scale column width based on image size
+            MarkdownParagraphChunk::Image(_) => 1,
+        })
+        .sum()
+}
+
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
     let mut max_lengths: Vec<usize> = vec![0; parsed.header.children.len()];
 
     for (index, cell) in parsed.header.children.iter().enumerate() {
-        let length = cell.contents.len();
+        let length = paragraph_len(&cell);
         max_lengths[index] = length;
     }
 
     for row in &parsed.body {
         for (index, cell) in row.children.iter().enumerate() {
-            let length = cell.contents.len();
+            let length = paragraph_len(&cell);
+
             if length > max_lengths[index] {
                 max_lengths[index] = length;
             }
@@ -307,11 +323,10 @@ fn render_markdown_table_row(
         };
 
         let max_width = max_column_widths.get(index).unwrap_or(&0.0);
-
         let mut cell = container
             .w(Length::Definite(relative(*max_width)))
             .h_full()
-            .child(contents)
+            .children(contents)
             .px_2()
             .py_1()
             .border_color(cx.border_color);
@@ -398,18 +413,219 @@ fn render_markdown_code_block(
         .into_any()
 }
 
-fn render_markdown_paragraph(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> AnyElement {
+fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {
     cx.with_common_p(div())
-        .child(render_markdown_text(parsed, cx))
+        .children(render_markdown_text(parsed, cx))
+        .flex()
         .into_any_element()
 }
 
-fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> AnyElement {
-    let element_id = cx.next_id(&parsed.source_range);
+fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) -> Vec<AnyElement> {
+    let mut any_element = vec![];
+    // these values are cloned in-order satisfy borrow checker
+    let syntax_theme = cx.syntax_theme.clone();
+    let workspace_clone = cx.workspace.clone();
+    let code_span_bg_color = cx.code_span_background_color;
+    let text_style = cx.text_style.clone();
+
+    for parsed_region in parsed_new {
+        match parsed_region {
+            MarkdownParagraphChunk::Text(parsed) => {
+                let element_id = cx.next_id(&parsed.source_range);
+
+                let highlights = gpui::combine_highlights(
+                    parsed.highlights.iter().filter_map(|(range, highlight)| {
+                        highlight
+                            .to_highlight_style(&syntax_theme)
+                            .map(|style| (range.clone(), style))
+                    }),
+                    parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
+                        |(region, range)| {
+                            if region.code {
+                                Some((
+                                    range.clone(),
+                                    HighlightStyle {
+                                        background_color: Some(code_span_bg_color),
+                                        ..Default::default()
+                                    },
+                                ))
+                            } else {
+                                None
+                            }
+                        },
+                    ),
+                );
+                let mut links = Vec::new();
+                let mut link_ranges = Vec::new();
+                for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+                    if let Some(link) = region.link.clone() {
+                        links.push(link);
+                        link_ranges.push(range.clone());
+                    }
+                }
+                let workspace = workspace_clone.clone();
+                let element = div()
+                    .child(
+                        InteractiveText::new(
+                            element_id,
+                            StyledText::new(parsed.contents.clone())
+                                .with_highlights(&text_style, highlights),
+                        )
+                        .tooltip({
+                            let links = links.clone();
+                            let link_ranges = link_ranges.clone();
+                            move |idx, cx| {
+                                for (ix, range) in link_ranges.iter().enumerate() {
+                                    if range.contains(&idx) {
+                                        return Some(LinkPreview::new(&links[ix].to_string(), cx));
+                                    }
+                                }
+                                None
+                            }
+                        })
+                        .on_click(
+                            link_ranges,
+                            move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
+                                Link::Web { url } => window_cx.open_url(url),
+                                Link::Path { path, .. } => {
+                                    if let Some(workspace) = &workspace {
+                                        _ = workspace.update(window_cx, |workspace, cx| {
+                                            workspace
+                                                .open_abs_path(path.clone(), false, cx)
+                                                .detach();
+                                        });
+                                    }
+                                }
+                            },
+                        ),
+                    )
+                    .into_any();
+                any_element.push(element);
+            }
+
+            MarkdownParagraphChunk::Image(image) => {
+                let (link, source_range, image_source, alt_text) = match image {
+                    Image::Web {
+                        link,
+                        source_range,
+                        url,
+                        alt_text,
+                    } => (
+                        link,
+                        source_range,
+                        Resource::Uri(url.clone().into()),
+                        alt_text,
+                    ),
+                    Image::Path {
+                        link,
+                        source_range,
+                        path,
+                        alt_text,
+                        ..
+                    } => {
+                        let image_path = Path::new(path.to_str().unwrap());
+                        (
+                            link,
+                            source_range,
+                            Resource::Path(Arc::from(image_path)),
+                            alt_text,
+                        )
+                    }
+                };
+
+                let element_id = cx.next_id(source_range);
+
+                match link {
+                    None => {
+                        let fallback_workspace = workspace_clone.clone();
+                        let fallback_syntax_theme = syntax_theme.clone();
+                        let fallback_text_style = text_style.clone();
+                        let fallback_alt_text = alt_text.clone();
+                        let element_id_new = element_id.clone();
+                        let element = div()
+                            .child(img(ImageSource::Resource(image_source)).with_fallback({
+                                move || {
+                                    fallback_text(
+                                        fallback_alt_text.clone().unwrap(),
+                                        element_id.clone(),
+                                        &fallback_syntax_theme,
+                                        code_span_bg_color,
+                                        fallback_workspace.clone(),
+                                        &fallback_text_style,
+                                    )
+                                }
+                            }))
+                            .id(element_id_new)
+                            .into_any();
+                        any_element.push(element);
+                    }
+                    Some(link) => {
+                        let link_click = link.clone();
+                        let link_tooltip = link.clone();
+                        let fallback_workspace = workspace_clone.clone();
+                        let fallback_syntax_theme = syntax_theme.clone();
+                        let fallback_text_style = text_style.clone();
+                        let fallback_alt_text = alt_text.clone();
+                        let element_id_new = element_id.clone();
+                        let image_element = div()
+                            .child(img(ImageSource::Resource(image_source)).with_fallback({
+                                move || {
+                                    fallback_text(
+                                        fallback_alt_text.clone().unwrap(),
+                                        element_id.clone(),
+                                        &fallback_syntax_theme,
+                                        code_span_bg_color,
+                                        fallback_workspace.clone(),
+                                        &fallback_text_style,
+                                    )
+                                }
+                            }))
+                            .id(element_id_new)
+                            .tooltip(move |cx| LinkPreview::new(&link_tooltip.to_string(), cx))
+                            .on_click({
+                                let workspace = workspace_clone.clone();
+                                move |_event, window_cx| match &link_click {
+                                    Link::Web { url } => window_cx.open_url(url),
+                                    Link::Path { path, .. } => {
+                                        if let Some(workspace) = &workspace {
+                                            _ = workspace.update(window_cx, |workspace, cx| {
+                                                workspace
+                                                    .open_abs_path(path.clone(), false, cx)
+                                                    .detach();
+                                            });
+                                        }
+                                    }
+                                }
+                            })
+                            .into_any();
+                        any_element.push(image_element);
+                    }
+                }
+            }
+        }
+    }
+
+    any_element
+}
+
+fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
+    let rule = div().w_full().h(px(2.)).bg(cx.border_color);
+    div().pt_3().pb_3().child(rule).into_any()
+}
+
+fn fallback_text(
+    parsed: ParsedMarkdownText,
+    source_range: ElementId,
+    syntax_theme: &theme::SyntaxTheme,
+    code_span_bg_color: Hsla,
+    workspace: Option<WeakView<Workspace>>,
+    text_style: &TextStyle,
+) -> AnyElement {
+    let element_id = source_range;
 
     let highlights = gpui::combine_highlights(
         parsed.highlights.iter().filter_map(|(range, highlight)| {
-            let highlight = highlight.to_highlight_style(&cx.syntax_theme)?;
+            let highlight = highlight.to_highlight_style(syntax_theme)?;
             Some((range.clone(), highlight))
         }),
         parsed
@@ -421,7 +637,7 @@ fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> 
                     Some((
                         range.clone(),
                         HighlightStyle {
-                            background_color: Some(cx.code_span_background_color),
+                            background_color: Some(code_span_bg_color),
                             ..Default::default()
                         },
                     ))
@@ -430,7 +646,6 @@ fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> 
                 }
             }),
     );
-
     let mut links = Vec::new();
     let mut link_ranges = Vec::new();
     for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
@@ -439,45 +654,38 @@ fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> 
             link_ranges.push(range.clone());
         }
     }
-
-    let workspace = cx.workspace.clone();
-
-    InteractiveText::new(
-        element_id,
-        StyledText::new(parsed.contents.clone()).with_highlights(&cx.text_style, highlights),
-    )
-    .tooltip({
-        let links = links.clone();
-        let link_ranges = link_ranges.clone();
-        move |idx, cx| {
-            for (ix, range) in link_ranges.iter().enumerate() {
-                if range.contains(&idx) {
-                    return Some(LinkPreview::new(&links[ix].to_string(), cx));
+    let element = div()
+        .child(
+            InteractiveText::new(
+                element_id,
+                StyledText::new(parsed.contents.clone()).with_highlights(text_style, highlights),
+            )
+            .tooltip({
+                let links = links.clone();
+                let link_ranges = link_ranges.clone();
+                move |idx, cx| {
+                    for (ix, range) in link_ranges.iter().enumerate() {
+                        if range.contains(&idx) {
+                            return Some(LinkPreview::new(&links[ix].to_string(), cx));
+                        }
+                    }
+                    None
                 }
-            }
-            None
-        }
-    })
-    .on_click(
-        link_ranges,
-        move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
-            Link::Web { url } => window_cx.open_url(url),
-            Link::Path {
-                path,
-                display_path: _,
-            } => {
-                if let Some(workspace) = &workspace {
-                    _ = workspace.update(window_cx, |workspace, cx| {
-                        workspace.open_abs_path(path.clone(), false, cx).detach();
-                    });
-                }
-            }
-        },
-    )
-    .into_any_element()
-}
-
-fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
-    let rule = div().w_full().h(px(2.)).bg(cx.border_color);
-    div().pt_3().pb_3().child(rule).into_any()
+            })
+            .on_click(
+                link_ranges,
+                move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
+                    Link::Web { url } => window_cx.open_url(url),
+                    Link::Path { path, .. } => {
+                        if let Some(workspace) = &workspace {
+                            _ = workspace.update(window_cx, |workspace, cx| {
+                                workspace.open_abs_path(path.clone(), false, cx).detach();
+                            });
+                        }
+                    }
+                },
+            ),
+        )
+        .into_any();
+    return element;
 }
