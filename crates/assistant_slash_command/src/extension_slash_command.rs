@@ -28,7 +28,11 @@ struct ExtensionSlashCommandListener {
 }
 
 impl OnSlashCommandExtensionChange for ExtensionSlashCommandListener {
-    fn register(&self, extension: Arc<dyn Extension>, command: extension::SlashCommand) {
+    fn register_slash_command(
+        &self,
+        extension: Arc<dyn Extension>,
+        command: extension::SlashCommand,
+    ) {
         self.slash_command_registry
             .register_command(ExtensionSlashCommand::new(extension, command), false)
     }

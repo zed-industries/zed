@@ -12,7 +12,12 @@ use client::{proto, telemetry::Telemetry, Client, ExtensionMetadata, GetExtensio
 use collections::{btree_map, BTreeMap, HashMap, HashSet};
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 pub use extension::ExtensionManifest;
-use extension::{ExtensionChangeListeners, OnLanguageExtensionChange};
+use extension::{
+    ExtensionChangeListeners, OnContextServerExtensionChange, OnGrammarExtensionChange,
+    OnIndexedDocsProviderExtensionChange, OnLanguageExtensionChange,
+    OnLanguageServerExtensionChange, OnSlashCommandExtensionChange, OnSnippetExtensionChange,
+    OnThemeExtensionChange,
+};
 use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
@@ -1007,7 +1012,6 @@ impl ExtensionStore {
             }
         }
 
-        let theme_change_listener = self.change_listeners.theme_listener();
         let themes_to_remove = old_index
             .themes
             .iter()
@@ -1037,20 +1041,17 @@ impl ExtensionStore {
             };
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
 
-            if let Some(listener) = self.change_listeners.language_server_listener() {
-                for (language_server_name, config) in extension.manifest.language_servers.iter() {
-                    for language in config.languages() {
-                        listener.remove_language_server(&language, language_server_name);
-                    }
+            for (language_server_name, config) in extension.manifest.language_servers.iter() {
+                for language in config.languages() {
+                    self.change_listeners
+                        .remove_language_server(&language, language_server_name);
                 }
             }
         }
 
         self.wasm_extensions
             .retain(|(extension, _)| !extensions_to_unload.contains(&extension.id));
-        if let Some(listener) = theme_change_listener.as_ref() {
-            listener.remove_user_themes(themes_to_remove);
-        }
+        self.change_listeners.remove_user_themes(themes_to_remove);
         self.change_listeners
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
@@ -1086,9 +1087,7 @@ impl ExtensionStore {
             }));
         }
 
-        if let Some(listener) = self.change_listeners.grammar_listener() {
-            listener.register(grammars_to_add);
-        }
+        self.change_listeners.register_grammars(grammars_to_add);
 
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
@@ -1126,7 +1125,7 @@ impl ExtensionStore {
         let fs = self.fs.clone();
         let wasm_host = self.wasm_host.clone();
         let root_dir = self.installed_dir.clone();
-        let snippet_change_listener = self.change_listeners.snippet_listener();
+        let extension_change_listeners = self.change_listeners.clone();
         let extension_entries = extensions_to_load
             .iter()
             .filter_map(|name| new_index.extensions.get(name).cloned())
@@ -1140,26 +1139,20 @@ impl ExtensionStore {
             cx.background_executor()
                 .spawn({
                     let fs = fs.clone();
-                    let theme_change_listener = theme_change_listener.clone();
                     async move {
-                        if let Some(listener) = theme_change_listener {
-                            for theme_path in themes_to_add.into_iter() {
-                                listener
-                                    .load_user_theme(theme_path, fs.clone())
-                                    .await
-                                    .log_err();
-                            }
+                        for theme_path in themes_to_add.into_iter() {
+                            extension_change_listeners
+                                .load_user_theme(theme_path, fs.clone())
+                                .await
+                                .log_err();
                         }
 
-                        if let Some(listener) = snippet_change_listener {
-                            for snippets_path in &snippets_to_add {
-                                if let Some(snippets_contents) =
-                                    fs.load(snippets_path).await.log_err()
-                                {
-                                    listener
-                                        .register(snippets_path, &snippets_contents)
-                                        .log_err();
-                                }
+                        for snippets_path in &snippets_to_add {
+                            if let Some(snippets_contents) = fs.load(snippets_path).await.log_err()
+                            {
+                                extension_change_listeners
+                                    .register_snippet(snippets_path, &snippets_contents)
+                                    .log_err();
                             }
                         }
                     }
@@ -1197,54 +1190,47 @@ impl ExtensionStore {
                 for (manifest, wasm_extension) in &wasm_extensions {
                     let extension = Arc::new(wasm_extension.clone());
 
-                    if let Some(listener) = this.change_listeners.language_server_listener() {
-                        for (language_server_id, language_server_config) in
-                            &manifest.language_servers
-                        {
-                            for language in language_server_config.languages() {
-                                listener.register_language_server(
-                                    extension.clone(),
-                                    language_server_id.clone(),
-                                    language.clone(),
-                                );
-                            }
-                        }
-                    }
-
-                    if let Some(listener) = this.change_listeners.slash_command_listener() {
-                        for (slash_command_name, slash_command) in &manifest.slash_commands {
-                            listener.register(
+                    for (language_server_id, language_server_config) in &manifest.language_servers {
+                        for language in language_server_config.languages() {
+                            this.change_listeners.register_language_server(
                                 extension.clone(),
-                                extension::SlashCommand {
-                                    name: slash_command_name.to_string(),
-                                    description: slash_command.description.to_string(),
-                                    // We don't currently expose this as a configurable option, as it currently drives
-                                    // the `menu_text` on the `SlashCommand` trait, which is not used for slash commands
-                                    // defined in extensions, as they are not able to be added to the menu.
-                                    tooltip_text: String::new(),
-                                    requires_argument: slash_command.requires_argument,
-                                },
+                                language_server_id.clone(),
+                                language.clone(),
                             );
                         }
                     }
 
-                    if let Some(listener) = this.change_listeners.context_server_listener() {
-                        for (id, _context_server_entry) in &manifest.context_servers {
-                            listener.register(extension.clone(), id.clone(), cx);
-                        }
+                    for (slash_command_name, slash_command) in &manifest.slash_commands {
+                        this.change_listeners.register_slash_command(
+                            extension.clone(),
+                            extension::SlashCommand {
+                                name: slash_command_name.to_string(),
+                                description: slash_command.description.to_string(),
+                                // We don't currently expose this as a configurable option, as it currently drives
+                                // the `menu_text` on the `SlashCommand` trait, which is not used for slash commands
+                                // defined in extensions, as they are not able to be added to the menu.
+                                tooltip_text: String::new(),
+                                requires_argument: slash_command.requires_argument,
+                            },
+                        );
                     }
 
-                    if let Some(listener) = this.change_listeners.indexed_docs_provider_listener() {
-                        for (provider_id, _provider) in &manifest.indexed_docs_providers {
-                            listener.register(extension.clone(), provider_id.clone());
-                        }
+                    for (id, _context_server_entry) in &manifest.context_servers {
+                        this.change_listeners.register_context_server(
+                            extension.clone(),
+                            id.clone(),
+                            cx,
+                        );
+                    }
+
+                    for (provider_id, _provider) in &manifest.indexed_docs_providers {
+                        this.change_listeners
+                            .register_indexed_docs_provider(extension.clone(), provider_id.clone());
                     }
                 }
 
                 this.wasm_extensions.extend(wasm_extensions);
-                if let Some(listener) = theme_change_listener.as_ref() {
-                    listener.reload_current_theme(cx);
-                }
+                this.change_listeners.reload_current_theme(cx);
             })
             .ok();
         })
@@ -1356,18 +1342,12 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let theme_families = if let Some(listener) = change_listeners.theme_listener() {
-                    let Some(theme_families) = listener
-                        .list_theme_names(theme_path.clone(), fs.clone())
-                        .await
-                        .log_err()
-                    else {
-                        continue;
-                    };
-
-                    theme_families
-                } else {
-                    Vec::new()
+                let Some(theme_families) = change_listeners
+                    .list_theme_names(theme_path.clone(), fs.clone())
+                    .await
+                    .log_err()
+                else {
+                    continue;
                 };
 
                 let relative_path = relative_path.to_path_buf();

@@ -26,7 +26,7 @@ struct GrammarExtensionChangeListener {
 }
 
 impl OnGrammarExtensionChange for GrammarExtensionChangeListener {
-    fn register(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
+    fn register_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
         self.language_registry.register_wasm_grammars(grammars)
     }
 }

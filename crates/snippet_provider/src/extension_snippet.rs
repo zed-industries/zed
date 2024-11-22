@@ -19,7 +19,7 @@ struct ExtensionSnippetListener {
 }
 
 impl OnSnippetExtensionChange for ExtensionSnippetListener {
-    fn register(&self, path: &PathBuf, snippet_contents: &str) -> Result<()> {
+    fn register_snippet(&self, path: &PathBuf, snippet_contents: &str) -> Result<()> {
         self.snippet_registry
             .register_snippets(path, snippet_contents)
     }

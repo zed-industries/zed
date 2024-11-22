@@ -5,6 +5,7 @@ use client::{proto, TypedEnvelope};
 use collections::{HashMap, HashSet};
 use extension::{
     Extension, ExtensionChangeListeners, ExtensionManifest, OnLanguageExtensionChange,
+    OnLanguageServerExtensionChange,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
@@ -174,23 +175,21 @@ impl HeadlessExtensionStore {
         let wasm_extension: Arc<dyn Extension> =
             Arc::new(WasmExtension::load(extension_dir, &manifest, wasm_host.clone(), &cx).await?);
 
-        this.update(cx, |this, _cx| {
-            if let Some(listener) = this.change_listeners.language_server_listener() {
-                for (language_server_id, language_server_config) in &manifest.language_servers {
-                    for language in language_server_config.languages() {
-                        this.loaded_language_servers
-                            .entry(manifest.id.clone())
-                            .or_default()
-                            .push((language_server_id.clone(), language.clone()));
-                        listener.register_language_server(
-                            wasm_extension.clone(),
-                            language_server_id.clone(),
-                            language.clone(),
-                        );
-                    }
-                }
+        for (language_server_id, language_server_config) in &manifest.language_servers {
+            for language in language_server_config.languages() {
+                this.update(cx, |this, _cx| {
+                    this.loaded_language_servers
+                        .entry(manifest.id.clone())
+                        .or_default()
+                        .push((language_server_id.clone(), language.clone()));
+                    this.change_listeners.register_language_server(
+                        wasm_extension.clone(),
+                        language_server_id.clone(),
+                        language.clone(),
+                    );
+                })?;
             }
-        })?;
+        }
 
         Ok(())
     }
@@ -202,22 +201,20 @@ impl HeadlessExtensionStore {
     ) -> Task<Result<()>> {
         self.loaded_extensions.remove(extension_id);
 
-        if let Some(listener) = self.change_listeners.language_listener() {
-            let languages_to_remove = self
-                .loaded_languages
-                .remove(extension_id)
-                .unwrap_or_default();
-            listener.remove_languages(&languages_to_remove, &[]);
-        }
+        let languages_to_remove = self
+            .loaded_languages
+            .remove(extension_id)
+            .unwrap_or_default();
+        self.change_listeners
+            .remove_languages(&languages_to_remove, &[]);
 
-        if let Some(listener) = self.change_listeners.language_server_listener() {
-            for (language_server_name, language) in self
-                .loaded_language_servers
-                .remove(extension_id)
-                .unwrap_or_default()
-            {
-                listener.remove_language_server(&language, &language_server_name);
-            }
+        for (language_server_name, language) in self
+            .loaded_language_servers
+            .remove(extension_id)
+            .unwrap_or_default()
+        {
+            self.change_listeners
+                .remove_language_server(&language, &language_server_name);
         }
 
         let path = self.extension_dir.join(&extension_id.to_string());

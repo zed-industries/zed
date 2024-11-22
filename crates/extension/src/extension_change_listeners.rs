@@ -10,73 +10,6 @@ use parking_lot::RwLock;
 
 use crate::{Extension, SlashCommand};
 
-pub trait OnThemeExtensionChange: Send + Sync + 'static {
-    fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>>;
-
-    fn remove_user_themes(&self, themes: Vec<SharedString>);
-
-    fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>>;
-
-    fn reload_current_theme(&self, cx: &mut AppContext);
-}
-
-pub trait OnGrammarExtensionChange: Send + Sync + 'static {
-    fn register(&self, grammars: Vec<(Arc<str>, PathBuf)>);
-}
-
-pub trait OnLanguageExtensionChange: Send + Sync + 'static {
-    fn register_language(
-        &self,
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: LanguageMatcher,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
-    );
-
-    fn remove_languages(
-        &self,
-        languages_to_remove: &[LanguageName],
-        grammars_to_remove: &[Arc<str>],
-    );
-}
-
-pub trait OnLanguageServerExtensionChange: Send + Sync + 'static {
-    fn register_language_server(
-        &self,
-        extension: Arc<dyn Extension>,
-        language_server_id: LanguageServerName,
-        language: LanguageName,
-    );
-
-    fn remove_language_server(
-        &self,
-        language: &LanguageName,
-        language_server_id: &LanguageServerName,
-    );
-
-    fn update_language_server_status(
-        &self,
-        language_server_id: LanguageServerName,
-        status: LanguageServerBinaryStatus,
-    );
-}
-
-pub trait OnSnippetExtensionChange: Send + Sync + 'static {
-    fn register(&self, path: &PathBuf, snippet_contents: &str) -> Result<()>;
-}
-
-pub trait OnSlashCommandExtensionChange: Send + Sync + 'static {
-    fn register(&self, extension: Arc<dyn Extension>, command: SlashCommand);
-}
-
-pub trait OnContextServerExtensionChange: Send + Sync + 'static {
-    fn register(&self, extension: Arc<dyn Extension>, server_id: Arc<str>, cx: &mut AppContext);
-}
-
-pub trait OnIndexedDocsProviderExtensionChange: Send + Sync + 'static {
-    fn register(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>);
-}
-
 #[derive(Default)]
 struct GlobalExtensionChangeListeners(Arc<ExtensionChangeListeners>);
 
@@ -122,19 +55,11 @@ impl ExtensionChangeListeners {
         }
     }
 
-    pub fn theme_listener(&self) -> Option<Arc<dyn OnThemeExtensionChange>> {
-        self.theme_listener.read().clone()
-    }
-
     pub fn register_theme_listener(
         &self,
         listener: impl OnThemeExtensionChange + Send + Sync + 'static,
     ) {
         self.theme_listener.write().replace(Arc::new(listener));
-    }
-
-    pub fn grammar_listener(&self) -> Option<Arc<dyn OnGrammarExtensionChange>> {
-        self.grammar_listener.read().clone()
     }
 
     pub fn register_grammar_listener(
@@ -144,19 +69,11 @@ impl ExtensionChangeListeners {
         self.grammar_listener.write().replace(Arc::new(listener));
     }
 
-    pub fn language_listener(&self) -> Option<Arc<dyn OnLanguageExtensionChange>> {
-        self.language_listener.read().clone()
-    }
-
     pub fn register_language_listener(
         &self,
         listener: impl OnLanguageExtensionChange + Send + Sync + 'static,
     ) {
         self.language_listener.write().replace(Arc::new(listener));
-    }
-
-    pub fn language_server_listener(&self) -> Option<Arc<dyn OnLanguageServerExtensionChange>> {
-        self.language_server_listener.read().clone()
     }
 
     pub fn register_language_server_listener(
@@ -168,19 +85,11 @@ impl ExtensionChangeListeners {
             .replace(Arc::new(listener));
     }
 
-    pub fn snippet_listener(&self) -> Option<Arc<dyn OnSnippetExtensionChange>> {
-        self.snippet_listener.read().clone()
-    }
-
     pub fn register_snippet_listener(
         &self,
         listener: impl OnSnippetExtensionChange + Send + Sync + 'static,
     ) {
         self.snippet_listener.write().replace(Arc::new(listener));
-    }
-
-    pub fn slash_command_listener(&self) -> Option<Arc<dyn OnSlashCommandExtensionChange>> {
-        self.slash_command_listener.read().clone()
     }
 
     pub fn register_slash_command_listener(
@@ -192,10 +101,6 @@ impl ExtensionChangeListeners {
             .replace(Arc::new(listener));
     }
 
-    pub fn context_server_listener(&self) -> Option<Arc<dyn OnContextServerExtensionChange>> {
-        self.context_server_listener.read().clone()
-    }
-
     pub fn register_context_server_listener(
         &self,
         listener: impl OnContextServerExtensionChange + Send + Sync + 'static,
@@ -203,12 +108,6 @@ impl ExtensionChangeListeners {
         self.context_server_listener
             .write()
             .replace(Arc::new(listener));
-    }
-
-    pub fn indexed_docs_provider_listener(
-        &self,
-    ) -> Option<Arc<dyn OnIndexedDocsProviderExtensionChange>> {
-        self.indexed_docs_provider_listener.read().clone()
     }
 
     pub fn register_indexed_docs_provider_listener(
@@ -221,6 +120,80 @@ impl ExtensionChangeListeners {
     }
 }
 
+pub trait OnThemeExtensionChange: Send + Sync + 'static {
+    fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>>;
+
+    fn remove_user_themes(&self, themes: Vec<SharedString>);
+
+    fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>>;
+
+    fn reload_current_theme(&self, cx: &mut AppContext);
+}
+
+impl OnThemeExtensionChange for ExtensionChangeListeners {
+    fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
+        let Some(listener) = self.theme_listener.read().clone() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        listener.list_theme_names(theme_path, fs)
+    }
+
+    fn remove_user_themes(&self, themes: Vec<SharedString>) {
+        let Some(listener) = self.theme_listener.read().clone() else {
+            return;
+        };
+
+        listener.remove_user_themes(themes)
+    }
+
+    fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>> {
+        let Some(listener) = self.theme_listener.read().clone() else {
+            return Task::ready(Ok(()));
+        };
+
+        listener.load_user_theme(theme_path, fs)
+    }
+
+    fn reload_current_theme(&self, cx: &mut AppContext) {
+        let Some(listener) = self.theme_listener.read().clone() else {
+            return;
+        };
+
+        listener.reload_current_theme(cx)
+    }
+}
+
+pub trait OnGrammarExtensionChange: Send + Sync + 'static {
+    fn register_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>);
+}
+
+impl OnGrammarExtensionChange for ExtensionChangeListeners {
+    fn register_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
+        let Some(listener) = self.grammar_listener.read().clone() else {
+            return;
+        };
+
+        listener.register_grammars(grammars)
+    }
+}
+
+pub trait OnLanguageExtensionChange: Send + Sync + 'static {
+    fn register_language(
+        &self,
+        language: LanguageName,
+        grammar: Option<Arc<str>>,
+        matcher: LanguageMatcher,
+        load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
+    );
+
+    fn remove_languages(
+        &self,
+        languages_to_remove: &[LanguageName],
+        grammars_to_remove: &[Arc<str>],
+    );
+}
+
 impl OnLanguageExtensionChange for ExtensionChangeListeners {
     fn register_language(
         &self,
@@ -229,7 +202,7 @@ impl OnLanguageExtensionChange for ExtensionChangeListeners {
         matcher: LanguageMatcher,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
     ) {
-        let Some(listener) = self.language_listener() else {
+        let Some(listener) = self.language_listener.read().clone() else {
             return;
         };
 
@@ -241,10 +214,136 @@ impl OnLanguageExtensionChange for ExtensionChangeListeners {
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
     ) {
-        let Some(listener) = self.language_listener() else {
+        let Some(listener) = self.language_listener.read().clone() else {
             return;
         };
 
         listener.remove_languages(languages_to_remove, grammars_to_remove)
+    }
+}
+
+pub trait OnLanguageServerExtensionChange: Send + Sync + 'static {
+    fn register_language_server(
+        &self,
+        extension: Arc<dyn Extension>,
+        language_server_id: LanguageServerName,
+        language: LanguageName,
+    );
+
+    fn remove_language_server(
+        &self,
+        language: &LanguageName,
+        language_server_id: &LanguageServerName,
+    );
+
+    fn update_language_server_status(
+        &self,
+        language_server_id: LanguageServerName,
+        status: LanguageServerBinaryStatus,
+    );
+}
+
+impl OnLanguageServerExtensionChange for ExtensionChangeListeners {
+    fn register_language_server(
+        &self,
+        extension: Arc<dyn Extension>,
+        language_server_id: LanguageServerName,
+        language: LanguageName,
+    ) {
+        let Some(listener) = self.language_server_listener.read().clone() else {
+            return;
+        };
+
+        listener.register_language_server(extension, language_server_id, language)
+    }
+
+    fn remove_language_server(
+        &self,
+        language: &LanguageName,
+        language_server_id: &LanguageServerName,
+    ) {
+        let Some(listener) = self.language_server_listener.read().clone() else {
+            return;
+        };
+
+        listener.remove_language_server(language, language_server_id)
+    }
+
+    fn update_language_server_status(
+        &self,
+        language_server_id: LanguageServerName,
+        status: LanguageServerBinaryStatus,
+    ) {
+        let Some(listener) = self.language_server_listener.read().clone() else {
+            return;
+        };
+
+        listener.update_language_server_status(language_server_id, status)
+    }
+}
+
+pub trait OnSnippetExtensionChange: Send + Sync + 'static {
+    fn register_snippet(&self, path: &PathBuf, snippet_contents: &str) -> Result<()>;
+}
+
+impl OnSnippetExtensionChange for ExtensionChangeListeners {
+    fn register_snippet(&self, path: &PathBuf, snippet_contents: &str) -> Result<()> {
+        let Some(listener) = self.snippet_listener.read().clone() else {
+            return Ok(());
+        };
+
+        listener.register_snippet(path, snippet_contents)
+    }
+}
+
+pub trait OnSlashCommandExtensionChange: Send + Sync + 'static {
+    fn register_slash_command(&self, extension: Arc<dyn Extension>, command: SlashCommand);
+}
+
+impl OnSlashCommandExtensionChange for ExtensionChangeListeners {
+    fn register_slash_command(&self, extension: Arc<dyn Extension>, command: SlashCommand) {
+        let Some(listener) = self.slash_command_listener.read().clone() else {
+            return;
+        };
+
+        listener.register_slash_command(extension, command)
+    }
+}
+
+pub trait OnContextServerExtensionChange: Send + Sync + 'static {
+    fn register_context_server(
+        &self,
+        extension: Arc<dyn Extension>,
+        server_id: Arc<str>,
+        cx: &mut AppContext,
+    );
+}
+
+impl OnContextServerExtensionChange for ExtensionChangeListeners {
+    fn register_context_server(
+        &self,
+        extension: Arc<dyn Extension>,
+        server_id: Arc<str>,
+        cx: &mut AppContext,
+    ) {
+        let Some(listener) = self.context_server_listener.read().clone() else {
+            return;
+        };
+
+        listener.register_context_server(extension, server_id, cx)
+    }
+}
+
+pub trait OnIndexedDocsProviderExtensionChange: Send + Sync + 'static {
+    fn register_indexed_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>);
+}
+
+impl OnIndexedDocsProviderExtensionChange for ExtensionChangeListeners {
+    fn register_indexed_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
+        let Some(listener) = self.indexed_docs_provider_listener.read().clone() else {
+            return;
+        };
+
+        listener.register_indexed_docs_provider(extension, provider_id)
     }
 }

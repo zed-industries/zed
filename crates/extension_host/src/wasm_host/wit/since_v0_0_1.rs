@@ -3,7 +3,7 @@ use crate::wasm_host::wit::since_v0_0_4;
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use async_trait::async_trait;
-use extension::WorktreeDelegate;
+use extension::{OnLanguageServerExtensionChange, WorktreeDelegate};
 use language::LanguageServerBinaryStatus;
 use semantic_version::SemanticVersion;
 use std::sync::{Arc, OnceLock};
@@ -134,24 +134,23 @@ impl ExtensionImports for WasmState {
         server_name: String,
         status: LanguageServerInstallationStatus,
     ) -> wasmtime::Result<()> {
-        if let Some(listener) = self.host.change_listeners.language_server_listener() {
-            let status = match status {
-                LanguageServerInstallationStatus::CheckingForUpdate => {
-                    LanguageServerBinaryStatus::CheckingForUpdate
-                }
-                LanguageServerInstallationStatus::Downloading => {
-                    LanguageServerBinaryStatus::Downloading
-                }
-                LanguageServerInstallationStatus::Cached
-                | LanguageServerInstallationStatus::Downloaded => LanguageServerBinaryStatus::None,
-                LanguageServerInstallationStatus::Failed(error) => {
-                    LanguageServerBinaryStatus::Failed { error }
-                }
-            };
+        let status = match status {
+            LanguageServerInstallationStatus::CheckingForUpdate => {
+                LanguageServerBinaryStatus::CheckingForUpdate
+            }
+            LanguageServerInstallationStatus::Downloading => {
+                LanguageServerBinaryStatus::Downloading
+            }
+            LanguageServerInstallationStatus::Cached
+            | LanguageServerInstallationStatus::Downloaded => LanguageServerBinaryStatus::None,
+            LanguageServerInstallationStatus::Failed(error) => {
+                LanguageServerBinaryStatus::Failed { error }
+            }
+        };
 
-            listener
-                .update_language_server_status(lsp::LanguageServerName(server_name.into()), status);
-        }
+        self.host
+            .change_listeners
+            .update_language_server_status(lsp::LanguageServerName(server_name.into()), status);
 
         Ok(())
     }

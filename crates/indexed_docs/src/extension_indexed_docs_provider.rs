@@ -24,7 +24,7 @@ struct ExtensionIndexedDocsProviderListener {
 }
 
 impl OnIndexedDocsProviderExtensionChange for ExtensionIndexedDocsProviderListener {
-    fn register(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
+    fn register_indexed_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
         self.indexed_docs_registry
             .register_provider(Box::new(ExtensionIndexedDocsProvider::new(
                 extension,

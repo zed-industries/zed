@@ -32,7 +32,12 @@ struct ExtensionIndexedDocsProviderListener {
 }
 
 impl OnContextServerExtensionChange for ExtensionIndexedDocsProviderListener {
-    fn register(&self, extension: Arc<dyn Extension>, id: Arc<str>, cx: &mut AppContext) {
+    fn register_context_server(
+        &self,
+        extension: Arc<dyn Extension>,
+        id: Arc<str>,
+        cx: &mut AppContext,
+    ) {
         self.context_server_factory_registry
             .update(cx, |registry, _| {
                 registry.register_server_factory(
