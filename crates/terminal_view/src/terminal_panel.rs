@@ -336,24 +336,28 @@ impl TerminalPanel {
     fn split_active_terminal(&mut self, cx: &mut ViewContext<Self>) -> Option<View<Pane>> {
         let workspace = self.workspace.clone().upgrade()?;
         let project = workspace.read(cx).project().clone();
-        let terminal_view = self
+        let working_directory = self
             .active_pane
             .read(cx)
             .active_item()
             .and_then(|item| item.downcast::<TerminalView>())
-            // TODO kb need not to clone here, as it duplicates the input/output
-            .map(Box::new)
-            .or_else(|| {
-                let kind = TerminalKind::Shell(default_working_directory(workspace.read(cx), cx));
-                let window = cx.window_handle();
-                let terminal = project
-                    .update(cx, |project, cx| project.create_terminal(kind, window, cx))
-                    .log_err()?;
-                let database_id = workspace.read(cx).database_id();
-                Some(Box::new(cx.new_view(|cx| {
-                    TerminalView::new(terminal.clone(), self.workspace.clone(), database_id, cx)
-                })))
-            })?;
+            .and_then(|terminal_view| {
+                terminal_view
+                    .read(cx)
+                    .terminal()
+                    .read(cx)
+                    .working_directory()
+            })
+            .or_else(|| default_working_directory(workspace.read(cx), cx));
+        let kind = TerminalKind::Shell(working_directory);
+        let window = cx.window_handle();
+        let terminal = project
+            .update(cx, |project, cx| project.create_terminal(kind, window, cx))
+            .log_err()?;
+        let database_id = workspace.read(cx).database_id();
+        let terminal_view = Box::new(cx.new_view(|cx| {
+            TerminalView::new(terminal.clone(), self.workspace.clone(), database_id, cx)
+        }));
         let pane = new_terminal_pane(self.workspace.clone(), project, cx);
         self.apply_tab_bar_buttons(&pane, cx);
         pane.update(cx, |pane, cx| {
