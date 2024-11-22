@@ -20,6 +20,7 @@ use std::{
     sync::LazyLock,
     time::{Duration, Instant},
 };
+use syntax_map::TreeSitterOptions;
 use text::network::Network;
 use text::{BufferId, LineEnding, LineIndent};
 use text::{Point, ToPoint};
@@ -931,7 +932,7 @@ fn test_text_objects(cx: &mut AppContext) {
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     let matches = snapshot
-        .text_object_ranges(ranges[0].clone())
+        .text_object_ranges(ranges[0].clone(), TreeSitterOptions::default())
         .map(|(range, text_object)| (&text[range], text_object))
         .collect::<Vec<_>>();
 

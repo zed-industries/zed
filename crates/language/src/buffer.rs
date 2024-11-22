@@ -15,6 +15,7 @@ use crate::{
     },
     task_context::RunnableRange,
     LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
+    TreeSitterOptions,
 };
 use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
@@ -3373,13 +3374,16 @@ impl BufferSnapshot {
     pub fn text_object_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
+        options: TreeSitterOptions,
     ) -> impl Iterator<Item = (Range<usize>, TextObject)> + '_ {
         let range = range.start.to_offset(self).saturating_sub(1)
             ..self.len().min(range.end.to_offset(self) + 1);
 
-        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            grammar.text_object_config.as_ref().map(|c| &c.query)
-        });
+        let mut matches =
+            self.syntax
+                .matches_with_options(range.clone(), &self.text, options, |grammar| {
+                    grammar.text_object_config.as_ref().map(|c| &c.query)
+                });
 
         let configs = matches
             .grammars()
@@ -3412,6 +3416,11 @@ impl BufferSnapshot {
                     continue;
                 };
                 let text_object = config.text_objects_by_capture_ix[ix].1;
+                if text_object != TextObject::AroundClass
+                    && text_object != TextObject::AroundFunction
+                {
+                    continue;
+                }
                 let byte_range = capture.node.byte_range();
 
                 let mut found = false;
