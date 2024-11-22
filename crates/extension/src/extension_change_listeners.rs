@@ -24,12 +24,6 @@ pub trait OnIndexedDocsProviderExtensionChange: Send + Sync + 'static {
     fn register(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>);
 }
 
-#[derive(Clone)]
-pub enum ExtensionChangeListener {
-    LanguageServer(Arc<dyn OnLanguageServerExtensionChange>),
-    IndexedDocsProvider(Arc<dyn OnIndexedDocsProviderExtensionChange>),
-}
-
 #[derive(Default)]
 struct GlobalExtensionChangeListeners(Arc<ExtensionChangeListeners>);
 
