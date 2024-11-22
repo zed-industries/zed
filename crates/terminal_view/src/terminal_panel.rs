@@ -739,9 +739,10 @@ fn new_terminal_pane(
     cx: &mut ViewContext<TerminalPanel>,
 ) -> View<Pane> {
     let is_local = project.read(cx).is_local();
+    let terminal_panel = cx.view().clone();
     let pane = cx.new_view(|cx| {
         let mut pane = Pane::new(
-            workspace,
+            workspace.clone(),
             project.clone(),
             Default::default(),
             None,
@@ -751,15 +752,27 @@ fn new_terminal_pane(
         pane.set_can_navigate(false, cx);
         pane.display_nav_history_buttons(None);
         pane.set_should_display_tab_bar(|_| true);
-        pane.set_can_split(Some(Arc::new(|pane, dragged_item, cx| {
+
+        let terminal_panel_for_split_check = terminal_panel.clone();
+        pane.set_can_split(Some(Arc::new(move |pane, dragged_item, cx| {
             if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
-                let item = if &tab.pane == cx.view() {
-                    pane.item_for_index(tab.ix)
-                } else {
-                    tab.pane.read(cx).item_for_index(tab.ix)
-                };
-                if let Some(item) = item {
-                    return item.downcast::<TerminalView>().is_some();
+                let current_pane = cx.view().clone();
+                let can_drag_away =
+                    terminal_panel_for_split_check.update(cx, |terminal_panel, _| {
+                        let current_panes = terminal_panel.center.panes();
+                        !current_panes.contains(&&tab.pane)
+                            || current_panes.len() > 1
+                            || (tab.pane != current_pane || pane.items_len() > 1)
+                    });
+                if can_drag_away {
+                    let item = if tab.pane == current_pane {
+                        pane.item_for_index(tab.ix)
+                    } else {
+                        tab.pane.read(cx).item_for_index(tab.ix)
+                    };
+                    if let Some(item) = item {
+                        return item.downcast::<TerminalView>().is_some();
+                    }
                 }
             }
             false
@@ -781,37 +794,48 @@ fn new_terminal_pane(
                     tab.pane.read(cx).item_for_index(tab.ix)
                 };
                 if let Some(item) = item {
-                    // TODO kb need to "move" terminals instead of splitting them + create new terminal in the old pane, if the task terminal was the last one
                     if item.downcast::<TerminalView>().is_some() {
-                        match pane.drag_split_direction() {
-                            Some(drag_split_direction) => {
-                                cx.emit(pane::Event::Split(drag_split_direction));
-                                return ControlFlow::Break(());
-                            }
-                            None => {
-                                if !belongs_to_this_pane {
-                                    let source = tab.pane.clone();
-                                    let destination = cx.view().clone();
-                                    let item_id_to_move = item.item_id();
-                                    let destination_index = pane.active_item_index();
+                        let source = tab.pane.clone();
+                        let item_id_to_move = item.item_id();
 
-                                    // Destination pane is currently updated, so defer the move.
-                                    cx.spawn(|_, mut cx| async move {
-                                        cx.update(|cx| {
-                                            move_item(
-                                                &source,
-                                                &destination,
-                                                item_id_to_move,
-                                                destination_index,
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                    })
-                                    .detach();
-                                }
-                            }
+                        let new_pane = pane.drag_split_direction().and_then(|split_direction| {
+                            terminal_panel.update(cx, |terminal_panel, cx| {
+                                let new_pane =
+                                    new_terminal_pane(workspace.clone(), project.clone(), cx);
+                                terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
+                                terminal_panel
+                                    .center
+                                    .split(&source, &new_pane, split_direction)
+                                    .log_err()?;
+                                Some(new_pane)
+                            })
+                        });
+
+                        let destination;
+                        let destination_index;
+                        if let Some(new_pane) = new_pane {
+                            destination_index = new_pane.read(cx).active_item_index();
+                            destination = new_pane;
+                        } else if belongs_to_this_pane {
+                            return ControlFlow::Break(());
+                        } else {
+                            destination = cx.view().clone();
+                            destination_index = pane.active_item_index();
                         }
+                        // Destination pane may be the one currently updated, so defer the move.
+                        cx.spawn(|_, mut cx| async move {
+                            cx.update(|cx| {
+                                move_item(
+                                    &source,
+                                    &destination,
+                                    item_id_to_move,
+                                    destination_index,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                        })
+                        .detach();
                     } else if let Some(project_path) = item.project_path(cx) {
                         if let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
                         {
