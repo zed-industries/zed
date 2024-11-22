@@ -1429,232 +1429,6 @@ impl ProjectPanel {
         }
     }
 
-    fn find_entry_in_worktree(
-        &self,
-        worktree_id: WorktreeId,
-        reverse_search: bool,
-        only_visible_entries: bool,
-        predicate: impl Fn(&Entry, WorktreeId) -> bool,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Entry> {
-        if only_visible_entries {
-            let entries = self
-                .visible_entries
-                .iter()
-                .find_map(|(tree_id, entries, _)| {
-                    if worktree_id == *tree_id {
-                        Some(entries)
-                    } else {
-                        None
-                    }
-                })?
-                .clone();
-
-            return ReversibleIterable::new(entries.iter(), reverse_search)
-                .find(|ele| predicate(ele, worktree_id))
-                .cloned();
-        }
-
-        let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
-        worktree.update(cx, |tree, _| {
-            ReversibleIterable::new(tree.entries(true, 0usize), reverse_search)
-                .find_single_ended(|ele| predicate(ele, worktree_id))
-                .cloned()
-        })
-    }
-
-    fn find_entry(
-        &self,
-        start: Option<&SelectedEntry>,
-        reverse_search: bool,
-        predicate: impl Fn(&Entry, WorktreeId) -> bool,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<SelectedEntry> {
-        let mut worktree_ids: Vec<_> = self
-            .visible_entries
-            .iter()
-            .map(|(worktree_id, _, _)| *worktree_id)
-            .collect();
-
-        let mut last_found: Option<SelectedEntry> = None;
-
-        if let Some(start) = start {
-            let worktree = self
-                .project
-                .read(cx)
-                .worktree_for_id(start.worktree_id, cx)?;
-
-            let search = worktree.update(cx, |tree, _| {
-                let entry = tree.entry_for_id(start.entry_id)?;
-                let root_entry = tree.root_entry()?;
-                let tree_id = tree.id();
-
-                let mut first_iter = tree.traverse_from_path(true, true, true, entry.path.as_ref());
-
-                if reverse_search {
-                    first_iter.next();
-                }
-
-                let first = first_iter
-                    .enumerate()
-                    .take_until(|(count, ele)| *ele == root_entry && *count != 0usize)
-                    .map(|(_, ele)| ele)
-                    .find(|ele| predicate(ele, tree_id))
-                    .cloned();
-
-                let second_iter = tree.entries(true, 0usize);
-
-                let second = if reverse_search {
-                    second_iter
-                        .take_until(|ele| ele.id == start.entry_id)
-                        .filter(|ele| predicate(ele, tree_id))
-                        .last()
-                        .cloned()
-                } else {
-                    second_iter
-                        .take_while(|ele| ele.id != start.entry_id)
-                        .filter(|ele| predicate(ele, tree_id))
-                        .last()
-                        .cloned()
-                };
-
-                if reverse_search {
-                    Some((second, first))
-                } else {
-                    Some((first, second))
-                }
-            });
-
-            if let Some((first, second)) = search {
-                let first = first.map(|entry| SelectedEntry {
-                    worktree_id: start.worktree_id,
-                    entry_id: entry.id,
-                });
-
-                let second = second.map(|entry| SelectedEntry {
-                    worktree_id: start.worktree_id,
-                    entry_id: entry.id,
-                });
-
-                if first.is_some() {
-                    return first;
-                }
-                last_found = second;
-
-                let idx = worktree_ids
-                    .iter()
-                    .enumerate()
-                    .find(|(_, ele)| **ele == start.worktree_id)
-                    .map(|(idx, _)| idx);
-
-                if let Some(idx) = idx {
-                    worktree_ids.rotate_left(idx + 1usize);
-                    worktree_ids.pop();
-                }
-            }
-        }
-
-        for tree_id in worktree_ids.into_iter() {
-            if let Some(found) =
-                self.find_entry_in_worktree(tree_id, reverse_search, false, &predicate, cx)
-            {
-                return Some(SelectedEntry {
-                    worktree_id: tree_id,
-                    entry_id: found.id,
-                });
-            }
-        }
-
-        last_found
-    }
-
-    fn find_visible_entry(
-        &self,
-        start: Option<&SelectedEntry>,
-        reverse_search: bool,
-        predicate: impl Fn(&Entry, WorktreeId) -> bool,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<SelectedEntry> {
-        let mut worktree_ids: Vec<_> = self
-            .visible_entries
-            .iter()
-            .map(|(worktree_id, _, _)| *worktree_id)
-            .collect();
-
-        let mut last_found: Option<SelectedEntry> = None;
-
-        if let Some(start) = start {
-            let entries = self
-                .visible_entries
-                .iter()
-                .find(|(worktree_id, _, _)| *worktree_id == start.worktree_id)
-                .map(|(_, entries, _)| entries)?;
-
-            let mut start_idx = entries
-                .iter()
-                .enumerate()
-                .find(|(_, ele)| ele.id == start.entry_id)
-                .map(|(idx, _)| idx)?;
-
-            if reverse_search {
-                start_idx = start_idx.saturating_add(1usize);
-            }
-
-            let (left, right) = entries.split_at_checked(start_idx)?;
-
-            let (first_iter, second_iter) = if reverse_search {
-                (
-                    ReversibleIterable::new(left.iter(), reverse_search),
-                    ReversibleIterable::new(right.iter(), reverse_search),
-                )
-            } else {
-                (
-                    ReversibleIterable::new(right.iter(), reverse_search),
-                    ReversibleIterable::new(left.iter(), reverse_search),
-                )
-            };
-
-            let first_search = first_iter.find(|ele| predicate(ele, start.worktree_id));
-            let second_search = second_iter.find(|ele| predicate(ele, start.worktree_id));
-
-            if first_search.is_some() {
-                return first_search.map(|entry| SelectedEntry {
-                    worktree_id: start.worktree_id,
-                    entry_id: entry.id,
-                });
-            }
-
-            last_found = second_search.map(|entry| SelectedEntry {
-                worktree_id: start.worktree_id,
-                entry_id: entry.id,
-            });
-
-            let idx = worktree_ids
-                .iter()
-                .enumerate()
-                .find(|(_, ele)| **ele == start.worktree_id)
-                .map(|(idx, _)| idx);
-
-            if let Some(idx) = idx {
-                worktree_ids.rotate_left(idx + 1usize);
-                worktree_ids.pop();
-            }
-        }
-
-        for tree_id in worktree_ids.into_iter() {
-            if let Some(found) =
-                self.find_entry_in_worktree(tree_id, reverse_search, true, &predicate, cx)
-            {
-                return Some(SelectedEntry {
-                    worktree_id: tree_id,
-                    entry_id: found.id,
-                });
-            }
-        }
-
-        last_found
-    }
-
     fn select_prev_diagnostic(&mut self, _: &SelectPrevDiagnostic, cx: &mut ViewContext<Self>) {
         let selection = self.find_entry(
             self.selection.as_ref(),
@@ -2989,6 +2763,232 @@ impl ProjectPanel {
             }
             ix = end_ix;
         }
+    }
+
+    fn find_entry_in_worktree(
+        &self,
+        worktree_id: WorktreeId,
+        reverse_search: bool,
+        only_visible_entries: bool,
+        predicate: impl Fn(&Entry, WorktreeId) -> bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Entry> {
+        if only_visible_entries {
+            let entries = self
+                .visible_entries
+                .iter()
+                .find_map(|(tree_id, entries, _)| {
+                    if worktree_id == *tree_id {
+                        Some(entries)
+                    } else {
+                        None
+                    }
+                })?
+                .clone();
+
+            return ReversibleIterable::new(entries.iter(), reverse_search)
+                .find(|ele| predicate(ele, worktree_id))
+                .cloned();
+        }
+
+        let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
+        worktree.update(cx, |tree, _| {
+            ReversibleIterable::new(tree.entries(true, 0usize), reverse_search)
+                .find_single_ended(|ele| predicate(ele, worktree_id))
+                .cloned()
+        })
+    }
+
+    fn find_entry(
+        &self,
+        start: Option<&SelectedEntry>,
+        reverse_search: bool,
+        predicate: impl Fn(&Entry, WorktreeId) -> bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<SelectedEntry> {
+        let mut worktree_ids: Vec<_> = self
+            .visible_entries
+            .iter()
+            .map(|(worktree_id, _, _)| *worktree_id)
+            .collect();
+
+        let mut last_found: Option<SelectedEntry> = None;
+
+        if let Some(start) = start {
+            let worktree = self
+                .project
+                .read(cx)
+                .worktree_for_id(start.worktree_id, cx)?;
+
+            let search = worktree.update(cx, |tree, _| {
+                let entry = tree.entry_for_id(start.entry_id)?;
+                let root_entry = tree.root_entry()?;
+                let tree_id = tree.id();
+
+                let mut first_iter = tree.traverse_from_path(true, true, true, entry.path.as_ref());
+
+                if reverse_search {
+                    first_iter.next();
+                }
+
+                let first = first_iter
+                    .enumerate()
+                    .take_until(|(count, ele)| *ele == root_entry && *count != 0usize)
+                    .map(|(_, ele)| ele)
+                    .find(|ele| predicate(ele, tree_id))
+                    .cloned();
+
+                let second_iter = tree.entries(true, 0usize);
+
+                let second = if reverse_search {
+                    second_iter
+                        .take_until(|ele| ele.id == start.entry_id)
+                        .filter(|ele| predicate(ele, tree_id))
+                        .last()
+                        .cloned()
+                } else {
+                    second_iter
+                        .take_while(|ele| ele.id != start.entry_id)
+                        .filter(|ele| predicate(ele, tree_id))
+                        .last()
+                        .cloned()
+                };
+
+                if reverse_search {
+                    Some((second, first))
+                } else {
+                    Some((first, second))
+                }
+            });
+
+            if let Some((first, second)) = search {
+                let first = first.map(|entry| SelectedEntry {
+                    worktree_id: start.worktree_id,
+                    entry_id: entry.id,
+                });
+
+                let second = second.map(|entry| SelectedEntry {
+                    worktree_id: start.worktree_id,
+                    entry_id: entry.id,
+                });
+
+                if first.is_some() {
+                    return first;
+                }
+                last_found = second;
+
+                let idx = worktree_ids
+                    .iter()
+                    .enumerate()
+                    .find(|(_, ele)| **ele == start.worktree_id)
+                    .map(|(idx, _)| idx);
+
+                if let Some(idx) = idx {
+                    worktree_ids.rotate_left(idx + 1usize);
+                    worktree_ids.pop();
+                }
+            }
+        }
+
+        for tree_id in worktree_ids.into_iter() {
+            if let Some(found) =
+                self.find_entry_in_worktree(tree_id, reverse_search, false, &predicate, cx)
+            {
+                return Some(SelectedEntry {
+                    worktree_id: tree_id,
+                    entry_id: found.id,
+                });
+            }
+        }
+
+        last_found
+    }
+
+    fn find_visible_entry(
+        &self,
+        start: Option<&SelectedEntry>,
+        reverse_search: bool,
+        predicate: impl Fn(&Entry, WorktreeId) -> bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<SelectedEntry> {
+        let mut worktree_ids: Vec<_> = self
+            .visible_entries
+            .iter()
+            .map(|(worktree_id, _, _)| *worktree_id)
+            .collect();
+
+        let mut last_found: Option<SelectedEntry> = None;
+
+        if let Some(start) = start {
+            let entries = self
+                .visible_entries
+                .iter()
+                .find(|(worktree_id, _, _)| *worktree_id == start.worktree_id)
+                .map(|(_, entries, _)| entries)?;
+
+            let mut start_idx = entries
+                .iter()
+                .enumerate()
+                .find(|(_, ele)| ele.id == start.entry_id)
+                .map(|(idx, _)| idx)?;
+
+            if reverse_search {
+                start_idx = start_idx.saturating_add(1usize);
+            }
+
+            let (left, right) = entries.split_at_checked(start_idx)?;
+
+            let (first_iter, second_iter) = if reverse_search {
+                (
+                    ReversibleIterable::new(left.iter(), reverse_search),
+                    ReversibleIterable::new(right.iter(), reverse_search),
+                )
+            } else {
+                (
+                    ReversibleIterable::new(right.iter(), reverse_search),
+                    ReversibleIterable::new(left.iter(), reverse_search),
+                )
+            };
+
+            let first_search = first_iter.find(|ele| predicate(ele, start.worktree_id));
+            let second_search = second_iter.find(|ele| predicate(ele, start.worktree_id));
+
+            if first_search.is_some() {
+                return first_search.map(|entry| SelectedEntry {
+                    worktree_id: start.worktree_id,
+                    entry_id: entry.id,
+                });
+            }
+
+            last_found = second_search.map(|entry| SelectedEntry {
+                worktree_id: start.worktree_id,
+                entry_id: entry.id,
+            });
+
+            let idx = worktree_ids
+                .iter()
+                .enumerate()
+                .find(|(_, ele)| **ele == start.worktree_id)
+                .map(|(idx, _)| idx);
+
+            if let Some(idx) = idx {
+                worktree_ids.rotate_left(idx + 1usize);
+                worktree_ids.pop();
+            }
+        }
+
+        for tree_id in worktree_ids.into_iter() {
+            if let Some(found) =
+                self.find_entry_in_worktree(tree_id, reverse_search, true, &predicate, cx)
+            {
+                return Some(SelectedEntry {
+                    worktree_id: tree_id,
+                    entry_id: found.id,
+                });
+            }
+        }
+
+        last_found
     }
 
     fn calculate_depth_and_difference(
