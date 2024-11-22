@@ -1,4 +1,3 @@
-use crate::extension_lsp_adapter::ExtensionLspAdapter;
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionSettings, ExtensionStore,
@@ -7,17 +6,12 @@ use crate::{
 use anyhow::Result;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
-use extension::{
-    Extension, ExtensionChangeListeners, OnGrammarExtensionChange, OnLanguageServerExtensionChange,
-    OnThemeExtensionChange,
-};
+use extension::ExtensionChangeListeners;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
-use gpui::{BackgroundExecutor, Context, SemanticVersion, SharedString, Task, TestAppContext};
+use gpui::{Context, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{
-    LanguageMatcher, LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage,
-};
+use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -31,88 +25,10 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use theme::{ThemeRegistry, ThemeSettings};
+use theme::ThemeRegistry;
 use util::test::temp_tree;
 
 use crate::ExtensionRegistrationHooks;
-
-struct TestThemeExtensionChangeListener {
-    theme_registry: Arc<ThemeRegistry>,
-    executor: BackgroundExecutor,
-}
-
-impl OnThemeExtensionChange for TestThemeExtensionChangeListener {
-    fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
-        self.executor.spawn(async move {
-            let themes = theme::read_user_theme(&theme_path, fs).await?;
-            Ok(themes.themes.into_iter().map(|theme| theme.name).collect())
-        })
-    }
-
-    fn remove_user_themes(&self, themes: Vec<SharedString>) {
-        self.theme_registry.remove_user_themes(&themes);
-    }
-
-    fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>> {
-        let theme_registry = self.theme_registry.clone();
-        self.executor
-            .spawn(async move { theme_registry.load_user_theme(&theme_path, fs).await })
-    }
-
-    fn reload_current_theme(&self, cx: &mut gpui::AppContext) {
-        ThemeSettings::reload_current_theme(cx)
-    }
-}
-
-struct TestGrammarExtensionChangeListener {
-    language_registry: Arc<LanguageRegistry>,
-}
-
-impl OnGrammarExtensionChange for TestGrammarExtensionChangeListener {
-    fn register(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
-        self.language_registry.register_wasm_grammars(grammars)
-    }
-}
-
-struct TestLanguageServerExtensionChangeListener {
-    language_registry: Arc<LanguageRegistry>,
-}
-
-impl OnLanguageServerExtensionChange for TestLanguageServerExtensionChangeListener {
-    fn register_language_server(
-        &self,
-        extension: Arc<dyn Extension>,
-        language_server_id: LanguageServerName,
-        language: LanguageName,
-    ) {
-        self.language_registry.register_lsp_adapter(
-            language.clone(),
-            Arc::new(ExtensionLspAdapter::new(
-                extension,
-                language_server_id,
-                language,
-            )),
-        );
-    }
-
-    fn remove_language_server(
-        &self,
-        language: &LanguageName,
-        language_server_id: &LanguageServerName,
-    ) {
-        self.language_registry
-            .remove_lsp_adapter(language, language_server_id);
-    }
-
-    fn update_language_server_status(
-        &self,
-        language_server_id: LanguageServerName,
-        status: LanguageServerBinaryStatus,
-    ) {
-        self.language_registry
-            .update_lsp_status(language_server_id, status);
-    }
-}
 
 struct TestExtensionRegistrationHooks {
     language_registry: Arc<LanguageRegistry>,
@@ -371,20 +287,17 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         .collect(),
     };
 
-    let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let extension_change_listeners = Arc::new(ExtensionChangeListeners::new());
-    extension_change_listeners.register_theme_listener(TestThemeExtensionChangeListener {
-        theme_registry: theme_registry.clone(),
-        executor: cx.executor(),
-    });
-    extension_change_listeners.register_grammar_listener(TestGrammarExtensionChangeListener {
-        language_registry: language_registry.clone(),
-    });
-    extension_change_listeners.register_language_server_listener(
-        TestLanguageServerExtensionChangeListener {
-            language_registry: language_registry.clone(),
-        },
+    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    theme_extension::init(
+        extension_change_listeners.clone(),
+        theme_registry.clone(),
+        cx.executor(),
+    );
+    let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    language_extension::init(
+        extension_change_listeners.clone(),
+        language_registry.clone(),
     );
     let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
         language_registry: language_registry.clone(),
@@ -605,20 +518,17 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
 
-    let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let extension_change_listeners = Arc::new(ExtensionChangeListeners::new());
-    extension_change_listeners.register_theme_listener(TestThemeExtensionChangeListener {
-        theme_registry,
-        executor: cx.executor(),
-    });
-    extension_change_listeners.register_grammar_listener(TestGrammarExtensionChangeListener {
-        language_registry: language_registry.clone(),
-    });
-    extension_change_listeners.register_language_server_listener(
-        TestLanguageServerExtensionChangeListener {
-            language_registry: language_registry.clone(),
-        },
+    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    theme_extension::init(
+        extension_change_listeners.clone(),
+        theme_registry.clone(),
+        cx.executor(),
+    );
+    let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    language_extension::init(
+        extension_change_listeners.clone(),
+        language_registry.clone(),
     );
     let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
         language_registry: language_registry.clone(),

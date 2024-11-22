@@ -1,4 +1,3 @@
-pub mod extension_lsp_adapter;
 pub mod extension_settings;
 pub mod headless_host;
 pub mod wasm_host;

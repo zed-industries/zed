@@ -281,6 +281,9 @@ fn main() {
 
         OpenListener::set_global(cx, open_listener.clone());
 
+        extension::init(cx);
+        let extension_change_listeners = ExtensionChangeListeners::global(cx);
+
         let client = Client::production(cx);
         cx.set_http_client(client.http_client().clone());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
@@ -314,6 +317,7 @@ fn main() {
         let node_runtime = NodeRuntime::new(client.http_client(), rx);
 
         language::init(cx);
+        language_extension::init(extension_change_listeners.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -323,7 +327,6 @@ fn main() {
         zed::init(cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
-        language::init(cx);
         let telemetry = client.telemetry();
         telemetry.start(
             system_id.as_ref().map(|id| id.to_string()),
@@ -373,9 +376,11 @@ fn main() {
 
         SystemAppearance::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
-        extension::init(cx);
-        zed::theme_extensions::init(cx);
-        extension_host::extension_lsp_adapter::init(app_state.languages.clone(), cx);
+        theme_extension::init(
+            extension_change_listeners.clone(),
+            ThemeRegistry::global(cx),
+            cx.background_executor().clone(),
+        );
         command_palette::init(cx);
         let copilot_language_server_id = app_state.languages.next_language_server_id();
         copilot::init(
@@ -407,7 +412,6 @@ fn main() {
             app_state.client.telemetry().clone(),
             cx,
         );
-        let extension_change_listeners = ExtensionChangeListeners::global(cx);
         let api =
             extensions_ui::ConcreteExtensionRegistrationHooks::new(app_state.languages.clone());
         extension_host::init(

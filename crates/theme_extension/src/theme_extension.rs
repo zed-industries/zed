@@ -7,11 +7,14 @@ use fs::Fs;
 use gpui::{AppContext, BackgroundExecutor, SharedString, Task};
 use theme::{ThemeRegistry, ThemeSettings};
 
-pub fn init(cx: &AppContext) {
-    let extension_change_listeners = ExtensionChangeListeners::global(cx);
+pub fn init(
+    extension_change_listeners: Arc<ExtensionChangeListeners>,
+    theme_registry: Arc<ThemeRegistry>,
+    executor: BackgroundExecutor,
+) {
     extension_change_listeners.register_theme_listener(ExtensionThemeListener {
-        theme_registry: ThemeRegistry::global(cx),
-        executor: cx.background_executor().clone(),
+        theme_registry,
+        executor,
     });
 }
 
@@ -38,7 +41,7 @@ impl OnThemeExtensionChange for ExtensionThemeListener {
             .spawn(async move { theme_registry.load_user_theme(&theme_path, fs).await })
     }
 
-    fn reload_current_theme(&self, cx: &mut gpui::AppContext) {
+    fn reload_current_theme(&self, cx: &mut AppContext) {
         ThemeSettings::reload_current_theme(cx)
     }
 }

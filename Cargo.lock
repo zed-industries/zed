@@ -4180,6 +4180,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "language_extension",
  "log",
  "lsp",
  "node_runtime",
@@ -4198,6 +4199,7 @@ dependencies = [
  "task",
  "tempfile",
  "theme",
+ "theme_extension",
  "toml 0.8.19",
  "url",
  "util",
@@ -4215,13 +4217,11 @@ dependencies = [
  "collections",
  "db",
  "editor",
- "extension",
  "extension_host",
  "fs",
  "fuzzy",
  "gpui",
  "language",
- "lsp",
  "num-format",
  "picker",
  "project",
@@ -6527,6 +6527,23 @@ dependencies = [
  "tree-sitter-typescript",
  "unicase",
  "unindent",
+ "util",
+]
+
+[[package]]
+name = "language_extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "extension",
+ "futures 0.3.31",
+ "gpui",
+ "language",
+ "lsp",
+ "serde",
+ "serde_json",
  "util",
 ]
 
@@ -12356,6 +12373,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "theme_extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "extension",
+ "fs",
+ "gpui",
+ "theme",
+]
+
+[[package]]
 name = "theme_importer"
 version = "0.1.0"
 dependencies = [
@@ -15504,6 +15532,7 @@ dependencies = [
  "install_cli",
  "journal",
  "language",
+ "language_extension",
  "language_model",
  "language_models",
  "language_selector",
@@ -15552,6 +15581,7 @@ dependencies = [
  "telemetry_events",
  "terminal_view",
  "theme",
+ "theme_extension",
  "theme_selector",
  "time",
  "toolchain_selector",

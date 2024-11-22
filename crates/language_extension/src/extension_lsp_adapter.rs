@@ -1,3 +1,9 @@
+use std::any::Any;
+use std::ops::Range;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -5,7 +11,7 @@ use extension::{
     Extension, ExtensionChangeListeners, OnLanguageServerExtensionChange, WorktreeDelegate,
 };
 use futures::{Future, FutureExt};
-use gpui::{AppContext, AsyncAppContext};
+use gpui::AsyncAppContext;
 use language::{
     CodeLabel, HighlightId, Language, LanguageName, LanguageRegistry, LanguageServerBinaryStatus,
     LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
@@ -13,12 +19,10 @@ use language::{
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
 use serde_json::Value;
-use std::ops::Range;
-use std::{any::Any, path::PathBuf, pin::Pin, sync::Arc};
 use util::{maybe, ResultExt};
 
 /// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
-pub struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
+struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
 
 #[async_trait]
 impl WorktreeDelegate for WorktreeDelegateAdapter {
@@ -46,8 +50,10 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
     }
 }
 
-pub fn init(language_registry: Arc<LanguageRegistry>, cx: &AppContext) {
-    let extension_change_listeners = ExtensionChangeListeners::global(cx);
+pub fn init(
+    extension_change_listeners: Arc<ExtensionChangeListeners>,
+    language_registry: Arc<LanguageRegistry>,
+) {
     extension_change_listeners
         .register_language_server_listener(ExtensionLanguageServerListener { language_registry });
 }
@@ -92,14 +98,14 @@ impl OnLanguageServerExtensionChange for ExtensionLanguageServerListener {
     }
 }
 
-pub struct ExtensionLspAdapter {
+struct ExtensionLspAdapter {
     extension: Arc<dyn Extension>,
     language_server_id: LanguageServerName,
     language_name: LanguageName,
 }
 
 impl ExtensionLspAdapter {
-    pub fn new(
+    fn new(
         extension: Arc<dyn Extension>,
         language_server_id: LanguageServerName,
         language_name: LanguageName,
