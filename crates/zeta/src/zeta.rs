@@ -5,8 +5,8 @@ use collections::{BTreeMap, HashMap};
 use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
 use http_client::HttpClient;
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, Point, ToOffset,
-    ToPoint,
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, Point, Rope,
+    ToOffset, ToPoint,
 };
 use std::{borrow::Cow, cmp, fmt::Write, mem, ops::Range, path::Path, sync::Arc, time::Duration};
 
@@ -32,13 +32,21 @@ pub struct Zeta {
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
 }
 
-#[derive(Debug)]
 pub struct InlineCompletion {
     id: InlineCompletionId,
     path: Arc<Path>,
-    range: Range<Anchor>,
-    old_text: Arc<str>,
-    new_text: Arc<str>,
+    edits: Vec<(Range<Anchor>, String)>,
+    snapshot: BufferSnapshot,
+}
+
+impl std::fmt::Debug for InlineCompletion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InlineCompletion")
+            .field("id", &self.id)
+            .field("path", &self.path)
+            .field("edits", &self.edits)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Zeta {
@@ -208,16 +216,20 @@ impl Zeta {
         let offset = point.to_offset(&snapshot);
         let excerpt_range = excerpt_range_for_position(point, &snapshot);
         let prompt_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
-        let prompt = include_str!("./complete_prompt.md")
-            .replace("<events>", &events)
-            .replace("<excerpt>", &prompt_excerpt);
+        let prompt = include_str!("./complete_prompt.md").replace("<events>", &events);
         log::debug!("requesting completion: {}", prompt);
+        log::debug!("requesting completion: {}", prompt_excerpt);
 
         let api_url = self.api_url.clone();
         let api_key = self.api_key.clone();
         let request = open_ai::Request {
             model: self.model.to_string(),
-            messages: vec![open_ai::RequestMessage::User { content: prompt }],
+            messages: vec![
+                open_ai::RequestMessage::System { content: prompt },
+                open_ai::RequestMessage::User {
+                    content: prompt_excerpt,
+                },
+            ],
             stream: false,
             max_tokens: None,
             stop: Vec::new(),
@@ -225,6 +237,7 @@ impl Zeta {
             tool_choice: None,
             tools: Vec::new(),
         };
+
         let http_client = self.http_client.clone();
 
         cx.spawn(|this, mut cx| async move {
@@ -252,33 +265,78 @@ impl Zeta {
             content = content.replace(CURSOR_MARKER, "");
             log::debug!("sanitized completion response: {}", content);
 
-            if let (Some(orig_start), Some(sep), Some(upd_end)) = (
-                content.find(ORIGINAL_MARKER),
-                content.find(SEPARATOR_MARKER),
-                content.find(UPDATED_MARKER),
-            ) {
-                let old_start = orig_start + ORIGINAL_MARKER.len();
-                let new_start = sep + SEPARATOR_MARKER.len();
+            let mut new_text = content.as_str();
+            if new_text.starts_with("```") {
+                let newline_ix = new_text.find('\n').context("could not find newline")?;
+                new_text = new_text[newline_ix + 1..]
+                    .trim_end()
+                    .strip_suffix("\n```")
+                    .context("could not find closing codefence")?;
+            }
 
-                let old_text: Arc<str> = content[old_start..sep + 1].into();
-                let new_text: Arc<str> = content[new_start..upd_end + 1].into();
-                let range =
-                    fuzzy::search(&snapshot.as_rope().slice(excerpt_range.clone()), &old_text);
+            let old_text = snapshot
+                .text_for_range(excerpt_range.clone())
+                .collect::<String>();
+            let diff = similar::TextDiff::from_words(old_text.as_str(), new_text);
 
+            let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+            let mut old_start = excerpt_range.start;
+            for change in diff.iter_all_changes() {
+                let value = change.value();
+                match change.tag() {
+                    similar::ChangeTag::Equal => {
+                        old_start += value.len();
+                    }
+                    similar::ChangeTag::Delete => {
+                        let old_end = old_start + value.len();
+                        if let Some((last_old_range, _)) = edits.last_mut() {
+                            if last_old_range.end == old_start {
+                                last_old_range.end = old_end;
+                            } else {
+                                edits.push((old_start..old_end, String::new()));
+                            }
+                        } else {
+                            edits.push((old_start..old_end, String::new()));
+                        }
+
+                        old_start = old_end;
+                    }
+                    similar::ChangeTag::Insert => {
+                        if let Some((last_old_range, last_new_text)) = edits.last_mut() {
+                            if last_old_range.end == old_start {
+                                last_new_text.push_str(value);
+                            } else {
+                                edits.push((old_start..old_start, value.into()));
+                            }
+                        } else {
+                            edits.push((old_start..old_start, value.into()));
+                        }
+                    }
+                }
+            }
+
+            if edits.is_empty() {
+                this.update(&mut cx, |this, _cx| {
+                    this.push_event(Event::NoInlineCompletion { id });
+                })?;
+                Ok(None)
+            } else {
+                let edits = edits
+                    .into_iter()
+                    .map(|(old_range, new_text)| {
+                        (
+                            snapshot.anchor_after(old_range.start)
+                                ..snapshot.anchor_before(old_range.end),
+                            new_text,
+                        )
+                    })
+                    .collect();
                 Ok(Some(InlineCompletion {
                     id,
                     path,
-                    range: snapshot.anchor_after(excerpt_range.start + range.start)
-                        ..snapshot.anchor_before(excerpt_range.start + range.end),
-                    new_text,
-                    old_text,
+                    edits,
+                    snapshot,
                 }))
-            } else {
-                this.update(&mut cx, |this, _cx| {
-                    this.push_event(Event::NoInlineCompletion { id })
-                })?;
-
-                Ok(None)
             }
         })
     }
@@ -363,15 +421,15 @@ fn excerpt_range_for_position(point: Point, snapshot: &BufferSnapshot) -> Range<
         context_lines_before += (point.row + CONTEXT_LINES) - snapshot.max_point().row;
     }
 
-    let excerpt_start =
-        Point::new(point.row.saturating_sub(context_lines_before), 0).to_offset(snapshot);
-    let excerpt_end = cmp::min(
-        Point::new(point.row + context_lines_after, 0),
-        snapshot.max_point(),
-    )
-    .to_offset(snapshot);
+    let excerpt_start = Point::new(point.row.saturating_sub(context_lines_before), 0);
+    let excerpt_end_row = cmp::min(point.row + context_lines_after, snapshot.max_point().row);
+    let mut excerpt_end = Point::new(excerpt_end_row, snapshot.line_len(excerpt_end_row));
+    while excerpt_end > excerpt_start && excerpt_end.column == 0 {
+        excerpt_end.row -= 1;
+        excerpt_end.column = snapshot.line_len(excerpt_end.row);
+    }
 
-    excerpt_start..excerpt_end
+    excerpt_start.to_offset(snapshot)..excerpt_end.to_offset(snapshot)
 }
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
@@ -485,10 +543,24 @@ impl Event {
             }
             Event::Close { path } => format!("User closed file: {:?}", path),
             Event::InlineCompletionRejected(completion) => {
+                let mut edits = String::new();
+                for (old_range, new_text) in &completion.edits {
+                    if !edits.is_empty() {
+                        edits.push('\n');
+                    }
+
+                    edits.push_str(&format_edit(
+                        &completion
+                            .snapshot
+                            .text_for_range(old_range.clone())
+                            .collect::<String>(),
+                        new_text,
+                    ));
+                }
+
                 format!(
-                    "User rejected this suggested edit you provided for file {:?}:\n{}",
-                    completion.path,
-                    format_edit(&completion.old_text, &completion.new_text)
+                    "User rejected these edits you suggested for file {:?}:\n{}",
+                    completion.path, edits
                 )
             }
             Event::NoInlineCompletion { .. } => "<|DONE|>".into(),
@@ -601,49 +673,25 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn active_completion_text<'a>(
         &'a self,
-        buffer: &Model<Buffer>,
+        _buffer: &Model<Buffer>,
         _cursor_position: language::Anchor,
-        cx: &'a AppContext,
+        _cx: &'a AppContext,
     ) -> Option<inline_completion::CompletionProposal> {
         let completion = self.current_completion.as_ref()?;
-
-        let snapshot = buffer.read(cx).snapshot();
-        let old_text = snapshot
-            .text_for_range(completion.range.clone())
-            .collect::<String>();
-
-        let diff = similar::TextDiff::from_words(old_text.as_str(), completion.new_text.as_ref());
-        let remapper = similar::utils::TextDiffRemapper::from_text_diff(
-            &diff,
-            old_text.as_str(),
-            completion.new_text.as_ref(),
-        );
-        let changes = diff.ops().iter().flat_map(move |x| remapper.iter_slices(x));
-
-        let mut inlays = Vec::new();
-        let mut ix = completion.range.start.to_offset(&snapshot);
-
-        for (tag, value) in changes {
-            match tag {
-                similar::ChangeTag::Equal => {
-                    ix += value.len();
-                }
-                similar::ChangeTag::Delete => {
-                    ix += value.len();
-                }
-                similar::ChangeTag::Insert => {
-                    inlays.push(inline_completion::InlayProposal::Suggestion(
-                        snapshot.anchor_after(ix),
-                        language::Rope::from(value),
-                    ));
-                }
-            }
-        }
-
+        let inlays = completion
+            .edits
+            .iter()
+            .map(|(old_range, new_text)| {
+                inline_completion::InlayProposal::Suggestion(
+                    old_range.end,
+                    language::Rope::from(new_text.as_str()),
+                )
+            })
+            .collect::<Vec<_>>();
         Some(inline_completion::CompletionProposal {
             inlays,
-            text: language::Rope::from(completion.new_text.as_ref()),
-            delete_range: Some(completion.range.clone()),
+            delete_range: Some(completion.edits[0].0.clone()),
+            text: Rope::from(completion.edits[0].1.as_str()),
         })
     }
 }
@@ -831,10 +879,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_element_to_vec(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-        let zeta = zeta(cx);
-
-        let buffer = open_buffer(
+        assert_open_edit_complete(
             "main.rs",
             indoc! {"
                 fn main() {
@@ -844,58 +889,18 @@ mod tests {
                     }
                 }
             "},
-            &zeta,
-            cx,
-        );
-        let edited_1 = indoc! {"
-            fn main() {
-                let words = vec![<|user_cursor_is_here|>\"hello\";
-                for ch in word.chars() {
-                    dbg!(ch);
-                }
-            }
-        "};
-        let cursor_start = edited_1
-            .find(CURSOR_MARKER)
-            .expect(&format!("{CURSOR_MARKER} not found"));
-        let edited_1 = edited_1.replace(CURSOR_MARKER, "");
-        edit(&buffer, &edited_1, cx);
-        autocomplete(&buffer, cursor_start, &zeta, cx).await;
-
-        let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
-        assert_eq!(
-            autocompleted,
             indoc! {"
                 fn main() {
-                    let words = vec![\"hello\"];
+                    let words = vec![<|user_cursor_is_here|>\"hello\";
                     for ch in word.chars() {
                         dbg!(ch);
                     }
                 }
-            "}
-        );
-
-        let edited_2 = indoc! {"
-            fn main() {
-                let words = vec![\"hello\"];<|user_cursor_is_here|>
-                for ch in word.chars() {
-                    dbg!(ch);
-                }
-            }
-        "};
-        let cursor_start = edited_2
-            .find(CURSOR_MARKER)
-            .expect(&format!("{CURSOR_MARKER} not found"));
-        autocomplete(&buffer, cursor_start, &zeta, cx).await;
-
-        let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
-        assert_autocompleted(
-            autocompleted,
-            &[
-                "Ensure the code contains a loop that iterates over `words`",
-                "Ensure that there is a nested loop that iterates over each `word.chars()`",
+            "},
+            vec![
+                "Ensure that `words` assignment is valid",
+                "Ensure a nested loop is created",
             ],
-            &zeta,
             cx,
         )
         .await;
@@ -1141,7 +1146,7 @@ mod tests {
             .unwrap();
         if let Some(completion) = completion {
             buffer.update(cx, |buffer, cx| {
-                buffer.edit([(completion.range, completion.new_text)], None, cx);
+                buffer.edit(completion.edits.clone(), None, cx);
             });
         }
     }
