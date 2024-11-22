@@ -60,7 +60,7 @@ pub struct TaskTemplate {
     pub shell: Shell,
     /// Whether to show the task line in the task output.
     #[serde(default = "default_true")]
-    pub show_task: bool,
+    pub show_summary: bool,
     /// Whether to show the command line in the task output.
     #[serde(default = "default_true")]
     pub show_command: bool,
@@ -237,7 +237,7 @@ impl TaskTemplate {
                 reveal: self.reveal,
                 hide: self.hide,
                 shell: self.shell.clone(),
-                show_task: self.show_task,
+                show_summary: self.show_summary,
                 show_command: self.show_command,
             }),
         })

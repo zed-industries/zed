@@ -639,7 +639,7 @@ pub struct TaskState {
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
     pub hide: HideStrategy,
-    pub show_task: bool,
+    pub show_summary: bool,
     pub show_command: bool,
 }
 
@@ -1763,7 +1763,7 @@ impl Terminal {
 
         let (finished_successfully, task_line, command_line) = task_summary(task, error_code);
         let mut lines_to_show = Vec::new();
-        if task.show_task {
+        if task.show_summary {
             lines_to_show.push(task_line.as_str());
         }
         if task.show_command {

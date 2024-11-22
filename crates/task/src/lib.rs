@@ -51,8 +51,8 @@ pub struct SpawnInTerminal {
     pub hide: HideStrategy,
     /// Which shell to use when spawning the task.
     pub shell: Shell,
-    /// Whether to show the task line in the task output.
-    pub show_task: bool,
+    /// Whether to show the task summary line in the task output (sucess/failure).
+    pub show_summary: bool,
     /// Whether to show the command line in the task output.
     pub show_command: bool,
 }

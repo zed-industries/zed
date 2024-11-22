@@ -43,7 +43,7 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     //     }
     "shell": "system",
     // Whether to show the task line in the output of the spawned task, defaults to `true`.
-    "show_task": true,
+    "show_summary": true,
     // Whether to show the command line in the output of the spawned task, defaults to `true`.
     "show_output": true
   }
