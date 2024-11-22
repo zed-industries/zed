@@ -2,8 +2,8 @@ use anyhow::ensure;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::AsyncAppContext;
 use gpui::{AppContext, Task};
+use gpui::{AsyncAppContext, SharedString};
 use language::language_settings::language_settings;
 use language::LanguageName;
 use language::LanguageToolchainStore;
@@ -19,7 +19,7 @@ use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::{json, Value};
-use smol::{lock::OnceCell, process::Command};
+use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
 use std::str::FromStr;
@@ -498,8 +498,17 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .to_string()
 }
 
-#[derive(Default)]
-pub(crate) struct PythonToolchainProvider {}
+pub(crate) struct PythonToolchainProvider {
+    term: SharedString,
+}
+
+impl Default for PythonToolchainProvider {
+    fn default() -> Self {
+        Self {
+            term: SharedString::new_static("Virtual Environment"),
+        }
+    }
+}
 
 static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
@@ -591,8 +600,9 @@ impl ToolchainLister for PythonToolchainProvider {
                 .into();
                 Some(Toolchain {
                     name,
-                    path: toolchain.executable?.to_str()?.to_owned().into(),
+                    path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
+                    as_json: serde_json::to_value(toolchain).ok()?,
                 })
             })
             .collect();
@@ -602,6 +612,9 @@ impl ToolchainLister for PythonToolchainProvider {
             default: None,
             groups: Default::default(),
         }
+    }
+    fn term(&self) -> SharedString {
+        self.term.clone()
     }
 }
 
@@ -698,7 +711,7 @@ impl PyLspAdapter {
         let mut path = PathBuf::from(work_dir.as_ref());
         path.push("pylsp-venv");
         if !path.exists() {
-            Command::new(python_path)
+            util::command::new_smol_command(python_path)
                 .arg("-m")
                 .arg("venv")
                 .arg("pylsp-venv")
@@ -779,7 +792,7 @@ impl LspAdapter for PyLspAdapter {
         let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
         let pip_path = venv.join("bin").join("pip3");
         ensure!(
-            Command::new(pip_path.as_path())
+            util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server")
                 .output()
@@ -789,7 +802,7 @@ impl LspAdapter for PyLspAdapter {
             "python-lsp-server installation failed"
         );
         ensure!(
-            Command::new(pip_path.as_path())
+            util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server[all]")
                 .output()
@@ -799,7 +812,7 @@ impl LspAdapter for PyLspAdapter {
             "python-lsp-server[all] installation failed"
         );
         ensure!(
-            Command::new(pip_path)
+            util::command::new_smol_command(pip_path)
                 .arg("install")
                 .arg("pylsp-mypy")
                 .output()
@@ -904,13 +917,17 @@ impl LspAdapter for PyLspAdapter {
                     .unwrap_or_else(|| {
                         json!({
                             "plugins": {
-                                "rope_autoimport": {"enabled": true},
-                                "mypy": {"enabled": true}
-                            }
+                                "pycodestyle": {"enabled": false},
+                                "rope_autoimport": {"enabled": true, "memory": true},
+                                "pylsp_mypy": {"enabled": false}
+                            },
+                            "rope": {
+                                "ropeFolder": null
+                            },
                         })
                     });
 
-            // If python.pythonPath is not set in user config, do so using our toolchain picker.
+            // If user did not explicitly modify their python venv, use one from picker.
             if let Some(toolchain) = toolchain {
                 if user_settings.is_null() {
                     user_settings = Value::Object(serde_json::Map::default());
@@ -926,23 +943,22 @@ impl LspAdapter for PyLspAdapter {
                         .or_insert(Value::Object(serde_json::Map::default()))
                         .as_object_mut()
                     {
-                        jedi.insert(
-                            "environment".to_string(),
-                            Value::String(toolchain.path.clone().into()),
-                        );
+                        jedi.entry("environment".to_string())
+                            .or_insert_with(|| Value::String(toolchain.path.clone().into()));
                     }
                     if let Some(pylint) = python
-                        .entry("mypy")
+                        .entry("pylsp_mypy")
                         .or_insert(Value::Object(serde_json::Map::default()))
                         .as_object_mut()
                     {
-                        pylint.insert(
-                            "overrides".to_string(),
+                        pylint.entry("overrides".to_string()).or_insert_with(|| {
                             Value::Array(vec![
                                 Value::String("--python-executable".into()),
                                 Value::String(toolchain.path.into()),
-                            ]),
-                        );
+                                Value::String("--cache-dir=/dev/null".into()),
+                                Value::Bool(true),
+                            ])
+                        });
                     }
                 }
             }

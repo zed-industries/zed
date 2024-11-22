@@ -14,6 +14,11 @@ use gpui::{
     percentage, svg, Animation, AnimationExt, AnyView, AppContext, AsyncAppContext, Model, Render,
     Subscription, Task, Transformation,
 };
+use language_model::{
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+};
 use settings::SettingsStore;
 use std::time::Duration;
 use strum::IntoEnumIterator;
@@ -22,12 +27,6 @@ use ui::{
     IconName, IconPosition, IconSize, IntoElement, Label, LabelCommon, ParentElement, Styled,
     ViewContext, VisualContext, WindowContext,
 };
-
-use crate::{
-    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest, RateLimiter, Role,
-};
-use crate::{LanguageModelCompletionEvent, LanguageModelProviderState};
 
 use super::anthropic::count_anthropic_tokens;
 use super::open_ai::count_open_ai_tokens;
@@ -383,9 +382,7 @@ impl Render for ConfigurationView {
                                         .icon_size(IconSize::Medium)
                                         .style(ui::ButtonStyle::Filled)
                                         .full_width()
-                                        .on_click(|_, cx| {
-                                            inline_completion_button::initiate_sign_in(cx)
-                                        }),
+                                        .on_click(|_, cx| copilot::initiate_sign_in(cx)),
                                 )
                                 .child(
                                     div().flex().w_full().items_center().child(

@@ -17,9 +17,9 @@ use gpui::{
 };
 use language::Buffer;
 use language_model::{
-    logging::report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
+use language_models::report_assistant_event;
 use settings::Settings;
 use std::{
     cmp,

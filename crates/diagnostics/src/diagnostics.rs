@@ -776,7 +776,7 @@ impl Item for ProjectDiagnosticsEditor {
         }
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
         ToolbarItemLocation::PrimaryLeft
     }
 

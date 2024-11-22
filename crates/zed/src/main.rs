@@ -1,5 +1,3 @@
-// Allow binary to be called Zed for a nice application menu when running executable directly
-#![allow(non_snake_case)]
 // Disable command line from opening on release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -367,6 +365,7 @@ fn main() {
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
         auto_update::init(client.http_client(), cx);
+        auto_update_ui::init(cx);
         reliability::init(
             client.http_client(),
             system_id.as_ref().map(|id| id.to_string()),
@@ -387,7 +386,8 @@ fn main() {
             cx,
         );
         supermaven::init(app_state.client.clone(), cx);
-        language_model::init(
+        language_model::init(cx);
+        language_models::init(
             app_state.user_store.clone(),
             app_state.client.clone(),
             app_state.fs.clone(),
@@ -460,6 +460,7 @@ fn main() {
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
+        vcs_menu::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);

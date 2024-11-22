@@ -2090,19 +2090,33 @@ impl LspCommand for GetCodeActions {
         server_id: LanguageServerId,
         _: AsyncAppContext,
     ) -> Result<Vec<CodeAction>> {
+        let requested_kinds_set = if let Some(kinds) = self.kinds {
+            Some(kinds.into_iter().collect::<HashSet<_>>())
+        } else {
+            None
+        };
+
         Ok(actions
             .unwrap_or_default()
             .into_iter()
             .filter_map(|entry| {
-                if let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry {
-                    Some(CodeAction {
-                        server_id,
-                        range: self.range.clone(),
-                        lsp_action,
-                    })
-                } else {
-                    None
+                let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry else {
+                    return None;
+                };
+
+                if let Some((requested_kinds, kind)) =
+                    requested_kinds_set.as_ref().zip(lsp_action.kind.as_ref())
+                {
+                    if !requested_kinds.contains(kind) {
+                        return None;
+                    }
                 }
+
+                Some(CodeAction {
+                    server_id,
+                    range: self.range.clone(),
+                    lsp_action,
+                })
             })
             .collect())
     }

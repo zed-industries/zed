@@ -43,7 +43,6 @@ case "$target" in
     macos)
         upload_to_blob_store $bucket_name "target/aarch64-apple-darwin/release/Zed.dmg" "nightly/Zed-aarch64.dmg"
         upload_to_blob_store $bucket_name "target/x86_64-apple-darwin/release/Zed.dmg" "nightly/Zed-x86_64.dmg"
-        upload_to_blob_store $bucket_name "target/release/Zed.dmg" "nightly/Zed.dmg"
         upload_to_blob_store $bucket_name "target/latest-sha" "nightly/latest-sha"
         rm -f "target/aarch64-apple-darwin/release/Zed.dmg" "target/x86_64-apple-darwin/release/Zed.dmg" "target/release/Zed.dmg"
         rm -f "target/latest-sha"

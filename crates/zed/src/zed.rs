@@ -6,10 +6,13 @@ pub(crate) mod linux_prompts;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod open_listener;
+mod quick_action_bar;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
+use anyhow::Context as _;
 pub use app_menus::*;
+use assets::Assets;
 use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
@@ -18,17 +21,15 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
+use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem,
     PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, View, ViewContext,
     VisualContext, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
-
-use anyhow::Context as _;
-use assets::Assets;
-use futures::{channel::mpsc, select_biased, StreamExt};
 use outline_panel::OutlinePanel;
+use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use project::{DirectoryLister, Item};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -43,16 +44,14 @@ use settings::{
 use std::any::TypeId;
 use std::path::PathBuf;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use theme::ActiveTheme;
-use workspace::notifications::NotificationId;
-use workspace::CloseIntent;
-
-use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use terminal_view::terminal_panel::{self, TerminalPanel};
+use theme::ActiveTheme;
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
-use vim::VimModeSetting;
+use vim_mode_setting::VimModeSetting;
 use welcome::{BaseKeymap, MultibufferHint};
+use workspace::notifications::NotificationId;
+use workspace::CloseIntent;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -223,7 +222,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(cursor_position, cx);
         });
 
-        auto_update::notify_of_any_new_update(cx);
+        auto_update_ui::notify_of_any_new_update(cx);
 
         let handle = cx.view().downgrade();
         cx.on_window_should_close(move |cx| {
@@ -824,8 +823,13 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
-    cx.on_keyboard_layout_change(move |_| {
-        keyboard_layout_tx.unbounded_send(()).ok();
+    let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+    cx.on_keyboard_layout_change(move |cx| {
+        let next_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+        if next_mapping != current_mapping {
+            current_mapping = next_mapping;
+            keyboard_layout_tx.unbounded_send(()).ok();
+        }
     })
     .detach();
 
@@ -3499,7 +3503,8 @@ mod tests {
                 app_state.client.http_client().clone(),
                 cx,
             );
-            language_model::init(
+            language_model::init(cx);
+            language_models::init(
                 app_state.user_store.clone(),
                 app_state.client.clone(),
                 app_state.fs.clone(),
