@@ -6,7 +6,6 @@ pub mod wasm_host;
 #[cfg(test)]
 mod extension_store_test;
 
-use crate::extension_lsp_adapter::ExtensionLspAdapter;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -122,7 +121,13 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     ) {
     }
 
-    fn register_lsp_adapter(&self, _language: LanguageName, _adapter: ExtensionLspAdapter) {}
+    fn register_lsp_adapter(
+        &self,
+        _extension: Arc<dyn Extension>,
+        _language_server_id: LanguageServerName,
+        _language: LanguageName,
+    ) {
+    }
 
     fn remove_lsp_adapter(&self, _language: &LanguageName, _server_name: &LanguageServerName) {}
 
@@ -1255,12 +1260,9 @@ impl ExtensionStore {
                     for (language_server_id, language_server_config) in &manifest.language_servers {
                         for language in language_server_config.languages() {
                             this.registration_hooks.register_lsp_adapter(
+                                extension.clone(),
+                                language_server_id.clone(),
                                 language.clone(),
-                                ExtensionLspAdapter {
-                                    extension: extension.clone(),
-                                    language_server_id: language_server_id.clone(),
-                                    language_name: language.clone(),
-                                },
                             );
                         }
                     }
