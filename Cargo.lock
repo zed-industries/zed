@@ -13688,7 +13688,6 @@ dependencies = [
  "parking_lot",
  "regex",
  "release_channel",
- "schemars",
  "search",
  "serde",
  "serde_derive",
