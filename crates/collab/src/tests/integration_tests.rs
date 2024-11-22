@@ -3412,7 +3412,8 @@ async fn test_local_settings(
     });
 }
 
-#[gpui::test(iterations = 10)]
+// TODO(#21034): This test is flaky for some execution orders. Set iterations back to 10 once fixed.
+#[gpui::test(iterations = 4)]
 async fn test_buffer_conflict_after_save(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,

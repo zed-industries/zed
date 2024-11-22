@@ -1775,9 +1775,7 @@ impl Buffer {
         match file.disk_state() {
             DiskState::New => false,
             DiskState::Present { mtime } => match self.saved_mtime {
-                Some(saved_mtime) => {
-                    mtime.bad_is_greater_than(saved_mtime) && self.has_unsaved_edits()
-                }
+                Some(saved_mtime) => mtime != saved_mtime && self.has_unsaved_edits(),
                 None => true,
             },
             DiskState::Deleted => true,
