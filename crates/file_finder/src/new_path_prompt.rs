@@ -75,17 +75,12 @@ impl Match {
     ) -> Task<anyhow::Result<ProjectPath>> {
         let worktree_id = if let Some(path_match) = &self.path_match {
             WorktreeId::from_usize(path_match.worktree_id)
-        } else if let Some(worktree) = project
-            .read(cx)
-            .visible_worktrees(cx)
-            .filter(|worktree| {
-                worktree
-                    .read(cx)
-                    .root_entry()
-                    .is_some_and(|entry| entry.is_dir())
-            })
-            .next()
-        {
+        } else if let Some(worktree) = project.read(cx).visible_worktrees(cx).find(|worktree| {
+            worktree
+                .read(cx)
+                .root_entry()
+                .is_some_and(|entry| entry.is_dir())
+        }) {
             worktree.read(cx).id()
         } else {
             let path = PathBuf::from(self.relative_path());
