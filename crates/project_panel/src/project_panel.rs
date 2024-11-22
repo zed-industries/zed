@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     cell::OnceCell,
+    cmp,
     collections::HashSet,
     ffi::OsStr,
     ops::Range,
@@ -548,7 +549,7 @@ impl ProjectPanel {
             .entry((project_path.worktree_id, path_buffer.clone()))
             .and_modify(|strongest_diagnostic_severity| {
                 *strongest_diagnostic_severity =
-                    std::cmp::min(*strongest_diagnostic_severity, diagnostic_severity);
+                    cmp::min(*strongest_diagnostic_severity, diagnostic_severity);
             })
             .or_insert(diagnostic_severity);
     }
@@ -1304,31 +1305,29 @@ impl ProjectPanel {
         let (worktree_id, worktree) = sanitized_entries
             .iter()
             .map(|entry| entry.worktree_id)
-            .collect::<HashSet<WorktreeId>>()
-            .into_iter()
             .filter_map(|id| project.worktree_for_id(id, cx).map(|w| (id, w.read(cx))))
             .max_by(|(_, a), (_, b)| a.root_name().cmp(b.root_name()))?;
 
-        let marked_entries_in_worktree: HashSet<&SelectedEntry> = sanitized_entries
+        let marked_entries_in_worktree = sanitized_entries
             .iter()
             .filter(|e| e.worktree_id == worktree_id)
-            .collect();
-
-        let entry = marked_entries_in_worktree
+            .collect::<HashSet<_>>();
+        let latest_entry = marked_entries_in_worktree
             .iter()
             .max_by(|a, b| {
-                let a_entry = worktree.entry_for_id(a.entry_id);
-                let b_entry = worktree.entry_for_id(b.entry_id);
-                match (a_entry, b_entry) {
+                match (
+                    worktree.entry_for_id(a.entry_id),
+                    worktree.entry_for_id(b.entry_id),
+                ) {
                     (Some(a), Some(b)) => {
                         compare_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
                     }
-                    _ => std::cmp::Ordering::Equal,
+                    _ => cmp::Ordering::Equal,
                 }
             })
-            .map(|e| worktree.entry_for_id(e.entry_id))??;
+            .and_then(|e| worktree.entry_for_id(e.entry_id))?;
 
-        let parent_path = entry.path.parent()?;
+        let parent_path = latest_entry.path.parent()?;
         let parent_entry = worktree.entry_for_path(parent_path)?;
 
         // Remove all siblings that are being deleted except the last marked entry
@@ -1336,7 +1335,7 @@ impl ProjectPanel {
             .snapshot()
             .child_entries(parent_path)
             .filter(|sibling| {
-                sibling.id == entry.id
+                sibling.id == latest_entry.id
                     || !marked_entries_in_worktree.contains(&&SelectedEntry {
                         worktree_id,
                         entry_id: sibling.id,
@@ -1346,27 +1345,29 @@ impl ProjectPanel {
             .collect();
 
         project::sort_worktree_entries(&mut siblings);
-        let entry_index = siblings.iter().position(|sibling| sibling.id == entry.id)?;
+        let sibling_entry_index = siblings
+            .iter()
+            .position(|sibling| sibling.id == latest_entry.id)?;
 
-        // Try next sibling
-        if let Some(next_sibling) = siblings.get(entry_index + 1) {
+        if let Some(next_sibling) = sibling_entry_index
+            .checked_add(1)
+            .and_then(|i| siblings.get(i))
+        {
             return Some(SelectedEntry {
                 worktree_id,
                 entry_id: next_sibling.id,
             });
         }
-
-        // Try previous sibling
-        if entry_index > 0 {
-            if let Some(prev_sibling) = siblings.get(entry_index - 1) {
-                return Some(SelectedEntry {
-                    worktree_id,
-                    entry_id: prev_sibling.id,
-                });
-            }
+        if let Some(prev_sibling) = sibling_entry_index
+            .checked_sub(1)
+            .and_then(|i| siblings.get(i))
+        {
+            return Some(SelectedEntry {
+                worktree_id,
+                entry_id: prev_sibling.id,
+            });
         }
-
-        // Fall back to parent
+        // No neighbour sibling found, fall back to parent
         Some(SelectedEntry {
             worktree_id,
             entry_id: parent_entry.id,
