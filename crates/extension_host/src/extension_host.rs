@@ -1286,10 +1286,8 @@ impl ExtensionStore {
                         );
                     }
 
-                    let indexed_docs_provider_listeners =
-                        this.change_listeners.indexed_docs_provider_listeners();
-                    for (provider_id, _provider) in &manifest.indexed_docs_providers {
-                        for listener in &indexed_docs_provider_listeners {
+                    if let Some(listener) = this.change_listeners.indexed_docs_provider_listener() {
+                        for (provider_id, _provider) in &manifest.indexed_docs_providers {
                             listener.register(extension.clone(), provider_id.clone());
                         }
                     }

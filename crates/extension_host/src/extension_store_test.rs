@@ -586,7 +586,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let extension_change_listeners = Arc::new(ExtensionChangeListeners::new());
     extension_change_listeners.register_theme_listener(TestThemeExtensionChangeListener {
-        theme_registry: theme_registry.clone(),
+        theme_registry,
         executor: cx.executor(),
     });
     let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
