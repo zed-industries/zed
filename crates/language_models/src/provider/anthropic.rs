@@ -1,9 +1,4 @@
-use crate::{
-    settings::AllLanguageModelSettings, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
-};
-use crate::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
+use crate::AllLanguageModelSettings;
 use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
@@ -15,6 +10,12 @@ use gpui::{
     View, WhiteSpace,
 };
 use http_client::HttpClient;
+use language_model::{
+    LanguageModel, LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+};
+use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -256,7 +257,7 @@ pub fn count_anthropic_tokens(
             let mut string_messages = Vec::with_capacity(messages.len());
 
             for message in messages {
-                use crate::MessageContent;
+                use language_model::MessageContent;
 
                 let mut string_contents = String::new();
 

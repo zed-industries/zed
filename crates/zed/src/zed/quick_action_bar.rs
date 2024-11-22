@@ -1,3 +1,6 @@
+mod markdown_preview;
+mod repl_menu;
+
 use assistant::assistant_settings::AssistantSettings;
 use assistant::AssistantPanel;
 use editor::actions::{
@@ -6,7 +9,6 @@ use editor::actions::{
     SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine, ToggleOutline,
 };
 use editor::{Editor, EditorSettings};
-
 use gpui::{
     Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
@@ -21,9 +23,6 @@ use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 use zed_actions::InlineAssist;
-
-mod repl_menu;
-mod toggle_markdown_preview;
 
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,

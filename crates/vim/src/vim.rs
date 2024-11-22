@@ -41,14 +41,10 @@ use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use ui::{IntoElement, VisualContext};
+use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
-
-/// Whether or not to enable Vim mode.
-///
-/// Default: false
-pub struct VimModeSetting(pub bool);
 
 /// An Action to Switch between modes
 #[derive(Clone, Deserialize, PartialEq)]
@@ -89,7 +85,7 @@ impl_actions!(vim, [SwitchMode, PushOperator, Number, SelectRegister]);
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut AppContext) {
-    VimModeSetting::register(cx);
+    vim_mode_setting::init(cx);
     VimSettings::register(cx);
     VimGlobals::register(cx);
 
@@ -1119,23 +1115,6 @@ impl Vim {
             editor.set_inline_completions_enabled(matches!(vim.mode, Mode::Insert | Mode::Replace));
         });
         cx.notify()
-    }
-}
-
-impl Settings for VimModeSetting {
-    const KEY: Option<&'static str> = Some("vim_mode");
-
-    type FileContent = Option<bool>;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        Ok(Self(
-            sources
-                .user
-                .or(sources.server)
-                .copied()
-                .flatten()
-                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
-        ))
     }
 }
 

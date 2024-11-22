@@ -1,10 +1,4 @@
 use super::open_ai::count_open_ai_tokens;
-use crate::provider::anthropic::map_to_language_model_completion_events;
-use crate::{
-    settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter,
-};
 use anthropic::AnthropicError;
 use anyhow::{anyhow, Result};
 use client::{
@@ -22,6 +16,14 @@ use gpui::{
     ModelContext, ReadGlobal, Subscription, Task,
 };
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
+use language_model::{
+    CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, RateLimiter, ZED_CLOUD_PROVIDER_ID,
+};
+use language_model::{
+    LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider,
+};
 use proto::TypedEnvelope;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -40,11 +42,11 @@ use strum::IntoEnumIterator;
 use thiserror::Error;
 use ui::{prelude::*, TintColor};
 
-use crate::{LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider};
+use crate::provider::anthropic::map_to_language_model_completion_events;
+use crate::AllLanguageModelSettings;
 
 use super::anthropic::count_anthropic_tokens;
 
-pub const PROVIDER_ID: &str = "zed.dev";
 pub const PROVIDER_NAME: &str = "Zed";
 
 const ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: Option<&str> =
@@ -255,7 +257,7 @@ impl LanguageModelProviderState for CloudLanguageModelProvider {
 
 impl LanguageModelProvider for CloudLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        LanguageModelProviderId(ZED_CLOUD_PROVIDER_ID.into())
     }
 
     fn name(&self) -> LanguageModelProviderName {
@@ -535,7 +537,7 @@ impl LanguageModel for CloudLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        LanguageModelProviderId(ZED_CLOUD_PROVIDER_ID.into())
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {

@@ -30,9 +30,10 @@ use gpui::{
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
-    logging::report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelTextStream, Role,
+    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelTextStream, Role,
 };
+use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};

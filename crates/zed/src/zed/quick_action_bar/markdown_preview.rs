@@ -5,7 +5,7 @@ use markdown_preview::{
 use ui::{prelude::*, text_for_keystroke, IconButtonShape, Tooltip};
 use workspace::Workspace;
 
-use crate::QuickActionBar;
+use super::QuickActionBar;
 
 impl QuickActionBar {
     pub fn render_toggle_markdown_preview(

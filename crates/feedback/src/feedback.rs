@@ -5,8 +5,6 @@ use workspace::Workspace;
 
 pub mod feedback_modal;
 
-actions!(feedback, [GiveFeedback, SubmitFeedback]);
-
 mod system_specs;
 
 actions!(

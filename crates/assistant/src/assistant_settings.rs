@@ -5,13 +5,12 @@ use anthropic::Model as AnthropicModel;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{AppContext, Pixels};
-use language_model::provider::open_ai;
-use language_model::settings::{
-    AnthropicSettingsContent, AnthropicSettingsContentV1, OllamaSettingsContent,
-    OpenAiSettingsContent, OpenAiSettingsContentV1, VersionedAnthropicSettingsContent,
-    VersionedOpenAiSettingsContent,
+use language_model::{CloudModel, LanguageModel};
+use language_models::{
+    provider::open_ai, AllLanguageModelSettings, AnthropicSettingsContent,
+    AnthropicSettingsContentV1, OllamaSettingsContent, OpenAiSettingsContent,
+    OpenAiSettingsContentV1, VersionedAnthropicSettingsContent, VersionedOpenAiSettingsContent,
 };
-use language_model::{settings::AllLanguageModelSettings, CloudModel, LanguageModel};
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
