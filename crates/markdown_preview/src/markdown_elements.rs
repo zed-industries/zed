@@ -13,7 +13,7 @@ pub enum ParsedMarkdownElement {
     BlockQuote(ParsedMarkdownBlockQuote),
     CodeBlock(ParsedMarkdownCodeBlock),
     /// A paragraph of text and other inline elements.
-    Paragraph(Vec<MarkdownParagraph>),
+    Paragraph(MarkdownParagraph),
     HorizontalRule(Range<usize>),
 }
 
@@ -26,8 +26,8 @@ impl ParsedMarkdownElement {
             Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
             Self::CodeBlock(code_block) => code_block.source_range.clone(),
             Self::Paragraph(text) => match &text[0] {
-                MarkdownParagraph::MarkdownText(t) => t.source_range.clone(),
-                MarkdownParagraph::MarkdownImage(image) => match image {
+                MarkdownParagraphChunk::Text(t) => t.source_range.clone(),
+                MarkdownParagraphChunk::Image(image) => match image {
                     Image::Web { source_range, .. } => source_range.clone(),
                     Image::Path { source_range, .. } => source_range.clone(),
                 },
@@ -41,11 +41,13 @@ impl ParsedMarkdownElement {
     }
 }
 
+pub type MarkdownParagraph = Vec<MarkdownParagraphChunk>;
+
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
-pub enum MarkdownParagraph {
-    MarkdownText(ParsedMarkdownText),
-    MarkdownImage(Image),
+pub enum MarkdownParagraphChunk {
+    Text(ParsedMarkdownText),
+    Image(Image),
 }
 
 #[derive(Debug)]
@@ -86,7 +88,7 @@ pub struct ParsedMarkdownCodeBlock {
 pub struct ParsedMarkdownHeading {
     pub source_range: Range<usize>,
     pub level: HeadingLevel,
-    pub contents: Vec<MarkdownParagraph>,
+    pub contents: MarkdownParagraph,
 }
 
 #[derive(Debug, PartialEq)]
@@ -120,7 +122,7 @@ pub enum ParsedMarkdownTableAlignment {
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownTableRow {
-    pub children: Vec<Vec<MarkdownParagraph>>,
+    pub children: Vec<MarkdownParagraph>,
 }
 
 impl Default for ParsedMarkdownTableRow {
@@ -136,7 +138,7 @@ impl ParsedMarkdownTableRow {
         }
     }
 
-    pub fn with_children(children: Vec<Vec<MarkdownParagraph>>) -> Self {
+    pub fn with_children(children: Vec<MarkdownParagraph>) -> Self {
         Self { children }
     }
 }
@@ -279,10 +281,7 @@ impl Display for Link {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Link::Web { url } => write!(f, "{}", url),
-            Link::Path {
-                display_path,
-                path: _,
-            } => write!(f, "{}", display_path.display()),
+            Link::Path { display_path, .. } => write!(f, "{}", display_path.display()),
         }
     }
 }
@@ -386,19 +385,8 @@ impl Image {
 impl Display for Image {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Image::Web {
-                source_range: _,
-                url,
-                link: _,
-                alt_text: _,
-            } => write!(f, "{}", url),
-            Image::Path {
-                source_range: _,
-                display_path,
-                path: _,
-                link: _,
-                alt_text: _,
-            } => write!(f, "{}", display_path.display()),
+            Image::Web { url, .. } => write!(f, "{}", url),
+            Image::Path { display_path, .. } => write!(f, "{}", display_path.display()),
         }
     }
 }

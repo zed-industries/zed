@@ -101,11 +101,11 @@ impl<'a> MarkdownParser<'a> {
             | Event::Code(_)
             | Event::Html(_)
             | Event::FootnoteReference(_)
-            | Event::Start(Tag::Link { link_type: _, dest_url: _, title: _, id: _ })
+            | Event::Start(Tag::Link { .. })
             | Event::Start(Tag::Emphasis)
             | Event::Start(Tag::Strong)
             | Event::Start(Tag::Strikethrough)
-            | Event::Start(Tag::Image { link_type: _, dest_url: _, title: _, id: _ }) => {
+            | Event::Start(Tag::Image { .. }) => {
                 true
             }
             _ => false,
@@ -134,12 +134,7 @@ impl<'a> MarkdownParser<'a> {
                     let text = self.parse_text(false, Some(source_range));
                     Some(vec![ParsedMarkdownElement::Paragraph(text)])
                 }
-                Tag::Heading {
-                    level,
-                    id: _,
-                    classes: _,
-                    attrs: _,
-                } => {
+                Tag::Heading { level, .. } => {
                     let level = *level;
                     self.cursor += 1;
                     let heading = self.parse_heading(level);
@@ -194,7 +189,7 @@ impl<'a> MarkdownParser<'a> {
         &mut self,
         should_complete_on_soft_break: bool,
         source_range: Option<Range<usize>>,
-    ) -> Vec<MarkdownParagraph> {
+    ) -> MarkdownParagraph {
         let source_range = source_range.unwrap_or_else(|| {
             self.current()
                 .map(|(_, range)| range.clone())
@@ -257,7 +252,7 @@ impl<'a> MarkdownParser<'a> {
                         region_ranges.push(prev_len..text.len());
                         regions.push(ParsedRegion {
                             code: false,
-                            link: Some(link.clone()),
+                            link: Some(link),
                         });
                         style.underline = true;
                         prev_len
@@ -321,19 +316,10 @@ impl<'a> MarkdownParser<'a> {
                     }
                     if let Some(mut image) = image.clone() {
                         let is_valid_image = match image.clone() {
-                            Image::Path {
-                                source_range: _,
-                                display_path,
-                                path: _,
-                                link: _,
-                                alt_text: _,
-                            } => gpui::ImageSource::try_from(display_path).is_ok(),
-                            Image::Web {
-                                source_range: _,
-                                url,
-                                link: _,
-                                alt_text: _,
-                            } => gpui::ImageSource::try_from(url).is_ok(),
+                            Image::Path { display_path, .. } => {
+                                gpui::ImageSource::try_from(display_path).is_ok()
+                            }
+                            Image::Web { url, .. } => gpui::ImageSource::try_from(url).is_ok(),
                         };
                         if is_valid_image {
                             text.truncate(text.len() - t.len());
@@ -358,7 +344,7 @@ impl<'a> MarkdownParser<'a> {
                             }
                             if !text.is_empty() {
                                 let parsed_regions =
-                                    MarkdownParagraph::MarkdownText(ParsedMarkdownText {
+                                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
                                         source_range: source_range.clone(),
                                         contents: text.clone(),
                                         highlights: highlights.clone(),
@@ -372,7 +358,7 @@ impl<'a> MarkdownParser<'a> {
                                 markdown_text_like.push(parsed_regions);
                             }
 
-                            let parsed_image = MarkdownParagraph::MarkdownImage(image.clone());
+                            let parsed_image = MarkdownParagraphChunk::Image(image.clone());
                             markdown_text_like.push(parsed_image);
                             style = MarkdownHighlightStyle::default();
                         }
@@ -401,23 +387,13 @@ impl<'a> MarkdownParser<'a> {
                     Tag::Emphasis => italic_depth += 1,
                     Tag::Strong => bold_depth += 1,
                     Tag::Strikethrough => strikethrough_depth += 1,
-                    Tag::Link {
-                        link_type: _,
-                        dest_url,
-                        title: _,
-                        id: _,
-                    } => {
+                    Tag::Link { dest_url, .. } => {
                         link = Link::identify(
                             self.file_location_directory.clone(),
                             dest_url.to_string(),
                         );
                     }
-                    Tag::Image {
-                        link_type: _,
-                        dest_url,
-                        title: _,
-                        id: _,
-                    } => {
+                    Tag::Image { dest_url, .. } => {
                         image = Image::identify(
                             source_range.clone(),
                             self.file_location_directory.clone(),
@@ -456,7 +432,7 @@ impl<'a> MarkdownParser<'a> {
             self.cursor += 1;
         }
         if !text.is_empty() {
-            markdown_text_like.push(MarkdownParagraph::MarkdownText(ParsedMarkdownText {
+            markdown_text_like.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
                 source_range: source_range.clone(),
                 contents: text,
                 highlights,
@@ -878,7 +854,7 @@ mod tests {
         assert_eq!(parsed.children.len(), 1);
         assert_eq!(
             parsed.children[0],
-            ParsedMarkdownElement::Paragraph(vec![MarkdownParagraph::MarkdownText(
+            ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
                 ParsedMarkdownText {
                     source_range: 0..35,
                     contents: "Some bostrikethroughld text".to_string(),
@@ -895,7 +871,7 @@ mod tests {
             panic!("Expected a paragraph");
         };
 
-        let paragraph = if let MarkdownParagraph::MarkdownText(text) = &new_text[0] {
+        let paragraph = if let MarkdownParagraphChunk::Text(text) = &new_text[0] {
             text
         } else {
             panic!("Expected a text");
@@ -961,7 +937,7 @@ mod tests {
         };
         assert_eq!(
             paragraph[0],
-            MarkdownParagraph::MarkdownImage(Image::Web {
+            MarkdownParagraphChunk::Image(Image::Web {
                 source_range: 0..111,
                 url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
                 link: None,
@@ -1391,7 +1367,7 @@ fn main() {
         ))
     }
 
-    fn h1(contents: Vec<MarkdownParagraph>, source_range: Range<usize>) -> ParsedMarkdownElement {
+    fn h1(contents: MarkdownParagraph, source_range: Range<usize>) -> ParsedMarkdownElement {
         ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
             source_range,
             level: HeadingLevel::H1,
@@ -1399,7 +1375,7 @@ fn main() {
         })
     }
 
-    fn h2(contents: Vec<MarkdownParagraph>, source_range: Range<usize>) -> ParsedMarkdownElement {
+    fn h2(contents: MarkdownParagraph, source_range: Range<usize>) -> ParsedMarkdownElement {
         ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
             source_range,
             level: HeadingLevel::H2,
@@ -1407,7 +1383,7 @@ fn main() {
         })
     }
 
-    fn h3(contents: Vec<MarkdownParagraph>, source_range: Range<usize>) -> ParsedMarkdownElement {
+    fn h3(contents: MarkdownParagraph, source_range: Range<usize>) -> ParsedMarkdownElement {
         ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
             source_range,
             level: HeadingLevel::H3,
@@ -1419,8 +1395,8 @@ fn main() {
         ParsedMarkdownElement::Paragraph(text(contents, source_range))
     }
 
-    fn text(contents: &str, source_range: Range<usize>) -> Vec<MarkdownParagraph> {
-        vec![MarkdownParagraph::MarkdownText(ParsedMarkdownText {
+    fn text(contents: &str, source_range: Range<usize>) -> MarkdownParagraph {
+        vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
             highlights: Vec::new(),
             region_ranges: Vec::new(),
             regions: Vec::new(),
@@ -1480,7 +1456,7 @@ fn main() {
         }
     }
 
-    fn row(children: Vec<Vec<MarkdownParagraph>>) -> ParsedMarkdownTableRow {
+    fn row(children: Vec<MarkdownParagraph>) -> ParsedMarkdownTableRow {
         ParsedMarkdownTableRow { children }
     }
 

@@ -1,8 +1,8 @@
 use crate::markdown_elements::{
-    HeadingLevel, Image, Link, MarkdownParagraph, ParsedMarkdown, ParsedMarkdownBlockQuote,
-    ParsedMarkdownCodeBlock, ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem,
-    ParsedMarkdownListItemType, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
-    ParsedMarkdownTableRow, ParsedMarkdownText,
+    HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
+    ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
+    ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
+    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow, ParsedMarkdownText,
 };
 use gpui::{
     div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
@@ -235,13 +235,13 @@ fn render_markdown_list_item(
     cx.with_common_p(item).into_any()
 }
 
-fn paragraph_len(paragraphs: &Vec<MarkdownParagraph>) -> usize {
+fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
     paragraphs
         .iter()
         .map(|paragraph| match paragraph {
-            MarkdownParagraph::MarkdownText(text) => text.contents.len(),
+            MarkdownParagraphChunk::Text(text) => text.contents.len(),
             // TODO: Scale column width based on image size
-            MarkdownParagraph::MarkdownImage(_) => 1,
+            MarkdownParagraphChunk::Image(_) => 1,
         })
         .sum()
 }
@@ -413,20 +413,14 @@ fn render_markdown_code_block(
         .into_any()
 }
 
-fn render_markdown_paragraph(
-    parsed: &Vec<MarkdownParagraph>,
-    cx: &mut RenderContext,
-) -> AnyElement {
+fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {
     cx.with_common_p(div())
         .children(render_markdown_text(parsed, cx))
         .flex()
         .into_any_element()
 }
 
-fn render_markdown_text(
-    parsed_new: &Vec<MarkdownParagraph>,
-    cx: &mut RenderContext,
-) -> Vec<AnyElement> {
+fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) -> Vec<AnyElement> {
     let mut any_element = vec![];
     // these values are cloned in-order satisfy borrow checker
     let syntax_theme = cx.syntax_theme.clone();
@@ -436,7 +430,7 @@ fn render_markdown_text(
 
     for parsed_region in parsed_new {
         match parsed_region {
-            MarkdownParagraph::MarkdownText(parsed) => {
+            MarkdownParagraphChunk::Text(parsed) => {
                 let element_id = cx.next_id(&parsed.source_range);
 
                 let highlights = gpui::combine_highlights(
@@ -493,10 +487,7 @@ fn render_markdown_text(
                             link_ranges,
                             move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
                                 Link::Web { url } => window_cx.open_url(url),
-                                Link::Path {
-                                    path,
-                                    display_path: _,
-                                } => {
+                                Link::Path { path, .. } => {
                                     if let Some(workspace) = &workspace {
                                         _ = workspace.update(window_cx, |workspace, cx| {
                                             workspace
@@ -512,7 +503,7 @@ fn render_markdown_text(
                 any_element.push(element);
             }
 
-            MarkdownParagraph::MarkdownImage(image) => {
+            MarkdownParagraphChunk::Image(image) => {
                 let (link, source_range, image_source, alt_text) = match image {
                     Image::Web {
                         link,
@@ -595,10 +586,7 @@ fn render_markdown_text(
                                 let workspace = workspace_clone.clone();
                                 move |_event, window_cx| match &link_click {
                                     Link::Web { url } => window_cx.open_url(url),
-                                    Link::Path {
-                                        display_path: _,
-                                        path,
-                                    } => {
+                                    Link::Path { path, .. } => {
                                         if let Some(workspace) = &workspace {
                                             _ = workspace.update(window_cx, |workspace, cx| {
                                                 workspace
@@ -688,10 +676,7 @@ fn fallback_text(
                 link_ranges,
                 move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
                     Link::Web { url } => window_cx.open_url(url),
-                    Link::Path {
-                        path,
-                        display_path: _,
-                    } => {
+                    Link::Path { path, .. } => {
                         if let Some(workspace) = &workspace {
                             _ = workspace.update(window_cx, |workspace, cx| {
                                 workspace.open_abs_path(path.clone(), false, cx).detach();
