@@ -912,7 +912,7 @@ mod tests {
     #[gpui::test]
     async fn test_new_cli_arg(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
-        let zeta = zeta(cx);
+        let zeta = Zeta::test(cx);
 
         let buffer = open_buffer(
             "crates/cli/src/main.rs",
@@ -971,7 +971,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         cx.executor().allow_parking();
-        let zeta = zeta(cx);
+        let zeta = Zeta::test(cx);
 
         let buffer = open_buffer(filename, initial, &zeta, cx);
         let cursor_start = edited
@@ -992,7 +992,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         cx.executor().allow_parking();
-        let zeta = zeta(cx);
+        let zeta = Zeta::test(cx);
 
         let buffer = open_buffer(filename, initial, &zeta, cx);
         let cursor_start = edited
@@ -1081,24 +1081,26 @@ mod tests {
         );
     }
 
-    fn zeta(cx: &mut TestAppContext) -> Model<Zeta> {
-        cx.new_model(|_| {
-            let (api_url, api_key, model) = match std::env::var("FIREWORKS_API_KEY") {
-                Ok(api_key) => (
-                    Arc::from("https://api.fireworks.ai/inference/v1"),
-                    Arc::from(api_key),
-                    Arc::from(std::env::var("FIREWORKS_MODEL").unwrap_or_else(|_| {
-                        "accounts/fireworks/models/qwen2p5-coder-32b-instruct".to_string()
-                    })),
-                ),
-                Err(_) => (
-                    Arc::from("http://localhost:11434/v1"),
-                    Arc::from(""),
-                    Arc::from("qwen2.5-coder:32b"),
-                ),
-            };
-            Zeta::new(api_url, api_key, model, Arc::new(ReqwestClient::new()))
-        })
+    impl Zeta {
+        fn test(cx: &mut TestAppContext) -> Model<Zeta> {
+            cx.new_model(|_| {
+                let (api_url, api_key, model) = match std::env::var("FIREWORKS_API_KEY") {
+                    Ok(api_key) => (
+                        Arc::from("https://api.fireworks.ai/inference/v1"),
+                        Arc::from(api_key),
+                        Arc::from(std::env::var("FIREWORKS_MODEL").unwrap_or_else(|_| {
+                            "accounts/fireworks/models/qwen2p5-coder-32b-instruct".to_string()
+                        })),
+                    ),
+                    Err(_) => (
+                        Arc::from("http://localhost:11434/v1"),
+                        Arc::from(""),
+                        Arc::from("qwen2.5-coder:32b"),
+                    ),
+                };
+                Zeta::new(api_url, api_key, model, Arc::new(ReqwestClient::new()))
+            })
+        }
     }
 
     fn edit(buffer: &Model<Buffer>, text: &str, cx: &mut TestAppContext) {
