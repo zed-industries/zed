@@ -650,10 +650,15 @@
     }
   },
   {
+    "context": "FileFinder",
+    "bindings": {
+      "ctrl": "file_finder::ToggleMenu"
+    }
+  },
+  {
     "context": "FileFinder && !menu_open",
     "bindings": {
       "ctrl-shift-p": "file_finder::SelectPrev",
-      "ctrl": "file_finder::OpenMenu",
       "ctrl-j": "pane::SplitDown",
       "ctrl-k": "pane::SplitUp",
       "ctrl-h": "pane::SplitLeft",

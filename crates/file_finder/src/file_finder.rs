@@ -42,7 +42,7 @@ use workspace::{
     Workspace,
 };
 
-actions!(file_finder, [SelectPrev, OpenMenu]);
+actions!(file_finder, [SelectPrev, ToggleMenu]);
 
 impl ModalView for FileFinder {
     fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> workspace::DismissDecision {
@@ -55,7 +55,6 @@ impl ModalView for FileFinder {
 
 pub struct FileFinder {
     picker: View<Picker<FileFinderDelegate>>,
-    picker_focus_handle: FocusHandle,
     init_modifiers: Option<Modifiers>,
 }
 
@@ -156,14 +155,8 @@ impl FileFinder {
     }
 
     fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
-        let picker_focus_handle = picker.focus_handle(cx);
-        picker.update(cx, |picker, _| {
-            picker.delegate.focus_handle = picker_focus_handle.clone();
-        });
         Self {
-            picker,
-            picker_focus_handle,
+            picker: cx.new_view(|cx| Picker::uniform_list(delegate, cx)),
             init_modifiers: cx.modifiers().modified().then_some(cx.modifiers()),
         }
     }
@@ -189,10 +182,12 @@ impl FileFinder {
         cx.dispatch_action(Box::new(menu::SelectPrev));
     }
 
-    fn handle_open_menu(&mut self, _: &OpenMenu, cx: &mut ViewContext<Self>) {
+    fn handle_toggle_menu(&mut self, _: &ToggleMenu, cx: &mut ViewContext<Self>) {
         self.picker.update(cx, |picker, cx| {
             let menu_handle = &picker.delegate.popover_menu_handle;
-            if !menu_handle.is_deployed() {
+            if menu_handle.is_deployed() {
+                menu_handle.hide(cx);
+            } else {
                 menu_handle.show(cx);
             }
         });
@@ -265,8 +260,8 @@ impl FileFinder {
 impl EventEmitter<DismissEvent> for FileFinder {}
 
 impl FocusableView for FileFinder {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
-        self.picker_focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
     }
 }
 
@@ -282,7 +277,7 @@ impl Render for FileFinder {
             .w(modal_max_width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_select_prev))
-            .on_action(cx.listener(Self::handle_open_menu))
+            .on_action(cx.listener(Self::handle_toggle_menu))
             .on_action(cx.listener(Self::go_to_file_split_left))
             .on_action(cx.listener(Self::go_to_file_split_right))
             .on_action(cx.listener(Self::go_to_file_split_up))
@@ -308,7 +303,6 @@ pub struct FileFinderDelegate {
     separate_history: bool,
     first_update: bool,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
-    focus_handle: FocusHandle,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -638,7 +632,6 @@ impl FileFinderDelegate {
             separate_history,
             first_update: true,
             popover_menu_handle: PopoverMenuHandle::default(),
-            focus_handle: cx.focus_handle(),
         }
     }
 
@@ -1263,11 +1256,7 @@ impl PickerDelegate for FileFinderDelegate {
                         .trigger(
                             Button::new("actions-trigger", "Split Options")
                                 .selected_label_color(Color::Accent)
-                                .key_binding(KeyBinding::for_action_in(
-                                    &OpenMenu,
-                                    &self.focus_handle,
-                                    cx,
-                                )),
+                                .key_binding(KeyBinding::for_action(&ToggleMenu, cx)),
                         )
                         .menu({
                             move |cx| {
