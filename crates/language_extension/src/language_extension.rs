@@ -11,31 +11,24 @@ pub fn init(
     extension_host_proxy: Arc<ExtensionHostProxy>,
     language_registry: Arc<LanguageRegistry>,
 ) {
-    extension_host_proxy.register_grammar_proxy(GrammarExtensionChangeListener {
-        language_registry: language_registry.clone(),
-    });
-    extension_host_proxy.register_language_proxy(LanguageExtensionChangeListener {
-        language_registry: language_registry.clone(),
-    });
-
-    extension_lsp_adapter::init(extension_host_proxy, language_registry);
+    let language_server_registry_proxy = LanguageServerRegistryProxy { language_registry };
+    extension_host_proxy.register_grammar_proxy(language_server_registry_proxy.clone());
+    extension_host_proxy.register_language_proxy(language_server_registry_proxy.clone());
+    extension_host_proxy.register_language_server_proxy(language_server_registry_proxy);
 }
 
-struct GrammarExtensionChangeListener {
+#[derive(Clone)]
+struct LanguageServerRegistryProxy {
     language_registry: Arc<LanguageRegistry>,
 }
 
-impl ExtensionGrammarProxy for GrammarExtensionChangeListener {
+impl ExtensionGrammarProxy for LanguageServerRegistryProxy {
     fn register_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
         self.language_registry.register_wasm_grammars(grammars)
     }
 }
 
-struct LanguageExtensionChangeListener {
-    language_registry: Arc<LanguageRegistry>,
-}
-
-impl ExtensionLanguageProxy for LanguageExtensionChangeListener {
+impl ExtensionLanguageProxy for LanguageServerRegistryProxy {
     fn register_language(
         &self,
         language: LanguageName,

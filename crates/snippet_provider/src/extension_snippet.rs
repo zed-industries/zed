@@ -9,16 +9,16 @@ use crate::SnippetRegistry;
 
 pub fn init(cx: &AppContext) {
     let proxy = ExtensionHostProxy::global(cx);
-    proxy.register_snippet_proxy(ExtensionSnippetListener {
+    proxy.register_snippet_proxy(SnippetRegistryProxy {
         snippet_registry: SnippetRegistry::global(cx),
     });
 }
 
-struct ExtensionSnippetListener {
+struct SnippetRegistryProxy {
     snippet_registry: Arc<SnippetRegistry>,
 }
 
-impl ExtensionSnippetProxy for ExtensionSnippetListener {
+impl ExtensionSnippetProxy for SnippetRegistryProxy {
     fn register_snippet(&self, path: &PathBuf, snippet_contents: &str) -> Result<()> {
         self.snippet_registry
             .register_snippets(path, snippet_contents)

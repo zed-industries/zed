@@ -18,16 +18,16 @@ impl ProjectDelegate for ExtensionProject {
 
 pub fn init(cx: &AppContext) {
     let proxy = ExtensionHostProxy::global(cx);
-    proxy.register_context_server_proxy(ExtensionIndexedDocsProviderListener {
+    proxy.register_context_server_proxy(ContextServerFactoryRegistryProxy {
         context_server_factory_registry: ContextServerFactoryRegistry::global(cx),
     });
 }
 
-struct ExtensionIndexedDocsProviderListener {
+struct ContextServerFactoryRegistryProxy {
     context_server_factory_registry: Model<ContextServerFactoryRegistry>,
 }
 
-impl ExtensionContextServerProxy for ExtensionIndexedDocsProviderListener {
+impl ExtensionContextServerProxy for ContextServerFactoryRegistryProxy {
     fn register_context_server(
         &self,
         extension: Arc<dyn Extension>,

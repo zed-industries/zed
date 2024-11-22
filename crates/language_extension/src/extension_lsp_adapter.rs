@@ -7,17 +7,19 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use extension::{Extension, ExtensionHostProxy, ExtensionLanguageServerProxy, WorktreeDelegate};
+use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
 use language::{
-    CodeLabel, HighlightId, Language, LanguageName, LanguageRegistry, LanguageServerBinaryStatus,
+    CodeLabel, HighlightId, Language, LanguageName, LanguageServerBinaryStatus,
     LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
 use serde_json::Value;
 use util::{maybe, ResultExt};
+
+use crate::LanguageServerRegistryProxy;
 
 /// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
 struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
@@ -48,19 +50,7 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
     }
 }
 
-pub fn init(
-    extension_host_proxy: Arc<ExtensionHostProxy>,
-    language_registry: Arc<LanguageRegistry>,
-) {
-    extension_host_proxy
-        .register_language_server_proxy(ExtensionLanguageServerListener { language_registry });
-}
-
-struct ExtensionLanguageServerListener {
-    language_registry: Arc<LanguageRegistry>,
-}
-
-impl ExtensionLanguageServerProxy for ExtensionLanguageServerListener {
+impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
     fn register_language_server(
         &self,
         extension: Arc<dyn Extension>,

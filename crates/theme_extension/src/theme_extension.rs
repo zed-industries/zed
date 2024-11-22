@@ -12,18 +12,18 @@ pub fn init(
     theme_registry: Arc<ThemeRegistry>,
     executor: BackgroundExecutor,
 ) {
-    extension_host_proxy.register_theme_proxy(ExtensionThemeListener {
+    extension_host_proxy.register_theme_proxy(ThemeRegistryProxy {
         theme_registry,
         executor,
     });
 }
 
-struct ExtensionThemeListener {
+struct ThemeRegistryProxy {
     theme_registry: Arc<ThemeRegistry>,
     executor: BackgroundExecutor,
 }
 
-impl ExtensionThemeProxy for ExtensionThemeListener {
+impl ExtensionThemeProxy for ThemeRegistryProxy {
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         self.executor.spawn(async move {
             let themes = theme::read_user_theme(&theme_path, fs).await?;

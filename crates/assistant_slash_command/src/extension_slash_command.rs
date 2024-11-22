@@ -16,16 +16,16 @@ use crate::{
 
 pub fn init(cx: &AppContext) {
     let proxy = ExtensionHostProxy::global(cx);
-    proxy.register_slash_command_proxy(ExtensionSlashCommandListener {
+    proxy.register_slash_command_proxy(SlashCommandRegistryProxy {
         slash_command_registry: SlashCommandRegistry::global(cx),
     });
 }
 
-struct ExtensionSlashCommandListener {
+struct SlashCommandRegistryProxy {
     slash_command_registry: Arc<SlashCommandRegistry>,
 }
 
-impl ExtensionSlashCommandProxy for ExtensionSlashCommandListener {
+impl ExtensionSlashCommandProxy for SlashCommandRegistryProxy {
     fn register_slash_command(
         &self,
         extension: Arc<dyn Extension>,

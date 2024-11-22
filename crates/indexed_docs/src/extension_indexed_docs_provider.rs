@@ -12,16 +12,16 @@ use crate::{
 
 pub fn init(cx: &AppContext) {
     let proxy = ExtensionHostProxy::global(cx);
-    proxy.register_indexed_docs_provider_proxy(ExtensionIndexedDocsProviderListener {
+    proxy.register_indexed_docs_provider_proxy(IndexedDocsRegistryProxy {
         indexed_docs_registry: IndexedDocsRegistry::global(cx),
     });
 }
 
-struct ExtensionIndexedDocsProviderListener {
+struct IndexedDocsRegistryProxy {
     indexed_docs_registry: Arc<IndexedDocsRegistry>,
 }
 
-impl ExtensionIndexedDocsProviderProxy for ExtensionIndexedDocsProviderListener {
+impl ExtensionIndexedDocsProviderProxy for IndexedDocsRegistryProxy {
     fn register_indexed_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
         self.indexed_docs_registry
             .register_provider(Box::new(ExtensionIndexedDocsProvider::new(
