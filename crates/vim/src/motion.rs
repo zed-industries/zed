@@ -1849,18 +1849,7 @@ fn unmatched_forward(
     let point = display_point.to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot);
 
-    // Ensure the range is contained by the current line.
-    let mut line_end = map.next_line_boundary(point).0;
-    if line_end == point {
-        line_end = map.max_point().to_point(map);
-    }
-
-    let line_range = map.prev_line_boundary(point).0..line_end;
-    let visible_line_range =
-        line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
-    let ranges = map
-        .buffer_snapshot
-        .enclosing_bracket_ranges(visible_line_range.clone());
+    let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point); //visible_line_range.clone());
     if let Some(ranges) = ranges {
         let mut closest_closing_destination = None;
         let mut closest_distance = usize::MAX;
@@ -1897,18 +1886,7 @@ fn unmatched_backward(
     let point = display_point.to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot);
 
-    // Ensure the range is contained by the current line.
-    let mut line_end = map.next_line_boundary(point).0;
-    if line_end == point {
-        line_end = map.max_point().to_point(map);
-    }
-
-    let line_range = map.prev_line_boundary(point).0..line_end;
-    let visible_line_range =
-        line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
-    let ranges = map
-        .buffer_snapshot
-        .enclosing_bracket_ranges(visible_line_range.clone());
+    let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point);
     if let Some(ranges) = ranges {
         let mut closest_starting_destination = None;
         let mut closest_distance = usize::MAX;
