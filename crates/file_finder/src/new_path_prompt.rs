@@ -1,6 +1,6 @@
 use futures::channel::oneshot;
 use fuzzy::PathMatch;
-use gpui::{HighlightStyle, Model, StyledText};
+use gpui::{HighlightStyle, Model, StyledText, Task};
 use picker::{Picker, PickerDelegate};
 use project::{Entry, PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
@@ -68,10 +68,15 @@ impl Match {
         }
     }
 
-    fn project_path(&self, project: &Project, cx: &WindowContext) -> Option<ProjectPath> {
+    fn project_path(
+        &self,
+        project: Model<Project>,
+        cx: &WindowContext,
+    ) -> Task<anyhow::Result<ProjectPath>> {
         let worktree_id = if let Some(path_match) = &self.path_match {
             WorktreeId::from_usize(path_match.worktree_id)
         } else if let Some(worktree) = project
+            .read(cx)
             .visible_worktrees(cx)
             .filter(|worktree| {
                 worktree
@@ -83,16 +88,40 @@ impl Match {
         {
             worktree.read(cx).id()
         } else {
-            // todo(): we should find_or_create a workspace.
-            return None;
+            let path = PathBuf::from(self.relative_path());
+            return cx.spawn(|mut cx| async move {
+                let home = project
+                    .update(&mut cx, |project, cx| {
+                        project.resolve_abs_path(
+                            &("~/".to_string() + &path.to_string_lossy().to_string()),
+                            cx,
+                        )
+                    })?
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("unable to resolve home"))?;
+                match home {
+                    project::ResolvedPath::ProjectPath { project_path, .. } => Ok(project_path),
+                    project::ResolvedPath::AbsPath { path, .. } => {
+                        let (worktree, path) = project
+                            .update(&mut cx, |project, cx| {
+                                project.find_or_create_worktree(path, false, cx)
+                            })?
+                            .await?;
+                        Ok(ProjectPath {
+                            worktree_id: worktree.read_with(&cx, |worktree, _| worktree.id())?,
+                            path: Arc::from(path),
+                        })
+                    }
+                }
+            });
         };
 
         let path = PathBuf::from(self.relative_path());
 
-        Some(ProjectPath {
+        Task::ready(Ok(ProjectPath {
             worktree_id,
             path: Arc::from(path),
-        })
+        }))
     }
 
     fn existing_prefix(&self, project: &Project, cx: &WindowContext) -> Option<PathBuf> {
@@ -350,7 +379,7 @@ impl PickerDelegate for NewPathDelegate {
     }
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
-        let Some(m) = self.matches.get(self.selected_index) else {
+        let Some(m) = self.matches.get(self.selected_index).cloned() else {
             return;
         };
 
@@ -368,31 +397,46 @@ impl PickerDelegate for NewPathDelegate {
             let m = m.clone();
             cx.spawn(|picker, mut cx| async move {
                 let answer = answer.await.ok();
-                picker
-                    .update(&mut cx, |picker, cx| {
-                        picker.delegate.should_dismiss = true;
-                        if answer != Some(0) {
-                            return;
-                        }
-                        if let Some(path) = m.project_path(picker.delegate.project.read(cx), cx) {
-                            if let Some(tx) = picker.delegate.tx.take() {
-                                tx.send(Some(path)).ok();
-                            }
-                        }
-                        cx.emit(gpui::DismissEvent);
-                    })
-                    .ok();
+                if answer != Some(0) {
+                    return Ok(());
+                }
+                let (task, tx) = picker.update(&mut cx, |picker, cx| {
+                    picker.delegate.should_dismiss = true;
+
+                    (
+                        m.project_path(picker.delegate.project.clone(), cx),
+                        picker.delegate.tx.take(),
+                    )
+                })?;
+                let path = task.await?;
+
+                if let Some(tx) = tx {
+                    tx.send(Some(path)).ok();
+                }
+                picker.update(&mut cx, |_, cx| {
+                    cx.emit(gpui::DismissEvent);
+                })
             })
             .detach();
             return;
         }
+        cx.spawn(|picker, mut cx| async move {
+            let (task, tx) = picker.update(&mut cx, |picker, cx| {
+                (
+                    m.project_path(picker.delegate.project.clone(), cx),
+                    picker.delegate.tx.take(),
+                )
+            })?;
+            let path = task.await?;
 
-        if let Some(path) = m.project_path(self.project.read(cx), cx) {
-            if let Some(tx) = self.tx.take() {
+            if let Some(tx) = tx {
                 tx.send(Some(path)).ok();
             }
-        }
-        cx.emit(gpui::DismissEvent);
+            picker.update(&mut cx, |_, cx| {
+                cx.emit(gpui::DismissEvent);
+            })
+        })
+        .detach();
     }
 
     fn should_dismiss(&self) -> bool {
