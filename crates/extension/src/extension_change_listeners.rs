@@ -6,7 +6,7 @@ use fs::Fs;
 use gpui::{AppContext, Global, ReadGlobal, SharedString, Task};
 use parking_lot::RwLock;
 
-use crate::Extension;
+use crate::{Extension, SlashCommand};
 
 pub trait OnThemeExtensionChange: Send + Sync + 'static {
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>>;
@@ -19,6 +19,10 @@ pub trait OnThemeExtensionChange: Send + Sync + 'static {
 }
 
 pub trait OnLanguageServerExtensionChange: Send + Sync + 'static {}
+
+pub trait OnSlashCommandExtensionChange: Send + Sync + 'static {
+    fn register(&self, extension: Arc<dyn Extension>, command: SlashCommand);
+}
 
 pub trait OnContextServerExtensionChange: Send + Sync + 'static {
     fn register(&self, extension: Arc<dyn Extension>, server_id: Arc<str>, cx: &mut AppContext);
@@ -36,6 +40,7 @@ impl Global for GlobalExtensionChangeListeners {}
 #[derive(Default)]
 pub struct ExtensionChangeListeners {
     theme_listener: RwLock<Option<Arc<dyn OnThemeExtensionChange>>>,
+    slash_command_listener: RwLock<Option<Arc<dyn OnSlashCommandExtensionChange>>>,
     context_server_listener: RwLock<Option<Arc<dyn OnContextServerExtensionChange>>>,
     indexed_docs_provider_listener: RwLock<Option<Arc<dyn OnIndexedDocsProviderExtensionChange>>>,
 }
@@ -58,6 +63,7 @@ impl ExtensionChangeListeners {
     pub fn new() -> Self {
         Self {
             theme_listener: RwLock::default(),
+            slash_command_listener: RwLock::default(),
             context_server_listener: RwLock::default(),
             indexed_docs_provider_listener: RwLock::default(),
         }
@@ -72,6 +78,19 @@ impl ExtensionChangeListeners {
         listener: impl OnThemeExtensionChange + Send + Sync + 'static,
     ) {
         self.theme_listener.write().replace(Arc::new(listener));
+    }
+
+    pub fn slash_command_listener(&self) -> Option<Arc<dyn OnSlashCommandExtensionChange>> {
+        self.slash_command_listener.read().clone()
+    }
+
+    pub fn register_slash_command_listener(
+        &self,
+        listener: impl OnSlashCommandExtensionChange + Send + Sync + 'static,
+    ) {
+        self.slash_command_listener
+            .write()
+            .replace(Arc::new(listener));
     }
 
     pub fn context_server_listener(&self) -> Option<Arc<dyn OnContextServerExtensionChange>> {

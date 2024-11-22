@@ -4211,7 +4211,6 @@ name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant_slash_command",
  "client",
  "collections",
  "db",
@@ -15465,7 +15464,6 @@ dependencies = [
  "ashpd",
  "assets",
  "assistant",
- "assistant_slash_command",
  "async-watch",
  "audio",
  "auto_update",

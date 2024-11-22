@@ -3,16 +3,36 @@ use std::sync::{atomic::AtomicBool, Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use extension::{Extension, WorktreeDelegate};
-use gpui::{Task, WeakView, WindowContext};
+use extension::{
+    Extension, ExtensionChangeListeners, OnSlashCommandExtensionChange, WorktreeDelegate,
+};
+use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use workspace::Workspace;
 
 use crate::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
-    SlashCommandResult,
+    SlashCommandRegistry, SlashCommandResult,
 };
+
+pub fn init(cx: &AppContext) {
+    let extension_change_listeners = ExtensionChangeListeners::global(cx);
+    extension_change_listeners.register_slash_command_listener(ExtensionSlashCommandListener {
+        slash_command_registry: SlashCommandRegistry::global(cx),
+    });
+}
+
+struct ExtensionSlashCommandListener {
+    slash_command_registry: Arc<SlashCommandRegistry>,
+}
+
+impl OnSlashCommandExtensionChange for ExtensionSlashCommandListener {
+    fn register(&self, extension: Arc<dyn Extension>, command: extension::SlashCommand) {
+        self.slash_command_registry
+            .register_command(ExtensionSlashCommand::new(extension, command), false)
+    }
+}
 
 /// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
 struct WorktreeDelegateAdapter(Arc<dyn LspAdapterDelegate>);

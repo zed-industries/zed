@@ -13,7 +13,6 @@ path = "src/extensions_ui.rs"
 
 [dependencies]
 anyhow.workspace = true
-assistant_slash_command.workspace = true
 client.workspace = true
 collections.workspace = true
 db.workspace = true

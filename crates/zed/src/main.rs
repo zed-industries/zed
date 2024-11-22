@@ -5,7 +5,6 @@ mod reliability;
 mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::SlashCommandRegistry;
 use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
@@ -410,7 +409,6 @@ fn main() {
         );
         let extension_change_listeners = ExtensionChangeListeners::global(cx);
         let api = extensions_ui::ConcreteExtensionRegistrationHooks::new(
-            SlashCommandRegistry::global(cx),
             SnippetRegistry::global(cx),
             app_state.languages.clone(),
         );

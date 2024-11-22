@@ -1,7 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
-use assistant_slash_command::{ExtensionSlashCommand, SlashCommandRegistry};
 use extension::Extension;
 use extension_host::extension_lsp_adapter::ExtensionLspAdapter;
 use language::{LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
@@ -9,19 +8,16 @@ use lsp::LanguageServerName;
 use snippet_provider::SnippetRegistry;
 
 pub struct ConcreteExtensionRegistrationHooks {
-    slash_command_registry: Arc<SlashCommandRegistry>,
     snippet_registry: Arc<SnippetRegistry>,
     language_registry: Arc<LanguageRegistry>,
 }
 
 impl ConcreteExtensionRegistrationHooks {
     pub fn new(
-        slash_command_registry: Arc<SlashCommandRegistry>,
         snippet_registry: Arc<SnippetRegistry>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Arc<dyn extension_host::ExtensionRegistrationHooks> {
         Arc::new(Self {
-            slash_command_registry,
             snippet_registry,
             language_registry,
         })
@@ -29,15 +25,6 @@ impl ConcreteExtensionRegistrationHooks {
 }
 
 impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistrationHooks {
-    fn register_slash_command(
-        &self,
-        extension: Arc<dyn Extension>,
-        command: extension::SlashCommand,
-    ) {
-        self.slash_command_registry
-            .register_command(ExtensionSlashCommand::new(extension, command), false)
-    }
-
     fn register_snippets(&self, path: &PathBuf, snippet_contents: &str) -> Result<()> {
         self.snippet_registry
             .register_snippets(path, snippet_contents)
