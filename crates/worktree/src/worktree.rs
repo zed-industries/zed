@@ -1506,12 +1506,9 @@ impl LocalWorktree {
         let path = path.into();
         let fs = self.fs.clone();
         let is_private = self.is_path_private(&path);
-        dbg!(&path);
         let Ok(abs_path) = self.absolutize(&path) else {
-            dbg!("oh no");
             return Task::ready(Err(anyhow!("invalid path {path:?}")));
         };
-        dbg!(&abs_path);
 
         let write = cx.background_executor().spawn({
             let fs = fs.clone();
