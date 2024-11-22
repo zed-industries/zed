@@ -498,7 +498,7 @@ impl Fs for RealFs {
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         let buffer_size = text.summary().len.min(10 * 1024);
         if let Some(path) = path.parent() {
-            self.create_dir(path).await?
+            self.create_dir(path).await?;
         }
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
