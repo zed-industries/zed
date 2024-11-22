@@ -8,7 +8,8 @@ use anyhow::Result;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
 use extension::{
-    Extension, ExtensionChangeListeners, OnLanguageServerExtensionChange, OnThemeExtensionChange,
+    Extension, ExtensionChangeListeners, OnGrammarExtensionChange, OnLanguageServerExtensionChange,
+    OnThemeExtensionChange,
 };
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
@@ -60,6 +61,16 @@ impl OnThemeExtensionChange for TestThemeExtensionChangeListener {
 
     fn reload_current_theme(&self, cx: &mut gpui::AppContext) {
         ThemeSettings::reload_current_theme(cx)
+    }
+}
+
+struct TestGrammarExtensionChangeListener {
+    language_registry: Arc<LanguageRegistry>,
+}
+
+impl OnGrammarExtensionChange for TestGrammarExtensionChangeListener {
+    fn register(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
+        self.language_registry.register_wasm_grammars(grammars)
     }
 }
 
@@ -126,10 +137,6 @@ impl ExtensionRegistrationHooks for TestExtensionRegistrationHooks {
     ) {
         self.language_registry
             .remove_languages(&languages_to_remove, &grammars_to_remove);
-    }
-
-    fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
-        self.language_registry.register_wasm_grammars(grammars)
     }
 }
 
@@ -371,6 +378,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         theme_registry: theme_registry.clone(),
         executor: cx.executor(),
     });
+    extension_change_listeners.register_grammar_listener(TestGrammarExtensionChangeListener {
+        language_registry: language_registry.clone(),
+    });
     extension_change_listeners.register_language_server_listener(
         TestLanguageServerExtensionChangeListener {
             language_registry: language_registry.clone(),
@@ -601,6 +611,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     extension_change_listeners.register_theme_listener(TestThemeExtensionChangeListener {
         theme_registry,
         executor: cx.executor(),
+    });
+    extension_change_listeners.register_grammar_listener(TestGrammarExtensionChangeListener {
+        language_registry: language_registry.clone(),
     });
     extension_change_listeners.register_language_server_listener(
         TestLanguageServerExtensionChangeListener {

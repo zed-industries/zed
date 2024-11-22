@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Result;
 use language::{LanguageRegistry, LoadedLanguage};
@@ -23,10 +23,6 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
     ) {
         self.language_registry
             .remove_languages(&languages_to_remove, &grammars_to_remove);
-    }
-
-    fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
-        self.language_registry.register_wasm_grammars(grammars)
     }
 
     fn register_language(

@@ -20,6 +20,10 @@ pub trait OnThemeExtensionChange: Send + Sync + 'static {
     fn reload_current_theme(&self, cx: &mut AppContext);
 }
 
+pub trait OnGrammarExtensionChange: Send + Sync + 'static {
+    fn register(&self, grammars: Vec<(Arc<str>, PathBuf)>);
+}
+
 pub trait OnLanguageServerExtensionChange: Send + Sync + 'static {
     fn register_language_server(
         &self,
@@ -65,6 +69,7 @@ impl Global for GlobalExtensionChangeListeners {}
 #[derive(Default)]
 pub struct ExtensionChangeListeners {
     theme_listener: RwLock<Option<Arc<dyn OnThemeExtensionChange>>>,
+    grammar_listener: RwLock<Option<Arc<dyn OnGrammarExtensionChange>>>,
     language_server_listener: RwLock<Option<Arc<dyn OnLanguageServerExtensionChange>>>,
     snippet_listener: RwLock<Option<Arc<dyn OnSnippetExtensionChange>>>,
     slash_command_listener: RwLock<Option<Arc<dyn OnSlashCommandExtensionChange>>>,
@@ -90,6 +95,7 @@ impl ExtensionChangeListeners {
     pub fn new() -> Self {
         Self {
             theme_listener: RwLock::default(),
+            grammar_listener: RwLock::default(),
             language_server_listener: RwLock::default(),
             snippet_listener: RwLock::default(),
             slash_command_listener: RwLock::default(),
@@ -107,6 +113,17 @@ impl ExtensionChangeListeners {
         listener: impl OnThemeExtensionChange + Send + Sync + 'static,
     ) {
         self.theme_listener.write().replace(Arc::new(listener));
+    }
+
+    pub fn grammar_listener(&self) -> Option<Arc<dyn OnGrammarExtensionChange>> {
+        self.grammar_listener.read().clone()
+    }
+
+    pub fn register_grammar_listener(
+        &self,
+        listener: impl OnGrammarExtensionChange + Send + Sync + 'static,
+    ) {
+        self.grammar_listener.write().replace(Arc::new(listener));
     }
 
     pub fn language_server_listener(&self) -> Option<Arc<dyn OnLanguageServerExtensionChange>> {

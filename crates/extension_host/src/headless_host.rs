@@ -349,10 +349,6 @@ impl ExtensionRegistrationHooks for HeadlessRegistrationHooks {
             .register_language(language, None, matcher, load)
     }
 
-    fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
-        self.language_registry.register_wasm_grammars(grammars)
-    }
-
     fn remove_languages(
         &self,
         languages_to_remove: &[LanguageName],

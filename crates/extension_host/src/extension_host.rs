@@ -104,8 +104,6 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     ) {
     }
 
-    fn register_wasm_grammars(&self, _grammars: Vec<(Arc<str>, PathBuf)>) {}
-
     fn remove_languages(
         &self,
         _languages_to_remove: &[LanguageName],
@@ -1113,8 +1111,9 @@ impl ExtensionStore {
             }));
         }
 
-        self.registration_hooks
-            .register_wasm_grammars(grammars_to_add);
+        if let Some(listener) = self.change_listeners.grammar_listener() {
+            listener.register(grammars_to_add);
+        }
 
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
