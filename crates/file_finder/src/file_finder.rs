@@ -55,6 +55,7 @@ impl ModalView for FileFinder {
 
 pub struct FileFinder {
     picker: View<Picker<FileFinderDelegate>>,
+    picker_focus_handle: FocusHandle,
     init_modifiers: Option<Modifiers>,
 }
 
@@ -155,8 +156,14 @@ impl FileFinder {
     }
 
     fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
+        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+        let picker_focus_handle = picker.focus_handle(cx);
+        picker.update(cx, |picker, _| {
+            picker.delegate.focus_handle = picker_focus_handle.clone();
+        });
         Self {
-            picker: cx.new_view(|cx| Picker::uniform_list(delegate, cx)),
+            picker,
+            picker_focus_handle,
             init_modifiers: cx.modifiers().modified().then_some(cx.modifiers()),
         }
     }
@@ -260,8 +267,8 @@ impl FileFinder {
 impl EventEmitter<DismissEvent> for FileFinder {}
 
 impl FocusableView for FileFinder {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.picker.focus_handle(cx)
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.picker_focus_handle.clone()
     }
 }
 
@@ -303,6 +310,7 @@ pub struct FileFinderDelegate {
     separate_history: bool,
     first_update: bool,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
+    focus_handle: FocusHandle,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -632,6 +640,7 @@ impl FileFinderDelegate {
             separate_history,
             first_update: true,
             popover_menu_handle: PopoverMenuHandle::default(),
+            focus_handle: cx.focus_handle(),
         }
     }
 
@@ -1235,6 +1244,7 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        let context = self.focus_handle.clone();
         Some(
             h_flex()
                 .w_full()
@@ -1256,15 +1266,19 @@ impl PickerDelegate for FileFinderDelegate {
                         .trigger(
                             Button::new("actions-trigger", "Split Options")
                                 .selected_label_color(Color::Accent)
-                                .key_binding(KeyBinding::for_action(&ToggleMenu, cx)),
+                                .key_binding(KeyBinding::for_action_in(&ToggleMenu, &context, cx)),
                         )
                         .menu({
                             move |cx| {
-                                Some(ContextMenu::build(cx, move |menu, _| {
-                                    menu.action("Split Left", pane::SplitLeft.boxed_clone())
-                                        .action("Split Right", pane::SplitRight.boxed_clone())
-                                        .action("Split Up", pane::SplitUp.boxed_clone())
-                                        .action("Split Down", pane::SplitDown.boxed_clone())
+                                Some(ContextMenu::build(cx, {
+                                    let context = context.clone();
+                                    move |menu, _| {
+                                        menu.context(context)
+                                            .action("Split Left", pane::SplitLeft.boxed_clone())
+                                            .action("Split Right", pane::SplitRight.boxed_clone())
+                                            .action("Split Up", pane::SplitUp.boxed_clone())
+                                            .action("Split Down", pane::SplitDown.boxed_clone())
+                                    }
                                 }))
                             }
                         }),
