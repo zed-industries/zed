@@ -2,10 +2,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use assistant_slash_command::{ExtensionSlashCommand, SlashCommandRegistry};
-use context_servers::ContextServerFactoryRegistry;
 use extension::Extension;
 use extension_host::extension_lsp_adapter::ExtensionLspAdapter;
-use gpui::Model;
 use language::{LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
 use lsp::LanguageServerName;
 use snippet_provider::SnippetRegistry;
@@ -14,7 +12,6 @@ pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,
     snippet_registry: Arc<SnippetRegistry>,
     language_registry: Arc<LanguageRegistry>,
-    context_server_factory_registry: Model<ContextServerFactoryRegistry>,
 }
 
 impl ConcreteExtensionRegistrationHooks {
@@ -22,13 +19,11 @@ impl ConcreteExtensionRegistrationHooks {
         slash_command_registry: Arc<SlashCommandRegistry>,
         snippet_registry: Arc<SnippetRegistry>,
         language_registry: Arc<LanguageRegistry>,
-        context_server_factory_registry: Model<ContextServerFactoryRegistry>,
     ) -> Arc<dyn extension_host::ExtensionRegistrationHooks> {
         Arc::new(Self {
             slash_command_registry,
             snippet_registry,
             language_registry,
-            context_server_factory_registry,
         })
     }
 }

@@ -11,7 +11,6 @@ use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, ProxySettings, UserStore};
 use collab_ui::channel_view::ChannelView;
-use context_servers::ContextServerFactoryRegistry;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
@@ -414,7 +413,6 @@ fn main() {
             SlashCommandRegistry::global(cx),
             SnippetRegistry::global(cx),
             app_state.languages.clone(),
-            ContextServerFactoryRegistry::global(cx),
         );
         extension_host::init(
             extension_change_listeners,
