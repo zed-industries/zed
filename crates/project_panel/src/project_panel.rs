@@ -1927,12 +1927,13 @@ impl ProjectPanel {
 
     fn disjoint_entries_for_removal(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
         let marked_entries = self.marked_entries();
+        let mut sanitized_entries = BTreeSet::new();
         if marked_entries.is_empty() {
-            return BTreeSet::default();
+            return sanitized_entries;
         }
 
         let project = self.project.read(cx);
-        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = marked_entries
+        let marked_entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = marked_entries
             .into_iter()
             .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
             .fold(HashMap::default(), |mut map, entry| {
@@ -1940,42 +1941,32 @@ impl ProjectPanel {
                 map
             });
 
-        let mut sanitized_entries = BTreeSet::new();
-        for (worktree_id, entries) in entries_by_worktree {
+        for (worktree_id, marked_entries) in marked_entries_by_worktree {
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 let worktree = worktree.read(cx);
-
-                let mut marked_dir_paths: Vec<Arc<Path>> = entries
+                let marked_dir_paths = marked_entries
                     .iter()
                     .filter_map(|entry| {
                         worktree.entry_for_id(entry.entry_id).and_then(|entry| {
                             if entry.is_dir() {
-                                Some(entry.path.clone())
+                                Some(entry.path.as_ref())
                             } else {
                                 None
                             }
                         })
                     })
-                    .collect();
+                    .collect::<BTreeSet<_>>();
 
-                marked_dir_paths.sort_by(|a, b| {
-                    b.as_ref()
-                        .components()
-                        .count()
-                        .cmp(&a.as_ref().components().count())
-                });
-
-                for entry in entries {
-                    if let Some(entry_info) = worktree.entry_for_id(entry.entry_id) {
-                        let entry_path = &entry_info.path;
-                        let should_exclude = marked_dir_paths.iter().any(|dir_path| {
-                            entry_path.starts_with(dir_path) && entry_path != dir_path
-                        });
-                        if !should_exclude {
-                            sanitized_entries.insert(entry);
-                        }
-                    }
-                }
+                sanitized_entries.extend(marked_entries.into_iter().filter(|entry| {
+                    let Some(entry_info) = worktree.entry_for_id(entry.entry_id) else {
+                        return false;
+                    };
+                    let entry_path = entry_info.path.as_ref();
+                    let inside_marked_dir = marked_dir_paths.iter().any(|&marked_dir_path| {
+                        entry_path != marked_dir_path && entry_path.starts_with(marked_dir_path)
+                    });
+                    !inside_marked_dir
+                }));
             }
         }
 
