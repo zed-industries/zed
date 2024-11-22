@@ -375,6 +375,7 @@ fn main() {
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         extension::init(cx);
         zed::theme_extensions::init(cx);
+        extension_host::extension_lsp_adapter::init(app_state.languages.clone(), cx);
         command_palette::init(cx);
         let copilot_language_server_id = app_state.languages.next_language_server_id();
         copilot::init(

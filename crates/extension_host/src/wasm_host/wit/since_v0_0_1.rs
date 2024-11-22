@@ -134,23 +134,25 @@ impl ExtensionImports for WasmState {
         server_name: String,
         status: LanguageServerInstallationStatus,
     ) -> wasmtime::Result<()> {
-        let status = match status {
-            LanguageServerInstallationStatus::CheckingForUpdate => {
-                LanguageServerBinaryStatus::CheckingForUpdate
-            }
-            LanguageServerInstallationStatus::Downloading => {
-                LanguageServerBinaryStatus::Downloading
-            }
-            LanguageServerInstallationStatus::Cached
-            | LanguageServerInstallationStatus::Downloaded => LanguageServerBinaryStatus::None,
-            LanguageServerInstallationStatus::Failed(error) => {
-                LanguageServerBinaryStatus::Failed { error }
-            }
-        };
+        if let Some(listener) = self.host.change_listeners.language_server_listener() {
+            let status = match status {
+                LanguageServerInstallationStatus::CheckingForUpdate => {
+                    LanguageServerBinaryStatus::CheckingForUpdate
+                }
+                LanguageServerInstallationStatus::Downloading => {
+                    LanguageServerBinaryStatus::Downloading
+                }
+                LanguageServerInstallationStatus::Cached
+                | LanguageServerInstallationStatus::Downloaded => LanguageServerBinaryStatus::None,
+                LanguageServerInstallationStatus::Failed(error) => {
+                    LanguageServerBinaryStatus::Failed { error }
+                }
+            };
 
-        self.host
-            .registration_hooks
-            .update_lsp_status(lsp::LanguageServerName(server_name.into()), status);
+            listener
+                .update_language_server_status(lsp::LanguageServerName(server_name.into()), status);
+        }
+
         Ok(())
     }
 

@@ -7,7 +7,9 @@ use crate::{
 use anyhow::Result;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
-use extension::{Extension, ExtensionChangeListeners, OnThemeExtensionChange};
+use extension::{
+    Extension, ExtensionChangeListeners, OnLanguageServerExtensionChange, OnThemeExtensionChange,
+};
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{BackgroundExecutor, Context, SemanticVersion, SharedString, Task, TestAppContext};
@@ -61,6 +63,46 @@ impl OnThemeExtensionChange for TestThemeExtensionChangeListener {
     }
 }
 
+struct TestLanguageServerExtensionChangeListener {
+    language_registry: Arc<LanguageRegistry>,
+}
+
+impl OnLanguageServerExtensionChange for TestLanguageServerExtensionChangeListener {
+    fn register_language_server(
+        &self,
+        extension: Arc<dyn Extension>,
+        language_server_id: LanguageServerName,
+        language: LanguageName,
+    ) {
+        self.language_registry.register_lsp_adapter(
+            language.clone(),
+            Arc::new(ExtensionLspAdapter::new(
+                extension,
+                language_server_id,
+                language,
+            )),
+        );
+    }
+
+    fn remove_language_server(
+        &self,
+        language: &LanguageName,
+        language_server_id: &LanguageServerName,
+    ) {
+        self.language_registry
+            .remove_lsp_adapter(language, language_server_id);
+    }
+
+    fn update_language_server_status(
+        &self,
+        language_server_id: LanguageServerName,
+        status: LanguageServerBinaryStatus,
+    ) {
+        self.language_registry
+            .update_lsp_status(language_server_id, status);
+    }
+}
+
 struct TestExtensionRegistrationHooks {
     language_registry: Arc<LanguageRegistry>,
 }
@@ -88,40 +130,6 @@ impl ExtensionRegistrationHooks for TestExtensionRegistrationHooks {
 
     fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
         self.language_registry.register_wasm_grammars(grammars)
-    }
-
-    fn register_lsp_adapter(
-        &self,
-        extension: Arc<dyn Extension>,
-        language_server_id: LanguageServerName,
-        language: LanguageName,
-    ) {
-        self.language_registry.register_lsp_adapter(
-            language.clone(),
-            Arc::new(ExtensionLspAdapter::new(
-                extension,
-                language_server_id,
-                language,
-            )),
-        );
-    }
-
-    fn update_lsp_status(
-        &self,
-        server_name: lsp::LanguageServerName,
-        status: LanguageServerBinaryStatus,
-    ) {
-        self.language_registry
-            .update_lsp_status(server_name, status);
-    }
-
-    fn remove_lsp_adapter(
-        &self,
-        language_name: &language::LanguageName,
-        server_name: &lsp::LanguageServerName,
-    ) {
-        self.language_registry
-            .remove_lsp_adapter(language_name, server_name);
     }
 }
 
@@ -363,6 +371,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         theme_registry: theme_registry.clone(),
         executor: cx.executor(),
     });
+    extension_change_listeners.register_language_server_listener(
+        TestLanguageServerExtensionChangeListener {
+            language_registry: language_registry.clone(),
+        },
+    );
     let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
         language_registry: language_registry.clone(),
     });
@@ -589,6 +602,11 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         theme_registry,
         executor: cx.executor(),
     });
+    extension_change_listeners.register_language_server_listener(
+        TestLanguageServerExtensionChangeListener {
+            language_registry: language_registry.clone(),
+        },
+    );
     let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
         language_registry: language_registry.clone(),
     });

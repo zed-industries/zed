@@ -4,6 +4,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{AppContext, Global, ReadGlobal, SharedString, Task};
+use language::{LanguageName, LanguageServerBinaryStatus};
+use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
 use crate::{Extension, SlashCommand};
@@ -18,7 +20,26 @@ pub trait OnThemeExtensionChange: Send + Sync + 'static {
     fn reload_current_theme(&self, cx: &mut AppContext);
 }
 
-pub trait OnLanguageServerExtensionChange: Send + Sync + 'static {}
+pub trait OnLanguageServerExtensionChange: Send + Sync + 'static {
+    fn register_language_server(
+        &self,
+        extension: Arc<dyn Extension>,
+        language_server_id: LanguageServerName,
+        language: LanguageName,
+    );
+
+    fn remove_language_server(
+        &self,
+        language: &LanguageName,
+        language_server_id: &LanguageServerName,
+    );
+
+    fn update_language_server_status(
+        &self,
+        language_server_id: LanguageServerName,
+        status: LanguageServerBinaryStatus,
+    );
+}
 
 pub trait OnSnippetExtensionChange: Send + Sync + 'static {
     fn register(&self, path: &PathBuf, snippet_contents: &str) -> Result<()>;
@@ -44,6 +65,7 @@ impl Global for GlobalExtensionChangeListeners {}
 #[derive(Default)]
 pub struct ExtensionChangeListeners {
     theme_listener: RwLock<Option<Arc<dyn OnThemeExtensionChange>>>,
+    language_server_listener: RwLock<Option<Arc<dyn OnLanguageServerExtensionChange>>>,
     snippet_listener: RwLock<Option<Arc<dyn OnSnippetExtensionChange>>>,
     slash_command_listener: RwLock<Option<Arc<dyn OnSlashCommandExtensionChange>>>,
     context_server_listener: RwLock<Option<Arc<dyn OnContextServerExtensionChange>>>,
@@ -68,6 +90,7 @@ impl ExtensionChangeListeners {
     pub fn new() -> Self {
         Self {
             theme_listener: RwLock::default(),
+            language_server_listener: RwLock::default(),
             snippet_listener: RwLock::default(),
             slash_command_listener: RwLock::default(),
             context_server_listener: RwLock::default(),
@@ -84,6 +107,19 @@ impl ExtensionChangeListeners {
         listener: impl OnThemeExtensionChange + Send + Sync + 'static,
     ) {
         self.theme_listener.write().replace(Arc::new(listener));
+    }
+
+    pub fn language_server_listener(&self) -> Option<Arc<dyn OnLanguageServerExtensionChange>> {
+        self.language_server_listener.read().clone()
+    }
+
+    pub fn register_language_server_listener(
+        &self,
+        listener: impl OnLanguageServerExtensionChange + Send + Sync + 'static,
+    ) {
+        self.language_server_listener
+            .write()
+            .replace(Arc::new(listener));
     }
 
     pub fn snippet_listener(&self) -> Option<Arc<dyn OnSnippetExtensionChange>> {

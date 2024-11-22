@@ -1,12 +1,14 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use extension::{Extension, WorktreeDelegate};
+use extension::{
+    Extension, ExtensionChangeListeners, OnLanguageServerExtensionChange, WorktreeDelegate,
+};
 use futures::{Future, FutureExt};
-use gpui::AsyncAppContext;
+use gpui::{AppContext, AsyncAppContext};
 use language::{
-    CodeLabel, HighlightId, Language, LanguageName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate,
+    CodeLabel, HighlightId, Language, LanguageName, LanguageRegistry, LanguageServerBinaryStatus,
+    LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
@@ -41,6 +43,52 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
 
     async fn shell_env(&self) -> Vec<(String, String)> {
         self.0.shell_env().await.into_iter().collect()
+    }
+}
+
+pub fn init(language_registry: Arc<LanguageRegistry>, cx: &AppContext) {
+    let extension_change_listeners = ExtensionChangeListeners::global(cx);
+    extension_change_listeners
+        .register_language_server_listener(ExtensionLanguageServerListener { language_registry });
+}
+
+struct ExtensionLanguageServerListener {
+    language_registry: Arc<LanguageRegistry>,
+}
+
+impl OnLanguageServerExtensionChange for ExtensionLanguageServerListener {
+    fn register_language_server(
+        &self,
+        extension: Arc<dyn Extension>,
+        language_server_id: LanguageServerName,
+        language: LanguageName,
+    ) {
+        self.language_registry.register_lsp_adapter(
+            language.clone(),
+            Arc::new(ExtensionLspAdapter::new(
+                extension,
+                language_server_id,
+                language,
+            )),
+        );
+    }
+
+    fn remove_language_server(
+        &self,
+        language: &LanguageName,
+        language_server_id: &LanguageServerName,
+    ) {
+        self.language_registry
+            .remove_lsp_adapter(language, language_server_id);
+    }
+
+    fn update_language_server_status(
+        &self,
+        language_server_id: LanguageServerName,
+        status: LanguageServerBinaryStatus,
+    ) {
+        self.language_registry
+            .update_lsp_status(language_server_id, status);
     }
 }
 

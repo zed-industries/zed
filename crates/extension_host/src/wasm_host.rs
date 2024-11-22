@@ -4,8 +4,9 @@ use crate::{ExtensionManifest, ExtensionRegistrationHooks};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use extension::{
-    CodeLabel, Command, Completion, KeyValueStoreDelegate, ProjectDelegate, SlashCommand,
-    SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
+    CodeLabel, Command, Completion, ExtensionChangeListeners, KeyValueStoreDelegate,
+    ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
+    WorktreeDelegate,
 };
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
@@ -40,6 +41,7 @@ pub struct WasmHost {
     release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
+    pub(crate) change_listeners: Arc<ExtensionChangeListeners>,
     pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
@@ -330,6 +332,7 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
+        change_listeners: Arc<ExtensionChangeListeners>,
         registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
         work_dir: PathBuf,
         cx: &mut AppContext,
@@ -346,6 +349,7 @@ impl WasmHost {
             work_dir,
             http_client,
             node_runtime,
+            change_listeners,
             registration_hooks,
             release_channel: ReleaseChannel::global(cx),
             _main_thread_message_task: task,

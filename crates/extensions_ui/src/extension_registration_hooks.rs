@@ -1,10 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
-use extension::Extension;
-use extension_host::extension_lsp_adapter::ExtensionLspAdapter;
-use language::{LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
-use lsp::LanguageServerName;
+use language::{LanguageRegistry, LoadedLanguage};
 
 pub struct ConcreteExtensionRegistrationHooks {
     language_registry: Arc<LanguageRegistry>,
@@ -19,40 +16,6 @@ impl ConcreteExtensionRegistrationHooks {
 }
 
 impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistrationHooks {
-    fn update_lsp_status(
-        &self,
-        server_name: lsp::LanguageServerName,
-        status: LanguageServerBinaryStatus,
-    ) {
-        self.language_registry
-            .update_lsp_status(server_name, status);
-    }
-
-    fn register_lsp_adapter(
-        &self,
-        extension: Arc<dyn Extension>,
-        language_server_id: LanguageServerName,
-        language: LanguageName,
-    ) {
-        self.language_registry.register_lsp_adapter(
-            language.clone(),
-            Arc::new(ExtensionLspAdapter::new(
-                extension,
-                language_server_id,
-                language,
-            )),
-        );
-    }
-
-    fn remove_lsp_adapter(
-        &self,
-        language_name: &language::LanguageName,
-        server_name: &lsp::LanguageServerName,
-    ) {
-        self.language_registry
-            .remove_lsp_adapter(language_name, server_name);
-    }
-
     fn remove_languages(
         &self,
         languages_to_remove: &[language::LanguageName],

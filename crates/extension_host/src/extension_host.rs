@@ -12,8 +12,8 @@ use async_tar::Archive;
 use client::{proto, telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
 use collections::{btree_map, BTreeMap, HashMap, HashSet};
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+use extension::ExtensionChangeListeners;
 pub use extension::ExtensionManifest;
-use extension::{Extension, ExtensionChangeListeners};
 use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
@@ -32,7 +32,6 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
     QUERY_FILENAME_PREFIXES,
 };
-use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
@@ -105,29 +104,12 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     ) {
     }
 
-    fn register_lsp_adapter(
-        &self,
-        _extension: Arc<dyn Extension>,
-        _language_server_id: LanguageServerName,
-        _language: LanguageName,
-    ) {
-    }
-
-    fn remove_lsp_adapter(&self, _language: &LanguageName, _server_name: &LanguageServerName) {}
-
     fn register_wasm_grammars(&self, _grammars: Vec<(Arc<str>, PathBuf)>) {}
 
     fn remove_languages(
         &self,
         _languages_to_remove: &[LanguageName],
         _grammars_to_remove: &[Arc<str>],
-    ) {
-    }
-
-    fn update_lsp_status(
-        &self,
-        _server_name: lsp::LanguageServerName,
-        _status: language::LanguageServerBinaryStatus,
     ) {
     }
 }
@@ -267,7 +249,7 @@ impl ExtensionStore {
         let (reload_tx, mut reload_rx) = unbounded();
         let (connection_registered_tx, mut connection_registered_rx) = unbounded();
         let mut this = Self {
-            change_listeners: extension_change_listeners,
+            change_listeners: extension_change_listeners.clone(),
             registration_hooks: extension_api.clone(),
             extension_index: Default::default(),
             installed_dir,
@@ -280,6 +262,7 @@ impl ExtensionStore {
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
+                extension_change_listeners,
                 extension_api,
                 work_dir,
                 cx,
@@ -1080,10 +1063,12 @@ impl ExtensionStore {
                 continue;
             };
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
-            for (language_server_name, config) in extension.manifest.language_servers.iter() {
-                for language in config.languages() {
-                    self.registration_hooks
-                        .remove_lsp_adapter(&language, language_server_name);
+
+            if let Some(listener) = self.change_listeners.language_server_listener() {
+                for (language_server_name, config) in extension.manifest.language_servers.iter() {
+                    for language in config.languages() {
+                        listener.remove_language_server(&language, language_server_name);
+                    }
                 }
             }
         }
@@ -1238,13 +1223,17 @@ impl ExtensionStore {
                 for (manifest, wasm_extension) in &wasm_extensions {
                     let extension = Arc::new(wasm_extension.clone());
 
-                    for (language_server_id, language_server_config) in &manifest.language_servers {
-                        for language in language_server_config.languages() {
-                            this.registration_hooks.register_lsp_adapter(
-                                extension.clone(),
-                                language_server_id.clone(),
-                                language.clone(),
-                            );
+                    if let Some(listener) = this.change_listeners.language_server_listener() {
+                        for (language_server_id, language_server_config) in
+                            &manifest.language_servers
+                        {
+                            for language in language_server_config.languages() {
+                                listener.register_language_server(
+                                    extension.clone(),
+                                    language_server_id.clone(),
+                                    language.clone(),
+                                );
+                            }
                         }
                     }
 
