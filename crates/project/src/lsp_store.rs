@@ -2020,6 +2020,7 @@ impl LspStore {
         &mut self,
         buffer_handle: &Model<Buffer>,
         range: Range<Anchor>,
+        kinds: Option<Vec<CodeActionKind>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
@@ -2033,7 +2034,7 @@ impl LspStore {
                 request: Some(proto::multi_lsp_query::Request::GetCodeActions(
                     GetCodeActions {
                         range: range.clone(),
-                        kinds: None,
+                        kinds: kinds.clone(),
                     }
                     .to_proto(project_id, buffer_handle.read(cx)),
                 )),
@@ -2059,7 +2060,7 @@ impl LspStore {
                         .map(|code_actions_response| {
                             GetCodeActions {
                                 range: range.clone(),
-                                kinds: None,
+                                kinds: kinds.clone(),
                             }
                             .response_from_proto(
                                 code_actions_response,
@@ -2084,7 +2085,7 @@ impl LspStore {
                 Some(range.start),
                 GetCodeActions {
                     range: range.clone(),
-                    kinds: None,
+                    kinds: kinds.clone(),
                 },
                 cx,
             );
