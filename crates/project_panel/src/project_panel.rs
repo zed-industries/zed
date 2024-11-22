@@ -1182,11 +1182,11 @@ impl ProjectPanel {
 
     fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
-            if self.marked_entries.is_empty() && self.selection.is_none() {
+            let items_to_delete = self.disjoint_entries_for_removal(cx);
+            if items_to_delete.is_empty() {
                 return None;
             }
             let project = self.project.read(cx);
-            let items_to_delete = self.disjoint_entries_for_removal(cx);
 
             let mut dirty_buffers = 0;
             let file_paths = items_to_delete
@@ -1263,7 +1263,7 @@ impl ProjectPanel {
             cx.spawn(|panel, mut cx| async move {
                 if let Some(answer) = answer {
                     if answer.await != Ok(0) {
-                        return Result::<(), anyhow::Error>::Ok(());
+                        return anyhow::Ok(());
                     }
                 }
                 for (entry_id, _) in file_paths {
@@ -1272,7 +1272,7 @@ impl ProjectPanel {
                             panel
                                 .project
                                 .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
-                                .ok_or_else(|| anyhow!("no such entry"))
+                                .context("no such entry")
                         })??
                         .await?;
                 }
@@ -1284,7 +1284,7 @@ impl ProjectPanel {
                         panel.select_last(&SelectLast {}, cx);
                     }
                 })?;
-                Result::<(), anyhow::Error>::Ok(())
+                Ok(())
             })
             .detach_and_log_err(cx);
             Some(())
