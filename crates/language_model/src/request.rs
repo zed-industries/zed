@@ -266,6 +266,7 @@ impl LanguageModelRequest {
             max_tokens: max_output_tokens,
             tools: Vec::new(),
             tool_choice: None,
+            prediction: None,
         }
     }
 

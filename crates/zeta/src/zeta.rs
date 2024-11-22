@@ -227,7 +227,7 @@ impl Zeta {
             messages: vec![
                 open_ai::RequestMessage::System { content: prompt },
                 open_ai::RequestMessage::User {
-                    content: prompt_excerpt,
+                    content: prompt_excerpt.clone(),
                 },
             ],
             stream: false,
@@ -236,6 +236,9 @@ impl Zeta {
             temperature: 0.0,
             tool_choice: None,
             tools: Vec::new(),
+            prediction: Some(open_ai::Prediction::Content {
+                content: prompt_excerpt,
+            }),
         };
 
         let http_client = self.http_client.clone();
@@ -1045,6 +1048,7 @@ mod tests {
                     temperature: 0.0,
                     tool_choice: None,
                     tools: Vec::new(),
+                    prediction: None,
                 },
             )
         });
