@@ -1040,7 +1040,6 @@ impl ExtensionStore {
                 continue;
             };
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
-
             for (language_server_name, config) in extension.manifest.language_servers.iter() {
                 for language in config.languages() {
                     self.change_listeners
