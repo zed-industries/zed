@@ -497,9 +497,7 @@ impl PaneAxis {
                     }
                 }
             }
-            if found_axis_index.is_none() {
-                return None; // no pane found
-            }
+            found_axis_index?; // no pane found
         }
 
         let min_size = match axis {
