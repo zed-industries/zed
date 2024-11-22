@@ -24,6 +24,8 @@ Suggest an edit.
 
 ### Constraints
 
+- Your edit suggestions **must** be as small possible.
+- Preserve indentation.
 - Do not suggest re-adding code the user has recently deleted
 - Do not suggest deleting lines that the user has recently inserted
 - Prefer completing what the user just typed over suggesting to delete what they typed

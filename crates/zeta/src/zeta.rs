@@ -228,8 +228,16 @@ impl Zeta {
         let http_client = self.http_client.clone();
 
         cx.spawn(|this, mut cx| async move {
+            let start = std::time::Instant::now();
             let mut response =
                 open_ai::complete(http_client.as_ref(), &api_url, &api_key, request).await?;
+
+            log::debug!(
+                "prompt_tokens: {:?}, completion_tokens: {:?}, elapsed: {:?}",
+                response.usage.prompt_tokens,
+                response.usage.completion_tokens,
+                start.elapsed()
+            );
             let choice = response.choices.pop().context("invalid response")?;
             let mut content = match choice.message {
                 open_ai::RequestMessage::Assistant { content, .. } => {
@@ -823,7 +831,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_element_to_vec(cx: &mut TestAppContext) {
-        assert_open_edit_complete(
+        cx.executor().allow_parking();
+        let zeta = zeta(cx);
+
+        let buffer = open_buffer(
             "main.rs",
             indoc! {"
                 fn main() {
@@ -833,18 +844,58 @@ mod tests {
                     }
                 }
             "},
+            &zeta,
+            cx,
+        );
+        let edited_1 = indoc! {"
+            fn main() {
+                let words = vec![<|user_cursor_is_here|>\"hello\";
+                for ch in word.chars() {
+                    dbg!(ch);
+                }
+            }
+        "};
+        let cursor_start = edited_1
+            .find(CURSOR_MARKER)
+            .expect(&format!("{CURSOR_MARKER} not found"));
+        let edited_1 = edited_1.replace(CURSOR_MARKER, "");
+        edit(&buffer, &edited_1, cx);
+        autocomplete(&buffer, cursor_start, &zeta, cx).await;
+
+        let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert_eq!(
+            autocompleted,
             indoc! {"
                 fn main() {
-                    let words = vec![<|user_cursor_is_here|>\"hello\";
+                    let words = vec![\"hello\"];
                     for ch in word.chars() {
                         dbg!(ch);
                     }
                 }
-            "},
-            vec![
-                "Ensure that `words` assignment is valid",
-                "Ensure a nested loop is created",
+            "}
+        );
+
+        let edited_2 = indoc! {"
+            fn main() {
+                let words = vec![\"hello\"];<|user_cursor_is_here|>
+                for ch in word.chars() {
+                    dbg!(ch);
+                }
+            }
+        "};
+        let cursor_start = edited_2
+            .find(CURSOR_MARKER)
+            .expect(&format!("{CURSOR_MARKER} not found"));
+        autocomplete(&buffer, cursor_start, &zeta, cx).await;
+
+        let autocompleted = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert_autocompleted(
+            autocompleted,
+            &[
+                "Ensure the code contains a loop that iterates over `words`",
+                "Ensure that there is a nested loop that iterates over each `word.chars()`",
             ],
+            &zeta,
             cx,
         )
         .await;
