@@ -79,6 +79,7 @@ impl LspAdapter for PythonLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let node = delegate.which("node".as_ref()).await?;
@@ -754,6 +755,7 @@ impl LspAdapter for PyLspAdapter {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         // We don't support user-provided pylsp, as global packages are discouraged in Python ecosystem.
