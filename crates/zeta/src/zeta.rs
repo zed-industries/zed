@@ -1092,7 +1092,7 @@ mod tests {
                     })),
                 ),
                 Err(_) => (
-                    Arc::from("http://localhost:11434"),
+                    Arc::from("http://localhost:11434/v1"),
                     Arc::from(""),
                     Arc::from("qwen2.5-coder:32b"),
                 ),
