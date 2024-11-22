@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{AppContext, Global, ReadGlobal, SharedString, Task};
-use language::{LanguageName, LanguageServerBinaryStatus};
+use language::{LanguageMatcher, LanguageName, LanguageServerBinaryStatus, LoadedLanguage};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
@@ -22,6 +22,22 @@ pub trait OnThemeExtensionChange: Send + Sync + 'static {
 
 pub trait OnGrammarExtensionChange: Send + Sync + 'static {
     fn register(&self, grammars: Vec<(Arc<str>, PathBuf)>);
+}
+
+pub trait OnLanguageExtensionChange: Send + Sync + 'static {
+    fn register_language(
+        &self,
+        language: LanguageName,
+        grammar: Option<Arc<str>>,
+        matcher: LanguageMatcher,
+        load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
+    );
+
+    fn remove_languages(
+        &self,
+        languages_to_remove: &[LanguageName],
+        grammars_to_remove: &[Arc<str>],
+    );
 }
 
 pub trait OnLanguageServerExtensionChange: Send + Sync + 'static {
@@ -70,6 +86,7 @@ impl Global for GlobalExtensionChangeListeners {}
 pub struct ExtensionChangeListeners {
     theme_listener: RwLock<Option<Arc<dyn OnThemeExtensionChange>>>,
     grammar_listener: RwLock<Option<Arc<dyn OnGrammarExtensionChange>>>,
+    language_listener: RwLock<Option<Arc<dyn OnLanguageExtensionChange>>>,
     language_server_listener: RwLock<Option<Arc<dyn OnLanguageServerExtensionChange>>>,
     snippet_listener: RwLock<Option<Arc<dyn OnSnippetExtensionChange>>>,
     slash_command_listener: RwLock<Option<Arc<dyn OnSlashCommandExtensionChange>>>,
@@ -96,6 +113,7 @@ impl ExtensionChangeListeners {
         Self {
             theme_listener: RwLock::default(),
             grammar_listener: RwLock::default(),
+            language_listener: RwLock::default(),
             language_server_listener: RwLock::default(),
             snippet_listener: RwLock::default(),
             slash_command_listener: RwLock::default(),
@@ -124,6 +142,17 @@ impl ExtensionChangeListeners {
         listener: impl OnGrammarExtensionChange + Send + Sync + 'static,
     ) {
         self.grammar_listener.write().replace(Arc::new(listener));
+    }
+
+    pub fn language_listener(&self) -> Option<Arc<dyn OnLanguageExtensionChange>> {
+        self.language_listener.read().clone()
+    }
+
+    pub fn register_language_listener(
+        &self,
+        listener: impl OnLanguageExtensionChange + Send + Sync + 'static,
+    ) {
+        self.language_listener.write().replace(Arc::new(listener));
     }
 
     pub fn language_server_listener(&self) -> Option<Arc<dyn OnLanguageServerExtensionChange>> {
@@ -189,5 +218,33 @@ impl ExtensionChangeListeners {
         self.indexed_docs_provider_listener
             .write()
             .replace(Arc::new(listener));
+    }
+}
+
+impl OnLanguageExtensionChange for ExtensionChangeListeners {
+    fn register_language(
+        &self,
+        language: LanguageName,
+        grammar: Option<Arc<str>>,
+        matcher: LanguageMatcher,
+        load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
+    ) {
+        let Some(listener) = self.language_listener() else {
+            return;
+        };
+
+        listener.register_language(language, grammar, matcher, load)
+    }
+
+    fn remove_languages(
+        &self,
+        languages_to_remove: &[LanguageName],
+        grammars_to_remove: &[Arc<str>],
+    ) {
+        let Some(listener) = self.language_listener() else {
+            return;
+        };
+
+        listener.remove_languages(languages_to_remove, grammars_to_remove)
     }
 }

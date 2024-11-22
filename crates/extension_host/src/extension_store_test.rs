@@ -3,7 +3,6 @@ use crate::{
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionSettings, ExtensionStore,
     GrammarManifestEntry, SchemaVersion, RELOAD_DEBOUNCE_DURATION,
 };
-use anyhow::Result;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
 use extension::ExtensionChangeListeners;
@@ -11,7 +10,7 @@ use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
+use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -27,34 +26,6 @@ use std::{
 };
 use theme::ThemeRegistry;
 use util::test::temp_tree;
-
-use crate::ExtensionRegistrationHooks;
-
-struct TestExtensionRegistrationHooks {
-    language_registry: Arc<LanguageRegistry>,
-}
-
-impl ExtensionRegistrationHooks for TestExtensionRegistrationHooks {
-    fn register_language(
-        &self,
-        language: language::LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: language::LanguageMatcher,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
-    ) {
-        self.language_registry
-            .register_language(language, grammar, matcher, load)
-    }
-
-    fn remove_languages(
-        &self,
-        languages_to_remove: &[language::LanguageName],
-        grammars_to_remove: &[Arc<str>],
-    ) {
-        self.language_registry
-            .remove_languages(&languages_to_remove, &grammars_to_remove);
-    }
-}
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -299,9 +270,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         extension_change_listeners.clone(),
         language_registry.clone(),
     );
-    let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
-        language_registry: language_registry.clone(),
-    });
     let node_runtime = NodeRuntime::unavailable();
 
     let store = cx.new_model(|cx| {
@@ -309,7 +277,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             PathBuf::from("/the-extension-dir"),
             None,
             extension_change_listeners.clone(),
-            registration_hooks.clone(),
             fs.clone(),
             http_client.clone(),
             http_client.clone(),
@@ -435,7 +402,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             PathBuf::from("/the-extension-dir"),
             None,
             extension_change_listeners,
-            registration_hooks,
             fs.clone(),
             http_client.clone(),
             http_client.clone(),
@@ -530,9 +496,6 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         extension_change_listeners.clone(),
         language_registry.clone(),
     );
-    let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
-        language_registry: language_registry.clone(),
-    });
     let node_runtime = NodeRuntime::unavailable();
 
     let mut status_updates = language_registry.language_server_binary_statuses();
@@ -627,7 +590,6 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             extensions_dir.clone(),
             Some(cache_dir),
             extension_change_listeners,
-            registration_hooks,
             fs.clone(),
             extension_client.clone(),
             builder_client,

@@ -11,8 +11,8 @@ use async_tar::Archive;
 use client::{proto, telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
 use collections::{btree_map, BTreeMap, HashMap, HashSet};
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
-use extension::ExtensionChangeListeners;
 pub use extension::ExtensionManifest;
+use extension::{ExtensionChangeListeners, OnLanguageExtensionChange};
 use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
@@ -93,27 +93,8 @@ pub fn is_version_compatible(
     true
 }
 
-pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
-    fn register_language(
-        &self,
-        _language: LanguageName,
-        _grammar: Option<Arc<str>>,
-        _matcher: language::LanguageMatcher,
-        _load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
-    ) {
-    }
-
-    fn remove_languages(
-        &self,
-        _languages_to_remove: &[LanguageName],
-        _grammars_to_remove: &[Arc<str>],
-    ) {
-    }
-}
-
 pub struct ExtensionStore {
     pub change_listeners: Arc<ExtensionChangeListeners>,
-    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     pub builder: Arc<ExtensionBuilder>,
     pub extension_index: ExtensionIndex,
     pub fs: Arc<dyn Fs>,
@@ -184,7 +165,6 @@ actions!(zed, [ReloadExtensions]);
 
 pub fn init(
     extension_change_listeners: Arc<ExtensionChangeListeners>,
-    registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
     node_runtime: NodeRuntime,
@@ -197,7 +177,6 @@ pub fn init(
             paths::extensions_dir().clone(),
             None,
             extension_change_listeners,
-            registration_hooks,
             fs,
             client.http_client().clone(),
             client.http_client().clone(),
@@ -230,7 +209,6 @@ impl ExtensionStore {
         extensions_dir: PathBuf,
         build_dir: Option<PathBuf>,
         extension_change_listeners: Arc<ExtensionChangeListeners>,
-        extension_api: Arc<dyn ExtensionRegistrationHooks>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
         builder_client: Arc<dyn HttpClient>,
@@ -247,7 +225,6 @@ impl ExtensionStore {
         let (connection_registered_tx, mut connection_registered_rx) = unbounded();
         let mut this = Self {
             change_listeners: extension_change_listeners.clone(),
-            registration_hooks: extension_api.clone(),
             extension_index: Default::default(),
             installed_dir,
             index_path,
@@ -260,7 +237,6 @@ impl ExtensionStore {
                 http_client.clone(),
                 node_runtime,
                 extension_change_listeners,
-                extension_api,
                 work_dir,
                 cx,
             ),
@@ -1075,7 +1051,7 @@ impl ExtensionStore {
         if let Some(listener) = theme_change_listener.as_ref() {
             listener.remove_user_themes(themes_to_remove);
         }
-        self.registration_hooks
+        self.change_listeners
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
         let languages_to_add = new_index
@@ -1120,7 +1096,7 @@ impl ExtensionStore {
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
-            self.registration_hooks.register_language(
+            self.change_listeners.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),

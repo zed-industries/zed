@@ -3,18 +3,17 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, TypedEnvelope};
 use collections::{HashMap, HashSet};
-use extension::{Extension, ExtensionChangeListeners, ExtensionManifest};
+use extension::{
+    Extension, ExtensionChangeListeners, ExtensionManifest, OnLanguageExtensionChange,
+};
 use fs::{Fs, RemoveOptions, RenameOptions};
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
 use http_client::HttpClient;
-use language::{LanguageConfig, LanguageName, LanguageQueries, LanguageRegistry, LoadedLanguage};
+use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
-use crate::{
-    wasm_host::{WasmExtension, WasmHost},
-    ExtensionRegistrationHooks,
-};
+use crate::wasm_host::{WasmExtension, WasmHost};
 
 #[derive(Clone, Debug)]
 pub struct ExtensionVersion {
@@ -25,7 +24,6 @@ pub struct ExtensionVersion {
 
 pub struct HeadlessExtensionStore {
     pub change_listeners: Arc<ExtensionChangeListeners>,
-    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     pub fs: Arc<dyn Fs>,
     pub extension_dir: PathBuf,
     pub wasm_host: Arc<WasmHost>,
@@ -38,23 +36,19 @@ impl HeadlessExtensionStore {
     pub fn new(
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
-        languages: Arc<LanguageRegistry>,
         extension_dir: PathBuf,
+        extension_change_listeners: Arc<ExtensionChangeListeners>,
         node_runtime: NodeRuntime,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        let change_listeners = ExtensionChangeListeners::global(cx);
-        let registration_hooks = Arc::new(HeadlessRegistrationHooks::new(languages.clone()));
         cx.new_model(|cx| Self {
-            change_listeners: change_listeners.clone(),
-            registration_hooks: registration_hooks.clone(),
+            change_listeners: extension_change_listeners.clone(),
             fs: fs.clone(),
             wasm_host: WasmHost::new(
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
-                change_listeners,
-                registration_hooks,
+                extension_change_listeners,
                 extension_dir.join("work"),
                 cx,
             ),
@@ -157,7 +151,7 @@ impl HeadlessExtensionStore {
 
                 config.grammar = None;
 
-                this.registration_hooks.register_language(
+                this.change_listeners.register_language(
                     config.name.clone(),
                     None,
                     config.matcher.clone(),
@@ -207,12 +201,14 @@ impl HeadlessExtensionStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         self.loaded_extensions.remove(extension_id);
-        let languages_to_remove = self
-            .loaded_languages
-            .remove(extension_id)
-            .unwrap_or_default();
-        self.registration_hooks
-            .remove_languages(&languages_to_remove, &[]);
+
+        if let Some(listener) = self.change_listeners.language_listener() {
+            let languages_to_remove = self
+                .loaded_languages
+                .remove(extension_id)
+                .unwrap_or_default();
+            listener.remove_languages(&languages_to_remove, &[]);
+        }
 
         if let Some(listener) = self.change_listeners.language_server_listener() {
             for (language_server_name, language) in self
@@ -323,38 +319,5 @@ impl HeadlessExtensionStore {
             .await?;
 
         Ok(proto::Ack {})
-    }
-}
-
-struct HeadlessRegistrationHooks {
-    language_registry: Arc<LanguageRegistry>,
-}
-
-impl HeadlessRegistrationHooks {
-    fn new(language_registry: Arc<LanguageRegistry>) -> Self {
-        Self { language_registry }
-    }
-}
-
-impl ExtensionRegistrationHooks for HeadlessRegistrationHooks {
-    fn register_language(
-        &self,
-        language: LanguageName,
-        _grammar: Option<Arc<str>>,
-        matcher: language::LanguageMatcher,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
-    ) {
-        log::info!("registering language: {:?}", language);
-        self.language_registry
-            .register_language(language, None, matcher, load)
-    }
-
-    fn remove_languages(
-        &self,
-        languages_to_remove: &[LanguageName],
-        _grammars_to_remove: &[Arc<str>],
-    ) {
-        self.language_registry
-            .remove_languages(languages_to_remove, &[])
     }
 }

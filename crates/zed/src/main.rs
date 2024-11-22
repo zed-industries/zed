@@ -412,11 +412,8 @@ fn main() {
             app_state.client.telemetry().clone(),
             cx,
         );
-        let api =
-            extensions_ui::ConcreteExtensionRegistrationHooks::new(app_state.languages.clone());
         extension_host::init(
             extension_change_listeners,
-            api,
             app_state.fs.clone(),
             app_state.client.clone(),
             app_state.node_runtime.clone(),

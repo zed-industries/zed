@@ -1,6 +1,6 @@
 pub mod wit;
 
-use crate::{ExtensionManifest, ExtensionRegistrationHooks};
+use crate::ExtensionManifest;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use extension::{
@@ -42,7 +42,6 @@ pub struct WasmHost {
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
     pub(crate) change_listeners: Arc<ExtensionChangeListeners>,
-    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
     _main_thread_message_task: Task<()>,
@@ -333,7 +332,6 @@ impl WasmHost {
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
         change_listeners: Arc<ExtensionChangeListeners>,
-        registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
         work_dir: PathBuf,
         cx: &mut AppContext,
     ) -> Arc<Self> {
@@ -350,7 +348,6 @@ impl WasmHost {
             http_client,
             node_runtime,
             change_listeners,
-            registration_hooks,
             release_channel: ReleaseChannel::global(cx),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
