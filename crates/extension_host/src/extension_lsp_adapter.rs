@@ -45,9 +45,23 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
 }
 
 pub struct ExtensionLspAdapter {
-    pub(crate) extension: Arc<dyn Extension>,
-    pub(crate) language_server_id: LanguageServerName,
-    pub(crate) language_name: LanguageName,
+    extension: Arc<dyn Extension>,
+    language_server_id: LanguageServerName,
+    language_name: LanguageName,
+}
+
+impl ExtensionLspAdapter {
+    pub fn new(
+        extension: Arc<dyn Extension>,
+        language_server_id: LanguageServerName,
+        language_name: LanguageName,
+    ) -> Self {
+        Self {
+            extension,
+            language_server_id,
+            language_name,
+        }
+    }
 }
 
 #[async_trait(?Send)]

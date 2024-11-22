@@ -11,7 +11,8 @@ use extension_host::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
 use fs::Fs;
 use gpui::{AppContext, BackgroundExecutor, Model, Task};
 use indexed_docs::{ExtensionIndexedDocsProvider, IndexedDocsRegistry, ProviderId};
-use language::{LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
+use language::{LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
+use lsp::LanguageServerName;
 use snippet_provider::SnippetRegistry;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::SharedString;
@@ -159,11 +160,18 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
 
     fn register_lsp_adapter(
         &self,
-        language_name: language::LanguageName,
-        adapter: ExtensionLspAdapter,
+        extension: Arc<dyn Extension>,
+        language_server_id: LanguageServerName,
+        language: LanguageName,
     ) {
-        self.language_registry
-            .register_lsp_adapter(language_name, Arc::new(adapter));
+        self.language_registry.register_lsp_adapter(
+            language.clone(),
+            Arc::new(ExtensionLspAdapter::new(
+                extension,
+                language_server_id,
+                language,
+            )),
+        );
     }
 
     fn remove_lsp_adapter(
