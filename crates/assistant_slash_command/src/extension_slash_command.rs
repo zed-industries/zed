@@ -14,8 +14,8 @@ use crate::{
     SlashCommandRegistry, SlashCommandResult,
 };
 
-pub fn init(cx: &AppContext) {
-    let proxy = ExtensionHostProxy::global(cx);
+pub fn init(cx: &mut AppContext) {
+    let proxy = ExtensionHostProxy::default_global(cx);
     proxy.register_slash_command_proxy(SlashCommandRegistryProxy {
         slash_command_registry: SlashCommandRegistry::global(cx),
     });

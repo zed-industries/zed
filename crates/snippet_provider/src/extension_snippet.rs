@@ -7,8 +7,8 @@ use gpui::AppContext;
 
 use crate::SnippetRegistry;
 
-pub fn init(cx: &AppContext) {
-    let proxy = ExtensionHostProxy::global(cx);
+pub fn init(cx: &mut AppContext) {
+    let proxy = ExtensionHostProxy::default_global(cx);
     proxy.register_snippet_proxy(SnippetRegistryProxy {
         snippet_registry: SnippetRegistry::global(cx),
     });

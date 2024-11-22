@@ -10,8 +10,8 @@ use crate::{
     IndexedDocsDatabase, IndexedDocsProvider, IndexedDocsRegistry, PackageName, ProviderId,
 };
 
-pub fn init(cx: &AppContext) {
-    let proxy = ExtensionHostProxy::global(cx);
+pub fn init(cx: &mut AppContext) {
+    let proxy = ExtensionHostProxy::default_global(cx);
     proxy.register_indexed_docs_provider_proxy(IndexedDocsRegistryProxy {
         indexed_docs_registry: IndexedDocsRegistry::global(cx),
     });

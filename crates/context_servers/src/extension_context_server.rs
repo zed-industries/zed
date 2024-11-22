@@ -16,8 +16,8 @@ impl ProjectDelegate for ExtensionProject {
     }
 }
 
-pub fn init(cx: &AppContext) {
-    let proxy = ExtensionHostProxy::global(cx);
+pub fn init(cx: &mut AppContext) {
+    let proxy = ExtensionHostProxy::default_global(cx);
     proxy.register_context_server_proxy(ContextServerFactoryRegistryProxy {
         context_server_factory_registry: ContextServerFactoryRegistry::global(cx),
     });
