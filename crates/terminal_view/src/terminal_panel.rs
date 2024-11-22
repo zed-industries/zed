@@ -309,19 +309,8 @@ impl TerminalPanel {
                     }
                 }
             }
-            pane::Event::ZoomIn => {
-                if pane == self.active_pane {
-                    // TODO kb render zoomed panel over everything else
-                    pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
-                    cx.notify();
-                }
-                cx.emit(PanelEvent::ZoomIn)
-            }
-            pane::Event::ZoomOut => {
-                pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
-                cx.emit(PanelEvent::ZoomOut)
-            }
-
+            pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
+            pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
             pane::Event::AddItem { item } => {
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
@@ -329,14 +318,12 @@ impl TerminalPanel {
                     })
                 }
             }
-
             pane::Event::Split(direction) => {
-                let Some(new_pane) = self.add_pane(cx) else {
+                let Some(new_pane) = self.split_active_terminal(cx) else {
                     return;
                 };
                 self.center.split(&pane, &new_pane, *direction).log_err();
             }
-
             pane::Event::Focus => {
                 self.active_pane = pane.clone();
             }
@@ -345,19 +332,26 @@ impl TerminalPanel {
         }
     }
 
-    fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> Option<View<Pane>> {
+    fn split_active_terminal(&mut self, cx: &mut ViewContext<Self>) -> Option<View<Pane>> {
         let workspace = self.workspace.clone().upgrade()?;
         let project = workspace.read(cx).project().clone();
-        let database_id = workspace.read(cx).database_id();
-        let kind = TerminalKind::Shell(default_working_directory(workspace.read(cx), cx));
-        let window = cx.window_handle();
-        // TODO kb reuse the old terminal's data (pwd, etc.)
-        let terminal = project
-            .update(cx, |project, cx| project.create_terminal(kind, window, cx))
-            .log_err()?;
-        let terminal_view = Box::new(cx.new_view(|cx| {
-            TerminalView::new(terminal.clone(), self.workspace.clone(), database_id, cx)
-        }));
+        let terminal_view = self
+            .active_pane
+            .read(cx)
+            .active_item()
+            .and_then(|item| item.downcast::<TerminalView>())
+            .map(Box::new)
+            .or_else(|| {
+                let kind = TerminalKind::Shell(default_working_directory(workspace.read(cx), cx));
+                let window = cx.window_handle();
+                let terminal = project
+                    .update(cx, |project, cx| project.create_terminal(kind, window, cx))
+                    .log_err()?;
+                let database_id = workspace.read(cx).database_id();
+                Some(Box::new(cx.new_view(|cx| {
+                    TerminalView::new(terminal.clone(), self.workspace.clone(), database_id, cx)
+                })))
+            })?;
         let pane = new_terminal_pane(self.workspace.clone(), project, cx);
         self.apply_tab_bar_buttons(&pane, cx);
         pane.update(cx, |pane, cx| {
@@ -825,6 +819,7 @@ fn new_terminal_pane(
                         // Destination pane may be the one currently updated, so defer the move.
                         cx.spawn(|_, mut cx| async move {
                             cx.update(|cx| {
+                                // TODO kb move into split, then move back into original pane into a new split — does not work
                                 move_item(
                                     &source,
                                     &destination,
