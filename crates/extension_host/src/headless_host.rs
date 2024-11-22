@@ -341,6 +341,7 @@ impl ExtensionRegistrationHooks for HeadlessRegistrationHooks {
         self.language_registry
             .register_language(language, None, matcher, load)
     }
+
     fn register_lsp_adapter(
         &self,
         extension: Arc<dyn Extension>,
