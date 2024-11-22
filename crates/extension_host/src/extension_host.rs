@@ -149,8 +149,8 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
 
     fn register_context_server(
         &self,
+        _extension: Arc<dyn Extension>,
         _id: Arc<str>,
-        _extension: WasmExtension,
         _cx: &mut AppContext,
     ) {
     }
@@ -1284,8 +1284,8 @@ impl ExtensionStore {
 
                     for (id, _context_server_entry) in &manifest.context_servers {
                         this.registration_hooks.register_context_server(
+                            extension.clone(),
                             id.clone(),
-                            wasm_extension.clone(),
                             cx,
                         );
                     }
