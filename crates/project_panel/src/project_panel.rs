@@ -5739,6 +5739,107 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_select_directory(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                "dir_1": {
+                    "nested_dir": {
+                        "file_a.py": "# File contents",
+                    }
+                },
+                "file_1.py": "# File contents",
+                "dir_2": {
+
+                },
+                "dir_3": {
+
+                },
+                "file_2.py": "# File contents",
+                "dir_4": {
+
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
+        cx.executor().run_until_parked();
+        select_path(&panel, "project_root/dir_1", cx);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    > dir_1  <== selected",
+                "    > dir_2",
+                "    > dir_3",
+                "    > dir_4",
+                "      file_1.py",
+                "      file_2.py",
+            ]
+        );
+        panel.update(cx, |panel, cx| {
+            panel.select_prev_directory(&SelectPrevDirectory, cx)
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root  <== selected",
+                "    > dir_1",
+                "    > dir_2",
+                "    > dir_3",
+                "    > dir_4",
+                "      file_1.py",
+                "      file_2.py",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.select_prev_directory(&SelectPrevDirectory, cx)
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    > dir_1",
+                "    > dir_2",
+                "    > dir_3",
+                "    > dir_4  <== selected",
+                "      file_1.py",
+                "      file_2.py",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.select_next_directory(&SelectNextDirectory, cx)
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root  <== selected",
+                "    > dir_1",
+                "    > dir_2",
+                "    > dir_3",
+                "    > dir_4",
+                "      file_1.py",
+                "      file_2.py",
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
