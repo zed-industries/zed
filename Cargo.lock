@@ -4235,7 +4235,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
- "vim_mode_setting",
+ "vim_settings",
  "wasmtime-wasi",
  "workspace",
  "zed_actions",
@@ -13697,17 +13697,20 @@ dependencies = [
  "tokio",
  "ui",
  "util",
- "vim_mode_setting",
+ "vim_settings",
  "workspace",
  "zed_actions",
 ]
 
 [[package]]
-name = "vim_mode_setting"
+name = "vim_settings"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "gpui",
+ "schemars",
+ "serde",
  "settings",
 ]
 
@@ -14425,7 +14428,7 @@ dependencies = [
  "theme_selector",
  "ui",
  "util",
- "vim_mode_setting",
+ "vim_settings",
  "workspace",
  "zed_actions",
 ]
@@ -15585,7 +15588,7 @@ dependencies = [
  "uuid",
  "vcs_menu",
  "vim",
- "vim_mode_setting",
+ "vim_settings",
  "welcome",
  "windows 0.58.0",
  "winresource",

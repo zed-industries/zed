@@ -1,5 +1,5 @@
 [package]
-name = "vim_mode_setting"
+name = "vim_settings"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,9 +9,12 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/vim_mode_setting.rs"
+path = "src/vim_settings.rs"
 
 [dependencies]
 anyhow.workspace = true
+collections.workspace = true
 gpui.workspace = true
 settings.workspace = true
+serde.workspace = true
+schemars.workspace = true

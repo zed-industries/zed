@@ -5,7 +5,7 @@ use crate::command::command_interceptor;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
-use crate::{UseSystemClipboard, Vim, VimSettings};
+use crate::{Vim, VimSettings};
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{Anchor, ClipboardSelection, Editor};
@@ -16,6 +16,7 @@ use language::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use ui::{SharedString, ViewContext};
+use vim_settings::UseSystemClipboard;
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -453,8 +454,8 @@ impl Operator {
             Operator::Literal { .. } => "^V",
             Operator::FindForward { before: false } => "f",
             Operator::FindForward { before: true } => "t",
-            Operator::Sneak { .. } => "z",
-            Operator::SneakBackward { .. } => "Z",
+            Operator::Sneak { .. } => "s",
+            Operator::SneakBackward { .. } => "S",
             Operator::FindBackward { after: false } => "F",
             Operator::FindBackward { after: true } => "T",
             Operator::AddSurrounds { .. } => "ys",

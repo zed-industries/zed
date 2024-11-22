@@ -199,11 +199,11 @@ mod test {
     use crate::{
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
-        UseSystemClipboard, VimSettings,
     };
     use gpui::ClipboardItem;
     use indoc::indoc;
     use settings::SettingsStore;
+    use vim_settings::{UseSystemClipboard, VimSettings};
 
     #[gpui::test]
     async fn test_paste(cx: &mut gpui::TestAppContext) {

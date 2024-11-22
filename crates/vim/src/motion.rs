@@ -460,10 +460,9 @@ impl Vim {
 
     pub(crate) fn motion(&mut self, motion: Motion, cx: &mut ViewContext<Self>) {
         if let Some(Operator::FindForward { .. })
-            | Some(Operator::Sneak { .. })
-            | Some(Operator::SneakBackward { .. })
-            | Some(Operator::FindBackward { .. }) =
-            self.active_operator()
+        | Some(Operator::Sneak { .. })
+        | Some(Operator::SneakBackward { .. })
+        | Some(Operator::FindBackward { .. }) = self.active_operator()
         {
             self.pop_operator(cx);
         }
@@ -796,40 +795,40 @@ impl Motion {
                     (new_point, SelectionGoal::None)
                 }
                 Motion::Sneak {
-                     first_char,
-                     second_char,
-                     smartcase,
-                 } => {
-                     let mut new_point =
-                         sneak(map, point, first_char, second_char, times, smartcase);
-                     if new_point == Some(point) {
-                         new_point =
-                             sneak(map, point, first_char, second_char, times + 1, smartcase);
-                     }
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point =
+                            sneak(map, point, first_char, second_char, times + 1, smartcase);
+                    }
 
-                     return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                 }
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
 
-                 Motion::SneakBackward {
-                     first_char,
-                     second_char,
-                     smartcase,
-                 } => {
-                     let mut new_point =
-                         sneak_backward(map, point, first_char, second_char, times, smartcase);
-                     if new_point == Some(point) {
-                         new_point = sneak_backward(
-                             map,
-                             point,
-                             first_char,
-                             second_char,
-                             times + 1,
-                             smartcase,
-                         );
-                     }
+                Motion::SneakBackward {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak_backward(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point = sneak_backward(
+                            map,
+                            point,
+                            first_char,
+                            second_char,
+                            times + 1,
+                            smartcase,
+                        );
+                    }
 
-                     return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                 }
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
                 _ => return None,
             },
             // , -- repeat the last find done with t, f, T, F, z, Z, in opposite direction

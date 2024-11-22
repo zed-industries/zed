@@ -47,7 +47,7 @@ use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::ActiveTheme;
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
-use vim_mode_setting::VimModeSetting;
+use vim_settings::{VimModeSetting, VimSettings};
 use welcome::{BaseKeymap, MultibufferHint};
 use workspace::notifications::NotificationId;
 use workspace::CloseIntent;
@@ -805,18 +805,25 @@ pub fn handle_keymap_file_changes(
 ) {
     BaseKeymap::register(cx);
     VimModeSetting::register(cx);
+    VimSettings::register(cx);
 
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
     let (keyboard_layout_tx, mut keyboard_layout_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
     let mut old_vim_enabled = VimModeSetting::get_global(cx).0;
+    let mut old_vim_sneak_enabled = VimSettings::get_global(cx).enable_vim_sneak;
     cx.observe_global::<SettingsStore>(move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
+        let new_vim_sneak_enabled = VimSettings::get_global(cx).enable_vim_sneak;
 
-        if new_base_keymap != old_base_keymap || new_vim_enabled != old_vim_enabled {
+        if new_base_keymap != old_base_keymap
+            || new_vim_enabled != old_vim_enabled
+            || new_vim_sneak_enabled != old_vim_sneak_enabled
+        {
             old_base_keymap = new_base_keymap;
             old_vim_enabled = new_vim_enabled;
+            old_vim_sneak_enabled = new_vim_sneak_enabled;
             base_keymap_tx.unbounded_send(()).unwrap();
         }
     })
@@ -877,6 +884,10 @@ pub fn load_default_keymap(cx: &mut AppContext) {
     KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
     if VimModeSetting::get_global(cx).0 {
         KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+
+        if VimSettings::get_global(cx).enable_vim_sneak {
+            KeymapFile::load_asset("keymaps/vim-sneak.json", cx).unwrap();
+        }
     }
 
     if let Some(asset_path) = base_keymap.asset_path() {
