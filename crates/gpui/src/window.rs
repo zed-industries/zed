@@ -3070,7 +3070,7 @@ impl<'a> WindowContext<'a> {
         &self,
         action: &dyn Action,
         focus_handle: &FocusHandle,
-    ) -> String {
+    ) -> Option<String> {
         self.bindings_for_action_in(action, focus_handle)
             .into_iter()
             .next()
@@ -3082,7 +3082,6 @@ impl<'a> WindowContext<'a> {
                     .collect::<Vec<_>>()
                     .join(" ")
             })
-            .unwrap_or_else(|| action.name().to_string())
     }
 
     /// Dispatch a mouse or keyboard event on the window.

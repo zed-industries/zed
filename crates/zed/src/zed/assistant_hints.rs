@@ -81,9 +81,9 @@ impl ActiveLineTrailerProvider for AssistantHintsProvider {
         }
 
         let chat_keybinding =
-            cx.keystroke_text_for_action_in(&assistant::ToggleFocus, focus_handle);
+            cx.keystroke_text_for_action_in(&assistant::ToggleFocus, focus_handle)?;
         let generate_keybinding =
-            cx.keystroke_text_for_action_in(&zed_actions::InlineAssist::default(), focus_handle);
+            cx.keystroke_text_for_action_in(&zed_actions::InlineAssist::default(), focus_handle)?;
 
         Some(
             h_flex()
