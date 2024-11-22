@@ -212,6 +212,7 @@ impl TerminalPanel {
                     panel.height = serialized_panel.height.map(|h| h.round());
                     panel.width = serialized_panel.width.map(|w| w.round());
                     // TODO kb (de)serialization of the center pane
+                    // TODO kb something panics, if I call cmd-p twice to split, on ond and then on the new pane
                     panel.active_pane.update(cx, |_, cx| {
                         serialized_panel
                             .items
@@ -340,6 +341,7 @@ impl TerminalPanel {
             .read(cx)
             .active_item()
             .and_then(|item| item.downcast::<TerminalView>())
+            // TODO kb need not to clone here, as it duplicates the input/output
             .map(Box::new)
             .or_else(|| {
                 let kind = TerminalKind::Shell(default_working_directory(workspace.read(cx), cx));
@@ -478,7 +480,7 @@ impl TerminalPanel {
                 .detach_and_log_err(cx);
             return;
         }
-        let (existing_item_index, existing_terminal) = terminals_for_task
+        let (existing_item_index, task_pane, existing_terminal) = terminals_for_task
             .last()
             .expect("covered no terminals case above")
             .clone();
@@ -487,7 +489,13 @@ impl TerminalPanel {
                 !use_new_terminal,
                 "Should have handled 'allow_concurrent_runs && use_new_terminal' case above"
             );
-            self.replace_terminal(spawn_task, existing_item_index, existing_terminal, cx);
+            self.replace_terminal(
+                spawn_task,
+                task_pane,
+                existing_item_index,
+                existing_terminal,
+                cx,
+            );
         } else {
             self.deferred_tasks.insert(
                 spawn_in_terminal.id.clone(),
@@ -502,6 +510,7 @@ impl TerminalPanel {
                             } else {
                                 terminal_panel.replace_terminal(
                                     spawn_task,
+                                    task_pane,
                                     existing_item_index,
                                     existing_terminal,
                                     cx,
@@ -546,26 +555,36 @@ impl TerminalPanel {
         &self,
         label: &str,
         cx: &mut AppContext,
-        // TODO kb need to return pane also
-    ) -> Vec<(usize, View<TerminalView>)> {
-        self.active_pane
-            .read(cx)
-            .items()
-            .enumerate()
-            .filter_map(|(index, item)| Some((index, item.act_as::<TerminalView>(cx)?)))
-            .filter_map(|(index, terminal_view)| {
-                let task_state = terminal_view.read(cx).terminal().read(cx).task()?;
-                if &task_state.full_label == label {
-                    Some((index, terminal_view))
-                } else {
-                    None
-                }
+    ) -> Vec<(usize, View<Pane>, View<TerminalView>)> {
+        self.center
+            .panes()
+            .into_iter()
+            .flat_map(|pane| {
+                pane.read(cx)
+                    .items()
+                    .enumerate()
+                    .filter_map(|(index, item)| Some((index, item.act_as::<TerminalView>(cx)?)))
+                    .filter_map(|(index, terminal_view)| {
+                        let task_state = terminal_view.read(cx).terminal().read(cx).task()?;
+                        if &task_state.full_label == label {
+                            Some((index, terminal_view))
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|(index, terminal_view)| (index, pane.clone(), terminal_view))
             })
             .collect()
     }
 
-    fn activate_terminal_view(&self, item_index: usize, focus: bool, cx: &mut WindowContext) {
-        self.active_pane.update(cx, |pane, cx| {
+    fn activate_terminal_view(
+        &self,
+        pane: &View<Pane>,
+        item_index: usize,
+        focus: bool,
+        cx: &mut WindowContext,
+    ) {
+        pane.update(cx, |pane, cx| {
             pane.activate_item(item_index, true, focus, cx)
         })
     }
@@ -671,6 +690,7 @@ impl TerminalPanel {
     fn replace_terminal(
         &self,
         spawn_task: SpawnInTerminal,
+        task_pane: View<Pane>,
         terminal_item_index: usize,
         terminal_to_replace: View<TerminalView>,
         cx: &mut ViewContext<'_, Self>,
@@ -693,7 +713,7 @@ impl TerminalPanel {
 
         match reveal {
             RevealStrategy::Always => {
-                self.activate_terminal_view(terminal_item_index, true, cx);
+                self.activate_terminal_view(&task_pane, terminal_item_index, true, cx);
                 let task_workspace = self.workspace.clone();
                 cx.spawn(|_, mut cx| async move {
                     task_workspace
@@ -703,7 +723,7 @@ impl TerminalPanel {
                 .detach();
             }
             RevealStrategy::NoFocus => {
-                self.activate_terminal_view(terminal_item_index, false, cx);
+                self.activate_terminal_view(&task_pane, terminal_item_index, false, cx);
                 let task_workspace = self.workspace.clone();
                 cx.spawn(|_, mut cx| async move {
                     task_workspace
@@ -866,10 +886,10 @@ fn new_terminal_pane(
 }
 
 async fn wait_for_terminals_tasks(
-    terminals_for_task: Vec<(usize, View<TerminalView>)>,
+    terminals_for_task: Vec<(usize, View<Pane>, View<TerminalView>)>,
     cx: &mut AsyncWindowContext,
 ) {
-    let pending_tasks = terminals_for_task.iter().filter_map(|(_, terminal)| {
+    let pending_tasks = terminals_for_task.iter().filter_map(|(_, _, terminal)| {
         terminal
             .update(cx, |terminal_view, cx| {
                 terminal_view
