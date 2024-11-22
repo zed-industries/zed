@@ -3731,6 +3731,7 @@ dependencies = [
  "emojis",
  "env_logger 0.11.5",
  "file_icons",
+ "fs",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -4236,7 +4237,6 @@ dependencies = [
  "ui",
  "util",
  "vim_settings",
- "wasmtime-wasi",
  "workspace",
  "zed_actions",
 ]
@@ -4621,6 +4621,7 @@ dependencies = [
  "objc",
  "parking_lot",
  "paths",
+ "proto",
  "rope",
  "serde",
  "serde_json",
@@ -6487,6 +6488,7 @@ dependencies = [
  "ctor",
  "ec4rs",
  "env_logger 0.11.5",
+ "fs",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -9424,24 +9426,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "quick_action_bar"
-version = "0.1.0"
-dependencies = [
- "assistant",
- "editor",
- "gpui",
- "markdown_preview",
- "picker",
- "repl",
- "search",
- "settings",
- "ui",
- "util",
- "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -14424,7 +14408,6 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
- "theme_selector",
  "ui",
  "util",
  "vim_settings",
@@ -15544,12 +15527,12 @@ dependencies = [
  "outline_panel",
  "parking_lot",
  "paths",
+ "picker",
  "profiling",
  "project",
  "project_panel",
  "project_symbols",
  "proto",
- "quick_action_bar",
  "recent_projects",
  "release_channel",
  "remote",

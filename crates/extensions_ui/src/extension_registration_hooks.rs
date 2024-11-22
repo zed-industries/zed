@@ -1,21 +1,29 @@
 use std::{path::PathBuf, sync::Arc};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use assistant_slash_command::{ExtensionSlashCommand, SlashCommandRegistry};
 use context_servers::manager::ServerCommand;
 use context_servers::ContextServerFactoryRegistry;
-use db::smol::future::FutureExt as _;
-use extension::Extension;
-use extension_host::wasm_host::ExtensionProject;
-use extension_host::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
+use extension::{Extension, ProjectDelegate};
+use extension_host::extension_lsp_adapter::ExtensionLspAdapter;
 use fs::Fs;
 use gpui::{AppContext, BackgroundExecutor, Model, Task};
 use indexed_docs::{ExtensionIndexedDocsProvider, IndexedDocsRegistry, ProviderId};
-use language::{LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
+use language::{LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
+use lsp::LanguageServerName;
 use snippet_provider::SnippetRegistry;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::SharedString;
-use wasmtime_wasi::WasiView as _;
+
+struct ExtensionProject {
+    worktree_ids: Vec<u64>,
+}
+
+impl ProjectDelegate for ExtensionProject {
+    fn worktree_ids(&self) -> Vec<u64> {
+        self.worktree_ids.clone()
+    }
+}
 
 pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,
@@ -71,8 +79,8 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
 
     fn register_context_server(
         &self,
+        extension: Arc<dyn Extension>,
         id: Arc<str>,
-        extension: wasm_host::WasmExtension,
         cx: &mut AppContext,
     ) {
         self.context_server_factory_registry
@@ -83,42 +91,24 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
                         move |project, cx| {
                             log::info!(
                                 "loading command for context server {id} from extension {}",
-                                extension.manifest.id
+                                extension.manifest().id
                             );
 
                             let id = id.clone();
                             let extension = extension.clone();
                             cx.spawn(|mut cx| async move {
                                 let extension_project =
-                                    project.update(&mut cx, |project, cx| ExtensionProject {
-                                        worktree_ids: project
-                                            .visible_worktrees(cx)
-                                            .map(|worktree| worktree.read(cx).id().to_proto())
-                                            .collect(),
+                                    project.update(&mut cx, |project, cx| {
+                                        Arc::new(ExtensionProject {
+                                            worktree_ids: project
+                                                .visible_worktrees(cx)
+                                                .map(|worktree| worktree.read(cx).id().to_proto())
+                                                .collect(),
+                                        })
                                     })?;
 
                                 let command = extension
-                                    .call({
-                                        let id = id.clone();
-                                        |extension, store| {
-                                            async move {
-                                                let project = store
-                                                    .data_mut()
-                                                    .table()
-                                                    .push(extension_project)?;
-                                                let command = extension
-                                                    .call_context_server_command(
-                                                        store,
-                                                        id.clone(),
-                                                        project,
-                                                    )
-                                                    .await?
-                                                    .map_err(|e| anyhow!("{}", e))?;
-                                                anyhow::Ok(command)
-                                            }
-                                            .boxed()
-                                        }
-                                    })
+                                    .context_server_command(id.clone(), extension_project)
                                     .await?;
 
                                 log::info!("loaded command for context server {id}: {command:?}");
@@ -159,11 +149,18 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
 
     fn register_lsp_adapter(
         &self,
-        language_name: language::LanguageName,
-        adapter: ExtensionLspAdapter,
+        extension: Arc<dyn Extension>,
+        language_server_id: LanguageServerName,
+        language: LanguageName,
     ) {
-        self.language_registry
-            .register_lsp_adapter(language_name, Arc::new(adapter));
+        self.language_registry.register_lsp_adapter(
+            language.clone(),
+            Arc::new(ExtensionLspAdapter::new(
+                extension,
+                language_server_id,
+                language,
+            )),
+        );
     }
 
     fn remove_lsp_adapter(

@@ -7,7 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context as _, Result};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs::{copy_recursive, Fs, PathEvent, RemoveOptions, Watcher};
+use fs::{copy_recursive, Fs, MTime, PathEvent, RemoveOptions, Watcher};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -61,7 +61,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
@@ -3395,7 +3395,7 @@ pub struct Entry {
     pub kind: EntryKind,
     pub path: Arc<Path>,
     pub inode: u64,
-    pub mtime: Option<SystemTime>,
+    pub mtime: Option<MTime>,
 
     pub canonical_path: Option<Box<Path>>,
     /// Whether this entry is ignored by Git.

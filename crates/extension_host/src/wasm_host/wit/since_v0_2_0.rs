@@ -8,7 +8,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use context_servers::manager::ContextServerSettings;
-use extension::{KeyValueStoreDelegate, WorktreeDelegate};
+use extension::{KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate};
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use language::{language_settings::AllLanguageSettings, LanguageName, LanguageServerBinaryStatus};
@@ -44,12 +44,9 @@ mod settings {
 }
 
 pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
+pub type ExtensionProject = Arc<dyn ProjectDelegate>;
 pub type ExtensionKeyValueStore = Arc<dyn KeyValueStoreDelegate>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
-
-pub struct ExtensionProject {
-    pub worktree_ids: Vec<u64>,
-}
 
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
@@ -273,7 +270,7 @@ impl HostProject for WasmState {
         project: Resource<ExtensionProject>,
     ) -> wasmtime::Result<Vec<u64>> {
         let project = self.table.get(&project)?;
-        Ok(project.worktree_ids.clone())
+        Ok(project.worktree_ids())
     }
 
     fn drop(&mut self, _project: Resource<Project>) -> Result<()> {

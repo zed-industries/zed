@@ -46,6 +46,7 @@ use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
+use std::ops;
 use std::time::{Duration, Instant};
 use std::{
     fmt::{self, Debug},
@@ -561,6 +562,42 @@ pub(crate) trait PlatformAtlas: Send + Sync {
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
+    fn remove(&self, key: &AtlasKey);
+}
+
+struct AtlasTextureList<T> {
+    textures: Vec<Option<T>>,
+    free_list: Vec<usize>,
+}
+
+impl<T> Default for AtlasTextureList<T> {
+    fn default() -> Self {
+        Self {
+            textures: Vec::default(),
+            free_list: Vec::default(),
+        }
+    }
+}
+
+impl<T> ops::Index<usize> for AtlasTextureList<T> {
+    type Output = Option<T>;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.textures[index]
+    }
+}
+
+impl<T> AtlasTextureList<T> {
+    #[allow(unused)]
+    fn drain(&mut self) -> std::vec::Drain<Option<T>> {
+        self.free_list.clear();
+        self.textures.drain(..)
+    }
+
+    #[allow(dead_code)]
+    fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut T> {
+        self.textures.iter_mut().flatten()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

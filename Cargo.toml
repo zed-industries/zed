@@ -81,7 +81,6 @@ members = [
     "crates/project_panel",
     "crates/project_symbols",
     "crates/proto",
-    "crates/quick_action_bar",
     "crates/recent_projects",
     "crates/refineable",
     "crates/refineable/derive_refineable",
@@ -259,7 +258,6 @@ project = { path = "crates/project" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
 proto = { path = "crates/proto" }
-quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }

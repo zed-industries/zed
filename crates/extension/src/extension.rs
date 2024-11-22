@@ -25,6 +25,10 @@ pub trait WorktreeDelegate: Send + Sync + 'static {
     async fn shell_env(&self) -> Vec<(String, String)>;
 }
 
+pub trait ProjectDelegate: Send + Sync + 'static {
+    fn worktree_ids(&self) -> Vec<u64>;
+}
+
 pub trait KeyValueStoreDelegate: Send + Sync + 'static {
     fn insert(&self, key: String, docs: String) -> Task<Result<()>>;
 }
@@ -86,6 +90,12 @@ pub trait Extension: Send + Sync + 'static {
         arguments: Vec<String>,
         worktree: Option<Arc<dyn WorktreeDelegate>>,
     ) -> Result<SlashCommandOutput>;
+
+    async fn context_server_command(
+        &self,
+        context_server_id: Arc<str>,
+        project: Arc<dyn ProjectDelegate>,
+    ) -> Result<Command>;
 
     async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>>;
 

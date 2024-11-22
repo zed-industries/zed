@@ -6,7 +6,6 @@ pub mod wasm_host;
 #[cfg(test)]
 mod extension_store_test;
 
-use crate::extension_lsp_adapter::ExtensionLspAdapter;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -122,7 +121,13 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     ) {
     }
 
-    fn register_lsp_adapter(&self, _language: LanguageName, _adapter: ExtensionLspAdapter) {}
+    fn register_lsp_adapter(
+        &self,
+        _extension: Arc<dyn Extension>,
+        _language_server_id: LanguageServerName,
+        _language: LanguageName,
+    ) {
+    }
 
     fn remove_lsp_adapter(&self, _language: &LanguageName, _server_name: &LanguageServerName) {}
 
@@ -144,8 +149,8 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
 
     fn register_context_server(
         &self,
+        _extension: Arc<dyn Extension>,
         _id: Arc<str>,
-        _extension: WasmExtension,
         _cx: &mut AppContext,
     ) {
     }
@@ -345,7 +350,10 @@ impl ExtensionStore {
                 if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
                     (index_metadata, extensions_metadata)
                 {
-                    if index_metadata.mtime > extensions_metadata.mtime {
+                    if index_metadata
+                        .mtime
+                        .bad_is_greater_than(extensions_metadata.mtime)
+                    {
                         extension_index_needs_rebuild = false;
                     }
                 }
@@ -1252,12 +1260,9 @@ impl ExtensionStore {
                     for (language_server_id, language_server_config) in &manifest.language_servers {
                         for language in language_server_config.languages() {
                             this.registration_hooks.register_lsp_adapter(
+                                extension.clone(),
+                                language_server_id.clone(),
                                 language.clone(),
-                                ExtensionLspAdapter {
-                                    extension: extension.clone(),
-                                    language_server_id: language_server_id.clone(),
-                                    language_name: language.clone(),
-                                },
                             );
                         }
                     }
@@ -1279,8 +1284,8 @@ impl ExtensionStore {
 
                     for (id, _context_server_entry) in &manifest.context_servers {
                         this.registration_hooks.register_context_server(
+                            extension.clone(),
                             id.clone(),
-                            wasm_extension.clone(),
                             cx,
                         );
                     }

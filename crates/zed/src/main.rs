@@ -1,5 +1,3 @@
-// Allow binary to be called Zed for a nice application menu when running executable directly
-#![allow(non_snake_case)]
 // Disable command line from opening on release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 

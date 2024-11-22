@@ -177,20 +177,17 @@ impl HeadlessExtensionStore {
         let wasm_extension: Arc<dyn Extension> =
             Arc::new(WasmExtension::load(extension_dir, &manifest, wasm_host.clone(), &cx).await?);
 
-        for (language_server_name, language_server_config) in &manifest.language_servers {
+        for (language_server_id, language_server_config) in &manifest.language_servers {
             for language in language_server_config.languages() {
                 this.update(cx, |this, _cx| {
                     this.loaded_language_servers
                         .entry(manifest.id.clone())
                         .or_default()
-                        .push((language_server_name.clone(), language.clone()));
+                        .push((language_server_id.clone(), language.clone()));
                     this.registration_hooks.register_lsp_adapter(
+                        wasm_extension.clone(),
+                        language_server_id.clone(),
                         language.clone(),
-                        ExtensionLspAdapter {
-                            extension: wasm_extension.clone(),
-                            language_server_id: language_server_name.clone(),
-                            language_name: language,
-                        },
                     );
                 })?;
             }
@@ -344,10 +341,22 @@ impl ExtensionRegistrationHooks for HeadlessRegistrationHooks {
         self.language_registry
             .register_language(language, None, matcher, load)
     }
-    fn register_lsp_adapter(&self, language: LanguageName, adapter: ExtensionLspAdapter) {
+
+    fn register_lsp_adapter(
+        &self,
+        extension: Arc<dyn Extension>,
+        language_server_id: LanguageServerName,
+        language: LanguageName,
+    ) {
         log::info!("registering lsp adapter {:?}", language);
-        self.language_registry
-            .register_lsp_adapter(language, Arc::new(adapter) as _);
+        self.language_registry.register_lsp_adapter(
+            language.clone(),
+            Arc::new(ExtensionLspAdapter::new(
+                extension,
+                language_server_id,
+                language,
+            )),
+        );
     }
 
     fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {

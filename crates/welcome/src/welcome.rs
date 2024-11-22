@@ -5,7 +5,7 @@ mod multibuffer_hint;
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, svg, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    actions, svg, Action, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
@@ -133,12 +133,8 @@ impl Render for WelcomePage {
                                                     "welcome page: change theme".to_string(),
                                                 );
                                                 this.workspace
-                                                    .update(cx, |workspace, cx| {
-                                                        theme_selector::toggle(
-                                                            workspace,
-                                                            &Default::default(),
-                                                            cx,
-                                                        )
+                                                    .update(cx, |_workspace, cx| {
+                                                        cx.dispatch_action(zed_actions::theme_selector::Toggle::default().boxed_clone());
                                                     })
                                                     .ok();
                                             })),
