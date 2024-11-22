@@ -71,8 +71,7 @@ impl Match {
     fn project_path(&self, project: &Project, cx: &WindowContext) -> Option<ProjectPath> {
         let worktree_id = if let Some(path_match) = &self.path_match {
             WorktreeId::from_usize(path_match.worktree_id)
-        } else if let Some(worktree) = project
-            .visible_worktrees(cx).find(|worktree| {
+        } else if let Some(worktree) = project.visible_worktrees(cx).find(|worktree| {
             worktree
                 .read(cx)
                 .root_entry()
