@@ -80,9 +80,9 @@ where
         F: FnMut(&Item) -> bool,
     {
         if R {
-            self.it.find(pred)
-        } else {
             self.it.filter(pred).last()
+        } else {
+            self.it.find(pred)
         }
     }
 }
