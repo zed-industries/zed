@@ -35,4 +35,4 @@ If you would like to use a specific dart binary or use dart via FVM you can spec
 }
 ```
 
-Please see the Dart documention for more information on [dart language-server capabilities](https://github.com/dart-lang/sdk/blob/main/pkg/analysis_server/tool/lsp_spec/README.md).
+Please see the Dart documentation for more information on [dart language-server capabilities](https://github.com/dart-lang/sdk/blob/main/pkg/analysis_server/tool/lsp_spec/README.md).
