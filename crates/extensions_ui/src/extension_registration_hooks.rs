@@ -6,13 +6,10 @@ use context_servers::manager::ServerCommand;
 use context_servers::ContextServerFactoryRegistry;
 use extension::{Extension, ProjectDelegate};
 use extension_host::extension_lsp_adapter::ExtensionLspAdapter;
-use fs::Fs;
-use gpui::{AppContext, BackgroundExecutor, Model, Task};
+use gpui::{AppContext, Model};
 use language::{LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
 use lsp::LanguageServerName;
 use snippet_provider::SnippetRegistry;
-use theme::{ThemeRegistry, ThemeSettings};
-use ui::SharedString;
 
 struct ExtensionProject {
     worktree_ids: Vec<u64>,
@@ -26,44 +23,28 @@ impl ProjectDelegate for ExtensionProject {
 
 pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,
-    theme_registry: Arc<ThemeRegistry>,
     snippet_registry: Arc<SnippetRegistry>,
     language_registry: Arc<LanguageRegistry>,
     context_server_factory_registry: Model<ContextServerFactoryRegistry>,
-    executor: BackgroundExecutor,
 }
 
 impl ConcreteExtensionRegistrationHooks {
     pub fn new(
-        theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         snippet_registry: Arc<SnippetRegistry>,
         language_registry: Arc<LanguageRegistry>,
         context_server_factory_registry: Model<ContextServerFactoryRegistry>,
-        cx: &AppContext,
     ) -> Arc<dyn extension_host::ExtensionRegistrationHooks> {
         Arc::new(Self {
-            theme_registry,
             slash_command_registry,
             snippet_registry,
             language_registry,
             context_server_factory_registry,
-            executor: cx.background_executor().clone(),
         })
     }
 }
 
 impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistrationHooks {
-    fn remove_user_themes(&self, themes: Vec<SharedString>) {
-        self.theme_registry.remove_user_themes(&themes);
-    }
-
-    fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn fs::Fs>) -> Task<Result<()>> {
-        let theme_registry = self.theme_registry.clone();
-        self.executor
-            .spawn(async move { theme_registry.load_user_theme(&theme_path, fs).await })
-    }
-
     fn register_slash_command(
         &self,
         extension: Arc<dyn Extension>,
@@ -182,16 +163,5 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
     ) {
         self.language_registry
             .register_language(language, grammar, matcher, load)
-    }
-
-    fn reload_current_theme(&self, cx: &mut AppContext) {
-        ThemeSettings::reload_current_theme(cx)
-    }
-
-    fn list_theme_names(&self, path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
-        self.executor.spawn(async move {
-            let themes = theme::read_user_theme(&path, fs).await?;
-            Ok(themes.themes.into_iter().map(|theme| theme.name).collect())
-        })
     }
 }

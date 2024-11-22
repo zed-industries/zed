@@ -1,9 +1,22 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::{AppContext, Global, ReadGlobal};
+use anyhow::Result;
+use fs::Fs;
+use gpui::{AppContext, Global, ReadGlobal, SharedString, Task};
 use parking_lot::RwLock;
 
 use crate::Extension;
+
+pub trait OnThemeExtensionChange {
+    fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>>;
+
+    fn remove_user_themes(&self, themes: Vec<SharedString>);
+
+    fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>>;
+
+    fn reload_current_theme(&self, cx: &mut AppContext);
+}
 
 pub trait OnLanguageServerExtensionChange {}
 
@@ -13,8 +26,8 @@ pub trait OnIndexedDocsProviderExtensionChange {
 
 #[derive(Clone)]
 pub enum ExtensionChangeListener {
-    LanguageServer(Arc<dyn OnLanguageServerExtensionChange>),
-    IndexedDocsProvider(Arc<dyn OnIndexedDocsProviderExtensionChange>),
+    LanguageServer(Arc<dyn OnLanguageServerExtensionChange + Send + Sync + 'static>),
+    IndexedDocsProvider(Arc<dyn OnIndexedDocsProviderExtensionChange + Send + Sync + 'static>),
 }
 
 #[derive(Default)]
@@ -24,6 +37,7 @@ impl Global for GlobalExtensionChangeListeners {}
 
 #[derive(Default)]
 pub struct ExtensionChangeListeners {
+    theme_listener: RwLock<Option<Arc<dyn OnThemeExtensionChange + Send + Sync + 'static>>>,
     listeners: RwLock<Vec<ExtensionChangeListener>>,
 }
 
@@ -44,6 +58,7 @@ impl ExtensionChangeListeners {
 
     pub fn new() -> Self {
         Self {
+            theme_listener: RwLock::default(),
             listeners: RwLock::default(),
         }
     }
@@ -52,32 +67,41 @@ impl ExtensionChangeListeners {
         self.listeners.read().iter().cloned().collect()
     }
 
+    pub fn theme_listener(
+        &self,
+    ) -> Option<Arc<dyn OnThemeExtensionChange + Send + Sync + 'static>> {
+        self.theme_listener.read().clone()
+    }
+
     pub fn indexed_docs_provider_listeners(
         &self,
-    ) -> Vec<Arc<dyn OnIndexedDocsProviderExtensionChange>> {
+    ) -> Vec<Arc<dyn OnIndexedDocsProviderExtensionChange + Send + Sync + 'static>> {
         self.filter_listeners(|listener| {
-            if let ExtensionChangeListener::IndexedDocsProvider(provider_listener) = listener {
-                Some(provider_listener.clone())
+            if let ExtensionChangeListener::IndexedDocsProvider(listener) = listener {
+                Some(listener.clone())
             } else {
                 None
             }
         })
     }
 
-    fn filter_listeners<F, R>(&self, mut f: F) -> Vec<R>
+    fn filter_listeners<F, R>(&self, f: F) -> Vec<R>
     where
         F: FnMut(&ExtensionChangeListener) -> Option<R>,
     {
-        self.listeners
-            .read()
-            .iter()
-            .filter_map(|listener| f(listener))
-            .collect()
+        self.listeners.read().iter().filter_map(f).collect()
+    }
+
+    pub fn register_theme_listener(
+        &self,
+        listener: impl OnThemeExtensionChange + Send + Sync + 'static,
+    ) {
+        self.theme_listener.write().replace(Arc::new(listener));
     }
 
     pub fn register_indexed_docs_provider_listener(
         &self,
-        listener: impl OnIndexedDocsProviderExtensionChange + 'static,
+        listener: impl OnIndexedDocsProviderExtensionChange + Send + Sync + 'static,
     ) {
         self.register(ExtensionChangeListener::IndexedDocsProvider(Arc::new(
             listener,
@@ -85,6 +109,6 @@ impl ExtensionChangeListeners {
     }
 
     pub fn register(&self, listener: ExtensionChangeListener) {
-        self.listeners.write().push(listener.into());
+        self.listeners.write().push(listener);
     }
 }

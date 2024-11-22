@@ -24,8 +24,8 @@ use futures::{
     select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext,
-    SharedString, Task, WeakModel,
+    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task,
+    WeakModel,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
@@ -96,22 +96,6 @@ pub fn is_version_compatible(
 }
 
 pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
-    fn remove_user_themes(&self, _themes: Vec<SharedString>) {}
-
-    fn load_user_theme(&self, _theme_path: PathBuf, _fs: Arc<dyn Fs>) -> Task<Result<()>> {
-        Task::ready(Ok(()))
-    }
-
-    fn list_theme_names(
-        &self,
-        _theme_path: PathBuf,
-        _fs: Arc<dyn Fs>,
-    ) -> Task<Result<Vec<String>>> {
-        Task::ready(Ok(Vec::new()))
-    }
-
-    fn reload_current_theme(&self, _cx: &mut AppContext) {}
-
     fn register_language(
         &self,
         _language: LanguageName,
@@ -1086,6 +1070,7 @@ impl ExtensionStore {
             }
         }
 
+        let theme_change_listener = self.change_listeners.theme_listener();
         let themes_to_remove = old_index
             .themes
             .iter()
@@ -1124,7 +1109,9 @@ impl ExtensionStore {
 
         self.wasm_extensions
             .retain(|(extension, _)| !extensions_to_unload.contains(&extension.id));
-        self.registration_hooks.remove_user_themes(themes_to_remove);
+        if let Some(listener) = theme_change_listener.as_ref() {
+            listener.remove_user_themes(themes_to_remove);
+        }
         self.registration_hooks
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
@@ -1213,9 +1200,15 @@ impl ExtensionStore {
             cx.background_executor()
                 .spawn({
                     let fs = fs.clone();
+                    let theme_change_listener = theme_change_listener.clone();
                     async move {
-                        for theme_path in themes_to_add.into_iter() {
-                            api.load_user_theme(theme_path, fs.clone()).await.log_err();
+                        if let Some(listener) = theme_change_listener {
+                            for theme_path in themes_to_add.into_iter() {
+                                listener
+                                    .load_user_theme(theme_path, fs.clone())
+                                    .await
+                                    .log_err();
+                            }
                         }
 
                         for snippets_path in &snippets_to_add {
@@ -1303,7 +1296,9 @@ impl ExtensionStore {
                 }
 
                 this.wasm_extensions.extend(wasm_extensions);
-                this.registration_hooks.reload_current_theme(cx);
+                if let Some(listener) = theme_change_listener.as_ref() {
+                    listener.reload_current_theme(cx);
+                }
             })
             .ok();
         })
@@ -1314,7 +1309,7 @@ impl ExtensionStore {
         let work_dir = self.wasm_host.work_dir.clone();
         let extensions_dir = self.installed_dir.clone();
         let index_path = self.index_path.clone();
-        let extension_api = self.registration_hooks.clone();
+        let change_listeners = self.change_listeners.clone();
         cx.background_executor().spawn(async move {
             let start_time = Instant::now();
             let mut index = ExtensionIndex::default();
@@ -1340,7 +1335,7 @@ impl ExtensionStore {
                         fs.clone(),
                         extension_dir,
                         &mut index,
-                        extension_api.clone(),
+                        change_listeners.clone(),
                     )
                     .await
                     .log_err();
@@ -1363,7 +1358,7 @@ impl ExtensionStore {
         fs: Arc<dyn Fs>,
         extension_dir: PathBuf,
         index: &mut ExtensionIndex,
-        extension_api: Arc<dyn ExtensionRegistrationHooks>,
+        change_listeners: Arc<ExtensionChangeListeners>,
     ) -> Result<()> {
         let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();
@@ -1415,12 +1410,18 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let Some(theme_families) = extension_api
-                    .list_theme_names(theme_path.clone(), fs.clone())
-                    .await
-                    .log_err()
-                else {
-                    continue;
+                let theme_families = if let Some(listener) = change_listeners.theme_listener() {
+                    let Some(theme_families) = listener
+                        .list_theme_names(theme_path.clone(), fs.clone())
+                        .await
+                        .log_err()
+                    else {
+                        continue;
+                    };
+
+                    theme_families
+                } else {
+                    Vec::new()
                 };
 
                 let relative_path = relative_path.to_path_buf();

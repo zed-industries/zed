@@ -377,6 +377,7 @@ fn main() {
         SystemAppearance::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         extension::init(cx);
+        zed::theme_extensions::init(cx);
         command_palette::init(cx);
         let copilot_language_server_id = app_state.languages.next_language_server_id();
         copilot::init(
@@ -410,12 +411,10 @@ fn main() {
         );
         let extension_change_listeners = ExtensionChangeListeners::global(cx);
         let api = extensions_ui::ConcreteExtensionRegistrationHooks::new(
-            ThemeRegistry::global(cx),
             SlashCommandRegistry::global(cx),
             SnippetRegistry::global(cx),
             app_state.languages.clone(),
             ContextServerFactoryRegistry::global(cx),
-            cx,
         );
         extension_host::init(
             extension_change_listeners,

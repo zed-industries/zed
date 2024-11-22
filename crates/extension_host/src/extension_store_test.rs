@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
-use extension::{Extension, ExtensionChangeListeners};
+use extension::{Extension, ExtensionChangeListeners, OnThemeExtensionChange};
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{BackgroundExecutor, Context, SemanticVersion, SharedString, Task, TestAppContext};
@@ -28,35 +28,44 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use theme::ThemeRegistry;
+use theme::{ThemeRegistry, ThemeSettings};
 use util::test::temp_tree;
 
 use crate::ExtensionRegistrationHooks;
 
-struct TestExtensionRegistrationHooks {
-    executor: BackgroundExecutor,
-    language_registry: Arc<LanguageRegistry>,
+struct TestThemeExtensionChangeListener {
     theme_registry: Arc<ThemeRegistry>,
+    executor: BackgroundExecutor,
 }
 
-impl ExtensionRegistrationHooks for TestExtensionRegistrationHooks {
-    fn list_theme_names(&self, path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
+impl OnThemeExtensionChange for TestThemeExtensionChangeListener {
+    fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         self.executor.spawn(async move {
-            let themes = theme::read_user_theme(&path, fs).await?;
+            let themes = theme::read_user_theme(&theme_path, fs).await?;
             Ok(themes.themes.into_iter().map(|theme| theme.name).collect())
         })
-    }
-
-    fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn fs::Fs>) -> Task<Result<()>> {
-        let theme_registry = self.theme_registry.clone();
-        self.executor
-            .spawn(async move { theme_registry.load_user_theme(&theme_path, fs).await })
     }
 
     fn remove_user_themes(&self, themes: Vec<SharedString>) {
         self.theme_registry.remove_user_themes(&themes);
     }
 
+    fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>> {
+        let theme_registry = self.theme_registry.clone();
+        self.executor
+            .spawn(async move { theme_registry.load_user_theme(&theme_path, fs).await })
+    }
+
+    fn reload_current_theme(&self, cx: &mut gpui::AppContext) {
+        ThemeSettings::reload_current_theme(cx)
+    }
+}
+
+struct TestExtensionRegistrationHooks {
+    language_registry: Arc<LanguageRegistry>,
+}
+
+impl ExtensionRegistrationHooks for TestExtensionRegistrationHooks {
     fn register_language(
         &self,
         language: language::LanguageName,
@@ -350,10 +359,12 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let extension_change_listeners = Arc::new(ExtensionChangeListeners::new());
-    let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
-        executor: cx.executor(),
-        language_registry: language_registry.clone(),
+    extension_change_listeners.register_theme_listener(TestThemeExtensionChangeListener {
         theme_registry: theme_registry.clone(),
+        executor: cx.executor(),
+    });
+    let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
+        language_registry: language_registry.clone(),
     });
     let node_runtime = NodeRuntime::unavailable();
 
@@ -574,10 +585,12 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let extension_change_listeners = Arc::new(ExtensionChangeListeners::new());
-    let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
-        executor: cx.executor(),
-        language_registry: language_registry.clone(),
+    extension_change_listeners.register_theme_listener(TestThemeExtensionChangeListener {
         theme_registry: theme_registry.clone(),
+        executor: cx.executor(),
+    });
+    let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
+        language_registry: language_registry.clone(),
     });
     let node_runtime = NodeRuntime::unavailable();
 

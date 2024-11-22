@@ -7,6 +7,7 @@ pub(crate) mod linux_prompts;
 pub(crate) mod mac_only_instance;
 mod open_listener;
 mod quick_action_bar;
+pub mod theme_extensions;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
