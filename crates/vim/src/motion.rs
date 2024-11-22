@@ -10,7 +10,7 @@ use gpui::{actions, impl_actions, px, ViewContext};
 use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
-use std::{ops::Range, time::Instant};
+use std::ops::Range;
 use workspace::searchable::Direction;
 
 use crate::{
@@ -2100,13 +2100,13 @@ fn method_motion(
     direction: Direction,
     is_start: bool,
 ) -> DisplayPoint {
+    let Some((_, _, buffer)) = map.buffer_snapshot.as_singleton() else {
+        return display_point;
+    };
+
     for _ in 0..times {
         let point = map.display_point_to_point(display_point, Bias::Left);
-        let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
-            return display_point;
-        };
-        let buffer = excerpt.buffer();
-        let offset = excerpt.map_offset_to_buffer(point.to_offset(&map.buffer_snapshot));
+        let offset = point.to_offset(&map.buffer_snapshot);
         let range = if direction == Direction::Prev {
             0..offset
         } else {
@@ -2214,7 +2214,6 @@ fn section_motion(
         };
         let next_point = match (direction, is_start) {
             (Direction::Prev, true) => {
-                dbg!("here?");
                 let mut start = excerpt.start_anchor().to_display_point(&map);
                 if start >= display_point && start.row() > DisplayRow(0) {
                     let Some(excerpt) = map.buffer_snapshot.excerpt_before(excerpt.id()) else {

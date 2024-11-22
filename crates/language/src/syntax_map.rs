@@ -13,7 +13,6 @@ use std::{
     fmt, iter,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
-    u16,
 };
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
