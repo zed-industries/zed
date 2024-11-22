@@ -88,7 +88,7 @@ impl Match {
                 let home = project
                     .update(&mut cx, |project, cx| {
                         project.resolve_abs_path(
-                            &("~/".to_string() + &path.to_string_lossy().to_string()),
+                            &("~/".to_string() + &path.to_string_lossy().as_ref()),
                             cx,
                         )
                     })?
