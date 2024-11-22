@@ -4,28 +4,28 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use extension::{ExtensionChangeListeners, OnGrammarExtensionChange, OnLanguageExtensionChange};
+use extension::{ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy};
 use language::{LanguageMatcher, LanguageName, LanguageRegistry, LoadedLanguage};
 
 pub fn init(
-    extension_change_listeners: Arc<ExtensionChangeListeners>,
+    extension_host_proxy: Arc<ExtensionHostProxy>,
     language_registry: Arc<LanguageRegistry>,
 ) {
-    extension_change_listeners.register_grammar_listener(GrammarExtensionChangeListener {
+    extension_host_proxy.register_grammar_proxy(GrammarExtensionChangeListener {
         language_registry: language_registry.clone(),
     });
-    extension_change_listeners.register_language_listener(LanguageExtensionChangeListener {
+    extension_host_proxy.register_language_proxy(LanguageExtensionChangeListener {
         language_registry: language_registry.clone(),
     });
 
-    extension_lsp_adapter::init(extension_change_listeners, language_registry);
+    extension_lsp_adapter::init(extension_host_proxy, language_registry);
 }
 
 struct GrammarExtensionChangeListener {
     language_registry: Arc<LanguageRegistry>,
 }
 
-impl OnGrammarExtensionChange for GrammarExtensionChangeListener {
+impl ExtensionGrammarProxy for GrammarExtensionChangeListener {
     fn register_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
         self.language_registry.register_wasm_grammars(grammars)
     }
@@ -35,7 +35,7 @@ struct LanguageExtensionChangeListener {
     language_registry: Arc<LanguageRegistry>,
 }
 
-impl OnLanguageExtensionChange for LanguageExtensionChangeListener {
+impl ExtensionLanguageProxy for LanguageExtensionChangeListener {
     fn register_language(
         &self,
         language: LanguageName,

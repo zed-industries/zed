@@ -4,8 +4,8 @@ use anyhow::{anyhow, Context as _, Result};
 use client::{proto, TypedEnvelope};
 use collections::{HashMap, HashSet};
 use extension::{
-    Extension, ExtensionChangeListeners, ExtensionManifest, OnLanguageExtensionChange,
-    OnLanguageServerExtensionChange,
+    Extension, ExtensionHostProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
+    ExtensionManifest,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
@@ -24,9 +24,9 @@ pub struct ExtensionVersion {
 }
 
 pub struct HeadlessExtensionStore {
-    pub change_listeners: Arc<ExtensionChangeListeners>,
     pub fs: Arc<dyn Fs>,
     pub extension_dir: PathBuf,
+    pub proxy: Arc<ExtensionHostProxy>,
     pub wasm_host: Arc<WasmHost>,
     pub loaded_extensions: HashMap<Arc<str>, Arc<str>>,
     pub loaded_languages: HashMap<Arc<str>, Vec<LanguageName>>,
@@ -38,22 +38,22 @@ impl HeadlessExtensionStore {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         extension_dir: PathBuf,
-        extension_change_listeners: Arc<ExtensionChangeListeners>,
+        extension_host_proxy: Arc<ExtensionHostProxy>,
         node_runtime: NodeRuntime,
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx| Self {
-            change_listeners: extension_change_listeners.clone(),
             fs: fs.clone(),
             wasm_host: WasmHost::new(
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
-                extension_change_listeners,
+                extension_host_proxy.clone(),
                 extension_dir.join("work"),
                 cx,
             ),
             extension_dir,
+            proxy: extension_host_proxy,
             loaded_extensions: Default::default(),
             loaded_languages: Default::default(),
             loaded_language_servers: Default::default(),
@@ -152,7 +152,7 @@ impl HeadlessExtensionStore {
 
                 config.grammar = None;
 
-                this.change_listeners.register_language(
+                this.proxy.register_language(
                     config.name.clone(),
                     None,
                     config.matcher.clone(),
@@ -182,7 +182,7 @@ impl HeadlessExtensionStore {
                         .entry(manifest.id.clone())
                         .or_default()
                         .push((language_server_id.clone(), language.clone()));
-                    this.change_listeners.register_language_server(
+                    this.proxy.register_language_server(
                         wasm_extension.clone(),
                         language_server_id.clone(),
                         language.clone(),
@@ -205,15 +205,14 @@ impl HeadlessExtensionStore {
             .loaded_languages
             .remove(extension_id)
             .unwrap_or_default();
-        self.change_listeners
-            .remove_languages(&languages_to_remove, &[]);
+        self.proxy.remove_languages(&languages_to_remove, &[]);
 
         for (language_server_name, language) in self
             .loaded_language_servers
             .remove(extension_id)
             .unwrap_or_default()
         {
-            self.change_listeners
+            self.proxy
                 .remove_language_server(&language, &language_server_name);
         }
 

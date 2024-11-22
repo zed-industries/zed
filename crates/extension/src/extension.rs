@@ -1,5 +1,5 @@
 pub mod extension_builder;
-mod extension_change_listeners;
+mod extension_host_proxy;
 mod extension_manifest;
 mod types;
 
@@ -14,13 +14,13 @@ use gpui::{AppContext, Task};
 use language::LanguageName;
 use semantic_version::SemanticVersion;
 
-pub use crate::extension_change_listeners::*;
+pub use crate::extension_host_proxy::*;
 pub use crate::extension_manifest::*;
 pub use crate::types::*;
 
 /// Initializes the `extension` crate.
 pub fn init(cx: &mut AppContext) {
-    ExtensionChangeListeners::default_global(cx);
+    ExtensionHostProxy::default_global(cx);
 }
 
 #[async_trait]

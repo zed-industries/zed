@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use extension::{
-    Extension, ExtensionChangeListeners, OnContextServerExtensionChange, ProjectDelegate,
-};
+use extension::{Extension, ExtensionContextServerProxy, ExtensionHostProxy, ProjectDelegate};
 use gpui::{AppContext, Model};
 
 use crate::manager::ServerCommand;
@@ -19,19 +17,17 @@ impl ProjectDelegate for ExtensionProject {
 }
 
 pub fn init(cx: &AppContext) {
-    let extension_change_listeners = ExtensionChangeListeners::global(cx);
-    extension_change_listeners.register_context_server_listener(
-        ExtensionIndexedDocsProviderListener {
-            context_server_factory_registry: ContextServerFactoryRegistry::global(cx),
-        },
-    );
+    let proxy = ExtensionHostProxy::global(cx);
+    proxy.register_context_server_proxy(ExtensionIndexedDocsProviderListener {
+        context_server_factory_registry: ContextServerFactoryRegistry::global(cx),
+    });
 }
 
 struct ExtensionIndexedDocsProviderListener {
     context_server_factory_registry: Model<ContextServerFactoryRegistry>,
 }
 
-impl OnContextServerExtensionChange for ExtensionIndexedDocsProviderListener {
+impl ExtensionContextServerProxy for ExtensionIndexedDocsProviderListener {
     fn register_context_server(
         &self,
         extension: Arc<dyn Extension>,

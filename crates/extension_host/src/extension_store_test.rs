@@ -5,7 +5,7 @@ use crate::{
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
-use extension::ExtensionChangeListeners;
+use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
@@ -258,25 +258,18 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         .collect(),
     };
 
-    let extension_change_listeners = Arc::new(ExtensionChangeListeners::new());
+    let proxy = Arc::new(ExtensionHostProxy::new());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
-    theme_extension::init(
-        extension_change_listeners.clone(),
-        theme_registry.clone(),
-        cx.executor(),
-    );
+    theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-    language_extension::init(
-        extension_change_listeners.clone(),
-        language_registry.clone(),
-    );
+    language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
 
     let store = cx.new_model(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
-            extension_change_listeners.clone(),
+            proxy.clone(),
             fs.clone(),
             http_client.clone(),
             http_client.clone(),
@@ -401,7 +394,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
-            extension_change_listeners,
+            proxy,
             fs.clone(),
             http_client.clone(),
             http_client.clone(),
@@ -484,18 +477,11 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
 
-    let extension_change_listeners = Arc::new(ExtensionChangeListeners::new());
+    let proxy = Arc::new(ExtensionHostProxy::new());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
-    theme_extension::init(
-        extension_change_listeners.clone(),
-        theme_registry.clone(),
-        cx.executor(),
-    );
+    theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-    language_extension::init(
-        extension_change_listeners.clone(),
-        language_registry.clone(),
-    );
+    language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
 
     let mut status_updates = language_registry.language_server_binary_statuses();
@@ -589,7 +575,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         ExtensionStore::new(
             extensions_dir.clone(),
             Some(cache_dir),
-            extension_change_listeners,
+            proxy,
             fs.clone(),
             extension_client.clone(),
             builder_client,

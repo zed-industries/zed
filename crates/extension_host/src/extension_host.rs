@@ -13,10 +13,9 @@ use collections::{btree_map, BTreeMap, HashMap, HashSet};
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 pub use extension::ExtensionManifest;
 use extension::{
-    ExtensionChangeListeners, OnContextServerExtensionChange, OnGrammarExtensionChange,
-    OnIndexedDocsProviderExtensionChange, OnLanguageExtensionChange,
-    OnLanguageServerExtensionChange, OnSlashCommandExtensionChange, OnSnippetExtensionChange,
-    OnThemeExtensionChange,
+    ExtensionContextServerProxy, ExtensionGrammarProxy, ExtensionHostProxy,
+    ExtensionIndexedDocsProviderProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
+    ExtensionSlashCommandProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::{
@@ -99,7 +98,7 @@ pub fn is_version_compatible(
 }
 
 pub struct ExtensionStore {
-    pub change_listeners: Arc<ExtensionChangeListeners>,
+    pub proxy: Arc<ExtensionHostProxy>,
     pub builder: Arc<ExtensionBuilder>,
     pub extension_index: ExtensionIndex,
     pub fs: Arc<dyn Fs>,
@@ -169,7 +168,7 @@ pub struct ExtensionIndexLanguageEntry {
 actions!(zed, [ReloadExtensions]);
 
 pub fn init(
-    extension_change_listeners: Arc<ExtensionChangeListeners>,
+    extension_host_proxy: Arc<ExtensionHostProxy>,
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
     node_runtime: NodeRuntime,
@@ -181,7 +180,7 @@ pub fn init(
         ExtensionStore::new(
             paths::extensions_dir().clone(),
             None,
-            extension_change_listeners,
+            extension_host_proxy,
             fs,
             client.http_client().clone(),
             client.http_client().clone(),
@@ -213,7 +212,7 @@ impl ExtensionStore {
     pub fn new(
         extensions_dir: PathBuf,
         build_dir: Option<PathBuf>,
-        extension_change_listeners: Arc<ExtensionChangeListeners>,
+        extension_host_proxy: Arc<ExtensionHostProxy>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
         builder_client: Arc<dyn HttpClient>,
@@ -229,7 +228,7 @@ impl ExtensionStore {
         let (reload_tx, mut reload_rx) = unbounded();
         let (connection_registered_tx, mut connection_registered_rx) = unbounded();
         let mut this = Self {
-            change_listeners: extension_change_listeners.clone(),
+            proxy: extension_host_proxy.clone(),
             extension_index: Default::default(),
             installed_dir,
             index_path,
@@ -241,7 +240,7 @@ impl ExtensionStore {
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
-                extension_change_listeners,
+                extension_host_proxy,
                 work_dir,
                 cx,
             ),
@@ -1042,7 +1041,7 @@ impl ExtensionStore {
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
             for (language_server_name, config) in extension.manifest.language_servers.iter() {
                 for language in config.languages() {
-                    self.change_listeners
+                    self.proxy
                         .remove_language_server(&language, language_server_name);
                 }
             }
@@ -1050,8 +1049,8 @@ impl ExtensionStore {
 
         self.wasm_extensions
             .retain(|(extension, _)| !extensions_to_unload.contains(&extension.id));
-        self.change_listeners.remove_user_themes(themes_to_remove);
-        self.change_listeners
+        self.proxy.remove_user_themes(themes_to_remove);
+        self.proxy
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
         let languages_to_add = new_index
@@ -1086,7 +1085,7 @@ impl ExtensionStore {
             }));
         }
 
-        self.change_listeners.register_grammars(grammars_to_add);
+        self.proxy.register_grammars(grammars_to_add);
 
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
@@ -1094,7 +1093,7 @@ impl ExtensionStore {
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
-            self.change_listeners.register_language(
+            self.proxy.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
@@ -1124,7 +1123,7 @@ impl ExtensionStore {
         let fs = self.fs.clone();
         let wasm_host = self.wasm_host.clone();
         let root_dir = self.installed_dir.clone();
-        let extension_change_listeners = self.change_listeners.clone();
+        let proxy = self.proxy.clone();
         let extension_entries = extensions_to_load
             .iter()
             .filter_map(|name| new_index.extensions.get(name).cloned())
@@ -1140,7 +1139,7 @@ impl ExtensionStore {
                     let fs = fs.clone();
                     async move {
                         for theme_path in themes_to_add.into_iter() {
-                            extension_change_listeners
+                            proxy
                                 .load_user_theme(theme_path, fs.clone())
                                 .await
                                 .log_err();
@@ -1149,7 +1148,7 @@ impl ExtensionStore {
                         for snippets_path in &snippets_to_add {
                             if let Some(snippets_contents) = fs.load(snippets_path).await.log_err()
                             {
-                                extension_change_listeners
+                                proxy
                                     .register_snippet(snippets_path, &snippets_contents)
                                     .log_err();
                             }
@@ -1191,7 +1190,7 @@ impl ExtensionStore {
 
                     for (language_server_id, language_server_config) in &manifest.language_servers {
                         for language in language_server_config.languages() {
-                            this.change_listeners.register_language_server(
+                            this.proxy.register_language_server(
                                 extension.clone(),
                                 language_server_id.clone(),
                                 language.clone(),
@@ -1200,7 +1199,7 @@ impl ExtensionStore {
                     }
 
                     for (slash_command_name, slash_command) in &manifest.slash_commands {
-                        this.change_listeners.register_slash_command(
+                        this.proxy.register_slash_command(
                             extension.clone(),
                             extension::SlashCommand {
                                 name: slash_command_name.to_string(),
@@ -1215,21 +1214,18 @@ impl ExtensionStore {
                     }
 
                     for (id, _context_server_entry) in &manifest.context_servers {
-                        this.change_listeners.register_context_server(
-                            extension.clone(),
-                            id.clone(),
-                            cx,
-                        );
+                        this.proxy
+                            .register_context_server(extension.clone(), id.clone(), cx);
                     }
 
                     for (provider_id, _provider) in &manifest.indexed_docs_providers {
-                        this.change_listeners
+                        this.proxy
                             .register_indexed_docs_provider(extension.clone(), provider_id.clone());
                     }
                 }
 
                 this.wasm_extensions.extend(wasm_extensions);
-                this.change_listeners.reload_current_theme(cx);
+                this.proxy.reload_current_theme(cx);
             })
             .ok();
         })
@@ -1240,7 +1236,7 @@ impl ExtensionStore {
         let work_dir = self.wasm_host.work_dir.clone();
         let extensions_dir = self.installed_dir.clone();
         let index_path = self.index_path.clone();
-        let change_listeners = self.change_listeners.clone();
+        let proxy = self.proxy.clone();
         cx.background_executor().spawn(async move {
             let start_time = Instant::now();
             let mut index = ExtensionIndex::default();
@@ -1266,7 +1262,7 @@ impl ExtensionStore {
                         fs.clone(),
                         extension_dir,
                         &mut index,
-                        change_listeners.clone(),
+                        proxy.clone(),
                     )
                     .await
                     .log_err();
@@ -1289,7 +1285,7 @@ impl ExtensionStore {
         fs: Arc<dyn Fs>,
         extension_dir: PathBuf,
         index: &mut ExtensionIndex,
-        change_listeners: Arc<ExtensionChangeListeners>,
+        proxy: Arc<ExtensionHostProxy>,
     ) -> Result<()> {
         let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();
@@ -1341,7 +1337,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let Some(theme_families) = change_listeners
+                let Some(theme_families) = proxy
                     .list_theme_names(theme_path.clone(), fs.clone())
                     .await
                     .log_err()

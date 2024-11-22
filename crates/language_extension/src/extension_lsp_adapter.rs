@@ -7,9 +7,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use extension::{
-    Extension, ExtensionChangeListeners, OnLanguageServerExtensionChange, WorktreeDelegate,
-};
+use extension::{Extension, ExtensionHostProxy, ExtensionLanguageServerProxy, WorktreeDelegate};
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
 use language::{
@@ -51,18 +49,18 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
 }
 
 pub fn init(
-    extension_change_listeners: Arc<ExtensionChangeListeners>,
+    extension_host_proxy: Arc<ExtensionHostProxy>,
     language_registry: Arc<LanguageRegistry>,
 ) {
-    extension_change_listeners
-        .register_language_server_listener(ExtensionLanguageServerListener { language_registry });
+    extension_host_proxy
+        .register_language_server_proxy(ExtensionLanguageServerListener { language_registry });
 }
 
 struct ExtensionLanguageServerListener {
     language_registry: Arc<LanguageRegistry>,
 }
 
-impl OnLanguageServerExtensionChange for ExtensionLanguageServerListener {
+impl ExtensionLanguageServerProxy for ExtensionLanguageServerListener {
     fn register_language_server(
         &self,
         extension: Arc<dyn Extension>,

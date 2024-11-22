@@ -3,9 +3,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use extension::{
-    Extension, ExtensionChangeListeners, OnSlashCommandExtensionChange, WorktreeDelegate,
-};
+use extension::{Extension, ExtensionHostProxy, ExtensionSlashCommandProxy, WorktreeDelegate};
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
@@ -17,8 +15,8 @@ use crate::{
 };
 
 pub fn init(cx: &AppContext) {
-    let extension_change_listeners = ExtensionChangeListeners::global(cx);
-    extension_change_listeners.register_slash_command_listener(ExtensionSlashCommandListener {
+    let proxy = ExtensionHostProxy::global(cx);
+    proxy.register_slash_command_proxy(ExtensionSlashCommandListener {
         slash_command_registry: SlashCommandRegistry::global(cx),
     });
 }
@@ -27,7 +25,7 @@ struct ExtensionSlashCommandListener {
     slash_command_registry: Arc<SlashCommandRegistry>,
 }
 
-impl OnSlashCommandExtensionChange for ExtensionSlashCommandListener {
+impl ExtensionSlashCommandProxy for ExtensionSlashCommandListener {
     fn register_slash_command(
         &self,
         extension: Arc<dyn Extension>,

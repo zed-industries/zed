@@ -3,7 +3,7 @@ use crate::HeadlessProject;
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use client::{telemetry, ProxySettings};
-use extension::ExtensionChangeListeners;
+use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
@@ -436,7 +436,7 @@ pub fn execute_run(
         git_hosting_providers::init(cx);
 
         extension::init(cx);
-        let extension_change_listeners = ExtensionChangeListeners::global(cx);
+        let proxy = ExtensionHostProxy::global(cx);
 
         let project = cx.new_model(|cx| {
             let fs = Arc::new(RealFs::new(Default::default(), None));
@@ -470,7 +470,7 @@ pub fn execute_run(
                     http_client,
                     node_runtime,
                     languages,
-                    extension_change_listeners,
+                    extension_host_proxy: proxy,
                 },
                 cx,
             )

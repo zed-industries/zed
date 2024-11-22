@@ -2,17 +2,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use extension::{ExtensionChangeListeners, OnThemeExtensionChange};
+use extension::{ExtensionHostProxy, ExtensionThemeProxy};
 use fs::Fs;
 use gpui::{AppContext, BackgroundExecutor, SharedString, Task};
 use theme::{ThemeRegistry, ThemeSettings};
 
 pub fn init(
-    extension_change_listeners: Arc<ExtensionChangeListeners>,
+    extension_host_proxy: Arc<ExtensionHostProxy>,
     theme_registry: Arc<ThemeRegistry>,
     executor: BackgroundExecutor,
 ) {
-    extension_change_listeners.register_theme_listener(ExtensionThemeListener {
+    extension_host_proxy.register_theme_proxy(ExtensionThemeListener {
         theme_registry,
         executor,
     });
@@ -23,7 +23,7 @@ struct ExtensionThemeListener {
     executor: BackgroundExecutor,
 }
 
-impl OnThemeExtensionChange for ExtensionThemeListener {
+impl ExtensionThemeProxy for ExtensionThemeListener {
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         self.executor.spawn(async move {
             let themes = theme::read_user_theme(&theme_path, fs).await?;
