@@ -1,4 +1,5 @@
 pub mod client;
+mod extension_context_server;
 pub mod manager;
 pub mod protocol;
 mod registry;

@@ -2842,6 +2842,7 @@ dependencies = [
  "anyhow",
  "collections",
  "command_palette_hooks",
+ "extension",
  "futures 0.3.31",
  "gpui",
  "log",

@@ -20,6 +20,10 @@ pub trait OnThemeExtensionChange: Send + Sync + 'static {
 
 pub trait OnLanguageServerExtensionChange: Send + Sync + 'static {}
 
+pub trait OnContextServerExtensionChange: Send + Sync + 'static {
+    fn register(&self, extension: Arc<dyn Extension>, server_id: Arc<str>, cx: &mut AppContext);
+}
+
 pub trait OnIndexedDocsProviderExtensionChange: Send + Sync + 'static {
     fn register(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>);
 }
@@ -32,6 +36,7 @@ impl Global for GlobalExtensionChangeListeners {}
 #[derive(Default)]
 pub struct ExtensionChangeListeners {
     theme_listener: RwLock<Option<Arc<dyn OnThemeExtensionChange>>>,
+    context_server_listener: RwLock<Option<Arc<dyn OnContextServerExtensionChange>>>,
     indexed_docs_provider_listener: RwLock<Option<Arc<dyn OnIndexedDocsProviderExtensionChange>>>,
 }
 
@@ -53,6 +58,7 @@ impl ExtensionChangeListeners {
     pub fn new() -> Self {
         Self {
             theme_listener: RwLock::default(),
+            context_server_listener: RwLock::default(),
             indexed_docs_provider_listener: RwLock::default(),
         }
     }
@@ -61,17 +67,30 @@ impl ExtensionChangeListeners {
         self.theme_listener.read().clone()
     }
 
-    pub fn indexed_docs_provider_listener(
-        &self,
-    ) -> Option<Arc<dyn OnIndexedDocsProviderExtensionChange>> {
-        self.indexed_docs_provider_listener.read().clone()
-    }
-
     pub fn register_theme_listener(
         &self,
         listener: impl OnThemeExtensionChange + Send + Sync + 'static,
     ) {
         self.theme_listener.write().replace(Arc::new(listener));
+    }
+
+    pub fn context_server_listener(&self) -> Option<Arc<dyn OnContextServerExtensionChange>> {
+        self.context_server_listener.read().clone()
+    }
+
+    pub fn register_context_server_listener(
+        &self,
+        listener: impl OnContextServerExtensionChange + Send + Sync + 'static,
+    ) {
+        self.context_server_listener
+            .write()
+            .replace(Arc::new(listener));
+    }
+
+    pub fn indexed_docs_provider_listener(
+        &self,
+    ) -> Option<Arc<dyn OnIndexedDocsProviderExtensionChange>> {
+        self.indexed_docs_provider_listener.read().clone()
     }
 
     pub fn register_indexed_docs_provider_listener(

@@ -131,14 +131,6 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     ) {
     }
 
-    fn register_context_server(
-        &self,
-        _extension: Arc<dyn Extension>,
-        _id: Arc<str>,
-        _cx: &mut AppContext,
-    ) {
-    }
-
     fn register_snippets(&self, _path: &PathBuf, _snippet_contents: &str) -> Result<()> {
         Ok(())
     }
@@ -1278,12 +1270,10 @@ impl ExtensionStore {
                         );
                     }
 
-                    for (id, _context_server_entry) in &manifest.context_servers {
-                        this.registration_hooks.register_context_server(
-                            extension.clone(),
-                            id.clone(),
-                            cx,
-                        );
+                    if let Some(listener) = this.change_listeners.context_server_listener() {
+                        for (id, _context_server_entry) in &manifest.context_servers {
+                            listener.register(extension.clone(), id.clone(), cx);
+                        }
                     }
 
                     if let Some(listener) = this.change_listeners.indexed_docs_provider_listener() {

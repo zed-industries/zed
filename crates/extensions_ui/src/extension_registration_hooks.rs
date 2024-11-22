@@ -2,24 +2,13 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use assistant_slash_command::{ExtensionSlashCommand, SlashCommandRegistry};
-use context_servers::manager::ServerCommand;
 use context_servers::ContextServerFactoryRegistry;
-use extension::{Extension, ProjectDelegate};
+use extension::Extension;
 use extension_host::extension_lsp_adapter::ExtensionLspAdapter;
-use gpui::{AppContext, Model};
+use gpui::Model;
 use language::{LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
 use lsp::LanguageServerName;
 use snippet_provider::SnippetRegistry;
-
-struct ExtensionProject {
-    worktree_ids: Vec<u64>,
-}
-
-impl ProjectDelegate for ExtensionProject {
-    fn worktree_ids(&self) -> Vec<u64> {
-        self.worktree_ids.clone()
-    }
-}
 
 pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,
@@ -52,54 +41,6 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
     ) {
         self.slash_command_registry
             .register_command(ExtensionSlashCommand::new(extension, command), false)
-    }
-
-    fn register_context_server(
-        &self,
-        extension: Arc<dyn Extension>,
-        id: Arc<str>,
-        cx: &mut AppContext,
-    ) {
-        self.context_server_factory_registry
-            .update(cx, |registry, _| {
-                registry.register_server_factory(
-                    id.clone(),
-                    Arc::new({
-                        move |project, cx| {
-                            log::info!(
-                                "loading command for context server {id} from extension {}",
-                                extension.manifest().id
-                            );
-
-                            let id = id.clone();
-                            let extension = extension.clone();
-                            cx.spawn(|mut cx| async move {
-                                let extension_project =
-                                    project.update(&mut cx, |project, cx| {
-                                        Arc::new(ExtensionProject {
-                                            worktree_ids: project
-                                                .visible_worktrees(cx)
-                                                .map(|worktree| worktree.read(cx).id().to_proto())
-                                                .collect(),
-                                        })
-                                    })?;
-
-                                let command = extension
-                                    .context_server_command(id.clone(), extension_project)
-                                    .await?;
-
-                                log::info!("loaded command for context server {id}: {command:?}");
-
-                                Ok(ServerCommand {
-                                    path: command.command,
-                                    args: command.args,
-                                    env: Some(command.env.into_iter().collect()),
-                                })
-                            })
-                        }
-                    }),
-                )
-            });
     }
 
     fn register_snippets(&self, path: &PathBuf, snippet_contents: &str) -> Result<()> {
