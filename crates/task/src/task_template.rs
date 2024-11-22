@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use util::serde::default_true;
 
 use anyhow::{bail, Context};
 use collections::{HashMap, HashSet};
@@ -57,12 +58,12 @@ pub struct TaskTemplate {
     /// Which shell to use when spawning the task.
     #[serde(default)]
     pub shell: Shell,
-    /// Wether to hide the task line in the task output.
-    #[serde(default)]
-    pub hide_task: bool,
-    /// Weather to hide the command line in the task output.
-    #[serde(default)]
-    pub hide_command: bool,
+    /// Whether to show the task line in the task output.
+    #[serde(default = "default_true")]
+    pub show_task: bool,
+    /// Whether to show the command line in the task output.
+    #[serde(default = "default_true")]
+    pub show_command: bool,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
@@ -236,8 +237,8 @@ impl TaskTemplate {
                 reveal: self.reveal,
                 hide: self.hide,
                 shell: self.shell.clone(),
-                hide_task: !self.hide_task,
-                hide_command: !self.hide_command,
+                show_task: self.show_task,
+                show_command: self.show_command,
             }),
         })
     }

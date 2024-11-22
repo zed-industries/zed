@@ -174,8 +174,8 @@ impl Project {
                     command_label: spawn_task.command_label,
                     hide: spawn_task.hide,
                     status: TaskStatus::Running,
-                    hide_task: spawn_task.hide_task,
-                    hide_command: spawn_task.hide_command,
+                    show_task: spawn_task.show_task,
+                    show_command: spawn_task.show_command,
                     completion_rx,
                 });
 

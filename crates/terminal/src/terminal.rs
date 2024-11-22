@@ -639,8 +639,8 @@ pub struct TaskState {
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
     pub hide: HideStrategy,
-    pub hide_task: bool,
-    pub hide_command: bool,
+    pub show_task: bool,
+    pub show_command: bool,
 }
 
 /// A status of the current terminal tab's task.
@@ -1762,21 +1762,19 @@ impl Terminal {
         };
 
         let (finished_successfully, task_line, command_line) = task_summary(task, error_code);
-        // Decide whether to display the task and/or command lines based on user preferences.
         let mut lines_to_show = Vec::new();
-        if task.hide_task {
+        if task.show_task {
             lines_to_show.push(task_line.as_str());
         }
-        if task.hide_command {
+        if task.show_command {
             lines_to_show.push(command_line.as_str());
         }
 
-        // SAFETY: the invocation happens on non `TaskStatus::Running` tasks, once,
-        // after either `AlacTermEvent::Exit` or `AlacTermEvent::ChildExit` events that are spawned
-        // when Zed task finishes and no more output is made.
-        // After the task summary is output once, no more text is appended to the terminal.
-        // Only append text if there are lines to show
         if !lines_to_show.is_empty() {
+            // SAFETY: the invocation happens on non `TaskStatus::Running` tasks, once,
+            // after either `AlacTermEvent::Exit` or `AlacTermEvent::ChildExit` events that are spawned
+            // when Zed task finishes and no more output is made.
+            // After the task summary is output once, no more text is appended to the terminal.
             unsafe { append_text_to_term(&mut self.term.lock(), &lines_to_show) };
         }
 
