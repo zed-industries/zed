@@ -1455,7 +1455,7 @@ impl ProjectPanel {
 
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         worktree.update(cx, |tree, _| {
-            ReversibleIterable::<REVERSE_SEARCH, _>::new(tree.entries(true, 0usize).into_iter())
+            ReversibleIterable::<REVERSE_SEARCH, _>::new(tree.entries(true, 0usize))
                 .find_single_ended(|ele| predicate(ele, worktree_id))
                 .cloned()
         })
