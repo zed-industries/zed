@@ -71,8 +71,20 @@ impl Match {
     fn project_path(&self, project: &Project, cx: &WindowContext) -> Option<ProjectPath> {
         let worktree_id = if let Some(path_match) = &self.path_match {
             WorktreeId::from_usize(path_match.worktree_id)
+        } else if let Some(worktree) = project
+            .visible_worktrees(cx)
+            .filter(|worktree| {
+                worktree
+                    .read(cx)
+                    .root_entry()
+                    .is_some_and(|entry| entry.is_dir())
+            })
+            .next()
+        {
+            worktree.read(cx).id()
         } else {
-            project.worktrees(cx).next()?.read(cx).id()
+            // todo(): we should find_or_create a workspace.
+            return None;
         };
 
         let path = PathBuf::from(self.relative_path());
