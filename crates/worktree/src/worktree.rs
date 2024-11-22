@@ -3336,11 +3336,7 @@ impl File {
     }
 
     pub fn project_entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
-        if self.is_deleted {
-            None
-        } else {
-            self.entry_id
-        }
+        self.entry_id
     }
 }
 
