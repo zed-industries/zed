@@ -1752,12 +1752,18 @@ impl<'a> WindowContext<'a> {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
-        window.next_frame.accessed_element_states.extend(
-            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
-        );
+        if let Some(element_states) = window
+            .rendered_frame
+            .accessed_element_states
+            .get(range.start.accessed_element_states_index..range.end.accessed_element_states_index)
+        {
+            window.next_frame.accessed_element_states.extend(
+                element_states
+                    .iter()
+                    .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+            );
+        }
+
         window
             .text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);

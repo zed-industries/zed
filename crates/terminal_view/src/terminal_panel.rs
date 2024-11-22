@@ -46,7 +46,7 @@ pub fn init(cx: &mut AppContext) {
             // TODO kb new actions (which keybindings to use?? cmd-k is taken on macOS):
             // * ActivatePaneInDirection, ActivateNextPane, ActivatePreviousPane, ActivatePane,
             // * CloseAllItemsAndPanes, CloseInactiveTabsAndPanes, SwapPaneInDirection,
-            // * SwapItemLeft, SwapItemRight, SplitLeft, SplitUp, SplitRight, SplitDown, SplitHorizontal, SplitVertical,
+            // * SwapItemLeft, SwapItemRight
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
@@ -212,7 +212,6 @@ impl TerminalPanel {
                     panel.height = serialized_panel.height.map(|h| h.round());
                     panel.width = serialized_panel.width.map(|w| w.round());
                     // TODO kb (de)serialization of the center pane
-                    // TODO kb something panics, if I call cmd-p twice to split, on ond and then on the new pane
                     panel.active_pane.update(cx, |_, cx| {
                         serialized_panel
                             .items
