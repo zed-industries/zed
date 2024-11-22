@@ -418,7 +418,7 @@ pub async fn post_events(
     if let Some(kinesis_client) = app.kinesis_client.clone() {
         if let Some(stream) = app.config.kinesis_stream.clone() {
             let mut request = kinesis_client.put_records().stream_name(stream);
-            for row in for_snowflake(request_body.clone(), first_event_at) {
+            for row in for_snowflake(request_body.clone(), first_event_at, country_code.clone()) {
                 if let Some(data) = serde_json::to_vec(&row).log_err() {
                     request = request.records(
                         aws_sdk_kinesis::types::PutRecordsRequestEntry::builder()
@@ -483,20 +483,7 @@ pub async fn post_events(
                         checksum_matched,
                     ))
             }
-            Event::Cpu(event) => to_upload.cpu_events.push(CpuEventRow::from_event(
-                event.clone(),
-                wrapper,
-                &request_body,
-                first_event_at,
-                checksum_matched,
-            )),
-            Event::Memory(event) => to_upload.memory_events.push(MemoryEventRow::from_event(
-                event.clone(),
-                wrapper,
-                &request_body,
-                first_event_at,
-                checksum_matched,
-            )),
+            Event::Cpu(_) | Event::Memory(_) => continue,
             Event::App(event) => to_upload.app_events.push(AppEventRow::from_event(
                 event.clone(),
                 wrapper,
@@ -947,6 +934,7 @@ pub struct CpuEventRow {
 }
 
 impl CpuEventRow {
+    #[allow(unused)]
     fn from_event(
         event: CpuEvent,
         wrapper: &EventWrapper,
@@ -1001,6 +989,7 @@ pub struct MemoryEventRow {
 }
 
 impl MemoryEventRow {
+    #[allow(unused)]
     fn from_event(
         event: MemoryEvent,
         wrapper: &EventWrapper,
@@ -1392,8 +1381,9 @@ pub fn calculate_json_checksum(app: Arc<AppState>, json: &impl AsRef<[u8]>) -> O
 fn for_snowflake(
     body: EventRequestBody,
     first_event_at: chrono::DateTime<chrono::Utc>,
+    country_code: Option<String>,
 ) -> impl Iterator<Item = SnowflakeRow> {
-    body.events.into_iter().map(move |event| {
+    body.events.into_iter().flat_map(move |event| {
         let timestamp =
             first_event_at + Duration::milliseconds(event.milliseconds_since_first_event);
         let (event_type, mut event_properties) = match &event.event {
@@ -1450,14 +1440,7 @@ fn for_snowflake(
                 },
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::Cpu(e) => (
-                "System CPU Sampled".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
-            Event::Memory(e) => (
-                "System Memory Sampled".to_string(),
-                serde_json::to_value(e).unwrap(),
-            ),
+            Event::Cpu(_) | Event::Memory(_) => return None,
             Event::App(e) => {
                 let mut properties = json!({});
                 let event_type = match e.operation.trim() {
@@ -1571,13 +1554,19 @@ fn for_snowflake(
                 body.release_channel.clone().into(),
             );
             map.insert("signed_in".to_string(), event.signed_in.into());
+            if let Some(country_code) = country_code.as_ref() {
+                map.insert("country".to_string(), country_code.clone().into());
+            }
         }
 
+        // NOTE: most amplitude user properties are read out of our event_properties
+        // dictionary. See https://app.amplitude.com/data/zed/Zed/sources/detail/production/falcon%3A159998
+        // for how that is configured.
         let user_properties = Some(serde_json::json!({
             "is_staff": body.is_staff,
         }));
 
-        SnowflakeRow {
+        Some(SnowflakeRow {
             time: timestamp,
             user_id: body.metrics_id.clone(),
             device_id: body.system_id.clone(),
@@ -1585,7 +1574,7 @@ fn for_snowflake(
             event_properties,
             user_properties,
             insert_id: Some(Uuid::new_v4().to_string()),
-        }
+        })
     })
 }
 
@@ -1598,49 +1587,4 @@ struct SnowflakeRow {
     pub event_properties: serde_json::Value,
     pub user_properties: Option<serde_json::Value>,
     pub insert_id: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SnowflakeData {
-    /// Identifier unique to each Zed installation (differs for stable, preview, dev)
-    pub installation_id: Option<String>,
-    /// Identifier unique to each logged in Zed user (randomly generated on first sign in)
-    /// Identifier unique to each Zed session (differs for each time you open Zed)
-    pub session_id: Option<String>,
-    pub metrics_id: Option<String>,
-    /// True for Zed staff, otherwise false
-    pub is_staff: Option<bool>,
-    /// Zed version number
-    pub app_version: String,
-    pub os_name: String,
-    pub os_version: Option<String>,
-    pub architecture: String,
-    /// Zed release channel (stable, preview, dev)
-    pub release_channel: Option<String>,
-    pub signed_in: bool,
-
-    #[serde(flatten)]
-    pub editor_event: Option<EditorEvent>,
-    #[serde(flatten)]
-    pub inline_completion_event: Option<InlineCompletionEvent>,
-    #[serde(flatten)]
-    pub call_event: Option<CallEvent>,
-    #[serde(flatten)]
-    pub assistant_event: Option<AssistantEvent>,
-    #[serde(flatten)]
-    pub cpu_event: Option<CpuEvent>,
-    #[serde(flatten)]
-    pub memory_event: Option<MemoryEvent>,
-    #[serde(flatten)]
-    pub app_event: Option<AppEvent>,
-    #[serde(flatten)]
-    pub setting_event: Option<SettingEvent>,
-    #[serde(flatten)]
-    pub extension_event: Option<ExtensionEvent>,
-    #[serde(flatten)]
-    pub edit_event: Option<EditEvent>,
-    #[serde(flatten)]
-    pub repl_event: Option<ReplEvent>,
-    #[serde(flatten)]
-    pub action_event: Option<ActionEvent>,
 }

@@ -271,6 +271,8 @@ gpui::actions!(
         Hover,
         Indent,
         JoinLines,
+        KillRingCut,
+        KillRingYank,
         LineDown,
         LineUp,
         MoveDown,

@@ -46,6 +46,7 @@ use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
+use std::ops;
 use std::time::{Duration, Instant};
 use std::{
     fmt::{self, Debug},
@@ -561,6 +562,42 @@ pub(crate) trait PlatformAtlas: Send + Sync {
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
+    fn remove(&self, key: &AtlasKey);
+}
+
+struct AtlasTextureList<T> {
+    textures: Vec<Option<T>>,
+    free_list: Vec<usize>,
+}
+
+impl<T> Default for AtlasTextureList<T> {
+    fn default() -> Self {
+        Self {
+            textures: Vec::default(),
+            free_list: Vec::default(),
+        }
+    }
+}
+
+impl<T> ops::Index<usize> for AtlasTextureList<T> {
+    type Output = Option<T>;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.textures[index]
+    }
+}
+
+impl<T> AtlasTextureList<T> {
+    #[allow(unused)]
+    fn drain(&mut self) -> std::vec::Drain<Option<T>> {
+        self.free_list.clear();
+        self.textures.drain(..)
+    }
+
+    #[allow(dead_code)]
+    fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut T> {
+        self.textures.iter_mut().flatten()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -643,9 +680,13 @@ impl PlatformInputHandler {
     }
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
-    fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String> {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        adjusted: &mut Option<Range<usize>>,
+    ) -> Option<String> {
         self.cx
-            .update(|cx| self.handler.text_for_range(range_utf16, cx))
+            .update(|cx| self.handler.text_for_range(range_utf16, adjusted, cx))
             .ok()
             .flatten()
     }
@@ -712,6 +753,7 @@ impl PlatformInputHandler {
 
 /// A struct representing a selection in a text buffer, in UTF16 characters.
 /// This is different from a range because the head may be before the tail.
+#[derive(Debug)]
 pub struct UTF16Selection {
     /// The range of text in the document this selection corresponds to
     /// in UTF16 characters.
@@ -749,6 +791,7 @@ pub trait InputHandler: 'static {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
         cx: &mut WindowContext,
     ) -> Option<String>;
 

@@ -14,8 +14,7 @@ use std::{
     any::Any,
     borrow::Cow,
     path::{Path, PathBuf},
-    sync::Arc,
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{fs::remove_matching, maybe, ResultExt};
@@ -639,7 +638,7 @@ fn package_name_and_bin_name_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<(String, String)> {
-    let mut command = std::process::Command::new("cargo");
+    let mut command = util::command::new_std_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -685,11 +684,10 @@ fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    let mut command = std::process::Command::new("cargo");
+    let mut command = util::command::new_std_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
-
     let pkgid = String::from_utf8(
         command
             .current_dir(package_directory)

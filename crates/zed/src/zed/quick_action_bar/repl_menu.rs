@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use gpui::ElementId;
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
 use picker::Picker;
 use repl::{
@@ -11,11 +12,9 @@ use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
     PopoverMenuHandle, Tooltip,
 };
-
-use gpui::ElementId;
 use util::ResultExt;
 
-use crate::QuickActionBar;
+use super::QuickActionBar;
 
 const ZED_REPL_DOCUMENTATION: &str = "https://zed.dev/docs/repl";
 

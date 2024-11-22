@@ -2,6 +2,12 @@ use anyhow::{anyhow, bail, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
 use http_client::HttpClient;
+use language_model::LanguageModelCompletionEvent;
+use language_model::{
+    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, RateLimiter, Role,
+};
 use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
     ChatResponseDelta, KeepAlive, OllamaToolCall,
@@ -13,12 +19,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use ui::{prelude::*, ButtonLike, Indicator};
 use util::ResultExt;
 
-use crate::LanguageModelCompletionEvent;
-use crate::{
-    settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
-};
+use crate::AllLanguageModelSettings;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";

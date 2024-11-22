@@ -4,7 +4,7 @@ use crate::{ExtensionManifest, ExtensionRegistrationHooks};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use extension::{
-    CodeLabel, Command, Completion, KeyValueStoreDelegate, SlashCommand,
+    CodeLabel, Command, Completion, KeyValueStoreDelegate, ProjectDelegate, SlashCommand,
     SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::{normalize_path, Fs};
@@ -34,7 +34,6 @@ use wasmtime::{
 };
 use wasmtime_wasi::{self as wasi, WasiView};
 use wit::Extension;
-pub use wit::ExtensionProject;
 
 pub struct WasmHost {
     engine: Engine,
@@ -232,6 +231,25 @@ impl extension::Extension for WasmExtension {
                     .map_err(|err| anyhow!("{err}"))?;
 
                 Ok(output.into())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn context_server_command(
+        &self,
+        context_server_id: Arc<str>,
+        project: Arc<dyn ProjectDelegate>,
+    ) -> Result<Command> {
+        self.call(|extension, store| {
+            async move {
+                let project_resource = store.data_mut().table().push(project)?;
+                let command = extension
+                    .call_context_server_command(store, context_server_id.clone(), project_resource)
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+                anyhow::Ok(command.into())
             }
             .boxed()
         })

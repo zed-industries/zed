@@ -1,12 +1,21 @@
-use futures::{channel::mpsc, StreamExt as _};
-use gpui::AppContext;
+use futures::{channel::mpsc, SinkExt as _};
+use gpui::{Task, View, WindowContext};
+use http_client::{AsyncBody, HttpClient, Request};
 use jupyter_protocol::{ExecutionState, JupyterMessage, KernelInfoReply};
-// todo(kyle): figure out if this needs to be different
 use runtimelib::JupyterKernelspec;
 
+use futures::StreamExt;
+use smol::io::AsyncReadExt as _;
+
+use crate::Session;
+
 use super::RunningKernel;
-use jupyter_websocket_client::RemoteServer;
-use std::fmt::Debug;
+use anyhow::Result;
+use jupyter_websocket_client::{
+    JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest, KernelSpecsResponse,
+    RemoteServer,
+};
+use std::{fmt::Debug, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub struct RemoteKernelSpecification {
@@ -14,6 +23,101 @@ pub struct RemoteKernelSpecification {
     pub url: String,
     pub token: String,
     pub kernelspec: JupyterKernelspec,
+}
+
+pub async fn launch_remote_kernel(
+    remote_server: &RemoteServer,
+    http_client: Arc<dyn HttpClient>,
+    kernel_name: &str,
+    _path: &str,
+) -> Result<String> {
+    //
+    let kernel_launch_request = KernelLaunchRequest {
+        name: kernel_name.to_string(),
+        // todo: add path to runtimelib
+        // path,
+    };
+
+    let kernel_launch_request = serde_json::to_string(&kernel_launch_request)?;
+
+    let request = Request::builder()
+        .method("POST")
+        .uri(&remote_server.api_url("/kernels"))
+        .header("Authorization", format!("token {}", remote_server.token))
+        .body(AsyncBody::from(kernel_launch_request))?;
+
+    let response = http_client.send(request).await?;
+
+    if !response.status().is_success() {
+        let mut body = String::new();
+        response.into_body().read_to_string(&mut body).await?;
+        return Err(anyhow::anyhow!("Failed to launch kernel: {}", body));
+    }
+
+    let mut body = String::new();
+    response.into_body().read_to_string(&mut body).await?;
+
+    let response: jupyter_websocket_client::Kernel = serde_json::from_str(&body)?;
+
+    Ok(response.id)
+}
+
+pub async fn list_remote_kernelspecs(
+    remote_server: RemoteServer,
+    http_client: Arc<dyn HttpClient>,
+) -> Result<Vec<RemoteKernelSpecification>> {
+    let url = remote_server.api_url("/kernelspecs");
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(&url)
+        .header("Authorization", format!("token {}", remote_server.token))
+        .body(AsyncBody::default())?;
+
+    let response = http_client.send(request).await?;
+
+    if response.status().is_success() {
+        let mut body = response.into_body();
+
+        let mut body_bytes = Vec::new();
+        body.read_to_end(&mut body_bytes).await?;
+
+        let kernel_specs: KernelSpecsResponse = serde_json::from_slice(&body_bytes)?;
+
+        let remote_kernelspecs = kernel_specs
+            .kernelspecs
+            .into_iter()
+            .map(|(name, spec)| RemoteKernelSpecification {
+                name: name.clone(),
+                url: remote_server.base_url.clone(),
+                token: remote_server.token.clone(),
+                // todo: line up the jupyter kernelspec from runtimelib with
+                //       the kernelspec pulled from the API
+                //
+                //        There are _small_ differences, so we may just want a impl `From`
+                kernelspec: JupyterKernelspec {
+                    argv: spec.spec.argv,
+                    display_name: spec.spec.display_name,
+                    language: spec.spec.language,
+                    // todo: fix up mismatch in types here
+                    metadata: None,
+                    interrupt_mode: None,
+                    env: None,
+                },
+            })
+            .collect::<Vec<RemoteKernelSpecification>>();
+
+        if remote_kernelspecs.is_empty() {
+            Err(anyhow::anyhow!("No kernel specs found"))
+        } else {
+            Ok(remote_kernelspecs.clone())
+        }
+    } else {
+        Err(anyhow::anyhow!(
+            "Failed to fetch kernel specs: {}",
+            response.status()
+        ))
+    }
 }
 
 impl PartialEq for RemoteKernelSpecification {
@@ -26,55 +130,91 @@ impl Eq for RemoteKernelSpecification {}
 
 pub struct RemoteRunningKernel {
     remote_server: RemoteServer,
+    _receiving_task: Task<Result<()>>,
+    _routing_task: Task<Result<()>>,
+    http_client: Arc<dyn HttpClient>,
     pub working_directory: std::path::PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
     pub kernel_info: Option<KernelInfoReply>,
+    pub kernel_id: String,
 }
 
 impl RemoteRunningKernel {
-    pub async fn new(
+    pub fn new(
         kernelspec: RemoteKernelSpecification,
         working_directory: std::path::PathBuf,
-        request_tx: mpsc::Sender<JupyterMessage>,
-        _cx: &mut AppContext,
-    ) -> anyhow::Result<(
-        Self,
-        (), // Stream<Item=JupyterMessage>
-    )> {
+        session: View<Session>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<Box<dyn RunningKernel>>> {
         let remote_server = RemoteServer {
             base_url: kernelspec.url,
             token: kernelspec.token,
         };
 
-        // todo: launch a kernel to get a kernel ID
-        let kernel_id = "not-implemented";
+        let http_client = cx.http_client();
 
-        let kernel_socket = remote_server.connect_to_kernel(kernel_id).await?;
+        cx.spawn(|cx| async move {
+            let kernel_id = launch_remote_kernel(
+                &remote_server,
+                http_client.clone(),
+                &kernelspec.name,
+                working_directory.to_str().unwrap_or_default(),
+            )
+            .await?;
 
-        let (mut _w, mut _r) = kernel_socket.split();
+            let kernel_socket = remote_server.connect_to_kernel(&kernel_id).await?;
 
-        let (_messages_tx, _messages_rx) = mpsc::channel::<JupyterMessage>(100);
+            let (mut w, mut r): (JupyterWebSocketWriter, JupyterWebSocketReader) =
+                kernel_socket.split();
 
-        // let routing_task = cx.background_executor().spawn({
-        //     async move {
-        //         while let Some(message) = request_rx.next().await {
-        //             w.send(message).await;
-        //         }
-        //     }
-        // });
-        // let messages_rx = r.into();
+            let (request_tx, mut request_rx) =
+                futures::channel::mpsc::channel::<JupyterMessage>(100);
 
-        anyhow::Ok((
-            Self {
+            let routing_task = cx.background_executor().spawn({
+                async move {
+                    while let Some(message) = request_rx.next().await {
+                        w.send(message).await.ok();
+                    }
+                    Ok(())
+                }
+            });
+
+            let receiving_task = cx.spawn({
+                let session = session.clone();
+
+                |mut cx| async move {
+                    while let Some(message) = r.next().await {
+                        match message {
+                            Ok(message) => {
+                                session
+                                    .update(&mut cx, |session, cx| {
+                                        session.route(&message, cx);
+                                    })
+                                    .ok();
+                            }
+                            Err(e) => {
+                                log::error!("Error receiving message: {:?}", e);
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+            });
+
+            anyhow::Ok(Box::new(Self {
+                _routing_task: routing_task,
+                _receiving_task: receiving_task,
                 remote_server,
                 working_directory,
                 request_tx,
+                // todo(kyle): pull this from the kernel API to start with
                 execution_state: ExecutionState::Idle,
                 kernel_info: None,
-            },
-            (),
-        ))
+                kernel_id,
+                http_client: http_client.clone(),
+            }) as Box<dyn RunningKernel>)
+        })
     }
 }
 
@@ -116,7 +256,30 @@ impl RunningKernel for RemoteRunningKernel {
         self.kernel_info = Some(info);
     }
 
-    fn force_shutdown(&mut self) -> anyhow::Result<()> {
-        unimplemented!("force_shutdown")
+    fn force_shutdown(&mut self, cx: &mut WindowContext) -> Task<anyhow::Result<()>> {
+        let url = self
+            .remote_server
+            .api_url(&format!("/kernels/{}", self.kernel_id));
+        let token = self.remote_server.token.clone();
+        let http_client = self.http_client.clone();
+
+        cx.spawn(|_| async move {
+            let request = Request::builder()
+                .method("DELETE")
+                .uri(&url)
+                .header("Authorization", format!("token {}", token))
+                .body(AsyncBody::default())?;
+
+            let response = http_client.send(request).await?;
+
+            if response.status().is_success() {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!(
+                    "Failed to shutdown kernel: {}",
+                    response.status()
+                ))
+            }
+        })
     }
 }

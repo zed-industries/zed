@@ -9,6 +9,7 @@ members = [
     "crates/assistant_tool",
     "crates/audio",
     "crates/auto_update",
+    "crates/auto_update_ui",
     "crates/breadcrumbs",
     "crates/call",
     "crates/channel",
@@ -49,11 +50,13 @@ members = [
     "crates/http_client",
     "crates/image_viewer",
     "crates/indexed_docs",
+    "crates/inline_completion",
     "crates/inline_completion_button",
     "crates/install_cli",
     "crates/journal",
     "crates/language",
     "crates/language_model",
+    "crates/language_models",
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
@@ -78,7 +81,6 @@ members = [
     "crates/project_panel",
     "crates/project_symbols",
     "crates/proto",
-    "crates/quick_action_bar",
     "crates/recent_projects",
     "crates/refineable",
     "crates/refineable/derive_refineable",
@@ -126,6 +128,7 @@ members = [
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
+    "crates/vim_mode_setting",
     "crates/welcome",
     "crates/workspace",
     "crates/worktree",
@@ -185,6 +188,7 @@ assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tool = { path = "crates/assistant_tool" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
+auto_update_ui = { path = "crates/auto_update_ui" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
@@ -221,11 +225,13 @@ html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
+inline_completion = { path = "crates/inline_completion" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_model = { path = "crates/language_model" }
+language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
@@ -252,7 +258,6 @@ project = { path = "crates/project" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
 proto = { path = "crates/proto" }
-quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
@@ -298,6 +303,7 @@ ui_macros = { path = "crates/ui_macros" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
+vim_mode_setting = { path = "crates/vim_mode_setting" }
 welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
@@ -332,7 +338,7 @@ blade-macros = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a
 blade-util = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
 blake3 = "1.5.3"
 bytes = "1.0"
-cargo_metadata = "0.18"
+cargo_metadata = "0.19"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }

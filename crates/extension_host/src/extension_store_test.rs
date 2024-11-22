@@ -7,11 +7,14 @@ use crate::{
 use anyhow::Result;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
+use extension::Extension;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{BackgroundExecutor, Context, SemanticVersion, SharedString, Task, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
+use language::{
+    LanguageMatcher, LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage,
+};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -80,11 +83,18 @@ impl ExtensionRegistrationHooks for TestExtensionRegistrationHooks {
 
     fn register_lsp_adapter(
         &self,
-        language_name: language::LanguageName,
-        adapter: ExtensionLspAdapter,
+        extension: Arc<dyn Extension>,
+        language_server_id: LanguageServerName,
+        language: LanguageName,
     ) {
-        self.language_registry
-            .register_lsp_adapter(language_name, Arc::new(adapter));
+        self.language_registry.register_lsp_adapter(
+            language.clone(),
+            Arc::new(ExtensionLspAdapter::new(
+                extension,
+                language_server_id,
+                language,
+            )),
+        );
     }
 
     fn update_lsp_status(

@@ -50,11 +50,11 @@ use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, BufferSnapshot, LanguageRegistry, LspAdapterDelegate, ToOffset,
 };
-use language_model::{
-    provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelRegistry, Role,
-};
 use language_model::{LanguageModelImage, LanguageModelToolUse};
+use language_model::{
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role,
+    ZED_CLOUD_PROVIDER_ID,
+};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
@@ -664,7 +664,7 @@ impl AssistantPanel {
         // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
         // the provider, we want to show a nudge to sign in.
         let show_zed_ai_notice = client_status.is_signed_out()
-            && active_provider.map_or(true, |provider| provider.id().0 == PROVIDER_ID);
+            && active_provider.map_or(true, |provider| provider.id().0 == ZED_CLOUD_PROVIDER_ID);
 
         self.show_zed_ai_notice = show_zed_ai_notice;
         cx.notify();
@@ -2050,30 +2050,6 @@ impl ContextEditor {
             ContextEvent::SlashCommandOutputSectionAdded { section } => {
                 self.insert_slash_command_output_sections([section.clone()], false, cx);
             }
-            ContextEvent::SlashCommandFinished {
-                output_range: _output_range,
-                run_commands_in_ranges,
-            } => {
-                for range in run_commands_in_ranges {
-                    let commands = self.context.update(cx, |context, cx| {
-                        context.reparse(cx);
-                        context
-                            .pending_commands_for_range(range.clone(), cx)
-                            .to_vec()
-                    });
-
-                    for command in commands {
-                        self.run_command(
-                            command.source_range,
-                            &command.name,
-                            &command.arguments,
-                            false,
-                            self.workspace.clone(),
-                            cx,
-                        );
-                    }
-                }
-            }
             ContextEvent::UsePendingTools => {
                 let pending_tool_uses = self
                     .context
@@ -2152,6 +2128,37 @@ impl ContextEditor {
         command_id: InvokedSlashCommandId,
         cx: &mut ViewContext<Self>,
     ) {
+        if let Some(invoked_slash_command) =
+            self.context.read(cx).invoked_slash_command(&command_id)
+        {
+            if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
+                let run_commands_in_ranges = invoked_slash_command
+                    .run_commands_in_ranges
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for range in run_commands_in_ranges {
+                    let commands = self.context.update(cx, |context, cx| {
+                        context.reparse(cx);
+                        context
+                            .pending_commands_for_range(range.clone(), cx)
+                            .to_vec()
+                    });
+
+                    for command in commands {
+                        self.run_command(
+                            command.source_range,
+                            &command.name,
+                            &command.arguments,
+                            false,
+                            self.workspace.clone(),
+                            cx,
+                        );
+                    }
+                }
+            }
+        }
+
         self.editor.update(cx, |editor, cx| {
             if let Some(invoked_slash_command) =
                 self.context.read(cx).invoked_slash_command(&command_id)

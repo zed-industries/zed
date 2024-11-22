@@ -402,6 +402,7 @@ dependencies = [
  "indoc",
  "language",
  "language_model",
+ "language_models",
  "languages",
  "log",
  "lsp",
@@ -1013,23 +1014,38 @@ dependencies = [
  "anyhow",
  "client",
  "db",
- "editor",
  "gpui",
  "http_client",
  "log",
- "markdown_preview",
- "menu",
  "paths",
  "release_channel",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "smol",
  "tempfile",
- "util",
  "which 6.0.3",
+ "workspace",
+]
+
+[[package]]
+name = "auto_update_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "auto_update",
+ "client",
+ "editor",
+ "gpui",
+ "http_client",
+ "markdown_preview",
+ "menu",
+ "release_channel",
+ "serde",
+ "serde_json",
+ "smol",
+ "util",
  "workspace",
 ]
 
@@ -2107,9 +2123,9 @@ dependencies = [
 
 [[package]]
 name = "cargo_metadata"
-version = "0.18.1"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d886547e41f740c616ae73108f6eb70afe6d940c7bc697cb30f13daec073037"
+checksum = "afc309ed89476c8957c50fb818f56fe894db857866c3e163335faa91dc34eb85"
 dependencies = [
  "camino",
  "cargo-platform",
@@ -2456,7 +2472,6 @@ dependencies = [
  "settings",
  "sha2",
  "smol",
- "sysinfo",
  "telemetry_events",
  "text",
  "thiserror 1.0.69",
@@ -2473,7 +2488,6 @@ dependencies = [
 name = "clock"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "parking_lot",
  "serde",
  "smallvec",
@@ -2698,7 +2712,6 @@ dependencies = [
  "tree-sitter-md",
  "ui",
  "util",
- "vcs_menu",
  "workspace",
 ]
 
@@ -2878,6 +2891,7 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
+ "inline_completion",
  "language",
  "lsp",
  "menu",
@@ -3352,9 +3366,9 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.2.8"
+version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edb49164822f3ee45b17acd4a208cfc1251410cf0cad9a833234c9890774dd9f"
+checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
 dependencies = [
  "quote",
  "syn 2.0.87",
@@ -3717,12 +3731,14 @@ dependencies = [
  "emojis",
  "env_logger 0.11.5",
  "file_icons",
+ "fs",
  "futures 0.3.31",
  "fuzzy",
  "git",
  "gpui",
  "http_client",
  "indoc",
+ "inline_completion",
  "itertools 0.13.0",
  "language",
  "linkify",
@@ -4029,6 +4045,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "util",
 ]
 
 [[package]]
@@ -4114,6 +4131,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml 0.8.19",
+ "util",
  "wasm-encoder 0.215.0",
  "wasmparser 0.215.0",
  "wit-component",
@@ -4167,6 +4185,7 @@ dependencies = [
  "paths",
  "project",
  "release_channel",
+ "remote",
  "reqwest_client",
  "schemars",
  "semantic_version",
@@ -4175,6 +4194,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "task",
+ "tempfile",
  "theme",
  "toml 0.8.19",
  "url",
@@ -4214,12 +4234,11 @@ dependencies = [
  "smallvec",
  "snippet_provider",
  "theme",
- "theme_selector",
  "ui",
  "util",
- "vim",
- "wasmtime-wasi",
+ "vim_mode_setting",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -4326,6 +4345,7 @@ dependencies = [
  "urlencoding",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -4601,6 +4621,7 @@ dependencies = [
  "objc",
  "parking_lot",
  "paths",
+ "proto",
  "rope",
  "serde",
  "serde_json",
@@ -4934,7 +4955,6 @@ dependencies = [
  "unindent",
  "url",
  "util",
- "windows 0.58.0",
 ]
 
 [[package]]
@@ -6058,6 +6078,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "inline_completion"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "language",
+ "project",
+ "text",
+]
+
+[[package]]
 name = "inline_completion_button"
 version = "0.1.0"
 dependencies = [
@@ -6077,7 +6107,6 @@ dependencies = [
  "supermaven",
  "theme",
  "ui",
- "util",
  "workspace",
  "zed_actions",
 ]
@@ -6459,6 +6488,7 @@ dependencies = [
  "ctor",
  "ec4rs",
  "env_logger 0.11.5",
+ "fs",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -6510,28 +6540,48 @@ dependencies = [
  "anthropic",
  "anyhow",
  "base64 0.22.1",
- "client",
  "collections",
- "copilot",
- "ctor",
- "editor",
- "env_logger 0.11.5",
- "feature_flags",
  "futures 0.3.31",
  "google_ai",
  "gpui",
  "http_client",
  "image",
- "inline_completion_button",
- "language",
  "log",
- "menu",
  "ollama",
  "open_ai",
  "parking_lot",
+ "proto",
+ "schemars",
+ "serde",
+ "serde_json",
+ "smol",
+ "strum 0.25.0",
+ "ui",
+ "util",
+]
+
+[[package]]
+name = "language_models"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "client",
+ "collections",
+ "copilot",
+ "editor",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "google_ai",
+ "gpui",
+ "http_client",
+ "language_model",
+ "menu",
+ "ollama",
+ "open_ai",
  "project",
  "proto",
- "rand 0.8.5",
  "schemars",
  "serde",
  "serde_json",
@@ -6539,12 +6589,10 @@ dependencies = [
  "smol",
  "strum 0.25.0",
  "telemetry_events",
- "text",
  "theme",
  "thiserror 1.0.69",
  "tiktoken-rs",
  "ui",
- "unindent",
  "util",
 ]
 
@@ -6671,9 +6719,9 @@ checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 
 [[package]]
 name = "libc"
-version = "0.2.162"
+version = "0.2.164"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18d287de67fe55fd7e1581fe933d965a5a9477b38e949cfa9f8574ef01506398"
+checksum = "433bfe06b8c75da9b2e3fbea6e5329ff87748f0b144ef75306e674c3f6f7c13f"
 
 [[package]]
 name = "libdbus-sys"
@@ -6922,7 +6970,6 @@ dependencies = [
  "serde_json",
  "smol",
  "util",
- "windows 0.58.0",
 ]
 
 [[package]]
@@ -7461,7 +7508,6 @@ dependencies = [
  "util",
  "walkdir",
  "which 6.0.3",
- "windows 0.58.0",
 ]
 
 [[package]]
@@ -9150,7 +9196,6 @@ dependencies = [
  "url",
  "util",
  "which 6.0.3",
- "windows 0.58.0",
  "worktree",
 ]
 
@@ -9381,24 +9426,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "quick_action_bar"
-version = "0.1.0"
-dependencies = [
- "assistant",
- "editor",
- "gpui",
- "markdown_preview",
- "picker",
- "repl",
- "search",
- "settings",
- "ui",
- "util",
- "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -9650,6 +9677,7 @@ dependencies = [
  "anyhow",
  "auto_update",
  "editor",
+ "extension_host",
  "file_finder",
  "futures 0.3.31",
  "fuzzy",
@@ -9675,6 +9703,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -9824,6 +9853,7 @@ dependencies = [
  "client",
  "clock",
  "env_logger 0.11.5",
+ "extension_host",
  "fork",
  "fs",
  "futures 0.3.31",
@@ -9880,6 +9910,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.5",
  "feature_flags",
+ "file_icons",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -9911,7 +9942,6 @@ dependencies = [
  "ui",
  "util",
  "uuid",
- "windows 0.58.0",
  "workspace",
 ]
 
@@ -10855,9 +10885,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.132"
+version = "1.0.133"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d726bfaff4b320266d395898905d0eba0345aae23b54aee3a737e260fd46db03"
+checksum = "c7fceb2473b9166b2294ef05efcb65a3db80803f0b03ef86a5fc88a2b85ee377"
 dependencies = [
  "indexmap 2.6.0",
  "itoa",
@@ -11784,6 +11814,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "inline_completion",
  "language",
  "log",
  "postage",
@@ -11798,7 +11829,6 @@ dependencies = [
  "ui",
  "unicode-segmentation",
  "util",
- "windows 0.58.0",
 ]
 
 [[package]]
@@ -12165,6 +12195,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12250,6 +12281,7 @@ name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "breadcrumbs",
  "client",
  "collections",
  "db",
@@ -12268,7 +12300,6 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "task",
- "tasks_ui",
  "terminal",
  "theme",
  "ui",
@@ -12363,6 +12394,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12575,17 +12607,12 @@ dependencies = [
  "call",
  "client",
  "collections",
- "command_palette",
- "editor",
- "extensions_ui",
  "feature_flags",
- "feedback",
  "gpui",
  "http_client",
  "notifications",
  "pretty_assertions",
  "project",
- "recent_projects",
  "remote",
  "rpc",
  "serde",
@@ -12593,11 +12620,9 @@ dependencies = [
  "smallvec",
  "story",
  "theme",
- "theme_selector",
  "tree-sitter-md",
  "ui",
  "util",
- "vcs_menu",
  "windows 0.58.0",
  "workspace",
  "zed_actions",
@@ -13519,6 +13544,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "smol",
  "take-until",
  "tempfile",
  "tendril",
@@ -13608,6 +13634,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -13654,8 +13681,18 @@ dependencies = [
  "tokio",
  "ui",
  "util",
+ "vim_mode_setting",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "vim_mode_setting"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "settings",
 ]
 
 [[package]]
@@ -14358,22 +14395,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "copilot",
  "db",
  "editor",
- "extensions_ui",
  "fuzzy",
  "gpui",
- "inline_completion_button",
  "install_cli",
  "picker",
  "project",
  "schemars",
  "serde",
  "settings",
- "theme_selector",
  "ui",
  "util",
- "vim",
+ "vim_mode_setting",
  "workspace",
  "zed_actions",
 ]
@@ -15424,7 +15459,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.163.0"
+version = "0.164.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -15435,6 +15470,7 @@ dependencies = [
  "async-watch",
  "audio",
  "auto_update",
+ "auto_update_ui",
  "backtrace",
  "breadcrumbs",
  "call",
@@ -15473,6 +15509,7 @@ dependencies = [
  "journal",
  "language",
  "language_model",
+ "language_models",
  "language_selector",
  "language_tools",
  "languages",
@@ -15488,12 +15525,12 @@ dependencies = [
  "outline_panel",
  "parking_lot",
  "paths",
+ "picker",
  "profiling",
  "project",
  "project_panel",
  "project_symbols",
  "proto",
- "quick_action_bar",
  "recent_projects",
  "release_channel",
  "remote",
@@ -15529,7 +15566,9 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "vcs_menu",
  "vim",
+ "vim_mode_setting",
  "welcome",
  "windows 0.58.0",
  "winresource",
