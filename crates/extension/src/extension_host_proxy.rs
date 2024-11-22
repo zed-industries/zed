@@ -57,55 +57,37 @@ impl ExtensionHostProxy {
         }
     }
 
-    pub fn register_theme_proxy(&self, proxy: impl ExtensionThemeProxy + Send + Sync + 'static) {
+    pub fn register_theme_proxy(&self, proxy: impl ExtensionThemeProxy) {
         self.theme_proxy.write().replace(Arc::new(proxy));
     }
 
-    pub fn register_grammar_proxy(
-        &self,
-        proxy: impl ExtensionGrammarProxy + Send + Sync + 'static,
-    ) {
+    pub fn register_grammar_proxy(&self, proxy: impl ExtensionGrammarProxy) {
         self.grammar_proxy.write().replace(Arc::new(proxy));
     }
 
-    pub fn register_language_proxy(
-        &self,
-        proxy: impl ExtensionLanguageProxy + Send + Sync + 'static,
-    ) {
+    pub fn register_language_proxy(&self, proxy: impl ExtensionLanguageProxy) {
         self.language_proxy.write().replace(Arc::new(proxy));
     }
 
-    pub fn register_language_server_proxy(
-        &self,
-        proxy: impl ExtensionLanguageServerProxy + Send + Sync + 'static,
-    ) {
+    pub fn register_language_server_proxy(&self, proxy: impl ExtensionLanguageServerProxy) {
         self.language_server_proxy.write().replace(Arc::new(proxy));
     }
 
-    pub fn register_snippet_proxy(
-        &self,
-        proxy: impl ExtensionSnippetProxy + Send + Sync + 'static,
-    ) {
+    pub fn register_snippet_proxy(&self, proxy: impl ExtensionSnippetProxy) {
         self.snippet_proxy.write().replace(Arc::new(proxy));
     }
 
-    pub fn register_slash_command_proxy(
-        &self,
-        proxy: impl ExtensionSlashCommandProxy + Send + Sync + 'static,
-    ) {
+    pub fn register_slash_command_proxy(&self, proxy: impl ExtensionSlashCommandProxy) {
         self.slash_command_proxy.write().replace(Arc::new(proxy));
     }
 
-    pub fn register_context_server_proxy(
-        &self,
-        proxy: impl ExtensionContextServerProxy + Send + Sync + 'static,
-    ) {
+    pub fn register_context_server_proxy(&self, proxy: impl ExtensionContextServerProxy) {
         self.context_server_proxy.write().replace(Arc::new(proxy));
     }
 
     pub fn register_indexed_docs_provider_proxy(
         &self,
-        proxy: impl ExtensionIndexedDocsProviderProxy + Send + Sync + 'static,
+        proxy: impl ExtensionIndexedDocsProviderProxy,
     ) {
         self.indexed_docs_provider_proxy
             .write()
