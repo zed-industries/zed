@@ -282,7 +282,7 @@ fn main() {
         OpenListener::set_global(cx, open_listener.clone());
 
         extension::init(cx);
-        let proxy = ExtensionHostProxy::global(cx);
+        let extension_host_proxy = ExtensionHostProxy::global(cx);
 
         let client = Client::production(cx);
         cx.set_http_client(client.http_client().clone());
@@ -317,7 +317,7 @@ fn main() {
         let node_runtime = NodeRuntime::new(client.http_client(), rx);
 
         language::init(cx);
-        language_extension::init(proxy.clone(), languages.clone());
+        language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -377,7 +377,7 @@ fn main() {
         SystemAppearance::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         theme_extension::init(
-            proxy.clone(),
+            extension_host_proxy.clone(),
             ThemeRegistry::global(cx),
             cx.background_executor().clone(),
         );
@@ -413,7 +413,7 @@ fn main() {
             cx,
         );
         extension_host::init(
-            proxy,
+            extension_host_proxy,
             app_state.fs.clone(),
             app_state.client.clone(),
             app_state.node_runtime.clone(),

@@ -436,7 +436,7 @@ pub fn execute_run(
         git_hosting_providers::init(cx);
 
         extension::init(cx);
-        let proxy = ExtensionHostProxy::global(cx);
+        let extension_host_proxy = ExtensionHostProxy::global(cx);
 
         let project = cx.new_model(|cx| {
             let fs = Arc::new(RealFs::new(Default::default(), None));
@@ -470,7 +470,7 @@ pub fn execute_run(
                     http_client,
                     node_runtime,
                     languages,
-                    extension_host_proxy: proxy,
+                    extension_host_proxy,
                 },
                 cx,
             )
