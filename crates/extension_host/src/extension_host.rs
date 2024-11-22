@@ -12,8 +12,8 @@ use async_tar::Archive;
 use client::{proto, telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
 use collections::{btree_map, BTreeMap, HashMap, HashSet};
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
-use extension::Extension;
 pub use extension::ExtensionManifest;
+use extension::{Extension, ExtensionChangeListeners};
 use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
@@ -155,8 +155,6 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     ) {
     }
 
-    fn register_docs_provider(&self, _extension: Arc<dyn Extension>, _provider_id: Arc<str>) {}
-
     fn register_snippets(&self, _path: &PathBuf, _snippet_contents: &str) -> Result<()> {
         Ok(())
     }
@@ -170,6 +168,7 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
 }
 
 pub struct ExtensionStore {
+    pub change_listeners: Arc<ExtensionChangeListeners>,
     pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     pub builder: Arc<ExtensionBuilder>,
     pub extension_index: ExtensionIndex,
@@ -240,6 +239,7 @@ pub struct ExtensionIndexLanguageEntry {
 actions!(zed, [ReloadExtensions]);
 
 pub fn init(
+    extension_change_listeners: Arc<ExtensionChangeListeners>,
     registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
@@ -252,6 +252,7 @@ pub fn init(
         ExtensionStore::new(
             paths::extensions_dir().clone(),
             None,
+            extension_change_listeners,
             registration_hooks,
             fs,
             client.http_client().clone(),
@@ -284,6 +285,7 @@ impl ExtensionStore {
     pub fn new(
         extensions_dir: PathBuf,
         build_dir: Option<PathBuf>,
+        extension_change_listeners: Arc<ExtensionChangeListeners>,
         extension_api: Arc<dyn ExtensionRegistrationHooks>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
@@ -300,6 +302,7 @@ impl ExtensionStore {
         let (reload_tx, mut reload_rx) = unbounded();
         let (connection_registered_tx, mut connection_registered_rx) = unbounded();
         let mut this = Self {
+            change_listeners: extension_change_listeners,
             registration_hooks: extension_api.clone(),
             extension_index: Default::default(),
             installed_dir,
@@ -1290,9 +1293,12 @@ impl ExtensionStore {
                         );
                     }
 
+                    let indexed_docs_provider_listeners =
+                        this.change_listeners.indexed_docs_provider_listeners();
                     for (provider_id, _provider) in &manifest.indexed_docs_providers {
-                        this.registration_hooks
-                            .register_docs_provider(extension.clone(), provider_id.clone());
+                        for listener in &indexed_docs_provider_listeners {
+                            listener.register(extension.clone(), provider_id.clone());
+                        }
                     }
                 }
 

@@ -8,7 +8,6 @@ use extension::{Extension, ProjectDelegate};
 use extension_host::extension_lsp_adapter::ExtensionLspAdapter;
 use fs::Fs;
 use gpui::{AppContext, BackgroundExecutor, Model, Task};
-use indexed_docs::{ExtensionIndexedDocsProvider, IndexedDocsRegistry, ProviderId};
 use language::{LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
 use lsp::LanguageServerName;
 use snippet_provider::SnippetRegistry;
@@ -28,7 +27,6 @@ impl ProjectDelegate for ExtensionProject {
 pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,
     theme_registry: Arc<ThemeRegistry>,
-    indexed_docs_registry: Arc<IndexedDocsRegistry>,
     snippet_registry: Arc<SnippetRegistry>,
     language_registry: Arc<LanguageRegistry>,
     context_server_factory_registry: Model<ContextServerFactoryRegistry>,
@@ -39,7 +37,6 @@ impl ConcreteExtensionRegistrationHooks {
     pub fn new(
         theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
-        indexed_docs_registry: Arc<IndexedDocsRegistry>,
         snippet_registry: Arc<SnippetRegistry>,
         language_registry: Arc<LanguageRegistry>,
         context_server_factory_registry: Model<ContextServerFactoryRegistry>,
@@ -48,7 +45,6 @@ impl ConcreteExtensionRegistrationHooks {
         Arc::new(Self {
             theme_registry,
             slash_command_registry,
-            indexed_docs_registry,
             snippet_registry,
             language_registry,
             context_server_factory_registry,
@@ -123,14 +119,6 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
                     }),
                 )
             });
-    }
-
-    fn register_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
-        self.indexed_docs_registry
-            .register_provider(Box::new(ExtensionIndexedDocsProvider::new(
-                extension,
-                ProviderId(provider_id),
-            )));
     }
 
     fn register_snippets(&self, path: &PathBuf, snippet_contents: &str) -> Result<()> {

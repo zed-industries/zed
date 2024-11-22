@@ -33,7 +33,6 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::impl_actions;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
-use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
@@ -275,7 +274,7 @@ pub fn init(
         client.telemetry().clone(),
         cx,
     );
-    IndexedDocsRegistry::init_global(cx);
+    indexed_docs::init(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(Assistant::NAMESPACE);

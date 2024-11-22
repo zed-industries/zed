@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
-use extension::Extension;
+use extension::{Extension, ExtensionChangeListeners};
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{BackgroundExecutor, Context, SemanticVersion, SharedString, Task, TestAppContext};
@@ -349,6 +349,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let extension_change_listeners = Arc::new(ExtensionChangeListeners::new());
     let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
         executor: cx.executor(),
         language_registry: language_registry.clone(),
@@ -360,6 +361,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
+            extension_change_listeners.clone(),
             registration_hooks.clone(),
             fs.clone(),
             http_client.clone(),
@@ -485,6 +487,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
+            extension_change_listeners,
             registration_hooks,
             fs.clone(),
             http_client.clone(),
@@ -570,6 +573,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let extension_change_listeners = Arc::new(ExtensionChangeListeners::new());
     let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
         executor: cx.executor(),
         language_registry: language_registry.clone(),
@@ -668,6 +672,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         ExtensionStore::new(
             extensions_dir.clone(),
             Some(cache_dir),
+            extension_change_listeners,
             registration_hooks,
             fs.clone(),
             extension_client.clone(),

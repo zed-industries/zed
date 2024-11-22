@@ -42,6 +42,7 @@ db.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
 env_logger.workspace = true
+extension.workspace = true
 extension_host.workspace = true
 extensions_ui.workspace = true
 feature_flags.workspace = true
@@ -56,7 +57,6 @@ go_to_line.workspace = true
 gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
 http_client.workspace = true
 image_viewer.workspace = true
-indexed_docs.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
 journal.workspace = true

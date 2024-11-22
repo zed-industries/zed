@@ -3,9 +3,35 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use extension::Extension;
+use extension::{Extension, ExtensionChangeListeners, OnIndexedDocsProviderExtensionChange};
+use gpui::AppContext;
 
-use crate::{IndexedDocsDatabase, IndexedDocsProvider, PackageName, ProviderId};
+use crate::{
+    IndexedDocsDatabase, IndexedDocsProvider, IndexedDocsRegistry, PackageName, ProviderId,
+};
+
+pub fn init(cx: &AppContext) {
+    let extension_change_listeners = ExtensionChangeListeners::global(cx);
+    extension_change_listeners.register_indexed_docs_provider_listener(
+        ExtensionIndexedDocsProviderListener {
+            indexed_docs_registry: IndexedDocsRegistry::global(cx),
+        },
+    );
+}
+
+struct ExtensionIndexedDocsProviderListener {
+    indexed_docs_registry: Arc<IndexedDocsRegistry>,
+}
+
+impl OnIndexedDocsProviderExtensionChange for ExtensionIndexedDocsProviderListener {
+    fn register(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
+        self.indexed_docs_registry
+            .register_provider(Box::new(ExtensionIndexedDocsProvider::new(
+                extension,
+                ProviderId(provider_id),
+            )));
+    }
+}
 
 pub struct ExtensionIndexedDocsProvider {
     extension: Arc<dyn Extension>,

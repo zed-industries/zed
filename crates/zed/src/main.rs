@@ -15,6 +15,7 @@ use context_servers::ContextServerFactoryRegistry;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
+use extension::ExtensionChangeListeners;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
@@ -23,7 +24,6 @@ use gpui::{
     VisualContext,
 };
 use http_client::{read_proxy_from_env, Uri};
-use indexed_docs::IndexedDocsRegistry;
 use language::LanguageRegistry;
 use log::LevelFilter;
 use reqwest_client::ReqwestClient;
@@ -376,6 +376,7 @@ fn main() {
 
         SystemAppearance::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+        extension::init(cx);
         command_palette::init(cx);
         let copilot_language_server_id = app_state.languages.next_language_server_id();
         copilot::init(
@@ -407,16 +408,17 @@ fn main() {
             app_state.client.telemetry().clone(),
             cx,
         );
+        let extension_change_listeners = ExtensionChangeListeners::global(cx);
         let api = extensions_ui::ConcreteExtensionRegistrationHooks::new(
             ThemeRegistry::global(cx),
             SlashCommandRegistry::global(cx),
-            IndexedDocsRegistry::global(cx),
             SnippetRegistry::global(cx),
             app_state.languages.clone(),
             ContextServerFactoryRegistry::global(cx),
             cx,
         );
         extension_host::init(
+            extension_change_listeners,
             api,
             app_state.fs.clone(),
             app_state.client.clone(),

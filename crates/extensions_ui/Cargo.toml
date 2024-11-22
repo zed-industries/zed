@@ -24,7 +24,6 @@ extension_host.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
-indexed_docs.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
