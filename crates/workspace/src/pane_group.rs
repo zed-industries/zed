@@ -153,6 +153,38 @@ impl PaneGroup {
     pub(crate) fn first_pane(&self) -> View<Pane> {
         self.root.first_pane()
     }
+
+    pub fn find_pane_in_direction(
+        &mut self,
+        active_pane: &View<Pane>,
+        direction: SplitDirection,
+        cx: &WindowContext,
+    ) -> Option<&View<Pane>> {
+        let bounding_box = self.bounding_box_for_pane(active_pane)?;
+        let cursor = active_pane.read(cx).pixel_position_of_cursor(cx);
+        let center = match cursor {
+            Some(cursor) if bounding_box.contains(&cursor) => cursor,
+            _ => bounding_box.center(),
+        };
+
+        let distance_to_next = crate::HANDLE_HITBOX_SIZE;
+
+        let target = match direction {
+            SplitDirection::Left => {
+                Point::new(bounding_box.left() - distance_to_next.into(), center.y)
+            }
+            SplitDirection::Right => {
+                Point::new(bounding_box.right() + distance_to_next.into(), center.y)
+            }
+            SplitDirection::Up => {
+                Point::new(center.x, bounding_box.top() - distance_to_next.into())
+            }
+            SplitDirection::Down => {
+                Point::new(center.x, bounding_box.bottom() + distance_to_next.into())
+            }
+        };
+        self.pane_at_pixel_position(target)
+    }
 }
 
 #[derive(Clone)]

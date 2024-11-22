@@ -1,4 +1,4 @@
-use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
+use std::{cmp, ops::ControlFlow, path::PathBuf, sync::Arc};
 
 use crate::{default_working_directory, TerminalView};
 use breadcrumbs::Breadcrumbs;
@@ -21,8 +21,8 @@ use terminal::{
     Terminal,
 };
 use ui::{
-    div, h_flex, ButtonCommon, Clickable, ContextMenu, IconButton, IconSize, PopoverMenu,
-    Selectable, Tooltip,
+    div, h_flex, ButtonCommon, Clickable, ContextMenu, IconButton, IconSize, InteractiveElement,
+    PopoverMenu, Selectable, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -30,7 +30,9 @@ use workspace::{
     item::SerializableItem,
     move_item, pane,
     ui::IconName,
-    DraggedTab, ItemId, NewTerminal, Pane, PaneGroup, ToggleZoom, Workspace,
+    ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane, DraggedTab,
+    ItemId, NewTerminal, Pane, PaneGroup, SplitDirection, SwapPaneInDirection, ToggleZoom,
+    Workspace,
 };
 
 use anyhow::Result;
@@ -43,10 +45,6 @@ actions!(terminal_panel, [ToggleFocus]);
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
-            // TODO kb new actions (which keybindings to use?? cmd-k is taken on macOS):
-            // * ActivatePaneInDirection, ActivateNextPane, ActivatePreviousPane, ActivatePane,
-            // * CloseAllItemsAndPanes, CloseInactiveTabsAndPanes, SwapPaneInDirection,
-            // * SwapItemLeft, SwapItemRight
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
@@ -319,7 +317,7 @@ impl TerminalPanel {
                 }
             }
             pane::Event::Split(direction) => {
-                let Some(new_pane) = self.split_active_terminal(cx) else {
+                let Some(new_pane) = self.new_pane_with_cloned_active_terminal(cx) else {
                     return;
                 };
                 self.center.split(&pane, &new_pane, *direction).log_err();
@@ -332,7 +330,10 @@ impl TerminalPanel {
         }
     }
 
-    fn split_active_terminal(&mut self, cx: &mut ViewContext<Self>) -> Option<View<Pane>> {
+    fn new_pane_with_cloned_active_terminal(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<Pane>> {
         let workspace = self.workspace.clone().upgrade()?;
         let project = workspace.read(cx).project().clone();
         let working_directory = self
@@ -842,7 +843,7 @@ fn new_terminal_pane(
                         // Destination pane may be the one currently updated, so defer the move.
                         cx.spawn(|_, mut cx| async move {
                             cx.update(|cx| {
-                                // TODO kb move into split, then move back into original pane into a new split — does not work
+                                // TODO kb split right, then try to drag and drop the new pane into the original one, so that it splits — nothing happens
                                 move_item(
                                     &source,
                                     &destination,
@@ -950,6 +951,78 @@ impl Render for TerminalPanel {
                 ))
             })
             .ok()
+            .map(|div| {
+                div.on_action({
+                    cx.listener(|terminal_panel, action: &ActivatePaneInDirection, cx| {
+                        if let Some(pane) = terminal_panel.center.find_pane_in_direction(
+                            &terminal_panel.active_pane,
+                            action.0,
+                            cx,
+                        ) {
+                            cx.focus_view(&pane);
+                        }
+                    })
+                })
+                .on_action(
+                    cx.listener(|terminal_panel, _action: &ActivateNextPane, cx| {
+                        let panes = terminal_panel.center.panes();
+                        if let Some(ix) = panes
+                            .iter()
+                            .position(|pane| **pane == terminal_panel.active_pane)
+                        {
+                            let next_ix = (ix + 1) % panes.len();
+                            let next_pane = panes[next_ix].clone();
+                            cx.focus_view(&next_pane);
+                        }
+                    }),
+                )
+                .on_action(
+                    cx.listener(|terminal_panel, _action: &ActivatePreviousPane, cx| {
+                        let panes = terminal_panel.center.panes();
+                        if let Some(ix) = panes
+                            .iter()
+                            .position(|pane| **pane == terminal_panel.active_pane)
+                        {
+                            let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
+                            let prev_pane = panes[prev_ix].clone();
+                            cx.focus_view(&prev_pane);
+                        }
+                    }),
+                )
+                .on_action(cx.listener(|terminal_panel, action: &ActivatePane, cx| {
+                    let panes = terminal_panel.center.panes();
+                    if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
+                        cx.focus_view(&pane);
+                    } else {
+                        if let Some(new_pane) =
+                            terminal_panel.new_pane_with_cloned_active_terminal(cx)
+                        {
+                            terminal_panel
+                                .center
+                                .split(
+                                    &terminal_panel.active_pane,
+                                    &new_pane,
+                                    SplitDirection::Right,
+                                )
+                                .log_err();
+                        }
+                    }
+                }))
+                .on_action(cx.listener(
+                    |terminal_panel, action: &SwapPaneInDirection, cx| {
+                        if let Some(to) = terminal_panel
+                            .center
+                            .find_pane_in_direction(&terminal_panel.active_pane, action.0, cx)
+                            .cloned()
+                        {
+                            terminal_panel
+                                .center
+                                .swap(&terminal_panel.active_pane.clone(), &to);
+                            cx.notify();
+                        }
+                    },
+                ))
+            })
             .unwrap_or_else(|| div())
     }
 }
