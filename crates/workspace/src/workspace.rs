@@ -1096,10 +1096,17 @@ impl Workspace {
         );
 
         cx.spawn(|mut cx| async move {
-            let serialized_workspace: Option<SerializedWorkspace> =
-                persistence::DB.workspace_for_roots(abs_paths.as_slice());
+            let mut paths_to_open = Vec::with_capacity(abs_paths.len());
+            for path in abs_paths.into_iter() {
+                if let Some(canonical) = app_state.fs.canonicalize(&path).await.ok() {
+                    paths_to_open.push(canonical)
+                } else {
+                    paths_to_open.push(path)
+                }
+            }
 
-            let mut paths_to_open = abs_paths;
+            let serialized_workspace: Option<SerializedWorkspace> =
+                persistence::DB.workspace_for_roots(paths_to_open.as_slice());
 
             let workspace_location = serialized_workspace
                 .as_ref()
