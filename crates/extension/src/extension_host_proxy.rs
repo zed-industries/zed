@@ -32,14 +32,14 @@ pub struct ExtensionHostProxy {
 }
 
 impl ExtensionHostProxy {
-    /// Returns the global [`ExtensionProxies`].
+    /// Returns the global [`ExtensionHostProxy`].
     pub fn global(cx: &AppContext) -> Arc<Self> {
         GlobalExtensionHostProxy::global(cx).0.clone()
     }
 
-    /// Returns the global [`ExtensionProxies`].
+    /// Returns the global [`ExtensionHostProxy`].
     ///
-    /// Inserts a default [`ExtensionProxies`] if one does not yet exist.
+    /// Inserts a default [`ExtensionHostProxy`] if one does not yet exist.
     pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
         cx.default_global::<GlobalExtensionHostProxy>().0.clone()
     }
