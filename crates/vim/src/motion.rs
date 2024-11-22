@@ -966,7 +966,7 @@ impl Motion {
                 }
                 _ => return None,
             },
-            // , -- repeat the last find done with t, f, T, F, z, Z, in opposite direction
+            // , -- repeat the last find done with t, f, T, F, s, S, in opposite direction
             RepeatFindReversed { last_find } => match **last_find {
                 Motion::FindForward {
                     before,
