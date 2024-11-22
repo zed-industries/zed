@@ -4237,7 +4237,6 @@ dependencies = [
  "ui",
  "util",
  "vim_mode_setting",
- "wasmtime-wasi",
  "workspace",
  "zed_actions",
 ]
