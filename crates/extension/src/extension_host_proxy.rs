@@ -11,9 +11,9 @@ use parking_lot::RwLock;
 use crate::{Extension, SlashCommand};
 
 #[derive(Default)]
-struct GlobalExtensionProxies(Arc<ExtensionHostProxy>);
+struct GlobalExtensionHostProxy(Arc<ExtensionHostProxy>);
 
-impl Global for GlobalExtensionProxies {}
+impl Global for GlobalExtensionHostProxy {}
 
 /// A proxy for interacting with the extension host.
 ///
@@ -34,14 +34,14 @@ pub struct ExtensionHostProxy {
 impl ExtensionHostProxy {
     /// Returns the global [`ExtensionProxies`].
     pub fn global(cx: &AppContext) -> Arc<Self> {
-        GlobalExtensionProxies::global(cx).0.clone()
+        GlobalExtensionHostProxy::global(cx).0.clone()
     }
 
     /// Returns the global [`ExtensionProxies`].
     ///
     /// Inserts a default [`ExtensionProxies`] if one does not yet exist.
     pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
-        cx.default_global::<GlobalExtensionProxies>().0.clone()
+        cx.default_global::<GlobalExtensionHostProxy>().0.clone()
     }
 
     pub fn new() -> Self {
