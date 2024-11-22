@@ -21,7 +21,7 @@ use client::{
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
-use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
+use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -4824,7 +4824,27 @@ impl Render for Workspace {
                                     let this = cx.view().clone();
                                     canvas(
                                         move |bounds, cx| {
-                                            this.update(cx, |this, _cx| this.bounds = bounds)
+                                            this.update(cx, |this, cx| {
+                                                let bounds_changed = this.bounds != bounds;
+                                                this.bounds = bounds;
+
+                                                if bounds_changed {
+                                                    this.left_dock.update(cx, |dock, cx| {
+                                                        dock.clamp_panel_size(bounds.size.width, cx)
+                                                    });
+
+                                                    this.right_dock.update(cx, |dock, cx| {
+                                                        dock.clamp_panel_size(bounds.size.width, cx)
+                                                    });
+
+                                                    this.bottom_dock.update(cx, |dock, cx| {
+                                                        dock.clamp_panel_size(
+                                                            bounds.size.height,
+                                                            cx,
+                                                        )
+                                                    });
+                                                }
+                                            })
                                         },
                                         |_, _, _| {},
                                     )
@@ -4836,42 +4856,27 @@ impl Render for Workspace {
                                         |workspace, e: &DragMoveEvent<DraggedDock>, cx| {
                                             match e.drag(cx).0 {
                                                 DockPosition::Left => {
-                                                    let size = e.event.position.x
-                                                        - workspace.bounds.left();
-                                                    workspace.left_dock.update(
+                                                    resize_left_dock(
+                                                        e.event.position.x
+                                                            - workspace.bounds.left(),
+                                                        workspace,
                                                         cx,
-                                                        |left_dock, cx| {
-                                                            left_dock.resize_active_panel(
-                                                                Some(size),
-                                                                cx,
-                                                            );
-                                                        },
                                                     );
                                                 }
                                                 DockPosition::Right => {
-                                                    let size = workspace.bounds.right()
-                                                        - e.event.position.x;
-                                                    workspace.right_dock.update(
+                                                    resize_right_dock(
+                                                        workspace.bounds.right()
+                                                            - e.event.position.x,
+                                                        workspace,
                                                         cx,
-                                                        |right_dock, cx| {
-                                                            right_dock.resize_active_panel(
-                                                                Some(size),
-                                                                cx,
-                                                            );
-                                                        },
                                                     );
                                                 }
                                                 DockPosition::Bottom => {
-                                                    let size = workspace.bounds.bottom()
-                                                        - e.event.position.y;
-                                                    workspace.bottom_dock.update(
+                                                    resize_bottom_dock(
+                                                        workspace.bounds.bottom()
+                                                            - e.event.position.y,
+                                                        workspace,
                                                         cx,
-                                                        |bottom_dock, cx| {
-                                                            bottom_dock.resize_active_panel(
-                                                                Some(size),
-                                                                cx,
-                                                            );
-                                                        },
                                                     );
                                                 }
                                             }
@@ -4957,6 +4962,40 @@ impl Render for Workspace {
             cx,
         )
     }
+}
+
+fn resize_bottom_dock(
+    new_size: Pixels,
+    workspace: &mut Workspace,
+    cx: &mut ViewContext<'_, Workspace>,
+) {
+    let size = new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE);
+    workspace.bottom_dock.update(cx, |bottom_dock, cx| {
+        bottom_dock.resize_active_panel(Some(size), cx);
+    });
+}
+
+fn resize_right_dock(
+    new_size: Pixels,
+    workspace: &mut Workspace,
+    cx: &mut ViewContext<'_, Workspace>,
+) {
+    let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
+    workspace.right_dock.update(cx, |right_dock, cx| {
+        right_dock.resize_active_panel(Some(size), cx);
+    });
+}
+
+fn resize_left_dock(
+    new_size: Pixels,
+    workspace: &mut Workspace,
+    cx: &mut ViewContext<'_, Workspace>,
+) {
+    let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
+
+    workspace.left_dock.update(cx, |left_dock, cx| {
+        left_dock.resize_active_panel(Some(size), cx);
+    });
 }
 
 impl WorkspaceStore {
