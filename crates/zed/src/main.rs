@@ -38,7 +38,6 @@ use settings::{
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
-use snippet_provider::SnippetRegistry;
 use std::{
     env,
     fs::OpenOptions,
@@ -408,10 +407,8 @@ fn main() {
             cx,
         );
         let extension_change_listeners = ExtensionChangeListeners::global(cx);
-        let api = extensions_ui::ConcreteExtensionRegistrationHooks::new(
-            SnippetRegistry::global(cx),
-            app_state.languages.clone(),
-        );
+        let api =
+            extensions_ui::ConcreteExtensionRegistrationHooks::new(app_state.languages.clone());
         extension_host::init(
             extension_change_listeners,
             api,

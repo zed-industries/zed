@@ -20,6 +20,10 @@ pub trait OnThemeExtensionChange: Send + Sync + 'static {
 
 pub trait OnLanguageServerExtensionChange: Send + Sync + 'static {}
 
+pub trait OnSnippetExtensionChange: Send + Sync + 'static {
+    fn register(&self, path: &PathBuf, snippet_contents: &str) -> Result<()>;
+}
+
 pub trait OnSlashCommandExtensionChange: Send + Sync + 'static {
     fn register(&self, extension: Arc<dyn Extension>, command: SlashCommand);
 }
@@ -40,6 +44,7 @@ impl Global for GlobalExtensionChangeListeners {}
 #[derive(Default)]
 pub struct ExtensionChangeListeners {
     theme_listener: RwLock<Option<Arc<dyn OnThemeExtensionChange>>>,
+    snippet_listener: RwLock<Option<Arc<dyn OnSnippetExtensionChange>>>,
     slash_command_listener: RwLock<Option<Arc<dyn OnSlashCommandExtensionChange>>>,
     context_server_listener: RwLock<Option<Arc<dyn OnContextServerExtensionChange>>>,
     indexed_docs_provider_listener: RwLock<Option<Arc<dyn OnIndexedDocsProviderExtensionChange>>>,
@@ -63,6 +68,7 @@ impl ExtensionChangeListeners {
     pub fn new() -> Self {
         Self {
             theme_listener: RwLock::default(),
+            snippet_listener: RwLock::default(),
             slash_command_listener: RwLock::default(),
             context_server_listener: RwLock::default(),
             indexed_docs_provider_listener: RwLock::default(),
@@ -78,6 +84,17 @@ impl ExtensionChangeListeners {
         listener: impl OnThemeExtensionChange + Send + Sync + 'static,
     ) {
         self.theme_listener.write().replace(Arc::new(listener));
+    }
+
+    pub fn snippet_listener(&self) -> Option<Arc<dyn OnSnippetExtensionChange>> {
+        self.snippet_listener.read().clone()
+    }
+
+    pub fn register_snippet_listener(
+        &self,
+        listener: impl OnSnippetExtensionChange + Send + Sync + 'static,
+    ) {
+        self.snippet_listener.write().replace(Arc::new(listener));
     }
 
     pub fn slash_command_listener(&self) -> Option<Arc<dyn OnSlashCommandExtensionChange>> {

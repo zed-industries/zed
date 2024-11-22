@@ -124,10 +124,6 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     ) {
     }
 
-    fn register_snippets(&self, _path: &PathBuf, _snippet_contents: &str) -> Result<()> {
-        Ok(())
-    }
-
     fn update_lsp_status(
         &self,
         _server_name: lsp::LanguageServerName,
@@ -1171,7 +1167,7 @@ impl ExtensionStore {
         let fs = self.fs.clone();
         let wasm_host = self.wasm_host.clone();
         let root_dir = self.installed_dir.clone();
-        let api = self.registration_hooks.clone();
+        let snippet_change_listener = self.change_listeners.snippet_listener();
         let extension_entries = extensions_to_load
             .iter()
             .filter_map(|name| new_index.extensions.get(name).cloned())
@@ -1196,11 +1192,15 @@ impl ExtensionStore {
                             }
                         }
 
-                        for snippets_path in &snippets_to_add {
-                            if let Some(snippets_contents) = fs.load(snippets_path).await.log_err()
-                            {
-                                api.register_snippets(snippets_path, &snippets_contents)
-                                    .log_err();
+                        if let Some(listener) = snippet_change_listener {
+                            for snippets_path in &snippets_to_add {
+                                if let Some(snippets_contents) =
+                                    fs.load(snippets_path).await.log_err()
+                                {
+                                    listener
+                                        .register(snippets_path, &snippets_contents)
+                                        .log_err();
+                                }
                             }
                         }
                     }

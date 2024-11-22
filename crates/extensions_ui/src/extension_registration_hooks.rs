@@ -5,31 +5,20 @@ use extension::Extension;
 use extension_host::extension_lsp_adapter::ExtensionLspAdapter;
 use language::{LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
 use lsp::LanguageServerName;
-use snippet_provider::SnippetRegistry;
 
 pub struct ConcreteExtensionRegistrationHooks {
-    snippet_registry: Arc<SnippetRegistry>,
     language_registry: Arc<LanguageRegistry>,
 }
 
 impl ConcreteExtensionRegistrationHooks {
     pub fn new(
-        snippet_registry: Arc<SnippetRegistry>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Arc<dyn extension_host::ExtensionRegistrationHooks> {
-        Arc::new(Self {
-            snippet_registry,
-            language_registry,
-        })
+        Arc::new(Self { language_registry })
     }
 }
 
 impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistrationHooks {
-    fn register_snippets(&self, path: &PathBuf, snippet_contents: &str) -> Result<()> {
-        self.snippet_registry
-            .register_snippets(path, snippet_contents)
-    }
-
     fn update_lsp_status(
         &self,
         server_name: lsp::LanguageServerName,
