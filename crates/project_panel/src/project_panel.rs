@@ -61,17 +61,18 @@ use workspace::{
 };
 use worktree::CreatedEntry;
 
-struct ReversibleIterable<const IS_REVERSE: bool, It> {
+struct ReversibleIterable<It> {
     it: It,
+    reverse: bool,
 }
 
-impl<const R: bool, T> ReversibleIterable<R, T> {
-    fn new(it: T) -> Self {
-        Self { it }
+impl<T> ReversibleIterable<T> {
+    fn new(it: T, reverse: bool) -> Self {
+        Self { it, reverse }
     }
 }
 
-impl<const R: bool, It, Item> ReversibleIterable<R, It>
+impl<It, Item> ReversibleIterable<It>
 where
     It: Iterator<Item = Item>,
 {
@@ -79,7 +80,7 @@ where
     where
         F: FnMut(&Item) -> bool,
     {
-        if R {
+        if self.reverse {
             self.it.filter(pred).last()
         } else {
             self.it.find(pred)
@@ -87,7 +88,7 @@ where
     }
 }
 
-impl<const R: bool, It, Item> ReversibleIterable<R, It>
+impl<It, Item> ReversibleIterable<It>
 where
     It: DoubleEndedIterator<Item = Item>,
 {
@@ -95,8 +96,8 @@ where
     where
         F: FnMut(&Item) -> bool,
     {
-        if R {
-            self.it.rev().find(|x| pred(x))
+        if self.reverse {
+            self.it.rfind(|x| pred(x))
         } else {
             self.it.find(|x| pred(x))
         }
@@ -1428,9 +1429,10 @@ impl ProjectPanel {
         }
     }
 
-    fn find_entry_in_worktree<const REVERSE_SEARCH: bool>(
+    fn find_entry_in_worktree(
         &self,
         worktree_id: WorktreeId,
+        reverse_search: bool,
         only_visible_entries: bool,
         predicate: impl Fn(&Entry, WorktreeId) -> bool,
         cx: &mut ViewContext<Self>,
@@ -1448,22 +1450,23 @@ impl ProjectPanel {
                 })?
                 .clone();
 
-            return ReversibleIterable::<REVERSE_SEARCH, _>::new(entries.iter())
+            return ReversibleIterable::new(entries.iter(), reverse_search)
                 .find(|ele| predicate(ele, worktree_id))
                 .cloned();
         }
 
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         worktree.update(cx, |tree, _| {
-            ReversibleIterable::<REVERSE_SEARCH, _>::new(tree.entries(true, 0usize))
+            ReversibleIterable::new(tree.entries(true, 0usize), reverse_search)
                 .find_single_ended(|ele| predicate(ele, worktree_id))
                 .cloned()
         })
     }
 
-    fn find_entry<const REVERSE_SEARCH: bool>(
+    fn find_entry(
         &self,
         start: Option<&SelectedEntry>,
+        reverse_search: bool,
         predicate: impl Fn(&Entry, WorktreeId) -> bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<SelectedEntry> {
@@ -1488,7 +1491,7 @@ impl ProjectPanel {
 
                 let mut first_iter = tree.traverse_from_path(true, true, true, entry.path.as_ref());
 
-                if REVERSE_SEARCH {
+                if reverse_search {
                     first_iter.next();
                 }
 
@@ -1501,7 +1504,7 @@ impl ProjectPanel {
 
                 let second_iter = tree.entries(true, 0usize);
 
-                let second = if REVERSE_SEARCH {
+                let second = if reverse_search {
                     second_iter
                         .take_until(|ele| ele.id == start.entry_id)
                         .filter(|ele| predicate(ele, tree_id))
@@ -1515,7 +1518,7 @@ impl ProjectPanel {
                         .cloned()
                 };
 
-                if REVERSE_SEARCH {
+                if reverse_search {
                     Some((second, first))
                 } else {
                     Some((first, second))
@@ -1553,7 +1556,7 @@ impl ProjectPanel {
 
         for tree_id in worktree_ids.into_iter() {
             if let Some(found) =
-                self.find_entry_in_worktree::<REVERSE_SEARCH>(tree_id, false, &predicate, cx)
+                self.find_entry_in_worktree(tree_id, reverse_search, false, &predicate, cx)
             {
                 return Some(SelectedEntry {
                     worktree_id: tree_id,
@@ -1565,9 +1568,10 @@ impl ProjectPanel {
         last_found
     }
 
-    fn find_visible_entry<const REVERSE_SEARCH: bool>(
+    fn find_visible_entry(
         &self,
         start: Option<&SelectedEntry>,
+        reverse_search: bool,
         predicate: impl Fn(&Entry, WorktreeId) -> bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<SelectedEntry> {
@@ -1592,21 +1596,21 @@ impl ProjectPanel {
                 .find(|(_, ele)| ele.id == start.entry_id)
                 .map(|(idx, _)| idx)?;
 
-            if REVERSE_SEARCH {
+            if reverse_search {
                 start_idx = start_idx.saturating_add(1usize);
             }
 
             let (left, right) = entries.split_at_checked(start_idx)?;
 
-            let (first_iter, second_iter) = if REVERSE_SEARCH {
+            let (first_iter, second_iter) = if reverse_search {
                 (
-                    ReversibleIterable::<REVERSE_SEARCH, _>::new(left.iter()),
-                    ReversibleIterable::<REVERSE_SEARCH, _>::new(right.iter()),
+                    ReversibleIterable::new(left.iter(), reverse_search),
+                    ReversibleIterable::new(right.iter(), reverse_search),
                 )
             } else {
                 (
-                    ReversibleIterable::<REVERSE_SEARCH, _>::new(right.iter()),
-                    ReversibleIterable::<REVERSE_SEARCH, _>::new(left.iter()),
+                    ReversibleIterable::new(right.iter(), reverse_search),
+                    ReversibleIterable::new(left.iter(), reverse_search),
                 )
             };
 
@@ -1639,7 +1643,7 @@ impl ProjectPanel {
 
         for tree_id in worktree_ids.into_iter() {
             if let Some(found) =
-                self.find_entry_in_worktree::<REVERSE_SEARCH>(tree_id, true, &predicate, cx)
+                self.find_entry_in_worktree(tree_id, reverse_search, true, &predicate, cx)
             {
                 return Some(SelectedEntry {
                     worktree_id: tree_id,
@@ -1652,8 +1656,9 @@ impl ProjectPanel {
     }
 
     fn select_prev_diagnostic(&mut self, _: &SelectPrevDiagnostic, cx: &mut ViewContext<Self>) {
-        let selection = self.find_entry::<true>(
+        let selection = self.find_entry(
             self.selection.as_ref(),
+            true,
             |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
@@ -1681,8 +1686,9 @@ impl ProjectPanel {
     }
 
     fn select_next_diagnostic(&mut self, _: &SelectNextDiagnostic, cx: &mut ViewContext<Self>) {
-        let selection = self.find_entry::<false>(
+        let selection = self.find_entry(
             self.selection.as_ref(),
+            false,
             |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
@@ -1710,8 +1716,9 @@ impl ProjectPanel {
     }
 
     fn select_prev_git_entry(&mut self, _: &SelectPrevGitEntry, cx: &mut ViewContext<Self>) {
-        let selection = self.find_entry::<true>(
+        let selection = self.find_entry(
             self.selection.as_ref(),
+            true,
             |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
@@ -1739,8 +1746,9 @@ impl ProjectPanel {
     }
 
     fn select_prev_directory(&mut self, _: &SelectPrevDirectory, cx: &mut ViewContext<Self>) {
-        let selection = self.find_visible_entry::<true>(
+        let selection = self.find_visible_entry(
             self.selection.as_ref(),
+            true,
             |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
@@ -1763,8 +1771,9 @@ impl ProjectPanel {
     }
 
     fn select_next_directory(&mut self, _: &SelectNextDirectory, cx: &mut ViewContext<Self>) {
-        let selection = self.find_visible_entry::<false>(
+        let selection = self.find_visible_entry(
             self.selection.as_ref(),
+            false,
             |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
@@ -1787,8 +1796,9 @@ impl ProjectPanel {
     }
 
     fn select_next_git_entry(&mut self, _: &SelectNextGitEntry, cx: &mut ViewContext<Self>) {
-        let selection = self.find_entry::<false>(
+        let selection = self.find_entry(
             self.selection.as_ref(),
+            true,
             |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
