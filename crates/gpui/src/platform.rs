@@ -581,6 +581,7 @@ impl<T> AtlasTextureList<T> {
         self.textures.drain(..)
     }
 
+    #[allow(dead_code)]
     fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut T> {
         self.textures.iter_mut().flatten()
     }
