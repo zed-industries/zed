@@ -906,7 +906,7 @@ impl LspAdapter for PyLspAdapter {
                             "plugins": {
                                 "pycodestyle": {"enabled": false},
                                 "rope_autoimport": {"enabled": true, "memory": true},
-                                "mypy": {"enabled": false}
+                                "pylsp_mypy": {"enabled": false}
                             },
                             "rope": {
                                 "ropeFolder": null
@@ -934,7 +934,7 @@ impl LspAdapter for PyLspAdapter {
                             .or_insert_with(|| Value::String(toolchain.path.clone().into()));
                     }
                     if let Some(pylint) = python
-                        .entry("mypy")
+                        .entry("pylsp_mypy")
                         .or_insert(Value::Object(serde_json::Map::default()))
                         .as_object_mut()
                     {
