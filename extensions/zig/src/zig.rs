@@ -1,15 +1,12 @@
 use std::fs;
-use zed_extension_api::{self as zed, serde_json, settings::LspSettings, LanguageServerId, Result};
+use zed_extension_api::{
+    self as zed, serde_json,
+    settings::{LanguageServerPath, LspServerInfo, LspSettings},
+    Command, LanguageServerId, Result,
+};
 
 struct ZigExtension {
     cached_binary_path: Option<String>,
-}
-
-#[derive(Clone)]
-struct ZlsBinary {
-    path: String,
-    args: Option<Vec<String>>,
-    environment: Option<Vec<(String, String)>>,
 }
 
 impl ZigExtension {
@@ -17,44 +14,21 @@ impl ZigExtension {
         &mut self,
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
-    ) -> Result<ZlsBinary> {
-        let mut args: Option<Vec<String>> = None;
-
-        let (platform, arch) = zed::current_platform();
-        let environment = match platform {
-            zed::Os::Mac | zed::Os::Linux => Some(worktree.shell_env()),
-            zed::Os::Windows => None,
-        };
-
-        if let Ok(lsp_settings) = LspSettings::for_worktree("zls", worktree) {
-            if let Some(binary) = lsp_settings.binary {
-                args = binary.arguments;
-                if let Some(path) = binary.path {
-                    return Ok(ZlsBinary {
-                        path: path.clone(),
-                        args,
-                        environment,
-                    });
-                }
+    ) -> Result<Command> {
+        let settings = LspSettings::for_worktree("zls", worktree).unwrap_or_default();
+        match worktree.find_language_server(
+            &settings,
+            &LspServerInfo {
+                binary_name: Some("zls".to_string()),
+                cached_binary_path: self.cached_binary_path.clone(),
+                ..Default::default()
+            },
+        ) {
+            LanguageServerPath::Command(command) | LanguageServerPath::CachedCommand(command) => {
+                return Ok(command)
             }
-        }
-
-        if let Some(path) = worktree.which("zls") {
-            return Ok(ZlsBinary {
-                path,
-                args,
-                environment,
-            });
-        }
-
-        if let Some(path) = &self.cached_binary_path {
-            if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
-                return Ok(ZlsBinary {
-                    path: path.clone(),
-                    args,
-                    environment,
-                });
-            }
+            LanguageServerPath::AutomaticDownload => {}
+            _ => return Err("Language server not found".to_string()),
         }
 
         zed::set_language_server_installation_status(
@@ -71,6 +45,8 @@ impl ZigExtension {
                 pre_release: false,
             },
         )?;
+
+        let (platform, arch) = zed::current_platform();
 
         let arch: &str = match arch {
             zed::Architecture::Aarch64 => "aarch64",
@@ -127,11 +103,7 @@ impl ZigExtension {
         }
 
         self.cached_binary_path = Some(binary_path.clone());
-        Ok(ZlsBinary {
-            path: binary_path,
-            args,
-            environment,
-        })
+        Ok(worktree.create_command(&settings.binary.unwrap_or_default(), binary_path))
     }
 }
 
@@ -147,12 +119,7 @@ impl zed::Extension for ZigExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let zls_binary = self.language_server_binary(language_server_id, worktree)?;
-        Ok(zed::Command {
-            command: zls_binary.path,
-            args: zls_binary.args.unwrap_or_default(),
-            env: zls_binary.environment.unwrap_or_default(),
-        })
+        self.language_server_binary(language_server_id, worktree)
     }
 
     fn language_server_workspace_configuration(

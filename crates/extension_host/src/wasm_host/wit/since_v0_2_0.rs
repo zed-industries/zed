@@ -634,6 +634,8 @@ impl ExtensionImports for WasmState {
                             }),
                             settings: settings.settings,
                             initialization_options: settings.initialization_options,
+                            allow_path_search: settings.allow_path_search,
+                            allow_automatic_download: settings.allow_automatic_download,
                         })?)
                     }
                     "context_servers" => {

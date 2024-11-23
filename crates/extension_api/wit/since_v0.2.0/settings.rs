@@ -17,6 +17,10 @@ pub struct LspSettings {
     pub initialization_options: Option<serde_json::Value>,
     /// The settings to pass to language server.
     pub settings: Option<serde_json::Value>,
+    /// Whether to search for the binary in the PATH.
+    pub allow_path_search: Option<bool>,
+    /// Whether to automatically download the binary.
+    pub allow_automatic_download: Option<bool>,
 }
 
 /// The settings for a particular context server.
@@ -29,7 +33,7 @@ pub struct ContextServerSettings {
 }
 
 /// The settings for a command.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommandSettings {
     /// The path to the command.
     pub path: Option<String>,

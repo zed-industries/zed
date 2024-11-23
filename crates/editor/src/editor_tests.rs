@@ -10383,6 +10383,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
                 initialization_options: Some(json!({
                     "some other init value": false
                 })),
+                ..Default::default()
             },
         );
     });
@@ -10402,6 +10403,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
+                ..Default::default()
             },
         );
     });
@@ -10421,6 +10423,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
+                ..Default::default()
             },
         );
     });
@@ -10438,6 +10441,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
                 binary: None,
                 settings: None,
                 initialization_options: None,
+                ..Default::default()
             },
         );
     });
