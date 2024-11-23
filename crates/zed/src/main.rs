@@ -147,9 +147,7 @@ fn main() {
         return;
     }
 
-    println!("Before init_logger()");
     init_logger();
-    println!("After init_logger()");
 
     log::info!("========== starting zed ==========");
 

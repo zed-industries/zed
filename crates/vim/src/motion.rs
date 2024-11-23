@@ -1848,7 +1848,7 @@ fn unmatched_forward(
     let point = display_point.to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot);
 
-    let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point); //visible_line_range.clone());
+    let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point);
     if let Some(ranges) = ranges {
         let mut closest_closing_destination = None;
         let mut closest_distance = usize::MAX;
