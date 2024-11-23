@@ -1,30 +1,27 @@
-use feature_flags::ZedPro;
-
-use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
-use proto::Plan;
-use workspace::ShowConfiguration;
-
 use std::sync::Arc;
 
-use crate::assistant_settings::AssistantSettings;
-use fs::Fs;
-use gpui::{Action, AnyElement, DismissEvent, SharedString, Task};
+use feature_flags::ZedPro;
+use gpui::{Action, AnyElement, AppContext, DismissEvent, SharedString, Task};
+use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use picker::{Picker, PickerDelegate};
-use settings::update_settings_file;
+use proto::Plan;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use workspace::ShowConfiguration;
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
+type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &AppContext) + 'static>;
+
 #[derive(IntoElement)]
-pub struct ModelSelector<T: PopoverTrigger> {
-    handle: Option<PopoverMenuHandle<Picker<ModelPickerDelegate>>>,
-    fs: Arc<dyn Fs>,
+pub struct LanguageModelSelector<T: PopoverTrigger> {
+    handle: Option<PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>>,
+    on_model_changed: OnModelChanged,
     trigger: T,
     info_text: Option<SharedString>,
 }
 
-pub struct ModelPickerDelegate {
-    fs: Arc<dyn Fs>,
+pub struct LanguageModelPickerDelegate {
+    on_model_changed: OnModelChanged,
     all_models: Vec<ModelInfo>,
     filtered_models: Vec<ModelInfo>,
     selected_index: usize,
@@ -38,28 +35,34 @@ struct ModelInfo {
     is_selected: bool,
 }
 
-impl<T: PopoverTrigger> ModelSelector<T> {
-    pub fn new(fs: Arc<dyn Fs>, trigger: T) -> Self {
-        ModelSelector {
+impl<T: PopoverTrigger> LanguageModelSelector<T> {
+    pub fn new(
+        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &AppContext) + 'static,
+        trigger: T,
+    ) -> Self {
+        LanguageModelSelector {
             handle: None,
-            fs,
+            on_model_changed: Arc::new(on_model_changed),
             trigger,
             info_text: None,
         }
     }
 
-    pub fn with_handle(mut self, handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>) -> Self {
+    pub fn with_handle(
+        mut self,
+        handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
+    ) -> Self {
         self.handle = Some(handle);
         self
     }
 
-    pub fn with_info_text(mut self, text: impl Into<SharedString>) -> Self {
+    pub fn info_text(mut self, text: impl Into<SharedString>) -> Self {
         self.info_text = Some(text.into());
         self
     }
 }
 
-impl PickerDelegate for ModelPickerDelegate {
+impl PickerDelegate for LanguageModelPickerDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
@@ -137,9 +140,7 @@ impl PickerDelegate for ModelPickerDelegate {
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(model_info) = self.filtered_models.get(self.selected_index) {
             let model = model_info.model.clone();
-            update_settings_file::<AssistantSettings>(self.fs.clone(), cx, move |settings, _| {
-                settings.set_model(model.clone())
-            });
+            (self.on_model_changed)(model.clone(), cx);
 
             // Update the selection status
             let selected_model_id = model_info.model.id();
@@ -296,7 +297,7 @@ impl PickerDelegate for ModelPickerDelegate {
     }
 }
 
-impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
+impl<T: PopoverTrigger> RenderOnce for LanguageModelSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let selected_provider = LanguageModelRegistry::read_global(cx)
             .active_provider()
@@ -331,8 +332,8 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
             })
             .collect::<Vec<_>>();
 
-        let delegate = ModelPickerDelegate {
-            fs: self.fs.clone(),
+        let delegate = LanguageModelPickerDelegate {
+            on_model_changed: self.on_model_changed.clone(),
             all_models: all_models.clone(),
             filtered_models: all_models,
             selected_index: 0,

@@ -58,6 +58,7 @@ members = [
     "crates/language",
     "crates/language_extension",
     "crates/language_model",
+    "crates/language_model_selector",
     "crates/language_models",
     "crates/language_selector",
     "crates/language_tools",
@@ -236,6 +237,7 @@ journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
+language_model_selector = { path = "crates/language_model_selector" }
 language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }

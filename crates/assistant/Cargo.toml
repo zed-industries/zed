@@ -50,6 +50,7 @@ indexed_docs.workspace = true
 indoc.workspace = true
 language.workspace = true
 language_model.workspace = true
+language_model_selector.workspace = true
 language_models.workspace = true
 log.workspace = true
 lsp.workspace = true

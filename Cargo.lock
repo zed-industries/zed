@@ -402,6 +402,7 @@ dependencies = [
  "indoc",
  "language",
  "language_model",
+ "language_model_selector",
  "language_models",
  "languages",
  "log",
@@ -6601,6 +6602,20 @@ dependencies = [
  "strum 0.25.0",
  "ui",
  "util",
+]
+
+[[package]]
+name = "language_model_selector"
+version = "0.1.0"
+dependencies = [
+ "feature_flags",
+ "gpui",
+ "language_model",
+ "picker",
+ "proto",
+ "ui",
+ "workspace",
+ "zed_actions",
 ]
 
 [[package]]

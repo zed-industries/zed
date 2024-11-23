@@ -17,9 +17,9 @@ use crate::{
     ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
     DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
     InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
-    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
-    ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    RequestType, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    MessageMetadata, MessageStatus, NewContext, ParsedSlashCommand, PendingSlashCommandStatus,
+    QuoteSelection, RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -55,6 +55,7 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role,
     ZED_CLOUD_PROVIDER_ID,
 };
+use language_model_selector::{LanguageModelPickerDelegate, LanguageModelSelector};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
@@ -142,7 +143,7 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
-    model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
+    model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
@@ -4457,13 +4458,13 @@ pub struct ContextEditorToolbarItem {
     fs: Arc<dyn Fs>,
     active_context_editor: Option<WeakView<ContextEditor>>,
     model_summary_editor: View<Editor>,
-    model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
+    model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
 }
 
 impl ContextEditorToolbarItem {
     pub fn new(
         workspace: &Workspace,
-        model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
+        model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
         model_summary_editor: View<Editor>,
     ) -> Self {
         Self {
@@ -4559,8 +4560,17 @@ impl Render for ContextEditorToolbarItem {
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
             .child(
-                ModelSelector::new(
-                    self.fs.clone(),
+                LanguageModelSelector::new(
+                    {
+                        let fs = self.fs.clone();
+                        move |model, cx| {
+                            update_settings_file::<AssistantSettings>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| settings.set_model(model.clone()),
+                            );
+                        }
+                    },
                     ButtonLike::new("active-model")
                         .style(ButtonStyle::Subtle)
                         .child(
