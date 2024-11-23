@@ -13,14 +13,14 @@ const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &AppContext) + 'static>;
 
 #[derive(IntoElement)]
-pub struct ModelSelector<T: PopoverTrigger> {
-    handle: Option<PopoverMenuHandle<Picker<ModelPickerDelegate>>>,
+pub struct LanguageModelSelector<T: PopoverTrigger> {
+    handle: Option<PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>>,
     on_model_changed: OnModelChanged,
     trigger: T,
     info_text: Option<SharedString>,
 }
 
-pub struct ModelPickerDelegate {
+pub struct LanguageModelPickerDelegate {
     on_model_changed: OnModelChanged,
     all_models: Vec<ModelInfo>,
     filtered_models: Vec<ModelInfo>,
@@ -35,12 +35,12 @@ struct ModelInfo {
     is_selected: bool,
 }
 
-impl<T: PopoverTrigger> ModelSelector<T> {
+impl<T: PopoverTrigger> LanguageModelSelector<T> {
     pub fn new(
         on_model_changed: impl Fn(Arc<dyn LanguageModel>, &AppContext) + 'static,
         trigger: T,
     ) -> Self {
-        ModelSelector {
+        LanguageModelSelector {
             handle: None,
             on_model_changed: Arc::new(on_model_changed),
             trigger,
@@ -48,18 +48,21 @@ impl<T: PopoverTrigger> ModelSelector<T> {
         }
     }
 
-    pub fn with_handle(mut self, handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>) -> Self {
+    pub fn with_handle(
+        mut self,
+        handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
+    ) -> Self {
         self.handle = Some(handle);
         self
     }
 
-    pub fn with_info_text(mut self, text: impl Into<SharedString>) -> Self {
+    pub fn info_text(mut self, text: impl Into<SharedString>) -> Self {
         self.info_text = Some(text.into());
         self
     }
 }
 
-impl PickerDelegate for ModelPickerDelegate {
+impl PickerDelegate for LanguageModelPickerDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
@@ -294,7 +297,7 @@ impl PickerDelegate for ModelPickerDelegate {
     }
 }
 
-impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
+impl<T: PopoverTrigger> RenderOnce for LanguageModelSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let selected_provider = LanguageModelRegistry::read_global(cx)
             .active_provider()
@@ -329,7 +332,7 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
             })
             .collect::<Vec<_>>();
 
-        let delegate = ModelPickerDelegate {
+        let delegate = LanguageModelPickerDelegate {
             on_model_changed: self.on_model_changed.clone(),
             all_models: all_models.clone(),
             filtered_models: all_models,

@@ -20,7 +20,7 @@ use language::Buffer;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
-use language_model_selector::ModelSelector;
+use language_model_selector::LanguageModelSelector;
 use language_models::report_assistant_event;
 use settings::{update_settings_file, Settings};
 use std::{
@@ -614,7 +614,7 @@ impl Render for PromptEditor {
                     .w_12()
                     .justify_center()
                     .gap_2()
-                    .child(ModelSelector::new(
+                    .child(LanguageModelSelector::new(
                         {
                             let fs = self.fs.clone();
                             move |model, cx| {

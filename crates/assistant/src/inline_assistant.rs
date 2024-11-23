@@ -33,7 +33,7 @@ use language_model::{
     LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelTextStream, Role,
 };
-use language_model_selector::ModelSelector;
+use language_model_selector::LanguageModelSelector;
 use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -1501,7 +1501,7 @@ impl Render for PromptEditor {
                     .justify_center()
                     .gap_2()
                     .child(
-                        ModelSelector::new(
+                        LanguageModelSelector::new(
                             {
                                 let fs = self.fs.clone();
                                 move |model, cx| {
@@ -1531,7 +1531,7 @@ impl Render for PromptEditor {
                                     )
                                 }),
                         )
-                        .with_info_text(
+                        .info_text(
                             "Inline edits use context\n\
                             from the currently selected\n\
                             assistant panel tab.",
