@@ -241,8 +241,12 @@ pub fn initialize_workspace(
 
         let prompt_builder = prompt_builder.clone();
         cx.spawn(|workspace_handle, mut cx| async move {
-            let is_assistant2_feature_flag_enabled = assistant2_feature_flag.await;
-            let is_assistant2_enabled = release_channel == ReleaseChannel::Dev && is_assistant2_feature_flag_enabled;
+            let is_assistant2_enabled = if cfg!(test) {
+                false
+            } else {
+                let is_assistant2_feature_flag_enabled = assistant2_feature_flag.await;
+                release_channel == ReleaseChannel::Dev && is_assistant2_feature_flag_enabled
+            };
 
             let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
                 let assistant2_panel =
