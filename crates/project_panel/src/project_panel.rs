@@ -1721,7 +1721,7 @@ impl ProjectPanel {
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         let abs_file_paths = {
             let project = self.project.read(cx);
-            self.selected_and_marked_entries()
+            self.marked_entries()
                 .into_iter()
                 .filter_map(|entry| {
                     let entry_path = project.path_for_entry(entry.entry_id, cx)?.path;
@@ -1745,7 +1745,7 @@ impl ProjectPanel {
     fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
         let file_paths = {
             let project = self.project.read(cx);
-            self.selected_and_marked_entries()
+            self.marked_entries()
                 .into_iter()
                 .filter_map(|entry| {
                     Some(
@@ -1929,7 +1929,7 @@ impl ProjectPanel {
     }
 
     fn disjoint_entries(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
-        let marked_entries = self.selected_and_marked_entries();
+        let marked_entries = self.marked_entries();
         let mut sanitized_entries = BTreeSet::new();
         if marked_entries.is_empty() {
             return sanitized_entries;
@@ -1977,7 +1977,7 @@ impl ProjectPanel {
     }
 
     // Returns the union of the currently selected entry and all marked entries.
-    fn selected_and_marked_entries(&self) -> BTreeSet<SelectedEntry> {
+    fn marked_entries(&self) -> BTreeSet<SelectedEntry> {
         let mut entries = self
             .marked_entries
             .iter()
@@ -1988,12 +1988,10 @@ impl ProjectPanel {
             .collect::<BTreeSet<_>>();
 
         if let Some(selection) = self.selection {
-            if !entries.contains(&selection) {
-                entries.insert(SelectedEntry {
-                    entry_id: self.resolve_entry(selection.entry_id),
-                    worktree_id: selection.worktree_id,
-                });
-            }
+            entries.insert(SelectedEntry {
+                entry_id: self.resolve_entry(selection.entry_id),
+                worktree_id: selection.worktree_id,
+            });
         }
 
         entries
