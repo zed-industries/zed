@@ -3,29 +3,18 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, TypedEnvelope};
 use collections::{HashMap, HashSet};
-use extension::{Extension, ExtensionManifest};
+use extension::{
+    Extension, ExtensionHostProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
+    ExtensionManifest,
+};
 use fs::{Fs, RemoveOptions, RenameOptions};
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
 use http_client::HttpClient;
-use language::{LanguageConfig, LanguageName, LanguageQueries, LanguageRegistry, LoadedLanguage};
+use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
-use crate::{
-    extension_lsp_adapter::ExtensionLspAdapter,
-    wasm_host::{WasmExtension, WasmHost},
-    ExtensionRegistrationHooks,
-};
-
-pub struct HeadlessExtensionStore {
-    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
-    pub fs: Arc<dyn Fs>,
-    pub extension_dir: PathBuf,
-    pub wasm_host: Arc<WasmHost>,
-    pub loaded_extensions: HashMap<Arc<str>, Arc<str>>,
-    pub loaded_languages: HashMap<Arc<str>, Vec<LanguageName>>,
-    pub loaded_language_servers: HashMap<Arc<str>, Vec<(LanguageServerName, LanguageName)>>,
-}
+use crate::wasm_host::{WasmExtension, WasmHost};
 
 #[derive(Clone, Debug)]
 pub struct ExtensionVersion {
@@ -34,28 +23,37 @@ pub struct ExtensionVersion {
     pub dev: bool,
 }
 
+pub struct HeadlessExtensionStore {
+    pub fs: Arc<dyn Fs>,
+    pub extension_dir: PathBuf,
+    pub proxy: Arc<ExtensionHostProxy>,
+    pub wasm_host: Arc<WasmHost>,
+    pub loaded_extensions: HashMap<Arc<str>, Arc<str>>,
+    pub loaded_languages: HashMap<Arc<str>, Vec<LanguageName>>,
+    pub loaded_language_servers: HashMap<Arc<str>, Vec<(LanguageServerName, LanguageName)>>,
+}
+
 impl HeadlessExtensionStore {
     pub fn new(
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
-        languages: Arc<LanguageRegistry>,
         extension_dir: PathBuf,
+        extension_host_proxy: Arc<ExtensionHostProxy>,
         node_runtime: NodeRuntime,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        let registration_hooks = Arc::new(HeadlessRegistrationHooks::new(languages.clone()));
         cx.new_model(|cx| Self {
-            registration_hooks: registration_hooks.clone(),
             fs: fs.clone(),
             wasm_host: WasmHost::new(
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
-                registration_hooks,
+                extension_host_proxy.clone(),
                 extension_dir.join("work"),
                 cx,
             ),
             extension_dir,
+            proxy: extension_host_proxy,
             loaded_extensions: Default::default(),
             loaded_languages: Default::default(),
             loaded_language_servers: Default::default(),
@@ -154,7 +152,7 @@ impl HeadlessExtensionStore {
 
                 config.grammar = None;
 
-                this.registration_hooks.register_language(
+                this.proxy.register_language(
                     config.name.clone(),
                     None,
                     config.matcher.clone(),
@@ -184,7 +182,7 @@ impl HeadlessExtensionStore {
                         .entry(manifest.id.clone())
                         .or_default()
                         .push((language_server_id.clone(), language.clone()));
-                    this.registration_hooks.register_lsp_adapter(
+                    this.proxy.register_language_server(
                         wasm_extension.clone(),
                         language_server_id.clone(),
                         language.clone(),
@@ -202,19 +200,20 @@ impl HeadlessExtensionStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         self.loaded_extensions.remove(extension_id);
+
         let languages_to_remove = self
             .loaded_languages
             .remove(extension_id)
             .unwrap_or_default();
-        self.registration_hooks
-            .remove_languages(&languages_to_remove, &[]);
+        self.proxy.remove_languages(&languages_to_remove, &[]);
+
         for (language_server_name, language) in self
             .loaded_language_servers
             .remove(extension_id)
             .unwrap_or_default()
         {
-            self.registration_hooks
-                .remove_lsp_adapter(&language, &language_server_name);
+            self.proxy
+                .remove_language_server(&language, &language_server_name);
         }
 
         let path = self.extension_dir.join(&extension_id.to_string());
@@ -316,73 +315,5 @@ impl HeadlessExtensionStore {
             .await?;
 
         Ok(proto::Ack {})
-    }
-}
-
-struct HeadlessRegistrationHooks {
-    language_registry: Arc<LanguageRegistry>,
-}
-
-impl HeadlessRegistrationHooks {
-    fn new(language_registry: Arc<LanguageRegistry>) -> Self {
-        Self { language_registry }
-    }
-}
-
-impl ExtensionRegistrationHooks for HeadlessRegistrationHooks {
-    fn register_language(
-        &self,
-        language: LanguageName,
-        _grammar: Option<Arc<str>>,
-        matcher: language::LanguageMatcher,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
-    ) {
-        log::info!("registering language: {:?}", language);
-        self.language_registry
-            .register_language(language, None, matcher, load)
-    }
-
-    fn register_lsp_adapter(
-        &self,
-        extension: Arc<dyn Extension>,
-        language_server_id: LanguageServerName,
-        language: LanguageName,
-    ) {
-        log::info!("registering lsp adapter {:?}", language);
-        self.language_registry.register_lsp_adapter(
-            language.clone(),
-            Arc::new(ExtensionLspAdapter::new(
-                extension,
-                language_server_id,
-                language,
-            )),
-        );
-    }
-
-    fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
-        self.language_registry.register_wasm_grammars(grammars)
-    }
-
-    fn remove_lsp_adapter(&self, language: &LanguageName, server_name: &LanguageServerName) {
-        self.language_registry
-            .remove_lsp_adapter(language, server_name)
-    }
-
-    fn remove_languages(
-        &self,
-        languages_to_remove: &[LanguageName],
-        _grammars_to_remove: &[Arc<str>],
-    ) {
-        self.language_registry
-            .remove_languages(languages_to_remove, &[])
-    }
-
-    fn update_lsp_status(
-        &self,
-        server_name: LanguageServerName,
-        status: language::LanguageServerBinaryStatus,
-    ) {
-        self.language_registry
-            .update_lsp_status(server_name, status)
     }
 }

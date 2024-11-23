@@ -5,16 +5,15 @@ mod reliability;
 mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::SlashCommandRegistry;
 use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, ProxySettings, UserStore};
 use collab_ui::channel_view::ChannelView;
-use context_servers::ContextServerFactoryRegistry;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
+use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
@@ -23,7 +22,6 @@ use gpui::{
     VisualContext,
 };
 use http_client::{read_proxy_from_env, Uri};
-use indexed_docs::IndexedDocsRegistry;
 use language::LanguageRegistry;
 use log::LevelFilter;
 use reqwest_client::ReqwestClient;
@@ -40,7 +38,6 @@ use settings::{
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
-use snippet_provider::SnippetRegistry;
 use std::{
     env,
     fs::OpenOptions,
@@ -284,6 +281,9 @@ fn main() {
 
         OpenListener::set_global(cx, open_listener.clone());
 
+        extension::init(cx);
+        let extension_host_proxy = ExtensionHostProxy::global(cx);
+
         let client = Client::production(cx);
         cx.set_http_client(client.http_client().clone());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
@@ -317,6 +317,7 @@ fn main() {
         let node_runtime = NodeRuntime::new(client.http_client(), rx);
 
         language::init(cx);
+        language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -326,7 +327,6 @@ fn main() {
         zed::init(cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
-        language::init(cx);
         let telemetry = client.telemetry();
         telemetry.start(
             system_id.as_ref().map(|id| id.to_string()),
@@ -376,6 +376,11 @@ fn main() {
 
         SystemAppearance::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+        theme_extension::init(
+            extension_host_proxy.clone(),
+            ThemeRegistry::global(cx),
+            cx.background_executor().clone(),
+        );
         command_palette::init(cx);
         let copilot_language_server_id = app_state.languages.next_language_server_id();
         copilot::init(
@@ -407,17 +412,8 @@ fn main() {
             app_state.client.telemetry().clone(),
             cx,
         );
-        let api = extensions_ui::ConcreteExtensionRegistrationHooks::new(
-            ThemeRegistry::global(cx),
-            SlashCommandRegistry::global(cx),
-            IndexedDocsRegistry::global(cx),
-            SnippetRegistry::global(cx),
-            app_state.languages.clone(),
-            ContextServerFactoryRegistry::global(cx),
-            cx,
-        );
         extension_host::init(
-            api,
+            extension_host_proxy,
             app_state.fs.clone(),
             app_state.client.clone(),
             app_state.node_runtime.clone(),

@@ -55,6 +55,7 @@ members = [
     "crates/install_cli",
     "crates/journal",
     "crates/language",
+    "crates/language_extension",
     "crates/language_model",
     "crates/language_models",
     "crates/language_selector",
@@ -116,6 +117,7 @@ members = [
     "crates/terminal_view",
     "crates/text",
     "crates/theme",
+    "crates/theme_extension",
     "crates/theme_importer",
     "crates/theme_selector",
     "crates/time_format",
@@ -230,6 +232,7 @@ inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
+language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
@@ -292,6 +295,7 @@ terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
+theme_extension = { path = "crates/theme_extension" }
 theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }

@@ -8,7 +8,9 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use context_servers::manager::ContextServerSettings;
-use extension::{KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate};
+use extension::{
+    ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
+};
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use language::{language_settings::AllLanguageSettings, LanguageName, LanguageServerBinaryStatus};
@@ -682,8 +684,9 @@ impl ExtensionImports for WasmState {
         };
 
         self.host
-            .registration_hooks
-            .update_lsp_status(::lsp::LanguageServerName(server_name.into()), status);
+            .proxy
+            .update_language_server_status(::lsp::LanguageServerName(server_name.into()), status);
+
         Ok(())
     }
 

@@ -1,22 +1,28 @@
+use std::any::Any;
+use std::ops::Range;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use extension::{Extension, WorktreeDelegate};
+use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
 use language::{
-    CodeLabel, HighlightId, Language, LanguageName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate,
+    CodeLabel, HighlightId, Language, LanguageName, LanguageServerBinaryStatus,
+    LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
 use serde_json::Value;
-use std::ops::Range;
-use std::{any::Any, path::PathBuf, pin::Pin, sync::Arc};
 use util::{maybe, ResultExt};
 
+use crate::LanguageServerRegistryProxy;
+
 /// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
-pub struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
+struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
 
 #[async_trait]
 impl WorktreeDelegate for WorktreeDelegateAdapter {
@@ -44,14 +50,50 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
     }
 }
 
-pub struct ExtensionLspAdapter {
+impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
+    fn register_language_server(
+        &self,
+        extension: Arc<dyn Extension>,
+        language_server_id: LanguageServerName,
+        language: LanguageName,
+    ) {
+        self.language_registry.register_lsp_adapter(
+            language.clone(),
+            Arc::new(ExtensionLspAdapter::new(
+                extension,
+                language_server_id,
+                language,
+            )),
+        );
+    }
+
+    fn remove_language_server(
+        &self,
+        language: &LanguageName,
+        language_server_id: &LanguageServerName,
+    ) {
+        self.language_registry
+            .remove_lsp_adapter(language, language_server_id);
+    }
+
+    fn update_language_server_status(
+        &self,
+        language_server_id: LanguageServerName,
+        status: LanguageServerBinaryStatus,
+    ) {
+        self.language_registry
+            .update_lsp_status(language_server_id, status);
+    }
+}
+
+struct ExtensionLspAdapter {
     extension: Arc<dyn Extension>,
     language_server_id: LanguageServerName,
     language_name: LanguageName,
 }
 
 impl ExtensionLspAdapter {
-    pub fn new(
+    fn new(
         extension: Arc<dyn Extension>,
         language_server_id: LanguageServerName,
         language_name: LanguageName,

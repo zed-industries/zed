@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context as _, Model, ModelContext, PromptLevel};
@@ -47,6 +48,7 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
+    pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
 
 impl HeadlessProject {
@@ -63,9 +65,11 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
+            extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        language_extension::init(proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new_model(|cx| {
@@ -152,8 +156,8 @@ impl HeadlessProject {
         let extensions = HeadlessExtensionStore::new(
             fs.clone(),
             http_client.clone(),
-            languages.clone(),
             paths::remote_extensions_dir().to_path_buf(),
+            proxy,
             node_runtime,
             cx,
         );

@@ -2601,6 +2601,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.5",
  "envy",
+ "extension",
  "file_finder",
  "fs",
  "futures 0.3.31",
@@ -2842,6 +2843,7 @@ dependencies = [
  "anyhow",
  "collections",
  "command_palette_hooks",
+ "extension",
  "futures 0.3.31",
  "gpui",
  "log",
@@ -4127,6 +4129,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "parking_lot",
  "semantic_version",
  "serde",
  "serde_json",
@@ -4178,6 +4181,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "language_extension",
  "log",
  "lsp",
  "node_runtime",
@@ -4196,6 +4200,7 @@ dependencies = [
  "task",
  "tempfile",
  "theme",
+ "theme_extension",
  "toml 0.8.19",
  "url",
  "util",
@@ -4209,21 +4214,15 @@ name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant_slash_command",
  "client",
  "collections",
- "context_servers",
  "db",
  "editor",
- "extension",
  "extension_host",
  "fs",
  "fuzzy",
  "gpui",
- "indexed_docs",
  "language",
- "log",
- "lsp",
  "num-format",
  "picker",
  "project",
@@ -4232,7 +4231,6 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
- "snippet_provider",
  "theme",
  "ui",
  "util",
@@ -6530,6 +6528,23 @@ dependencies = [
  "tree-sitter-typescript",
  "unicase",
  "unindent",
+ "util",
+]
+
+[[package]]
+name = "language_extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "extension",
+ "futures 0.3.31",
+ "gpui",
+ "language",
+ "lsp",
+ "serde",
+ "serde_json",
  "util",
 ]
 
@@ -9853,6 +9868,7 @@ dependencies = [
  "client",
  "clock",
  "env_logger 0.11.5",
+ "extension",
  "extension_host",
  "fork",
  "fs",
@@ -9862,6 +9878,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "language_extension",
  "languages",
  "libc",
  "log",
@@ -11304,6 +11321,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "extension",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -12355,6 +12373,17 @@ dependencies = [
  "strum 0.25.0",
  "util",
  "uuid",
+]
+
+[[package]]
+name = "theme_extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "extension",
+ "fs",
+ "gpui",
+ "theme",
 ]
 
 [[package]]
@@ -15466,7 +15495,6 @@ dependencies = [
  "ashpd",
  "assets",
  "assistant",
- "assistant_slash_command",
  "async-watch",
  "audio",
  "auto_update",
@@ -15483,12 +15511,12 @@ dependencies = [
  "collections",
  "command_palette",
  "command_palette_hooks",
- "context_servers",
  "copilot",
  "db",
  "diagnostics",
  "editor",
  "env_logger 0.11.5",
+ "extension",
  "extension_host",
  "extensions_ui",
  "feature_flags",
@@ -15503,11 +15531,11 @@ dependencies = [
  "gpui",
  "http_client",
  "image_viewer",
- "indexed_docs",
  "inline_completion_button",
  "install_cli",
  "journal",
  "language",
+ "language_extension",
  "language_model",
  "language_models",
  "language_selector",
@@ -15556,6 +15584,7 @@ dependencies = [
  "telemetry_events",
  "terminal_view",
  "theme",
+ "theme_extension",
  "theme_selector",
  "time",
  "toolchain_selector",
