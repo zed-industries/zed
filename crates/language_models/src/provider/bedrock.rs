@@ -1,33 +1,36 @@
-use crate::{
-    settings::AllLanguageModelSettings, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
-};
-use crate::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
+use crate::AllLanguageModelSettings;
+use bedrock::{BedrockError, BedrockEvent, bedrock_client, Model};
 use anyhow::{anyhow, Context as _, Result};
-use aws_config as config;
-use aws_config::meta::credentials::CredentialsProviderChain;
-use aws_config::Region;
-use aws_credential_types::Credentials;
-use aws_sdk_bedrockruntime as bedrock_client;
-use aws_sdk_bedrockruntime::Config;
 use collections::{BTreeMap, HashMap};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
-use gpui::{AnyView, AppContext, AsyncAppContext, FontStyle, Model, ModelContext, Subscription, Task, TextStyle, View, WhiteSpace};
+use gpui::{
+    AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
+    View, WhiteSpace,
+};
+use http_client::HttpClient;
+use language_model::{
+    LanguageModel, LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+};
+use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use aws_config::Region;
+use aws_credential_types::Credentials;
 use serde_json::Value;
 use strum::IntoEnumIterator;
-use bedrock::{BedrockError, ContentDelta, Event, ResponseContent};
+use bedrock::bedrock_client::Config;
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::{maybe, ResultExt};
+
 
 const PROVIDER_ID : &str = "amazon-bedrock";
 const PROVIDER_NAME : &str = "Amazon Bedrock";
@@ -211,8 +214,8 @@ impl BedrockLanguageModelProvider {
 
 struct BedrockModel {
     id: LanguageModelId,
-    model: bedrock::Model,
-    state: Model<State>,
+    model: Model,
+    state: gpui::Model<State>,
     request_limiter: RateLimiter,
 }
 
@@ -221,8 +224,8 @@ impl BedrockModel {
         &self,
         request: bedrock::Request,
         cx: &AsyncAppContext
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<Event, BedrockError>>>> {
-
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<BedrockEvent, BedrockError>>>> {
+        todo!()
     }
 }
 
@@ -287,72 +290,21 @@ impl LanguageModel for BedrockModel {
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
-        self.model
-            .cache_configuration()
-            .map(|config| LanguageModelCacheConfiguration {
-                max_cache_anchors: config.max_cache_anchors,
-                should_speculate: config.should_speculate,
-                min_total_token: config.min_total_token,
-            })
+        unimplemented!()
     }
 }
 
-fn get_bedrock_tokens(request: LanguageModelRequest, cx: &AppContext) -> BoxFuture<'static, Result<usize>> {
-    cx.background_executor()
-        .spawn(async move {
-            let messages = request.messages;
-            let mut tokens_from_images = 0;
-            let mut string_messages = Vec::with_capacity(messages.len());
-
-            for message in messages {
-                use crate::MessageContent;
-
-                let mut string_contents = String::new();
-
-                for content in message.content {
-                    match content {
-                        MessageContent::Text(text) => {
-                            string_contents.push_str(&text);
-                        }
-                        MessageContent::Image(image) => {
-                            tokens_from_images += image.estimate_tokens();
-                        }
-                        MessageContent::ToolUse(_tool_use) => {
-                            unimplemented!();
-                        }
-                        MessageContent::ToolResult(tool_result) => {
-                            unimplemented!();
-                        }
-                    }
-                }
-
-                if !string_contents.is_empty() {
-                    string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
-                        role: match message.role {
-                            Role::User => "user".into(),
-                            Role::Assistant => "assistant".into(),
-                            Role::System => "system".into(),
-                        },
-                        content: Some(string_contents),
-                        name: None,
-                        function_call: None,
-                    });
-                }
-            }
-
-            // Tiktoken doesn't yet support these models, so we manually use the
-            // same tokenizer as GPT-4.
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-                .map(|tokens| tokens + tokens_from_images)
-        })
-        .boxed()
+// TODO: just call the ConverseOutput.usage() method:
+// https://docs.rs/aws-sdk-bedrockruntime/latest/aws_sdk_bedrockruntime/operation/converse/struct.ConverseOutput.html#method.output
+pub fn get_bedrock_tokens(request: LanguageModelRequest, cx: &AppContext) -> BoxFuture<'static, Result<usize>> {
+    todo!()
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<Event, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockEvent, BedrockError>>>>,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<Event, BedrockError>>>>
+        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockEvent, BedrockError>>>>
     }
 
     futures::stream::unfold(
@@ -363,42 +315,11 @@ pub fn map_to_language_model_completion_events(
             while let Some(event) = state.events.next().await {
                 match event {
                     Ok(event) => match event {
-                        Event::ContentBlockStart {
-                            index,
-                            content_block,
-                        } => match content_block {
-                            ResponseContent::Text { text } => {
-                                return Some((
-                                    Some(Ok(LanguageModelCompletionEvent::Text(text))),
-                                    state,
-                                ));
-                            }
-                        },
-                        Event::ContentBlockDelta { index, delta } => match delta {
-                            ContentDelta::TextDelta { text } => {
-                                return Some((
-                                    Some(Ok(LanguageModelCompletionEvent::Text(text))),
-                                    state,
-                                ));
-                            }
-                            _ => {}
-                        },
-                        Event::MessageDelta { delta, .. } => {
-                            if let Some(stop_reason) = delta.stop_reason.as_deref() {
-                                let stop_reason = match stop_reason {
-                                    "end_turn" => StopReason::EndTurn,
-                                    "max_tokens" => StopReason::MaxTokens,
-                                    "tool_use" => StopReason::ToolUse,
-                                    _ => StopReason::EndTurn,
-                                };
-
-                                return Some((
-                                    Some(Ok(LanguageModelCompletionEvent::Stop(stop_reason))),
-                                    state,
-                                ));
-                            }
-                        }
-                        _ => {}
+                        BedrockEvent::ContentBlockDelta(_) => {}
+                        BedrockEvent::ContentBlockStart(_) => {}
+                        BedrockEvent::MessageStart(_) => {}
+                        BedrockEvent::MessageStop(_) => {}
+                        BedrockEvent::Metadata(_) => {}
                     },
                     Err(err) => {
                         return Some((Some(Err(anyhow!(err))), state));
@@ -441,13 +362,6 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
-                    cache_configuration: model.cache_configuration.as_ref().map(|config| {
-                        bedrock::BedrockModelCacheConfiguration {
-                            max_cache_anchors: config.max_cache_anchors,
-                            should_speculate: config.should_speculate,
-                            min_total_token: config.min_total_token,
-                        }
-                    }),
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
                 },
@@ -488,7 +402,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
 impl LanguageModelProviderState for BedrockLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<Model<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -497,7 +411,7 @@ struct ConfigurationView {
     access_key_id_editor: View<Editor>,
     secret_access_key_editor: View<Editor>,
     region_editor: View<Editor>,
-    state: Model<State>,
+    state: gpui::Model<State>,
     load_credentials_task: Option<Task<()>>,
 }
 

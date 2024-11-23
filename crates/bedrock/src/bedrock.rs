@@ -3,19 +3,19 @@ mod models;
 use std::{str::FromStr};
 use std::any::Any;
 use anyhow::{Context, Result};
-use aws_sdk_bedrockruntime::types::{ConverseStreamOutput};
+use aws_sdk_bedrockruntime::types::{ContentBlockDeltaEvent, ContentBlockStartEvent, ConverseStreamMetadataEvent, ConverseStreamOutput, Message, MessageStartEvent, MessageStopEvent};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub use aws_sdk_bedrockruntime as bedrock;
-pub use bedrock::operation::converse_stream::ConverseStreamInput as StreamingRequest;
-pub use bedrock::types::ContentBlock as RequestContent;
-pub use bedrock::types::ConverseOutput as Response;
-pub use bedrock::types::Message;
-pub use bedrock::types::ConversationRole;
-pub use bedrock::types::ResponseStream;
-pub use bedrock::types::ConverseStreamOutput as BedrockEvent;
+use aws_sdk_bedrockruntime as bedrock;
+pub use aws_sdk_bedrockruntime as bedrock_client;
+pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
+pub use bedrock::types::ContentBlock as BedrockRequestContent;
+use bedrock::types::ConverseOutput as Response;
+pub use bedrock::types::Message as BedrockMessage;
+pub use bedrock::types::ConversationRole as BedrockRole;
+pub use bedrock::types::ResponseStream as BedrockResponseStream;
 
 //TODO: Re-export the Bedrock stuff
 // https://doc.rust-lang.org/rustdoc/write-documentation/re-exports.html
@@ -122,4 +122,12 @@ pub struct Metadata {
 pub enum BedrockError {
     SdkError(bedrock::Error),
     Other(anyhow::Error)
+}
+
+pub enum BedrockEvent {
+    ContentBlockDelta(ContentBlockDeltaEvent),
+    ContentBlockStart(ContentBlockStartEvent),
+    MessageStart(MessageStartEvent),
+    MessageStop(MessageStopEvent),
+    Metadata(ConverseStreamMetadataEvent),
 }
