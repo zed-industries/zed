@@ -1540,6 +1540,9 @@ fn for_snowflake(
                     "welcome page: open" => "Welcome Page Opened".to_string(),
                     "welcome page: edit settings" => "Settings Edited".to_string(),
                     "welcome page: view docs" => "Documentation Viewed".to_string(),
+                    "welcome page: toggle metric telemetry" => {
+                        "Welcome Telemetry Toggled".to_string()
+                    }
 
                     // Extensions
                     "extensions: install extension" => "Extension Installed".to_string(),
@@ -1549,9 +1552,6 @@ fn for_snowflake(
                     // Misc
                     "project search: open" => "Project Search Opened".to_string(),
                     "project diagnostics: open" => "Project Diagnostics Opened".to_string(),
-                    "welcome page: toggle metric telemetry" => {
-                        "Welcome Telemetry Toggled".to_string()
-                    }
                     "markdown preview: open" => "Markdown Preview Opened".to_string(),
                     "repl sessions: open" => "REPL Session Started".to_string(),
 
