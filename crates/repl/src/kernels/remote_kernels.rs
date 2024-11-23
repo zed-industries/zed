@@ -91,19 +91,7 @@ pub async fn list_remote_kernelspecs(
                 name: name.clone(),
                 url: remote_server.base_url.clone(),
                 token: remote_server.token.clone(),
-                // todo: line up the jupyter kernelspec from runtimelib with
-                //       the kernelspec pulled from the API
-                //
-                //        There are _small_ differences, so we may just want a impl `From`
-                kernelspec: JupyterKernelspec {
-                    argv: spec.spec.argv,
-                    display_name: spec.spec.display_name,
-                    language: spec.spec.language,
-                    // todo: fix up mismatch in types here
-                    metadata: None,
-                    interrupt_mode: None,
-                    env: None,
-                },
+                kernelspec: spec.spec,
             })
             .collect::<Vec<RemoteKernelSpecification>>();
 
