@@ -32,7 +32,7 @@ If you are developing collaborative features of Zed, you'll need to install the 
 Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
 
 ```sh
-docker compose up -d
+docker-compose up -d
 ```
 
 ## Building from source
