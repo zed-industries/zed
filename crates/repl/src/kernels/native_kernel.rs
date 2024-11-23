@@ -6,9 +6,9 @@ use futures::{
     AsyncBufReadExt as _, SinkExt as _,
 };
 use gpui::{EntityId, Task, View, WindowContext};
-use jupyter_protocol::{JupyterMessage, JupyterMessageContent, KernelInfoReply};
+use jupyter_protocol::{JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply};
 use project::Fs;
-use runtimelib::{dirs, ConnectionInfo, ExecutionState, JupyterKernelspec};
+use runtimelib::{dirs, ConnectionInfo, ExecutionState};
 use smol::{net::TcpListener, process::Command};
 use std::{
     env,

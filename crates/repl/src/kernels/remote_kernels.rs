@@ -1,8 +1,7 @@
 use futures::{channel::mpsc, SinkExt as _};
 use gpui::{Task, View, WindowContext};
 use http_client::{AsyncBody, HttpClient, Request};
-use jupyter_protocol::{ExecutionState, JupyterMessage, KernelInfoReply};
-use runtimelib::JupyterKernelspec;
+use jupyter_protocol::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
 
 use futures::StreamExt;
 use smol::io::AsyncReadExt as _;
@@ -34,8 +33,9 @@ pub async fn launch_remote_kernel(
     //
     let kernel_launch_request = KernelLaunchRequest {
         name: kernel_name.to_string(),
-        // todo: add path to runtimelib
-        // path,
+        // Note: since the path we have locally may not be the same as the one on the remote server,
+        // we don't send it. We'll have to evaluate this decisiion along the way.
+        path: None,
     };
 
     let kernel_launch_request = serde_json::to_string(&kernel_launch_request)?;
@@ -163,7 +163,7 @@ impl RemoteRunningKernel {
             )
             .await?;
 
-            let kernel_socket = remote_server.connect_to_kernel(&kernel_id).await?;
+            let (kernel_socket, _response) = remote_server.connect_to_kernel(&kernel_id).await?;
 
             let (mut w, mut r): (JupyterWebSocketWriter, JupyterWebSocketReader) =
                 kernel_socket.split();
