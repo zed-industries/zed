@@ -1,0 +1,20 @@
+[package]
+name = "assistant2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/assistant.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+proto.workspace = true
+ui.workspace = true
+workspace.workspace = true
