@@ -1216,6 +1216,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-bedrockruntime"
+version = "1.61.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30652d08e84639fa570b696070e974d3153724701f81f89112e90986c811c39d"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-eventstream",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes 1.8.0",
+ "http 0.2.12",
+ "once_cell",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-kinesis"
 version = "1.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1672,6 +1695,25 @@ name = "base64ct"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
+
+[[package]]
+name = "bedrock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aws-config",
+ "aws-sdk-bedrockruntime",
+ "chrono",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
+ "strum 0.25.0",
+ "thiserror 1.0.69",
+ "tokio",
+ "util",
+]
 
 [[package]]
 name = "bigdecimal"
@@ -6756,7 +6798,9 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "aws-sdk-bedrockruntime",
  "base64 0.22.1",
+ "bedrock",
  "collections",
  "futures 0.3.31",
  "google_ai",
@@ -6798,6 +6842,9 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "aws-config",
+ "aws-credential-types",
+ "bedrock",
  "client",
  "collections",
  "copilot",
