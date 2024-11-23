@@ -1441,66 +1441,108 @@ fn for_snowflake(
             Event::Cpu(_) | Event::Memory(_) => return None,
             Event::App(e) => {
                 let mut properties = json!({});
+                //     ┌─operation───────────────────────────────────────────────────────────────┬───────c─┐
+                //  1. │ x open                                                                    │ 6159197 │
+                //  2. │ x project search: open                                                    │ 2392903 │
+                //  3. │ x open node project                                                       │ 1932196 │
+                //  4. │ x open project                                                            │ 1255229 │
+                //  5. │ x project diagnostics: open                                               │  874902 │
+                //  6. │ x extensions: install extension                                           │  740975 │
+                //  7. │ x first open                                                              │  628155 │
+                //  8. │ x extensions page: open                                                   │  587550 │
+                //  9. │ x open yarn project                                                       │  536736 │
+                // 10. │ x welcome page: change theme                                              │  474574 │
+                // 11. │ x open pnpm project                                                       │  354027 │
+                // 12. │ x welcome page: close                                                     │  225846 │
+                // 13. │ x welcome page: toggle vim                                                │  195507 │
+                // 14. │ x extensions: uninstall extension                                         │  169871 │
+                // 15. │ x welcome page: toggle metric telemetry                                   │  139129 │
+                // 16. │ x welcome page: install cli                                               │  114708 │
+                // 17. │ x first open for release channel                                          │  112648 │
+                // 18. │ x welcome page: change keymap                                             │   86185 │
+                // 19. │ x markdown preview: open                                                  │   47892 │
+                // 20. │ x welcome page: open extensions                                           │   35326 │
+                // 21. │ x welcome page: toggle diagnostic telemetry                               │   29635 │
+                // 22. │ x welcome page: sign in to copilot                                        │   28970 │
+                // 23. │ x welcome page: open                                                      │   24141 │
+                // 24. │ x open ssh project                                                        │   18684 │
+                // 25. │ x welcome page: edit settings                                             │   10290 │
+                // 26. │ x create ssh project                                                      │    5171 │
+                // 27. │ x repl sessions: open                                                     │    5066 │
+                // 28. │ x close                                                                   │    4924 │
+                // 29. │ x create ssh server                                                       │    3025 │
+                // 30. │ x welcome page: view docs                                                 │    2427 │
+                // 31. │ x feature upsell: toggle vim                                              │    1350 │
+                // 32. │ x feature upsell: viewed docs (https://zed.dev/docs/git)                  │    1066 │
+                // 33. │ x feature upsell: viewed docs (https://zed.dev/docs/languages/cpp)        │     836 │
+                // 34. │ x feature upsell: viewed docs (https://zed.dev/docs/languages/python)     │     767 │
+                // 35. │ x feature upsell: viewed docs (https://zed.dev/docs/languages/rust)       │     498 │
+                // 36. │ x feature upsell: viewed docs (https://zed.dev/docs/languages/typescript) │     484 │
+                // 37. │ x feature upsell: viewed docs (https://zed.dev/docs/languages/go)         │     410 │
+                // 38. │ x feature upsell: viewed docs (https://zed.dev/docs/languages/c)          │     383 │
+                // 39. │ x feature upsell: viewed docs (https://zed.dev/docs/vim)                  │     276 │
+                // 40. │ x feature upsell: viewed docs (https://zed.dev/docs/git#git-integrations) │      94 │
+                // 41. │ x feature upsell: viewed docs (https://zed.dev/docs/languages/bash)       │      42 │
+                // 42. │ skip extensions: toggle vim                                                  │      26 │
+                // 43. │ skip welcome page: toggle helix                                              │      17 │
+                // 44. │ skip project diagnostics：打开                                               │      15 │
+                // 45. │ skip 扩展：安装扩展                                                          │       8 │
+                // 46. │ skip first app open ever                                                     │       8 │
+                // 47. │ skip extensions page：打开                                                   │       4 │
+                // 48. │ skip 项目问题: open                                                          │       4 │
+                // 49. │ skip 打开 node 项目                                                          │       3 │
+                // 50. │ skip 打开项目                                                                │       3 │
+                // 51. │ skip first app open for release channel                                      │       1 │
+                // 52. │ skip project diagnostics: 開啟                                               │       1 │
+                // 53. │ skip 打开 pnpm 项目                                                          │       1 │
+                // 54. │ skip 扩展：卸载扩展                                                          │       1 │
+                //     └─operation───────────────────────────────────────────────────────────────┴───────c─┘
                 let event_type = match e.operation.trim() {
-                    "extensions: install extension" => "Extension Installed".to_string(),
                     "open" => "App Opened".to_string(),
                     "project search: open" => "Project Search Opened".to_string(),
-                    "first open" => {
-                        properties["is_first_open"] = json!(true);
-                        "App First Opened".to_string()
-                    }
-                    "extensions: uninstall extension" => "Extension Uninstalled".to_string(),
-                    "welcome page: close" => "Welcome Page Closed".to_string(),
-                    "open project" => {
-                        properties["is_first_time"] = json!(false);
+                    "open node project" => {
+                        properties["project_type"] = json!("node");
                         "Project Opened".to_string()
                     }
-                    "welcome page: install cli" => "CLI Installed".to_string(),
+                    "open pnpm project" => {
+                        properties["project_type"] = json!("pnpm");
+                        "Project Opened".to_string()
+                    }
+                    "open yarn project" => {
+                        properties["project_type"] = json!("yarn");
+                        "Project Opened".to_string()
+                    }
+                    "open project" => "Project Opened".to_string(),
                     "project diagnostics: open" => "Project Diagnostics Opened".to_string(),
+                    "extensions: install extension" => "Extension Installed".to_string(),
+                    "first open" => "App First Opened".to_string(),
                     "extensions page: open" => "Extensions Page Opened".to_string(),
                     "welcome page: change theme" => "Welcome Theme Changed".to_string(),
+                    "welcome page: close" => "Welcome Page Closed".to_string(),
+                    "welcome page: toggle vim" => "Welcome Vim Mode Toggled".to_string(),
+                    "extensions: uninstall extension" => "Extension Uninstalled".to_string(),
                     "welcome page: toggle metric telemetry" => {
-                        properties["enabled"] = json!(false);
                         "Welcome Telemetry Toggled".to_string()
                     }
-                    "welcome page: change keymap" => "Keymap Changed".to_string(),
-                    "welcome page: toggle vim" => {
-                        properties["enabled"] = json!(false);
-                        "Welcome Vim Mode Toggled".to_string()
+                    "welcome page: install cli" => "CLI Installed".to_string(),
+                    "first open for release channel" => {
+                        "App First Opened For Release Channel".to_string()
                     }
-                    "welcome page: sign in to copilot" => "Welcome Copilot Signed In".to_string(),
+                    "welcome page: change keymap" => "Keymap Changed".to_string(),
+                    "markdown preview: open" => "Markdown Preview Opened".to_string(),
+                    "welcome page: open extensions" => "Extensions Page Opened".to_string(),
                     "welcome page: toggle diagnostic telemetry" => {
                         "Welcome Telemetry Toggled".to_string()
                     }
+                    "welcome page: sign in to copilot" => "Welcome Copilot Signed In".to_string(),
                     "welcome page: open" => "Welcome Page Opened".to_string(),
-                    "close" => "App Closed".to_string(),
-                    "markdown preview: open" => "Markdown Preview Opened".to_string(),
-                    "welcome page: open extensions" => "Extensions Page Opened".to_string(),
-                    "open node project" | "open pnpm project" | "open yarn project" => {
-                        properties["project_type"] = json!("node");
-                        properties["is_first_time"] = json!(false);
-                        "Project Opened".to_string()
-                    }
-                    "repl sessions: open" => "REPL Session Started".to_string(),
-                    "welcome page: toggle helix" => {
-                        properties["enabled"] = json!(false);
-                        "Helix Mode Toggled".to_string()
-                    }
-                    "welcome page: edit settings" => {
-                        properties["changed_settings"] = json!([]);
-                        "Settings Edited".to_string()
-                    }
-                    "welcome page: view docs" => "Documentation Viewed".to_string(),
-                    "open ssh project" => {
-                        properties["is_first_time"] = json!(false);
-                        "SSH Project Opened".to_string()
-                    }
-                    "create ssh server" => "SSH Server Created".to_string(),
+                    "open ssh project" => "SSH Project Opened".to_string(),
+                    "welcome page: edit settings" => "Settings Edited".to_string(),
                     "create ssh project" => "SSH Project Created".to_string(),
-                    "first open for release channel" => {
-                        properties["is_first_for_channel"] = json!(true);
-                        "App First Opened For Release Channel".to_string()
-                    }
+                    "repl sessions: open" => "REPL Session Started".to_string(),
+                    "close" => "App Closed".to_string(),
+                    "create ssh server" => "SSH Server Created".to_string(),
+                    "welcome page: view docs" => "Documentation Viewed".to_string(),
                     "feature upsell: toggle vim" => {
                         properties["source"] = json!("Feature Upsell");
                         "Vim Mode Toggled".to_string()
