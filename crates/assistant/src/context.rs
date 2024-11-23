@@ -1,13 +1,14 @@
 #[cfg(test)]
 mod context_tests;
 
+use crate::patch::{PatchId, PatchStore};
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
     AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
 };
+use crate::{PatchStoreEvent, ResolvedPatch, ToolWorkingSet};
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
@@ -369,10 +370,8 @@ pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
-    PatchesUpdated {
-        removed: Vec<Range<language::Anchor>>,
-        updated: Vec<Range<language::Anchor>>,
-    },
+    PatchUpdated(PatchId),
+    PatchRemoved(PatchId),
     InvokedSlashCommandChanged {
         command_id: InvokedSlashCommandId,
     },
@@ -562,9 +561,10 @@ pub struct Context {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    patches: Vec<AssistantPatch>,
+    patches: Vec<(Range<text::Anchor>, PatchId)>,
+    patch_store: Model<PatchStore>,
     xml_tags: Vec<XmlTag>,
-    project: Option<Model<Project>>,
+    project: Model<Project>,
     prompt_builder: Arc<PromptBuilder>,
 }
 
@@ -578,9 +578,9 @@ impl ContextAnnotation for ParsedSlashCommand {
     }
 }
 
-impl ContextAnnotation for AssistantPatch {
+impl ContextAnnotation for (Range<language::Anchor>, PatchId) {
     fn range(&self) -> &Range<language::Anchor> {
-        &self.range
+        &self.0
     }
 }
 
@@ -595,7 +595,7 @@ impl EventEmitter<ContextEvent> for Context {}
 impl Context {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
-        project: Option<Model<Project>>,
+        project: Model<Project>,
         telemetry: Option<Arc<Telemetry>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
@@ -625,7 +625,7 @@ impl Context {
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
         tools: Arc<ToolWorkingSet>,
-        project: Option<Model<Project>>,
+        project: Model<Project>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -641,6 +641,14 @@ impl Context {
         });
         let edits_since_last_slash_command_parse =
             buffer.update(cx, |buffer, _| buffer.subscribe());
+        let patch_store = cx.new_model(|_| PatchStore::new(project.clone()));
+        cx.subscribe(&patch_store, |_, _, event, cx| {
+            cx.emit(match event {
+                PatchStoreEvent::PatchUpdated(id) => ContextEvent::PatchUpdated(*id),
+                PatchStoreEvent::PatchRemoved(id) => ContextEvent::PatchRemoved(*id),
+            })
+        })
+        .detach();
         let mut this = Self {
             id,
             timestamp: clock::Lamport::new(replica_id),
@@ -665,6 +673,7 @@ impl Context {
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
+            patch_store,
             buffer,
             telemetry,
             project,
@@ -748,7 +757,7 @@ impl Context {
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
         tools: Arc<ToolWorkingSet>,
-        project: Option<Model<Project>>,
+        project: Model<Project>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -1031,7 +1040,7 @@ impl Context {
         self.language_registry.clone()
     }
 
-    pub fn project(&self) -> Option<Model<Project>> {
+    pub fn project(&self) -> Model<Project> {
         self.project.clone()
     }
 
@@ -1047,50 +1056,46 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub(crate) fn patch_containing(
-        &self,
+    pub(crate) fn patch_containing<'a>(
+        &'a self,
         position: Point,
-        cx: &AppContext,
-    ) -> Option<&AssistantPatch> {
+        cx: &'a AppContext,
+    ) -> Option<PatchId> {
         let buffer = self.buffer.read(cx);
-        let index = self.patches.binary_search_by(|patch| {
-            let patch_range = patch.range.to_point(&buffer);
-            if position < patch_range.start {
-                Ordering::Greater
-            } else if position > patch_range.end {
-                Ordering::Less
-            } else {
-                Ordering::Equal
-            }
-        });
-        if let Ok(ix) = index {
-            Some(&self.patches[ix])
-        } else {
-            None
-        }
+        let index = self
+            .patches
+            .binary_search_by(|patch| {
+                let patch_range = patch.0.to_point(&buffer);
+                if position < patch_range.start {
+                    Ordering::Greater
+                } else if position > patch_range.end {
+                    Ordering::Less
+                } else {
+                    Ordering::Equal
+                }
+            })
+            .ok()?;
+        Some(self.patches[index].1)
     }
 
-    pub fn patch_ranges(&self) -> impl Iterator<Item = Range<language::Anchor>> + '_ {
-        self.patches.iter().map(|patch| patch.range.clone())
+    pub fn patch_ids(&self) -> impl Iterator<Item = PatchId> + '_ {
+        self.patches.iter().map(|patch| patch.1)
     }
 
-    pub(crate) fn patch_for_range(
-        &self,
-        range: &Range<language::Anchor>,
-        cx: &AppContext,
+    pub(crate) fn patch_for_id<'a>(
+        &'a self,
+        id: PatchId,
+        cx: &'a AppContext,
     ) -> Option<&AssistantPatch> {
-        let buffer = self.buffer.read(cx);
-        let index = self.patch_index_for_range(range, buffer).ok()?;
-        Some(&self.patches[index])
+        self.patch_store.read(cx).get(id)
     }
 
-    fn patch_index_for_range(
+    pub(crate) fn resolve_patch(
         &self,
-        tagged_range: &Range<text::Anchor>,
-        buffer: &text::BufferSnapshot,
-    ) -> Result<usize, usize> {
-        self.patches
-            .binary_search_by(|probe| probe.range.cmp(&tagged_range, buffer))
+        id: PatchId,
+        cx: &AppContext,
+    ) -> Task<Result<ResolvedPatch>> {
+        self.patch_store.read(cx).resolve_patch(id, cx)
     }
 
     pub fn parsed_slash_commands(&self) -> &[ParsedSlashCommand] {
@@ -1388,8 +1393,6 @@ impl Context {
 
         let mut removed_parsed_slash_command_ranges = Vec::new();
         let mut updated_parsed_slash_commands = Vec::new();
-        let mut removed_patches = Vec::new();
-        let mut updated_patches = Vec::new();
         while let Some(mut row_range) = row_ranges.next() {
             while let Some(next_row_range) = row_ranges.peek() {
                 if row_range.end >= next_row_range.start {
@@ -1414,13 +1417,7 @@ impl Context {
                 cx,
             );
             self.invalidate_pending_slash_commands(&buffer, cx);
-            self.reparse_patches_in_range(
-                start..end,
-                &buffer,
-                &mut updated_patches,
-                &mut removed_patches,
-                cx,
-            );
+            self.reparse_patches_in_range(start..end, &buffer, cx);
         }
 
         if !updated_parsed_slash_commands.is_empty()
@@ -1429,13 +1426,6 @@ impl Context {
             cx.emit(ContextEvent::ParsedSlashCommandsUpdated {
                 removed: removed_parsed_slash_command_ranges,
                 updated: updated_parsed_slash_commands,
-            });
-        }
-
-        if !updated_patches.is_empty() || !removed_patches.is_empty() {
-            cx.emit(ContextEvent::PatchesUpdated {
-                removed: removed_patches,
-                updated: updated_patches,
             });
         }
     }
@@ -1532,8 +1522,6 @@ impl Context {
         &mut self,
         range: Range<text::Anchor>,
         buffer: &BufferSnapshot,
-        updated: &mut Vec<Range<text::Anchor>>,
-        removed: &mut Vec<Range<text::Anchor>>,
         cx: &mut ModelContext<Self>,
     ) {
         // Rebuild the XML tags in the edited range.
@@ -1549,13 +1537,13 @@ impl Context {
 
         // Reparse all tags after the last unchanged patch before the change.
         let mut tags_start_ix = 0;
-        if let Some(preceding_unchanged_patch) =
+        if let Some((preceding_unchanged_patch_range, _)) =
             self.patches[..intersecting_patches_range.start].last()
         {
             tags_start_ix = match self.xml_tags.binary_search_by(|tag| {
                 tag.range
                     .start
-                    .cmp(&preceding_unchanged_patch.range.end, buffer)
+                    .cmp(&preceding_unchanged_patch_range.end, buffer)
                     .then(Ordering::Less)
             }) {
                 Ok(ix) | Err(ix) => ix,
@@ -1564,13 +1552,28 @@ impl Context {
 
         // Rebuild the patches in the range.
         let new_patches = self.parse_patches(tags_start_ix, range.end, buffer, cx);
-        updated.extend(new_patches.iter().map(|patch| patch.range.clone()));
-        let removed_patches = self.patches.splice(intersecting_patches_range, new_patches);
-        removed.extend(
-            removed_patches
-                .map(|patch| patch.range)
-                .filter(|range| !updated.contains(&range)),
-        );
+        self.patch_store.update(cx, |patch_store, cx| {
+            let mut removed_entries = self.patches[intersecting_patches_range.clone()]
+                .iter()
+                .map(|(range, id)| (range.start, *id))
+                .collect::<HashMap<_, _>>();
+            let added_entries = new_patches.into_iter().map(|patch| {
+                let id;
+                let range = patch.range.clone();
+                if let Some(existing_id) = removed_entries.remove(&range.start) {
+                    id = existing_id;
+                    patch_store.update(id, patch, cx).ok();
+                } else {
+                    id = patch_store.insert(patch.clone(), cx);
+                };
+                (range, id)
+            });
+            self.patches
+                .splice(intersecting_patches_range, added_entries);
+            for id in removed_entries.into_values() {
+                patch_store.remove(id, cx);
+            }
+        });
     }
 
     fn parse_xml_tags_in_range(
@@ -1648,7 +1651,7 @@ impl Context {
             if tag.kind == XmlTagKind::Patch && tag.is_open_tag {
                 patch_tag_depth += 1;
                 let patch_start = tag.range.start;
-                let mut edits = Vec::<Result<AssistantEdit>>::new();
+                let mut edits = Vec::<AssistantEdit>::new();
                 let mut patch = AssistantPatch {
                     range: patch_start..patch_start,
                     title: String::new().into(),
@@ -1660,7 +1663,7 @@ impl Context {
                     if tag.kind == XmlTagKind::Patch && !tag.is_open_tag {
                         patch_tag_depth -= 1;
                         if patch_tag_depth == 0 {
-                            patch.range.end = tag.range.end;
+                            patch.range.end = tag.range.end.bias_right(buffer);
 
                             // Include the line immediately after this <patch> tag if it's empty.
                             let patch_end_offset = patch.range.end.to_offset(buffer);
@@ -1677,13 +1680,7 @@ impl Context {
                                 }
                             }
 
-                            edits.sort_unstable_by(|a, b| {
-                                if let (Ok(a), Ok(b)) = (a, b) {
-                                    a.path.cmp(&b.path)
-                                } else {
-                                    Ordering::Equal
-                                }
-                            });
+                            edits.sort_unstable_by(|a, b| a.path.cmp(&b.path));
                             patch.edits = edits.into();
                             patch.status = AssistantPatchStatus::Ready;
                             new_patches.push(patch);
@@ -1713,13 +1710,17 @@ impl Context {
 
                         while let Some(tag) = tags.next() {
                             if tag.kind == XmlTagKind::Edit && !tag.is_open_tag {
-                                edits.push(AssistantEdit::new(
+                                if let Some(edit) = AssistantEdit::new(
                                     path,
                                     operation,
                                     old_text,
                                     new_text,
                                     description,
-                                ));
+                                )
+                                .log_err()
+                                {
+                                    edits.push(edit);
+                                }
                                 break;
                             }
 
@@ -2603,14 +2604,8 @@ impl Context {
         }
 
         let buffer = self.buffer.read(cx).text_snapshot();
-        let mut updated = Vec::new();
-        let mut removed = Vec::new();
         for range in ranges {
-            self.reparse_patches_in_range(range, &buffer, &mut updated, &mut removed, cx);
-        }
-
-        if !updated.is_empty() || !removed.is_empty() {
-            cx.emit(ContextEvent::PatchesUpdated { removed, updated })
+            self.reparse_patches_in_range(range, &buffer, cx);
         }
     }
 

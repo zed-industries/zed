@@ -1,6 +1,5 @@
 use crate::slash_command::file_command::codeblock_fence_for_path;
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -13,14 +12,15 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
-    ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
-    InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
-    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
-    ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    RequestType, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    Assist, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context, ContextEvent,
+    ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory,
+    DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
+    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
+    MessageStatus, ModelPickerDelegate, ModelSelector, NewContext, ParsedSlashCommand,
+    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, RequestType,
+    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
+use crate::{PatchId, ResolvedPatch, ToolWorkingSet};
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::{proto, zed_urls, Client, Status};
@@ -1481,13 +1481,15 @@ struct ScrollPosition {
 
 struct PatchViewState {
     crease_id: CreaseId,
+    multibuffer_range: Range<Anchor>,
+    height: u32,
     editor: Option<PatchEditorState>,
     update_task: Option<Task<()>>,
 }
 
 struct PatchEditorState {
     editor: WeakView<ProposedChangesEditor>,
-    opened_patch: AssistantPatch,
+    opened_patch: ResolvedPatch,
 }
 
 type MessageHeader = MessageMetadata;
@@ -1517,8 +1519,8 @@ pub struct ContextEditor {
     invoked_slash_command_creases: HashMap<InvokedSlashCommandId, CreaseId>,
     pending_tool_use_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
-    patches: HashMap<Range<language::Anchor>, PatchViewState>,
-    active_patch: Option<Range<language::Anchor>>,
+    patches: HashMap<PatchId, PatchViewState>,
+    active_patch: Option<PatchId>,
     assistant_panel: WeakView<AssistantPanel>,
     last_error: Option<AssistError>,
     show_accept_terms: bool,
@@ -1573,7 +1575,7 @@ impl ContextEditor {
         ];
 
         let sections = context.read(cx).slash_command_output_sections().to_vec();
-        let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
+        let patch_ids = context.read(cx).patch_ids().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands.clone();
         let tools = context.read(cx).tools.clone();
         let mut this = Self {
@@ -1604,7 +1606,9 @@ impl ContextEditor {
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
         this.insert_slash_command_output_sections(sections, false, cx);
-        this.patches_updated(&Vec::new(), &patch_ranges, cx);
+        for patch_id in patch_ids {
+            this.patch_updated(patch_id, cx);
+        }
         this
     }
 
@@ -1636,7 +1640,7 @@ impl ContextEditor {
     }
 
     fn focus_active_patch(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some((_range, patch)) = self.active_patch() {
+        if let Some(patch) = self.active_patch() {
             if let Some(editor) = patch
                 .editor
                 .as_ref()
@@ -1956,9 +1960,8 @@ impl ContextEditor {
                     );
                 });
             }
-            ContextEvent::PatchesUpdated { removed, updated } => {
-                self.patches_updated(removed, updated, cx);
-            }
+            ContextEvent::PatchUpdated(patch_id) => self.patch_updated(*patch_id, cx),
+            ContextEvent::PatchRemoved(patch_id) => self.patch_removed(*patch_id, cx),
             ContextEvent::ParsedSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
@@ -2220,125 +2223,124 @@ impl ContextEditor {
         });
     }
 
-    fn patches_updated(
-        &mut self,
-        removed: &Vec<Range<text::Anchor>>,
-        updated: &Vec<Range<text::Anchor>>,
-        cx: &mut ViewContext<ContextEditor>,
-    ) {
+    fn patch_updated(&mut self, patch_id: PatchId, cx: &mut ViewContext<ContextEditor>) {
         let this = cx.view().downgrade();
-        let mut editors_to_close = Vec::new();
-
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let multibuffer = &snapshot.buffer_snapshot;
             let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
 
-            let mut removed_crease_ids = Vec::new();
-            let mut ranges_to_unfold: Vec<Range<Anchor>> = Vec::new();
-            for range in removed {
-                if let Some(state) = self.patches.remove(range) {
-                    let patch_start = multibuffer
-                        .anchor_in_excerpt(excerpt_id, range.start)
-                        .unwrap();
-                    let patch_end = multibuffer
-                        .anchor_in_excerpt(excerpt_id, range.end)
-                        .unwrap();
+            let Some(patch) = self.context.read(cx).patch_for_id(patch_id, cx) else {
+                return;
+            };
 
-                    editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
-                    ranges_to_unfold.push(patch_start..patch_end);
-                    removed_crease_ids.push(state.crease_id);
+            let path_count = patch.path_count();
+            let patch_start = multibuffer
+                .anchor_in_excerpt(excerpt_id, patch.range.start)
+                .unwrap();
+            let patch_end = multibuffer
+                .anchor_in_excerpt(excerpt_id, patch.range.end)
+                .unwrap();
+            let render_block: RenderBlock = Arc::new({
+                let this = this.clone();
+                move |cx: &mut BlockContext<'_, '_>| {
+                    let max_width = cx.max_width;
+                    let gutter_width = cx.gutter_dimensions.full_width();
+                    let block_id = cx.block_id;
+                    let selected = cx.selected;
+                    this.update(&mut **cx, |this, cx| {
+                        this.render_patch_block(
+                            patch_id,
+                            max_width,
+                            gutter_width,
+                            block_id,
+                            selected,
+                            cx,
+                        )
+                    })
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| Empty.into_any())
                 }
+            });
+
+            let mut height = path_count as u32 + 1;
+            if patch.status == AssistantPatchStatus::Pending {
+                height += 1;
             }
-            editor.unfold_ranges(&ranges_to_unfold, true, false, cx);
-            editor.remove_creases(removed_crease_ids, cx);
 
-            for range in updated {
-                let Some(patch) = self.context.read(cx).patch_for_range(&range, cx).cloned() else {
-                    continue;
-                };
+            let crease = Crease::block(
+                patch_start..patch_end,
+                height,
+                BlockStyle::Flex,
+                render_block.clone(),
+            );
 
-                let path_count = patch.path_count();
-                let patch_start = multibuffer
-                    .anchor_in_excerpt(excerpt_id, patch.range.start)
-                    .unwrap();
-                let patch_end = multibuffer
-                    .anchor_in_excerpt(excerpt_id, patch.range.end)
-                    .unwrap();
-                let render_block: RenderBlock = Arc::new({
-                    let this = this.clone();
-                    let patch_range = range.clone();
-                    move |cx: &mut BlockContext<'_, '_>| {
-                        let max_width = cx.max_width;
-                        let gutter_width = cx.gutter_dimensions.full_width();
-                        let block_id = cx.block_id;
-                        let selected = cx.selected;
-                        this.update(&mut **cx, |this, cx| {
-                            this.render_patch_block(
-                                patch_range.clone(),
-                                max_width,
-                                gutter_width,
-                                block_id,
-                                selected,
-                                cx,
-                            )
+            let should_refold;
+            if let Some(state) = self.patches.get_mut(&patch_id) {
+                if state.multibuffer_range != (patch_start..patch_end) || state.height != height {
+                    editor.remove_creases([state.crease_id], cx);
+                    state.crease_id = editor.insert_creases([crease.clone()], cx)[0];
+                    state.height = height;
+                    state.multibuffer_range = patch_start..patch_end;
+                    should_refold = snapshot.intersects_fold(patch_start.to_offset(&multibuffer));
+                } else {
+                    should_refold = false;
+                }
+
+                if state.editor.is_some() {
+                    let resolved_patch = self.context.read(cx).resolve_patch(patch_id, cx);
+                    state.update_task = Some({
+                        let this = this.clone();
+                        cx.spawn(|_, cx| async move {
+                            if let Some(resolved_patch) = resolved_patch.await.log_err() {
+                                Self::update_patch_editor(
+                                    this.clone(),
+                                    patch_id,
+                                    resolved_patch,
+                                    cx,
+                                )
+                                .log_err();
+                            }
                         })
-                        .ok()
-                        .flatten()
-                        .unwrap_or_else(|| Empty.into_any())
-                    }
-                });
-
-                let height = path_count as u32 + 1;
-                let crease = Crease::block(
-                    patch_start..patch_end,
-                    height,
-                    BlockStyle::Flex,
-                    render_block.clone(),
+                    });
+                }
+            } else {
+                let crease_id = editor.insert_creases([crease.clone()], cx)[0];
+                self.patches.insert(
+                    patch_id,
+                    PatchViewState {
+                        crease_id,
+                        multibuffer_range: patch_start..patch_end,
+                        height,
+                        editor: None,
+                        update_task: None,
+                    },
                 );
 
-                let should_refold;
-                if let Some(state) = self.patches.get_mut(&range) {
-                    if let Some(editor_state) = &state.editor {
-                        if editor_state.opened_patch != patch {
-                            state.update_task = Some({
-                                let this = this.clone();
-                                cx.spawn(|_, cx| async move {
-                                    Self::update_patch_editor(this.clone(), patch, cx)
-                                        .await
-                                        .log_err();
-                                })
-                            });
-                        }
-                    }
+                should_refold = true;
+            }
 
-                    should_refold =
-                        snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
-                } else {
-                    let crease_id = editor.insert_creases([crease.clone()], cx)[0];
-                    self.patches.insert(
-                        range.clone(),
-                        PatchViewState {
-                            crease_id,
-                            editor: None,
-                            update_task: None,
-                        },
-                    );
-
-                    should_refold = true;
-                }
-
-                if should_refold {
-                    editor.unfold_ranges(&[patch_start..patch_end], true, false, cx);
-                    editor.fold_creases(vec![crease], false, cx);
-                }
+            if should_refold {
+                editor.unfold_ranges(&[patch_start..patch_end], true, false, cx);
+                editor.fold_creases(vec![crease], false, cx);
             }
         });
+        self.update_active_patch(cx);
+    }
 
-        for editor in editors_to_close {
+    fn patch_removed(&mut self, patch_id: PatchId, cx: &mut ViewContext<ContextEditor>) {
+        let Some(state) = self.patches.remove(&patch_id) else {
+            return;
+        };
+        self.editor.update(cx, |editor, cx| {
+            editor.unfold_ranges(&[state.multibuffer_range], true, false, cx);
+            editor.remove_creases([state.crease_id], cx);
+        });
+
+        if let Some(editor) = state.editor.and_then(|state| state.editor.upgrade()) {
             self.close_patch_editor(editor, cx);
         }
-
         self.update_active_patch(cx);
     }
 
@@ -2419,9 +2421,8 @@ impl ContextEditor {
         cx.emit(event.clone());
     }
 
-    fn active_patch(&self) -> Option<(Range<text::Anchor>, &PatchViewState)> {
-        let patch = self.active_patch.as_ref()?;
-        Some((patch.clone(), self.patches.get(&patch)?))
+    fn active_patch(&self) -> Option<&PatchViewState> {
+        self.patches.get(self.active_patch.as_ref()?)
     }
 
     fn update_active_patch(&mut self, cx: &mut ViewContext<Self>) {
@@ -2430,9 +2431,8 @@ impl ContextEditor {
         });
         let context = self.context.read(cx);
 
-        let new_patch = context.patch_containing(newest_cursor, cx).cloned();
-
-        if new_patch.as_ref().map(|p| &p.range) == self.active_patch.as_ref() {
+        let new_patch_id = context.patch_containing(newest_cursor, cx);
+        if new_patch_id == self.active_patch {
             return;
         }
 
@@ -2446,16 +2446,14 @@ impl ContextEditor {
             }
         }
 
-        if let Some(new_patch) = new_patch {
-            self.active_patch = Some(new_patch.range.clone());
+        if let Some(patch_id) = new_patch_id {
+            self.active_patch = Some(patch_id);
 
-            if let Some(patch_state) = self.patches.get_mut(&new_patch.range) {
-                let mut editor = None;
-                if let Some(state) = &patch_state.editor {
-                    if let Some(opened_editor) = state.editor.upgrade() {
-                        editor = Some(opened_editor);
-                    }
-                }
+            if let Some(patch_state) = self.patches.get_mut(&patch_id) {
+                let editor = patch_state
+                    .editor
+                    .as_ref()
+                    .and_then(|state| state.editor.upgrade());
 
                 if let Some(editor) = editor {
                     self.workspace
@@ -2464,8 +2462,13 @@ impl ContextEditor {
                         })
                         .ok();
                 } else {
+                    let resolved_patch = self.context.read(cx).resolve_patch(patch_id, cx);
                     patch_state.update_task = Some(cx.spawn(move |this, cx| async move {
-                        Self::open_patch_editor(this, new_patch, cx).await.log_err();
+                        if let Some(resolved_patch) = resolved_patch.await.log_err() {
+                            Self::open_patch_editor(this, patch_id, resolved_patch, cx)
+                                .await
+                                .log_err();
+                        }
                     }));
                 }
             }
@@ -2494,35 +2497,25 @@ impl ContextEditor {
 
     async fn open_patch_editor(
         this: WeakView<Self>,
-        patch: AssistantPatch,
+        patch_id: PatchId,
+        patch: ResolvedPatch,
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
         let project = this.update(&mut cx, |this, _| this.project.clone())?;
-        let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
 
         let editor = cx.new_view(|cx| {
-            let editor = ProposedChangesEditor::new(
-                patch.title.clone(),
-                resolved_patch
-                    .edit_groups
-                    .iter()
-                    .map(|(buffer, groups)| ProposedChangeLocation {
-                        buffer: buffer.clone(),
-                        ranges: groups
-                            .iter()
-                            .map(|group| group.context_range.clone())
-                            .collect(),
-                    })
-                    .collect(),
+            let mut editor = ProposedChangesEditor::new(
+                SharedString::from(""),
+                Vec::<ProposedChangeLocation<usize>>::new(),
                 Some(project.clone()),
                 cx,
             );
-            resolved_patch.apply(&editor, cx);
+            patch.apply(&mut editor, None, cx);
             editor
         })?;
 
         this.update(&mut cx, |this, cx| {
-            if let Some(patch_state) = this.patches.get_mut(&patch.range) {
+            if let Some(patch_state) = this.patches.get_mut(&patch_id) {
                 patch_state.editor = Some(PatchEditorState {
                     editor: editor.downgrade(),
                     opened_patch: patch,
@@ -2540,34 +2533,18 @@ impl ContextEditor {
         Ok(())
     }
 
-    async fn update_patch_editor(
+    fn update_patch_editor(
         this: WeakView<Self>,
-        patch: AssistantPatch,
+        patch_id: PatchId,
+        patch: ResolvedPatch,
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
-        let project = this.update(&mut cx, |this, _| this.project.clone())?;
-        let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
         this.update(&mut cx, |this, cx| {
-            let patch_state = this.patches.get_mut(&patch.range)?;
-
-            let locations = resolved_patch
-                .edit_groups
-                .iter()
-                .map(|(buffer, groups)| ProposedChangeLocation {
-                    buffer: buffer.clone(),
-                    ranges: groups
-                        .iter()
-                        .map(|group| group.context_range.clone())
-                        .collect(),
-                })
-                .collect();
-
+            let patch_state = this.patches.get_mut(&patch_id)?;
             if let Some(state) = &mut patch_state.editor {
                 if let Some(editor) = state.editor.upgrade() {
                     editor.update(cx, |editor, cx| {
-                        editor.set_title(patch.title.clone(), cx);
-                        editor.reset_locations(locations, cx);
-                        resolved_patch.apply(editor, cx);
+                        patch.apply(editor, Some(&state.opened_patch), cx);
                     });
 
                     state.opened_patch = patch;
@@ -2576,7 +2553,6 @@ impl ContextEditor {
                 }
             }
             patch_state.update_task.take();
-
             Some(())
         })?;
         Ok(())
@@ -3451,23 +3427,16 @@ impl ContextEditor {
 
     fn render_patch_block(
         &mut self,
-        range: Range<text::Anchor>,
+        patch_id: PatchId,
         max_width: Pixels,
         gutter_width: Pixels,
         id: BlockId,
         selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
-        let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
-        let (excerpt_id, _buffer_id, _) = snapshot.buffer_snapshot.as_singleton().unwrap();
-        let excerpt_id = *excerpt_id;
-        let anchor = snapshot
-            .buffer_snapshot
-            .anchor_in_excerpt(excerpt_id, range.start)
-            .unwrap();
-
         let theme = cx.theme().clone();
-        let patch = self.context.read(cx).patch_for_range(&range, cx)?;
+        let patch = self.context.read(cx).patch_for_id(patch_id, cx)?;
+        let anchor = self.patches.get(&patch_id)?.multibuffer_range.start;
         let paths = patch
             .paths()
             .map(|p| SharedString::from(p.to_string()))

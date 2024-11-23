@@ -1,11 +1,11 @@
 use super::{AssistantEdit, MessageCacheMetadata};
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
     Context, ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId,
     MessageStatus, PromptBuilder,
 };
+use crate::{PatchId, ToolWorkingSet};
 use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,
@@ -26,6 +26,7 @@ use project::Project;
 use rand::prelude::*;
 use serde_json::json;
 use settings::SettingsStore;
+use std::mem;
 use std::{
     cell::RefCell,
     env,
@@ -45,23 +46,7 @@ use workspace::Workspace;
 
 #[gpui::test]
 fn test_inserting_and_removing_messages(cx: &mut AppContext) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
-    assistant_panel::init(cx);
-    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry,
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
+    let context = init_test(cx);
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -186,24 +171,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
 
 #[gpui::test]
 fn test_message_splitting(cx: &mut AppContext) {
-    let settings_store = SettingsStore::test(cx);
-    cx.set_global(settings_store);
-    LanguageModelRegistry::test(cx);
-    assistant_panel::init(cx);
-    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry.clone(),
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
+    let context = init_test(cx);
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -291,23 +259,7 @@ fn test_message_splitting(cx: &mut AppContext) {
 
 #[gpui::test]
 fn test_messages_for_offsets(cx: &mut AppContext) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
-    assistant_panel::init(cx);
-    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry,
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
+    let context = init_test(cx);
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -386,13 +338,7 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
 
 #[gpui::test]
 async fn test_slash_commands(cx: &mut TestAppContext) {
-    let settings_store = cx.update(SettingsStore::test);
-    cx.set_global(settings_store);
-    cx.update(LanguageModelRegistry::test);
-    cx.update(Project::init_settings);
-    cx.update(assistant_panel::init);
     let fs = FakeFs::new(cx.background_executor.clone());
-
     fs.insert_tree(
         "/test",
         json!({
@@ -406,23 +352,10 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         }),
     )
     .await;
+    let context = cx.update(|cx| init_test_with_fs(fs, cx));
 
     let slash_command_registry = cx.update(SlashCommandRegistry::default_global);
     slash_command_registry.register_command(file_command::FileSlashCommand, false);
-
-    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry.clone(),
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
 
     #[derive(Default)]
     struct ContextRanges {
@@ -680,7 +613,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
+async fn test_patch_parsing(cx: &mut TestAppContext) {
     cx.update(prompt_library::init);
     let mut settings_store = cx.update(SettingsStore::test);
     cx.update(|cx| {
@@ -706,13 +639,24 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     let context = cx.new_model(|cx| {
         Context::local(
             registry.clone(),
-            Some(project),
+            project.clone(),
             None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
             cx,
         )
+    });
+
+    let events = Rc::new(RefCell::new(Vec::new()));
+    context.update(cx, |_, cx| {
+        let events = events.clone();
+        cx.subscribe(&context, move |_, _, event, _cx| match event {
+            ContextEvent::PatchUpdated(id) => events.borrow_mut().push(("updated", *id)),
+            ContextEvent::PatchRemoved(id) => events.borrow_mut().push(("removed", *id)),
+            _ => {}
+        })
+        .detach();
     });
 
     // Insert an assistant message to simulate a response.
@@ -744,8 +688,9 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         &[],
         cx,
     );
+    assert_eq!(mem::take(&mut *events.borrow_mut()), &[]);
 
-    // Partial edit step tag is added
+    // Partial patch tag is added
     edit(
         &context,
         "
@@ -781,7 +726,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         <edit>»",
         cx,
     );
-    expect_patches(
+    let patch_ids = expect_patches(
         &context,
         "
 
@@ -793,8 +738,12 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         &[&[]],
         cx,
     );
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        &[("updated", patch_ids[0])]
+    );
 
-    // The full patch is added
+    // Add one edit to the patch
     edit(
         &context,
         "
@@ -811,7 +760,59 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         <new_text>
         fn two() {}
         </new_text>
-        </edit>
+        </edit>»",
+        cx,
+    );
+    let patch_ids = expect_patches(
+        &context,
+        "
+
+        one
+        two
+
+        «<patch>
+        <edit>
+        <description>add a `two` function</description>
+        <path>src/lib.rs</path>
+        <operation>insert_after</operation>
+        <old_text>fn one</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
+        </edit>»",
+        &[&[AssistantEdit {
+            path: "src/lib.rs".into(),
+            kind: AssistantEditKind::InsertAfter {
+                old_text: "fn one".into(),
+                new_text: "fn two() {}".into(),
+                description: Some("add a `two` function".into()),
+            },
+        }]],
+        cx,
+    );
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        &[("updated", patch_ids[0])]
+    );
+
+    // The full patch is added
+    edit(
+        &context,
+        "
+
+        one
+        two
+
+        <patch>
+        <edit>
+        <description>add a `two` function</description>
+        <path>src/lib.rs</path>
+        <operation>insert_after</operation>
+        <old_text>fn one</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
+        </edit>«
         </patch>
 
         also,»",
@@ -846,6 +847,10 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             },
         }]],
         cx,
+    );
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        &[("updated", patch_ids[0])]
     );
 
     // The step is manually edited.
@@ -901,6 +906,10 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         }]],
         cx,
     );
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        &[("updated", patch_ids[0])]
+    );
 
     // When setting the message role to User, the steps are cleared.
     context.update(cx, |context, cx| {
@@ -929,6 +938,10 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         &[],
         cx,
+    );
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        &[("removed", patch_ids[0])]
     );
 
     // When setting the message role back to Assistant, the steps are reparsed.
@@ -976,7 +989,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
-            None,
+            project,
             None,
             cx,
         )
@@ -1027,26 +1040,28 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         expected_marked_text: &str,
         expected_suggestions: &[&[AssistantEdit]],
         cx: &mut TestAppContext,
-    ) {
+    ) -> Vec<PatchId> {
         let expected_marked_text = expected_marked_text.unindent();
         let (expected_text, _) = marked_text_ranges(&expected_marked_text, false);
 
-        let (buffer_text, ranges, patches) = context.update(cx, |context, cx| {
+        let (buffer_text, ranges, patch_ids, patches) = context.update(cx, |context, cx| {
+            let patch_store = context.patch_store.read(cx);
             context.buffer.read_with(cx, |buffer, _| {
                 let ranges = context
                     .patches
                     .iter()
-                    .map(|entry| entry.range.to_offset(buffer))
+                    .map(|entry| entry.0.to_offset(buffer))
                     .collect::<Vec<_>>();
-                (
-                    buffer.text(),
-                    ranges,
-                    context
-                        .patches
-                        .iter()
-                        .map(|step| step.edits.clone())
-                        .collect::<Vec<_>>(),
-                )
+                let patch_ids = context
+                    .patches
+                    .iter()
+                    .map(|(_, id)| *id)
+                    .collect::<Vec<_>>();
+                let patches = patch_ids
+                    .iter()
+                    .map(|id| patch_store.get(*id).unwrap().clone())
+                    .collect::<Vec<_>>();
+                (buffer.text(), ranges, patch_ids, patches)
             })
         });
 
@@ -1060,41 +1075,24 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
                 .iter()
                 .map(|patch| {
                     patch
+                        .edits
                         .iter()
-                        .map(|edit| {
-                            let edit = edit.as_ref().unwrap();
-                            AssistantEdit {
-                                path: edit.path.clone(),
-                                kind: edit.kind.clone(),
-                            }
+                        .map(|edit| AssistantEdit {
+                            path: edit.path.clone(),
+                            kind: edit.kind.clone(),
                         })
                         .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>(),
             expected_suggestions
         );
+        patch_ids
     }
 }
 
 #[gpui::test]
 async fn test_serialization(cx: &mut TestAppContext) {
-    let settings_store = cx.update(SettingsStore::test);
-    cx.set_global(settings_store);
-    cx.update(LanguageModelRegistry::test);
-    cx.update(assistant_panel::init);
-    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry.clone(),
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
+    let context = cx.update(init_test);
     let buffer = context.read_with(cx, |context, _| context.buffer.clone());
     let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
     let message_1 = context.update(cx, |context, cx| {
@@ -1132,11 +1130,11 @@ async fn test_serialization(cx: &mut TestAppContext) {
         Context::deserialize(
             serialized_context,
             Default::default(),
-            registry.clone(),
-            prompt_builder.clone(),
+            context.read(cx).language_registry.clone(),
+            context.read(cx).prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
-            None,
+            context.read(cx).project.clone(),
             None,
             cx,
         )
@@ -1172,8 +1170,9 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let settings_store = cx.update(SettingsStore::test);
     cx.set_global(settings_store);
     cx.update(LanguageModelRegistry::test);
-
     cx.update(assistant_panel::init);
+    cx.update(Project::init_settings);
+
     let slash_commands = cx.update(SlashCommandRegistry::default_global);
     slash_commands.register_command(FakeSlashCommand("cmd-1".into()), false);
     slash_commands.register_command(FakeSlashCommand("cmd-2".into()), false);
@@ -1187,6 +1186,8 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let context_id = ContextId::new();
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     for i in 0..num_peers {
+        let project =
+            cx.update(|cx| Project::empty(FakeFs::new(cx.background_executor().clone()), cx));
         let context = cx.new_model(|cx| {
             Context::new(
                 context_id.clone(),
@@ -1196,7 +1197,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),
                 Arc::new(ToolWorkingSet::default()),
-                None,
+                project,
                 None,
                 cx,
             )
@@ -1443,23 +1444,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
 
 #[gpui::test]
 fn test_mark_cache_anchors(cx: &mut AppContext) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
-    assistant_panel::init(cx);
-    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry,
-            None,
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            Arc::new(ToolWorkingSet::default()),
-            cx,
-        )
-    });
+    let context = init_test(cx);
     let buffer = context.read(cx).buffer.clone();
 
     // Create a test cache configuration
@@ -1601,6 +1586,32 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
         ],
         "Modifying a message should invalidate all future messages."
     );
+}
+
+fn init_test(cx: &mut AppContext) -> Model<Context> {
+    init_test_with_fs(FakeFs::new(cx.background_executor().clone()), cx)
+}
+
+fn init_test_with_fs(fs: Arc<FakeFs>, cx: &mut AppContext) -> Model<Context> {
+    let settings_store = SettingsStore::test(cx);
+    LanguageModelRegistry::test(cx);
+    cx.set_global(settings_store);
+    Project::init_settings(cx);
+    assistant_panel::init(cx);
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+    let project = Project::empty(fs, cx);
+    cx.new_model(|cx| {
+        Context::local(
+            registry,
+            project,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
+            cx,
+        )
+    })
 }
 
 fn messages(context: &Model<Context>, cx: &AppContext) -> Vec<(MessageId, Role, Range<usize>)> {

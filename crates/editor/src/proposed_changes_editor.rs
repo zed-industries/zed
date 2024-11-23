@@ -110,6 +110,10 @@ impl ProposedChangesEditor {
         this
     }
 
+    pub fn multibuffer(&self) -> Model<MultiBuffer> {
+        self.multibuffer.clone()
+    }
+
     pub fn branch_buffer_for_base(&self, base_buffer: &Model<Buffer>) -> Option<Model<Buffer>> {
         self.buffer_entries.iter().find_map(|entry| {
             if &entry.base == base_buffer {
@@ -153,26 +157,9 @@ impl ProposedChangesEditor {
             multibuffer.clear(cx);
         });
 
-        let mut buffer_entries = Vec::new();
+        self.buffer_entries = Vec::new();
         for location in locations {
-            let branch_buffer;
-            if let Some(ix) = self
-                .buffer_entries
-                .iter()
-                .position(|entry| entry.base == location.buffer)
-            {
-                let entry = self.buffer_entries.remove(ix);
-                branch_buffer = entry.branch.clone();
-                buffer_entries.push(entry);
-            } else {
-                branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-                buffer_entries.push(BufferEntry {
-                    branch: branch_buffer.clone(),
-                    base: location.buffer.clone(),
-                    _subscription: cx.subscribe(&branch_buffer, Self::on_buffer_event),
-                });
-            }
-
+            let branch_buffer = self.add_buffer(location.buffer, cx);
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.push_excerpts(
                     branch_buffer,
@@ -185,10 +172,34 @@ impl ProposedChangesEditor {
             });
         }
 
-        self.buffer_entries = buffer_entries;
         self.editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |selections| selections.refresh())
         });
+    }
+
+    pub fn add_buffer(
+        &mut self,
+        base_buffer: Model<Buffer>,
+        cx: &mut ViewContext<ProposedChangesEditor>,
+    ) -> Model<Buffer> {
+        let branch_buffer;
+        if let Some(ix) = self
+            .buffer_entries
+            .iter()
+            .position(|entry| entry.base == base_buffer)
+        {
+            let entry = self.buffer_entries.remove(ix);
+            branch_buffer = entry.branch.clone();
+            self.buffer_entries.push(entry);
+        } else {
+            branch_buffer = base_buffer.update(cx, |buffer, cx| buffer.branch(cx));
+            self.buffer_entries.push(BufferEntry {
+                branch: branch_buffer.clone(),
+                base: base_buffer.clone(),
+                _subscription: cx.subscribe(&branch_buffer, Self::on_buffer_event),
+            });
+        }
+        branch_buffer
     }
 
     pub fn recalculate_all_buffer_diffs(&self) {

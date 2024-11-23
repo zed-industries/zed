@@ -363,7 +363,7 @@ impl ContextStore {
         let context = cx.new_model(|cx| {
             Context::local(
                 self.languages.clone(),
-                Some(self.project.clone()),
+                self.project.clone(),
                 Some(self.telemetry.clone()),
                 self.prompt_builder.clone(),
                 self.slash_commands.clone(),
@@ -406,7 +406,7 @@ impl ContextStore {
                     prompt_builder,
                     slash_commands,
                     tools,
-                    Some(project),
+                    project,
                     Some(telemetry),
                     cx,
                 )
@@ -468,7 +468,7 @@ impl ContextStore {
                     prompt_builder,
                     slash_commands,
                     tools,
-                    Some(project),
+                    project,
                     Some(telemetry),
                     cx,
                 )
@@ -548,7 +548,7 @@ impl ContextStore {
                     prompt_builder,
                     slash_commands,
                     tools,
-                    Some(project),
+                    project,
                     Some(telemetry),
                     cx,
                 )
