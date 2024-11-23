@@ -550,7 +550,7 @@ async fn check_usage_limit(
 
             SnowflakeRow::new(
                 "Language Model Rate Limited",
-                claims.metrics_id.clone(),
+                claims.metrics_id,
                 claims.is_staff,
                 claims.system_id.clone(),
                 json!({
@@ -698,7 +698,7 @@ impl<S> Drop for TokenCountingStream<S> {
                 });
                 SnowflakeRow::new(
                     "Language Model Used",
-                    claims.metrics_id.clone(),
+                    claims.metrics_id,
                     claims.is_staff,
                     claims.system_id.clone(),
                     properties,

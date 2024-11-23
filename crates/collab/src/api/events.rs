@@ -1614,10 +1614,8 @@ impl SnowflakeRow {
         stream: &Option<String>,
     ) -> anyhow::Result<()> {
         let Some((client, stream)) = client.as_ref().zip(stream.as_ref()) else {
-            dbg!(&self);
             return Ok(());
         };
-        dbg!(&self);
         let row = serde_json::to_vec(&self)?;
         client
             .put_record()
