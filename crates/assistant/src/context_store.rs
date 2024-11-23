@@ -770,7 +770,7 @@ impl ContextStore {
                         contexts.push(SavedContextMetadata {
                             title: title.to_string(),
                             path,
-                            mtime: metadata.mtime.into(),
+                            mtime: metadata.mtime.timestamp_for_user().into(),
                         });
                     }
                 }

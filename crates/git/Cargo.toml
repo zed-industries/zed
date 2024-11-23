@@ -31,10 +31,6 @@ time.workspace = true
 url.workspace = true
 util.workspace = true
 
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
-
-
 [dev-dependencies]
 unindent.workspace = true
 serde_json.workspace = true

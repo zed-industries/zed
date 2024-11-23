@@ -3,7 +3,7 @@ use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
 use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke, WindowContext};
 
-#[derive(IntoElement, Clone)]
+#[derive(Debug, IntoElement, Clone)]
 pub struct KeyBinding {
     /// A keybinding consists of a key and a set of modifier keys.
     /// More then one keybinding produces a chord.

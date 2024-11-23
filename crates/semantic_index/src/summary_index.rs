@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayString;
-use fs::Fs;
+use fs::{Fs, MTime};
 use futures::{stream::StreamExt, TryFutureExt};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{AppContext, Model, Task};
@@ -21,7 +21,7 @@ use std::{
     future::Future,
     path::Path,
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 use util::ResultExt;
 use worktree::Snapshot;
@@ -39,7 +39,7 @@ struct UnsummarizedFile {
     // Path to the file on disk
     path: Arc<Path>,
     // The mtime of the file on disk
-    mtime: Option<SystemTime>,
+    mtime: Option<MTime>,
     // BLAKE3 hash of the source file's contents
     digest: Blake3Digest,
     // The source file's contents
@@ -51,7 +51,7 @@ struct SummarizedFile {
     // Path to the file on disk
     path: String,
     // The mtime of the file on disk
-    mtime: Option<SystemTime>,
+    mtime: Option<MTime>,
     // BLAKE3 hash of the source file's contents
     digest: Blake3Digest,
     // The LLM's summary of the file's contents
@@ -63,7 +63,7 @@ pub type Blake3Digest = ArrayString<{ blake3::OUT_LEN * 2 }>;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileDigest {
-    pub mtime: Option<SystemTime>,
+    pub mtime: Option<MTime>,
     pub digest: Blake3Digest,
 }
 
@@ -88,7 +88,7 @@ pub struct SummaryIndex {
 }
 
 struct Backlogged {
-    paths_to_digest: channel::Receiver<Vec<(Arc<Path>, Option<SystemTime>)>>,
+    paths_to_digest: channel::Receiver<Vec<(Arc<Path>, Option<MTime>)>>,
     task: Task<Result<()>>,
 }
 
@@ -319,7 +319,7 @@ impl SummaryIndex {
         digest_db: heed::Database<Str, SerdeBincode<FileDigest>>,
         txn: &RoTxn<'_>,
         entry: &Entry,
-    ) -> Vec<(Arc<Path>, Option<SystemTime>)> {
+    ) -> Vec<(Arc<Path>, Option<MTime>)> {
         let entry_db_key = db_key_for_path(&entry.path);
 
         match digest_db.get(&txn, &entry_db_key) {
@@ -414,7 +414,7 @@ impl SummaryIndex {
 
     fn digest_files(
         &self,
-        paths: channel::Receiver<Vec<(Arc<Path>, Option<SystemTime>)>>,
+        paths: channel::Receiver<Vec<(Arc<Path>, Option<MTime>)>>,
         worktree_abs_path: Arc<Path>,
         cx: &AppContext,
     ) -> MightNeedSummaryFiles {
@@ -646,7 +646,7 @@ impl SummaryIndex {
         let start = Instant::now();
         let backlogged = {
             let (tx, rx) = channel::bounded(512);
-            let needs_summary: Vec<(Arc<Path>, Option<SystemTime>)> = {
+            let needs_summary: Vec<(Arc<Path>, Option<MTime>)> = {
                 let mut backlog = self.backlog.lock();
 
                 backlog.drain().collect()

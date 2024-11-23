@@ -22,8 +22,8 @@ db.workspace = true
 editor.workspace = true
 futures.workspace = true
 gpui.workspace = true
-human_bytes = "0.4.1"
 http_client.workspace = true
+human_bytes = "0.4.1"
 language.workspace = true
 log.workspace = true
 menu.workspace = true
@@ -39,6 +39,7 @@ ui.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

@@ -31,6 +31,7 @@ async-watch.workspace = true
 clock.workspace = true
 collections.workspace = true
 ec4rs.workspace = true
+fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true

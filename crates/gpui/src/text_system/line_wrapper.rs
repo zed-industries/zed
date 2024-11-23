@@ -1,4 +1,4 @@
-use crate::{px, FontId, FontRun, Pixels, PlatformTextSystem, SharedString};
+use crate::{px, FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
@@ -104,6 +104,7 @@ impl LineWrapper {
         line: SharedString,
         truncate_width: Pixels,
         ellipsis: Option<&str>,
+        runs: &mut Vec<TextRun>,
     ) -> SharedString {
         let mut width = px(0.);
         let mut ellipsis_width = px(0.);
@@ -124,15 +125,15 @@ impl LineWrapper {
             width += char_width;
 
             if width.floor() > truncate_width {
-                return SharedString::from(format!(
-                    "{}{}",
-                    &line[..truncate_ix],
-                    ellipsis.unwrap_or("")
-                ));
+                let ellipsis = ellipsis.unwrap_or("");
+                let result = SharedString::from(format!("{}{}", &line[..truncate_ix], ellipsis));
+                update_runs_after_truncation(&result, ellipsis, runs);
+
+                return result;
             }
         }
 
-        line.clone()
+        line
     }
 
     pub(crate) fn is_word_char(c: char) -> bool {
@@ -195,6 +196,23 @@ impl LineWrapper {
     }
 }
 
+fn update_runs_after_truncation(result: &str, ellipsis: &str, runs: &mut Vec<TextRun>) {
+    let mut truncate_at = result.len() - ellipsis.len();
+    let mut run_end = None;
+    for (run_index, run) in runs.iter_mut().enumerate() {
+        if run.len <= truncate_at {
+            truncate_at -= run.len;
+        } else {
+            run.len = truncate_at + ellipsis.len();
+            run_end = Some(run_index + 1);
+            break;
+        }
+    }
+    if let Some(run_end) = run_end {
+        runs.truncate(run_end);
+    }
+}
+
 /// A boundary between two lines of text.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Boundary {
@@ -213,7 +231,9 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{font, TestAppContext, TestDispatcher};
+    use crate::{
+        font, Font, FontFeatures, FontStyle, FontWeight, Hsla, TestAppContext, TestDispatcher,
+    };
     #[cfg(target_os = "macos")]
     use crate::{TextRun, WindowTextSystem, WrapBoundary};
     use rand::prelude::*;
@@ -230,6 +250,26 @@ mod tests {
             .unwrap();
         let id = cx.text_system().font_id(&font("Zed Plex Mono")).unwrap();
         LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
+    }
+
+    fn generate_test_runs(input_run_len: &[usize]) -> Vec<TextRun> {
+        input_run_len
+            .iter()
+            .map(|run_len| TextRun {
+                len: *run_len,
+                font: Font {
+                    family: "Dummy".into(),
+                    features: FontFeatures::default(),
+                    fallbacks: None,
+                    weight: FontWeight::default(),
+                    style: FontStyle::Normal,
+                },
+                color: Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            })
+            .collect()
     }
 
     #[test]
@@ -293,26 +333,133 @@ mod tests {
     fn test_truncate_line() {
         let mut wrapper = build_wrapper();
 
-        assert_eq!(
-            wrapper.truncate_line("aa bbb cccc ddddd eeee ffff gggg".into(), px(220.), None),
-            "aa bbb cccc ddddd eeee"
+        fn perform_test(
+            wrapper: &mut LineWrapper,
+            text: &'static str,
+            result: &'static str,
+            ellipsis: Option<&str>,
+        ) {
+            let dummy_run_lens = vec![text.len()];
+            let mut dummy_runs = generate_test_runs(&dummy_run_lens);
+            assert_eq!(
+                wrapper.truncate_line(text.into(), px(220.), ellipsis, &mut dummy_runs),
+                result
+            );
+            assert_eq!(dummy_runs.first().unwrap().len, result.len());
+        }
+
+        perform_test(
+            &mut wrapper,
+            "aa bbb cccc ddddd eeee ffff gggg",
+            "aa bbb cccc ddddd eeee",
+            None,
         );
-        assert_eq!(
-            wrapper.truncate_line(
-                "aa bbb cccc ddddd eeee ffff gggg".into(),
-                px(220.),
-                Some("…")
-            ),
-            "aa bbb cccc ddddd eee…"
+        perform_test(
+            &mut wrapper,
+            "aa bbb cccc ddddd eeee ffff gggg",
+            "aa bbb cccc ddddd eee…",
+            Some("…"),
         );
-        assert_eq!(
-            wrapper.truncate_line(
-                "aa bbb cccc ddddd eeee ffff gggg".into(),
-                px(220.),
-                Some("......")
-            ),
-            "aa bbb cccc dddd......"
+        perform_test(
+            &mut wrapper,
+            "aa bbb cccc ddddd eeee ffff gggg",
+            "aa bbb cccc dddd......",
+            Some("......"),
         );
+    }
+
+    #[test]
+    fn test_truncate_multiple_runs() {
+        let mut wrapper = build_wrapper();
+
+        fn perform_test(
+            wrapper: &mut LineWrapper,
+            text: &'static str,
+            result: &str,
+            run_lens: &[usize],
+            result_run_len: &[usize],
+            line_width: Pixels,
+        ) {
+            let mut dummy_runs = generate_test_runs(run_lens);
+            assert_eq!(
+                wrapper.truncate_line(text.into(), line_width, Some("…"), &mut dummy_runs),
+                result
+            );
+            for (run, result_len) in dummy_runs.iter().zip(result_run_len) {
+                assert_eq!(run.len, *result_len);
+            }
+        }
+        // Case 0: Normal
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 12, ... }
+        //
+        // Truncate res: abcd… (truncate_at = 4)
+        // Run res: Run0 { string: abcd…, len: 7, ... }
+        perform_test(&mut wrapper, "abcdefghijkl", "abcd…", &[12], &[7], px(50.));
+        // Case 1: Drop some runs
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: abcdef… (truncate_at = 6)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
+        // 5, ... }
+        perform_test(
+            &mut wrapper,
+            "abcdefghijkl",
+            "abcdef…",
+            &[4, 4, 4],
+            &[4, 5],
+            px(70.),
+        );
+        // Case 2: Truncate at start of some run
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: abcdefgh… (truncate_at = 8)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
+        // 4, ... }, Run2 { string: …, len: 3, ... }
+        perform_test(
+            &mut wrapper,
+            "abcdefghijkl",
+            "abcdefgh…",
+            &[4, 4, 4],
+            &[4, 4, 3],
+            px(90.),
+        );
+    }
+
+    #[test]
+    fn test_update_run_after_truncation() {
+        fn perform_test(result: &str, run_lens: &[usize], result_run_lens: &[usize]) {
+            let mut dummy_runs = generate_test_runs(run_lens);
+            update_runs_after_truncation(result, "…", &mut dummy_runs);
+            for (run, result_len) in dummy_runs.iter().zip(result_run_lens) {
+                assert_eq!(run.len, *result_len);
+            }
+        }
+        // Case 0: Normal
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 12, ... }
+        //
+        // Truncate res: abcd… (truncate_at = 4)
+        // Run res: Run0 { string: abcd…, len: 7, ... }
+        perform_test("abcd…", &[12], &[7]);
+        // Case 1: Drop some runs
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: abcdef… (truncate_at = 6)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
+        // 5, ... }
+        perform_test("abcdef…", &[4, 4, 4], &[4, 5]);
+        // Case 2: Truncate at start of some run
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: abcdefgh… (truncate_at = 8)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
+        // 4, ... }, Run2 { string: …, len: 3, ... }
+        perform_test("abcdefgh…", &[4, 4, 4], &[4, 4, 3]);
     }
 
     #[test]

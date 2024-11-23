@@ -16,6 +16,7 @@
       "ctrl-shift-l": "editor::SplitSelectionIntoLines",
       "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-d": "editor::DuplicateLineDown",
+      "alt-f3": "editor::SelectAllMatches", // find_all_under
       "f12": "editor::GoToDefinition",
       "ctrl-f12": "editor::GoToDefinitionSplit",
       "shift-f12": "editor::FindAllReferences",

@@ -32,9 +32,6 @@ smol.workspace = true
 util.workspace = true
 release_channel.workspace = true
 
-[target.'cfg(windows)'.dependencies]
-windows.workspace = true
-
 [dev-dependencies]
 async-pipe.workspace = true
 ctor.workspace = true

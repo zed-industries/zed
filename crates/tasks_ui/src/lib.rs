@@ -3,6 +3,7 @@ use editor::{tasks::task_context, Editor};
 use gpui::{AppContext, Task as AsyncTask, ViewContext, WindowContext};
 use modal::TasksModal;
 use project::{Location, WorktreeId};
+use task::TaskId;
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
 
@@ -25,9 +26,13 @@ pub fn init(cx: &mut AppContext) {
                         .read(cx)
                         .task_inventory()
                         .and_then(|inventory| {
-                            inventory
-                                .read(cx)
-                                .last_scheduled_task(action.task_id.as_ref())
+                            inventory.read(cx).last_scheduled_task(
+                                action
+                                    .task_id
+                                    .as_ref()
+                                    .map(|id| TaskId(id.clone()))
+                                    .as_ref(),
+                            )
                         })
                     {
                         if action.reevaluate_context {

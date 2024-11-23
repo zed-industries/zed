@@ -425,6 +425,19 @@ impl<D: PickerDelegate> Picker<D> {
         self.cancel(&menu::Cancel, cx);
     }
 
+    pub fn refresh_placeholder(&mut self, cx: &mut WindowContext<'_>) {
+        match &self.head {
+            Head::Editor(view) => {
+                let placeholder = self.delegate.placeholder_text(cx);
+                view.update(cx, |this, cx| {
+                    this.set_placeholder_text(placeholder, cx);
+                    cx.notify();
+                });
+            }
+            Head::Empty(_) => {}
+        }
+    }
+
     pub fn refresh(&mut self, cx: &mut ViewContext<Self>) {
         let query = self.query(cx);
         self.update_matches(query, cx);

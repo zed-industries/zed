@@ -536,7 +536,7 @@ impl Item for ProjectSearchView {
         }
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
         if self.has_matches() {
             ToolbarItemLocation::Secondary
         } else {

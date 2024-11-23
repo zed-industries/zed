@@ -6,14 +6,13 @@ use futures::{
     stream::{self, BoxStream},
     AsyncBufReadExt, AsyncReadExt, Stream, StreamExt,
 };
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     convert::TryFrom,
     future::{self, Future},
     pin::Pin,
-    time::Duration,
 };
 use strum::EnumIter;
 
@@ -308,17 +307,13 @@ pub async fn complete(
     api_url: &str,
     api_key: &str,
     request: Request,
-    low_speed_timeout: Option<Duration>,
 ) -> Result<Response> {
     let uri = format!("{api_url}/chat/completions");
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key));
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.read_timeout(low_speed_timeout);
-    };
 
     let mut request_body = request;
     request_body.stream = false;
@@ -396,24 +391,19 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
-    low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     if request.model == "o1-preview" || request.model == "o1-mini" {
-        let response = complete(client, api_url, api_key, request, low_speed_timeout).await;
+        let response = complete(client, api_url, api_key, request).await;
         let response_stream_event = response.map(adapt_response_to_stream);
         return Ok(stream::once(future::ready(response_stream_event)).boxed());
     }
 
     let uri = format!("{api_url}/chat/completions");
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key));
-
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.read_timeout(low_speed_timeout);
-    };
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;

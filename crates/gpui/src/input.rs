@@ -9,8 +9,12 @@ use std::ops::Range;
 /// See [`InputHandler`] for details on how to implement each method.
 pub trait ViewInputHandler: 'static + Sized {
     /// See [`InputHandler::text_for_range`] for details
-    fn text_for_range(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>)
-        -> Option<String>;
+    fn text_for_range(
+        &mut self,
+        range: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<String>;
 
     /// See [`InputHandler::selected_text_range`] for details
     fn selected_text_range(
@@ -89,10 +93,12 @@ impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
         cx: &mut WindowContext,
     ) -> Option<String> {
-        self.view
-            .update(cx, |view, cx| view.text_for_range(range_utf16, cx))
+        self.view.update(cx, |view, cx| {
+            view.text_for_range(range_utf16, adjusted_range, cx)
+        })
     }
 
     fn replace_text_in_range(

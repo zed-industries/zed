@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use anyhow::{bail, Result};
 
@@ -119,6 +119,7 @@ impl ToolchainStore {
             let toolchain = Toolchain {
                 name: toolchain.name.into(),
                 path: toolchain.path.into(),
+                as_json: serde_json::Value::from_str(&toolchain.raw_json)?,
                 language_name,
             };
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
@@ -144,6 +145,7 @@ impl ToolchainStore {
             toolchain: toolchain.map(|toolchain| proto::Toolchain {
                 name: toolchain.name.into(),
                 path: toolchain.path.into(),
+                raw_json: toolchain.as_json.to_string(),
             }),
         })
     }
@@ -182,6 +184,7 @@ impl ToolchainStore {
                 .map(|toolchain| proto::Toolchain {
                     name: toolchain.name.to_string(),
                     path: toolchain.path.to_string(),
+                    raw_json: toolchain.as_json.to_string(),
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -352,6 +355,7 @@ impl RemoteToolchainStore {
                     toolchain: Some(proto::Toolchain {
                         name: toolchain.name.into(),
                         path: toolchain.path.into(),
+                        raw_json: toolchain.as_json.to_string(),
                     }),
                 })
                 .await
@@ -383,10 +387,13 @@ impl RemoteToolchainStore {
             let toolchains = response
                 .toolchains
                 .into_iter()
-                .map(|toolchain| Toolchain {
-                    language_name: language_name.clone(),
-                    name: toolchain.name.into(),
-                    path: toolchain.path.into(),
+                .filter_map(|toolchain| {
+                    Some(Toolchain {
+                        language_name: language_name.clone(),
+                        name: toolchain.name.into(),
+                        path: toolchain.path.into(),
+                        as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
+                    })
                 })
                 .collect();
             let groups = response
@@ -421,10 +428,13 @@ impl RemoteToolchainStore {
                 .await
                 .log_err()?;
 
-            response.toolchain.map(|toolchain| Toolchain {
-                language_name: language_name.clone(),
-                name: toolchain.name.into(),
-                path: toolchain.path.into(),
+            response.toolchain.and_then(|toolchain| {
+                Some(Toolchain {
+                    language_name: language_name.clone(),
+                    name: toolchain.name.into(),
+                    path: toolchain.path.into(),
+                    as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
+                })
             })
         })
     }

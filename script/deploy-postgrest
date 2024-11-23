@@ -3,7 +3,7 @@
 set -eu
 source script/lib/deploy-helpers.sh
 
-if [[ $# < 1 ]]; then
+if [[ $# != 1 ]]; then
   echo "Usage: $0 <production|staging> (postgrest not needed on preview or nightly)"
   exit 1
 fi

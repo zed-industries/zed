@@ -263,7 +263,7 @@ impl TextLayout {
             .line_height
             .to_pixels(font_size.into(), cx.rem_size());
 
-        let runs = if let Some(runs) = runs {
+        let mut runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
@@ -306,7 +306,7 @@ impl TextLayout {
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let text = if let Some(truncate_width) = truncate_width {
-                    line_wrapper.truncate_line(text.clone(), truncate_width, ellipsis)
+                    line_wrapper.truncate_line(text.clone(), truncate_width, ellipsis, &mut runs)
                 } else {
                     text.clone()
                 };

@@ -639,6 +639,8 @@ pub struct TaskState {
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
     pub hide: HideStrategy,
+    pub show_summary: bool,
+    pub show_command: bool,
 }
 
 /// A status of the current terminal tab's task.
@@ -1760,11 +1762,22 @@ impl Terminal {
         };
 
         let (finished_successfully, task_line, command_line) = task_summary(task, error_code);
-        // SAFETY: the invocation happens on non `TaskStatus::Running` tasks, once,
-        // after either `AlacTermEvent::Exit` or `AlacTermEvent::ChildExit` events that are spawned
-        // when Zed task finishes and no more output is made.
-        // After the task summary is output once, no more text is appended to the terminal.
-        unsafe { append_text_to_term(&mut self.term.lock(), &[&task_line, &command_line]) };
+        let mut lines_to_show = Vec::new();
+        if task.show_summary {
+            lines_to_show.push(task_line.as_str());
+        }
+        if task.show_command {
+            lines_to_show.push(command_line.as_str());
+        }
+
+        if !lines_to_show.is_empty() {
+            // SAFETY: the invocation happens on non `TaskStatus::Running` tasks, once,
+            // after either `AlacTermEvent::Exit` or `AlacTermEvent::ChildExit` events that are spawned
+            // when Zed task finishes and no more output is made.
+            // After the task summary is output once, no more text is appended to the terminal.
+            unsafe { append_text_to_term(&mut self.term.lock(), &lines_to_show) };
+        }
+
         match task.hide {
             HideStrategy::Never => {}
             HideStrategy::Always => {

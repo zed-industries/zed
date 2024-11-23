@@ -3,9 +3,33 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use extension::Extension;
+use extension::{Extension, ExtensionHostProxy, ExtensionIndexedDocsProviderProxy};
+use gpui::AppContext;
 
-use crate::{IndexedDocsDatabase, IndexedDocsProvider, PackageName, ProviderId};
+use crate::{
+    IndexedDocsDatabase, IndexedDocsProvider, IndexedDocsRegistry, PackageName, ProviderId,
+};
+
+pub fn init(cx: &mut AppContext) {
+    let proxy = ExtensionHostProxy::default_global(cx);
+    proxy.register_indexed_docs_provider_proxy(IndexedDocsRegistryProxy {
+        indexed_docs_registry: IndexedDocsRegistry::global(cx),
+    });
+}
+
+struct IndexedDocsRegistryProxy {
+    indexed_docs_registry: Arc<IndexedDocsRegistry>,
+}
+
+impl ExtensionIndexedDocsProviderProxy for IndexedDocsRegistryProxy {
+    fn register_indexed_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
+        self.indexed_docs_registry
+            .register_provider(Box::new(ExtensionIndexedDocsProvider::new(
+                extension,
+                ProviderId(provider_id),
+            )));
+    }
+}
 
 pub struct ExtensionIndexedDocsProvider {
     extension: Arc<dyn Extension>,
@@ -26,7 +50,6 @@ impl IndexedDocsProvider for ExtensionIndexedDocsProvider {
 
     fn database_path(&self) -> PathBuf {
         let mut database_path = PathBuf::from(self.extension.work_dir().as_ref());
-        database_path.push(self.extension.manifest().id.as_ref());
         database_path.push("docs");
         database_path.push(format!("{}.0.mdb", self.id));
 

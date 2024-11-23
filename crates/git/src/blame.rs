@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::{ops::Range, path::Path};
 use text::Rope;
@@ -80,9 +80,7 @@ fn run_git_blame(
     path: &Path,
     contents: &Rope,
 ) -> Result<String> {
-    let mut child = Command::new(git_binary);
-
-    child
+    let child = util::command::new_std_command(git_binary)
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")
@@ -91,15 +89,7 @@ fn run_git_blame(
         .arg(path.as_os_str())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-    }
-
-    let child = child
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
 

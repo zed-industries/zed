@@ -1,7 +1,7 @@
 use crate::{
     self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
     Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
-    SharedString, StyleRefinement, WhiteSpace,
+    SharedString, StrikethroughStyle, StyleRefinement, WhiteSpace,
 };
 use crate::{TextStyleRefinement, Truncate};
 pub use gpui_macros::{
@@ -12,7 +12,7 @@ pub use gpui_macros::{
 use taffy::style::{AlignContent, Display};
 
 /// A trait for elements that can be styled.
-/// Use this to opt-in to a CSS-like styling API.
+/// Use this to opt-in to a utility CSS-like styling API.
 pub trait Styled: Sized {
     /// Returns a reference to the style memory of this element.
     fn style(&mut self) -> &mut StyleRefinement;
@@ -323,19 +323,23 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Get the text style that has been configured on this element.
+    /// Returns a mutable reference to the text style that has been configured on this element.
     fn text_style(&mut self) -> &mut Option<TextStyleRefinement> {
         let style: &mut StyleRefinement = self.style();
         &mut style.text
     }
 
-    /// Set the text color of this element, this value cascades to its child elements.
+    /// Sets the text color of this element.
+    ///
+    /// This value cascades to its child elements.
     fn text_color(mut self, color: impl Into<Hsla>) -> Self {
         self.text_style().get_or_insert_with(Default::default).color = Some(color.into());
         self
     }
 
-    /// Set the font weight of this element, this value cascades to its child elements.
+    /// Sets the font weight of this element
+    ///
+    /// This value cascades to its child elements.
     fn font_weight(mut self, weight: FontWeight) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -343,7 +347,9 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the background color of this element, this value cascades to its child elements.
+    /// Sets the background color of this element.
+    ///
+    /// This value cascades to its child elements.
     fn text_bg(mut self, bg: impl Into<Hsla>) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -351,7 +357,9 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the text size of this element, this value cascades to its child elements.
+    /// Sets the text size of this element.
+    ///
+    /// This value cascades to its child elements.
     fn text_size(mut self, size: impl Into<AbsoluteLength>) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -359,8 +367,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the text size to 'extra small',
-    /// see the [Tailwind Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
+    /// Sets the text size to 'extra small'.
+    /// [Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
     fn text_xs(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -368,8 +376,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the text size to 'small',
-    /// see the [Tailwind Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
+    /// Sets the text size to 'small'.
+    /// [Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
     fn text_sm(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -377,7 +385,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Reset the text styling for this element and its children.
+    /// Sets the text size to 'base'.
+    /// [Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
     fn text_base(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -385,8 +394,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the text size to 'large',
-    /// see the [Tailwind Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
+    /// Sets the text size to 'large'.
+    /// [Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
     fn text_lg(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -394,8 +403,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the text size to 'extra large',
-    /// see the [Tailwind Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
+    /// Sets the text size to 'extra large'.
+    /// [Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
     fn text_xl(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -403,8 +412,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the text size to 'extra-extra large',
-    /// see the [Tailwind Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
+    /// Sets the text size to 'extra extra large'.
+    /// [Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
     fn text_2xl(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -412,8 +421,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the text size to 'extra-extra-extra large',
-    /// see the [Tailwind Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
+    /// Sets the text size to 'extra extra extra large'.
+    /// [Docs](https://tailwindcss.com/docs/font-size#setting-the-font-size)
     fn text_3xl(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -421,17 +430,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the font style to 'non-italic',
-    /// see the [Tailwind Docs](https://tailwindcss.com/docs/font-style#italicizing-text)
-    fn non_italic(mut self) -> Self {
-        self.text_style()
-            .get_or_insert_with(Default::default)
-            .font_style = Some(FontStyle::Normal);
-        self
-    }
-
-    /// Set the font style to 'italic',
-    /// see the [Tailwind Docs](https://tailwindcss.com/docs/font-style#italicizing-text)
+    /// Sets the font style of the element to italic.
+    /// [Docs](https://tailwindcss.com/docs/font-style#italicizing-text)
     fn italic(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -439,7 +439,29 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Remove the text decoration on this element, this value cascades to its child elements.
+    /// Sets the font style of the element to normal (not italic).
+    /// [Docs](https://tailwindcss.com/docs/font-style#italicizing-text)
+    fn not_italic(mut self) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_style = Some(FontStyle::Normal);
+        self
+    }
+
+    /// Sets the decoration of the text to have a line through it.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration#setting-the-text-decoration)
+    fn line_through(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        style.strikethrough = Some(StrikethroughStyle {
+            thickness: px(1.),
+            ..Default::default()
+        });
+        self
+    }
+
+    /// Removes the text decoration on this element.
+    ///
+    /// This value cascades to its child elements.
     fn text_decoration_none(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -447,7 +469,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the color for the underline on this element
+    /// Sets the color for the underline on this element
     fn text_decoration_color(mut self, color: impl Into<Hsla>) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
         let underline = style.underline.get_or_insert_with(Default::default);
@@ -455,7 +477,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the underline to a solid line
+    /// Sets the text decoration style to a solid line.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-style)
     fn text_decoration_solid(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
         let underline = style.underline.get_or_insert_with(Default::default);
@@ -463,7 +486,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the underline to a wavy line
+    /// Sets the text decoration style to a wavy line.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-style)
     fn text_decoration_wavy(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
         let underline = style.underline.get_or_insert_with(Default::default);
@@ -471,7 +495,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the underline to be 0 thickness, see the [Tailwind Docs](https://tailwindcss.com/docs/text-decoration-thickness)
+    /// Sets the text decoration to be 0px thick.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-thickness)
     fn text_decoration_0(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
         let underline = style.underline.get_or_insert_with(Default::default);
@@ -479,7 +504,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the underline to be 1px thick, see the [Tailwind Docs](https://tailwindcss.com/docs/text-decoration-thickness)
+    /// Sets the text decoration to be 1px thick.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-thickness)
     fn text_decoration_1(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
         let underline = style.underline.get_or_insert_with(Default::default);
@@ -487,7 +513,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the underline to be 2px thick, see the [Tailwind Docs](https://tailwindcss.com/docs/text-decoration-thickness)
+    /// Sets the text decoration to be 2px thick.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-thickness)
     fn text_decoration_2(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
         let underline = style.underline.get_or_insert_with(Default::default);
@@ -495,7 +522,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the underline to be 4px thick, see the [Tailwind Docs](https://tailwindcss.com/docs/text-decoration-thickness)
+    /// Sets the text decoration to be 4px thick.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-thickness)
     fn text_decoration_4(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
         let underline = style.underline.get_or_insert_with(Default::default);
@@ -503,7 +531,8 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the underline to be 8px thick, see the [Tailwind Docs](https://tailwindcss.com/docs/text-decoration-thickness)
+    /// Sets the text decoration to be 8px thick.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-thickness)
     fn text_decoration_8(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
         let underline = style.underline.get_or_insert_with(Default::default);
@@ -511,7 +540,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Change the font family on this element and its children.
+    /// Sets the font family of this element and its children.
     fn font_family(mut self, family_name: impl Into<SharedString>) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -519,7 +548,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Change the font of this element and its children.
+    /// Sets the font of this element and its children.
     fn font(mut self, font: Font) -> Self {
         let Font {
             family,
@@ -539,7 +568,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the line height on this element and its children.
+    /// Sets the line height of this element and its children.
     fn line_height(mut self, line_height: impl Into<DefiniteLength>) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -547,20 +576,20 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set opacity on this element and its children.
+    /// Sets the opacity of this element and its children.
     fn opacity(mut self, opacity: f32) -> Self {
         self.style().opacity = Some(opacity);
         self
     }
 
-    /// Draw a debug border around this element.
+    /// Draws a debug border around this element.
     #[cfg(debug_assertions)]
     fn debug(mut self) -> Self {
         self.style().debug = Some(true);
         self
     }
 
-    /// Draw a debug border on all conforming elements below this element.
+    /// Draws a debug border on all conforming elements below this element.
     #[cfg(debug_assertions)]
     fn debug_below(mut self) -> Self {
         self.style().debug_below = Some(true);

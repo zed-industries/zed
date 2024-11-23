@@ -13,21 +13,10 @@ use std::fmt;
 use std::{
     any::type_name,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 pub use url::Url;
 
-#[derive(Clone, Debug)]
-pub struct ReadTimeout(pub Duration);
-
-impl Default for ReadTimeout {
-    fn default() -> Self {
-        Self(Duration::from_secs(5))
-    }
-}
-
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
-
 pub enum RedirectPolicy {
     #[default]
     NoFollow,
@@ -37,20 +26,11 @@ pub enum RedirectPolicy {
 pub struct FollowRedirects(pub bool);
 
 pub trait HttpRequestExt {
-    /// Set a read timeout on the request.
-    /// For isahc, this is the low_speed_timeout.
-    /// For other clients, this is the timeout used for read calls when reading the response.
-    /// In all cases this prevents servers stalling completely, but allows them to send data slowly.
-    fn read_timeout(self, timeout: Duration) -> Self;
     /// Whether or not to follow redirects
     fn follow_redirects(self, follow: RedirectPolicy) -> Self;
 }
 
 impl HttpRequestExt for http::request::Builder {
-    fn read_timeout(self, timeout: Duration) -> Self {
-        self.extension(ReadTimeout(timeout))
-    }
-
     fn follow_redirects(self, follow: RedirectPolicy) -> Self {
         self.extension(follow)
     }

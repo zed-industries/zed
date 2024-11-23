@@ -18,8 +18,9 @@ use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView, Workspace};
+use zed_actions::feedback::GiveFeedback;
 
-use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedRepo};
+use crate::{system_specs::SystemSpecs, OpenZedRepo};
 
 // For UI testing purposes
 const SEND_SUCCESS_IN_DEV_MODE: bool = true;

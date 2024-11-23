@@ -5,6 +5,7 @@ use gpui::{Task, ViewContext};
 
 use crate::Editor;
 
+#[derive(Debug)]
 pub struct DebouncedDelay {
     task: Option<Task<()>>,
     cancel_channel: Option<oneshot::Sender<()>>,

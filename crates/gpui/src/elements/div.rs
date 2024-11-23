@@ -2383,7 +2383,7 @@ where
 
 /// A wrapper around an element that can store state, produced after assigning an ElementId.
 pub struct Stateful<E> {
-    element: E,
+    pub(crate) element: E,
 }
 
 impl<E> Styled for Stateful<E>

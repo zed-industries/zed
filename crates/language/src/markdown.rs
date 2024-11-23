@@ -239,12 +239,7 @@ pub async fn parse_markdown_block(
             Event::Start(tag) => match tag {
                 Tag::Paragraph => new_paragraph(text, &mut list_stack),
 
-                Tag::Heading {
-                    level: _,
-                    id: _,
-                    classes: _,
-                    attrs: _,
-                } => {
+                Tag::Heading { .. } => {
                     new_paragraph(text, &mut list_stack);
                     bold_depth += 1;
                 }
@@ -267,12 +262,7 @@ pub async fn parse_markdown_block(
 
                 Tag::Strikethrough => strikethrough_depth += 1,
 
-                Tag::Link {
-                    link_type: _,
-                    dest_url,
-                    title: _,
-                    id: _,
-                } => link_url = Some(dest_url.to_string()),
+                Tag::Link { dest_url, .. } => link_url = Some(dest_url.to_string()),
 
                 Tag::List(number) => {
                     list_stack.push((number, false));

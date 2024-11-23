@@ -44,6 +44,21 @@ impl ShapedLine {
         self.layout.len
     }
 
+    /// Override the len, useful if you're rendering text a
+    /// as text b (e.g. rendering invisibles).
+    pub fn with_len(mut self, len: usize) -> Self {
+        let layout = self.layout.as_ref();
+        self.layout = Arc::new(LineLayout {
+            font_size: layout.font_size,
+            width: layout.width,
+            ascent: layout.ascent,
+            descent: layout.descent,
+            runs: layout.runs.clone(),
+            len,
+        });
+        self
+    }
+
     /// Paint the line of text to the window.
     pub fn paint(
         &self,

@@ -41,7 +41,11 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     //           "args": ["--login"]
     //         }
     //     }
-    "shell": "system"
+    "shell": "system",
+    // Whether to show the task line in the output of the spawned task, defaults to `true`.
+    "show_summary": true,
+    // Whether to show the command line in the output of the spawned task, defaults to `true`.
+    "show_output": true
   }
 ]
 ```
@@ -92,6 +96,38 @@ To use a variable in a task, prefix it with a dollar sign (`$`):
 You can also use verbose syntax that allows specifying a default if a given variable is not available: `${ZED_FILE:default_value}`
 
 These environmental variables can also be used in tasks `cwd`, `args` and `label` fields.
+
+### Variable Quoting
+
+When working with paths containing spaces or other special characters, please ensure variables are properly escaped.
+
+For example, instead of this (which will fail if the path has a space):
+
+```json
+{
+  "label": "stat current file",
+  "command": "stat $ZED_FILE"
+}
+```
+
+Provide the
+
+```json
+{
+  "label": "stat current file",
+  "command": "stat",
+  "args": ["$ZED_FILE"]
+}
+```
+
+Or explicitly include escaped quotes like so:
+
+```json
+{
+  "label": "stat current file",
+  "command": "stat \"$ZED_FILE\""
+}
+```
 
 ## Oneshot tasks
 

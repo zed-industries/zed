@@ -1,8 +1,8 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
 use client::telemetry::Telemetry;
-use editor::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
+use inline_completion::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
     Buffer, OffsetRangeExt, ToOffset,

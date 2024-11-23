@@ -66,7 +66,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::LineIndent;
-use ui::{div, px, IntoElement, ParentElement, SharedString, Styled, WindowContext};
+use ui::{px, SharedString, WindowContext};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -541,11 +541,17 @@ pub struct HighlightStyles {
     pub suggestion: Option<HighlightStyle>,
 }
 
+#[derive(Clone)]
+pub enum ChunkReplacement {
+    Renderer(ChunkRenderer),
+    Str(SharedString),
+}
+
 pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
     pub is_tab: bool,
-    pub renderer: Option<ChunkRenderer>,
+    pub replacement: Option<ChunkReplacement>,
 }
 
 impl<'a> HighlightedChunk<'a> {
@@ -557,7 +563,7 @@ impl<'a> HighlightedChunk<'a> {
         let mut text = self.text;
         let style = self.style;
         let is_tab = self.is_tab;
-        let renderer = self.renderer;
+        let renderer = self.replacement;
         iter::from_fn(move || {
             let mut prefix_len = 0;
             while let Some(&ch) = chars.peek() {
@@ -573,30 +579,33 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style,
                         is_tab,
-                        renderer: renderer.clone(),
+                        replacement: renderer.clone(),
                     });
                 }
                 chars.next();
                 let (prefix, suffix) = text.split_at(ch.len_utf8());
                 text = suffix;
                 if let Some(replacement) = replacement(ch) {
-                    let background = editor_style.status.hint_background;
-                    let underline = editor_style.status.hint;
+                    let invisible_highlight = HighlightStyle {
+                        background_color: Some(editor_style.status.hint_background),
+                        underline: Some(UnderlineStyle {
+                            color: Some(editor_style.status.hint),
+                            thickness: px(1.),
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    };
+                    let invisible_style = if let Some(mut style) = style {
+                        style.highlight(invisible_highlight);
+                        style
+                    } else {
+                        invisible_highlight
+                    };
                     return Some(HighlightedChunk {
                         text: prefix,
-                        style: None,
+                        style: Some(invisible_style),
                         is_tab: false,
-                        renderer: Some(ChunkRenderer {
-                            render: Arc::new(move |_| {
-                                div()
-                                    .child(replacement)
-                                    .bg(background)
-                                    .text_decoration_1()
-                                    .text_decoration_color(underline)
-                                    .into_any_element()
-                            }),
-                            constrain_width: false,
-                        }),
+                        replacement: Some(ChunkReplacement::Str(replacement.into())),
                     });
                 } else {
                     let invisible_highlight = HighlightStyle {
@@ -619,7 +628,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
-                        renderer: renderer.clone(),
+                        replacement: renderer.clone(),
                     });
                 }
             }
@@ -631,7 +640,7 @@ impl<'a> HighlightedChunk<'a> {
                     text: remainder,
                     style,
                     is_tab,
-                    renderer: renderer.clone(),
+                    replacement: renderer.clone(),
                 })
             } else {
                 None
@@ -895,7 +904,7 @@ impl DisplaySnapshot {
                 text: chunk.text,
                 style: highlight_style,
                 is_tab: chunk.is_tab,
-                renderer: chunk.renderer,
+                replacement: chunk.renderer.map(ChunkReplacement::Renderer),
             }
             .highlight_invisibles(editor_style)
         })

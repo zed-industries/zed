@@ -343,7 +343,7 @@ fn init_test(cx: &mut AppContext) -> Model<ChannelStore> {
     release_channel::init(SemanticVersion::default(), cx);
     client::init_settings(cx);
 
-    let clock = Arc::new(FakeSystemClock::default());
+    let clock = Arc::new(FakeSystemClock::new());
     let http = FakeHttpClient::with_404_response();
     let client = Client::new(clock, http.clone(), cx);
     let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));

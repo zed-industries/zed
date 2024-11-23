@@ -2,9 +2,8 @@ mod supported_countries;
 
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 pub use supported_countries::*;
 
@@ -15,7 +14,6 @@ pub async fn stream_generate_content(
     api_url: &str,
     api_key: &str,
     mut request: GenerateContentRequest,
-    low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
     let uri = format!(
         "{api_url}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}",
@@ -23,14 +21,10 @@ pub async fn stream_generate_content(
     );
     request.model.clear();
 
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json");
-
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.read_timeout(low_speed_timeout);
-    };
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
@@ -70,7 +64,6 @@ pub async fn count_tokens(
     api_url: &str,
     api_key: &str,
     request: CountTokensRequest,
-    low_speed_timeout: Option<Duration>,
 ) -> Result<CountTokensResponse> {
     let uri = format!(
         "{}/v1beta/models/gemini-pro:countTokens?key={}",
@@ -78,14 +71,10 @@ pub async fn count_tokens(
     );
     let request = serde_json::to_string(&request)?;
 
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(&uri)
         .header("Content-Type", "application/json");
-
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.read_timeout(low_speed_timeout);
-    }
 
     let http_request = request_builder.body(AsyncBody::from(request))?;
     let mut response = client.send(http_request).await?;

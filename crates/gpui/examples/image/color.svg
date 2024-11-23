@@ -6,8 +6,8 @@
     <circle cx="240" cy="100" r="30" stroke="#dc2626" />
     <circle cx="380" cy="100" r="20" stroke="#d97706" />
     <circle cx="380" cy="240" r="30" stroke="#06b6d4" />
-    <circle cx="100" cy="240" r="30" stroke="#3b82f6" />
+    <circle cx="100" cy="240" r="30" stroke="#3b82f666" />
     <circle cx="240" cy="380" r="30" stroke="#7c3aed" />
     <circle cx="380" cy="380" r="20" stroke="#c026d3" />
-    <circle cx="100" cy="380" r="20" stroke="#e11d48" />
+    <circle cx="100" cy="380" r="20" stroke="#e11d4866" />
 </svg>

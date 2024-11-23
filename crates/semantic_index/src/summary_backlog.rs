@@ -1,5 +1,6 @@
 use collections::HashMap;
-use std::{path::Path, sync::Arc, time::SystemTime};
+use fs::MTime;
+use std::{path::Path, sync::Arc};
 
 const MAX_FILES_BEFORE_RESUMMARIZE: usize = 4;
 const MAX_BYTES_BEFORE_RESUMMARIZE: u64 = 1_000_000; // 1 MB
@@ -7,14 +8,14 @@ const MAX_BYTES_BEFORE_RESUMMARIZE: u64 = 1_000_000; // 1 MB
 #[derive(Default, Debug)]
 pub struct SummaryBacklog {
     /// Key: path to a file that needs summarization, but that we haven't summarized yet. Value: that file's size on disk, in bytes, and its mtime.
-    files: HashMap<Arc<Path>, (u64, Option<SystemTime>)>,
+    files: HashMap<Arc<Path>, (u64, Option<MTime>)>,
     /// Cache of the sum of all values in `files`, so we don't have to traverse the whole map to check if we're over the byte limit.
     total_bytes: u64,
 }
 
 impl SummaryBacklog {
     /// Store the given path in the backlog, along with how many bytes are in it.
-    pub fn insert(&mut self, path: Arc<Path>, bytes_on_disk: u64, mtime: Option<SystemTime>) {
+    pub fn insert(&mut self, path: Arc<Path>, bytes_on_disk: u64, mtime: Option<MTime>) {
         let (prev_bytes, _) = self
             .files
             .insert(path, (bytes_on_disk, mtime))
@@ -34,7 +35,7 @@ impl SummaryBacklog {
 
     /// Remove all the entries in the backlog and return the file paths as an iterator.
     #[allow(clippy::needless_lifetimes)] // Clippy thinks this 'a can be elided, but eliding it gives a compile error
-    pub fn drain<'a>(&'a mut self) -> impl Iterator<Item = (Arc<Path>, Option<SystemTime>)> + 'a {
+    pub fn drain<'a>(&'a mut self) -> impl Iterator<Item = (Arc<Path>, Option<MTime>)> + 'a {
         self.total_bytes = 0;
 
         self.files

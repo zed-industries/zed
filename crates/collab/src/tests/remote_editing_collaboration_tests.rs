@@ -1,6 +1,7 @@
 use crate::tests::TestServer;
 use call::ActiveCall;
 use collections::HashSet;
+use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _};
 use futures::StreamExt as _;
 use gpui::{BackgroundExecutor, Context as _, SemanticVersion, TestAppContext, UpdateGlobal as _};
@@ -81,6 +82,7 @@ async fn test_sharing_an_ssh_remote_project(
                 http_client: remote_http_client,
                 node_runtime: node,
                 languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,
         )
@@ -243,6 +245,7 @@ async fn test_ssh_collaboration_git_branches(
                 http_client: remote_http_client,
                 node_runtime: node,
                 languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,
         )
@@ -400,6 +403,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
                 http_client: remote_http_client,
                 node_runtime: NodeRuntime::unavailable(),
                 languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,
         )

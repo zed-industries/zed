@@ -1,11 +1,11 @@
 pub mod wit;
 
-use crate::{ExtensionManifest, ExtensionRegistrationHooks};
+use crate::ExtensionManifest;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use extension::{
-    KeyValueStoreDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput,
-    WorktreeDelegate,
+    CodeLabel, Command, Completion, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate,
+    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
@@ -19,6 +19,8 @@ use futures::{
 };
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use http_client::HttpClient;
+use language::LanguageName;
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
@@ -32,14 +34,13 @@ use wasmtime::{
 };
 use wasmtime_wasi::{self as wasi, WasiView};
 use wit::Extension;
-pub use wit::ExtensionProject;
 
 pub struct WasmHost {
     engine: Engine,
     release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
-    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
+    pub(crate) proxy: Arc<ExtensionHostProxy>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
     _main_thread_message_task: Task<()>,
@@ -63,6 +64,132 @@ impl extension::Extension for WasmExtension {
 
     fn work_dir(&self) -> Arc<Path> {
         self.work_dir.clone()
+    }
+
+    async fn language_server_command(
+        &self,
+        language_server_id: LanguageServerName,
+        language_name: LanguageName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Command> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let command = extension
+                    .call_language_server_command(
+                        store,
+                        &language_server_id,
+                        &language_name,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(command.into())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn language_server_initialization_options(
+        &self,
+        language_server_id: LanguageServerName,
+        language_name: LanguageName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let options = extension
+                    .call_language_server_initialization_options(
+                        store,
+                        &language_server_id,
+                        &language_name,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+                anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn language_server_workspace_configuration(
+        &self,
+        language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let options = extension
+                    .call_language_server_workspace_configuration(
+                        store,
+                        &language_server_id,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+                anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn labels_for_completions(
+        &self,
+        language_server_id: LanguageServerName,
+        completions: Vec<Completion>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        self.call(|extension, store| {
+            async move {
+                let labels = extension
+                    .call_labels_for_completions(
+                        store,
+                        &language_server_id,
+                        completions.into_iter().map(Into::into).collect(),
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(labels
+                    .into_iter()
+                    .map(|label| label.map(Into::into))
+                    .collect())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn labels_for_symbols(
+        &self,
+        language_server_id: LanguageServerName,
+        symbols: Vec<Symbol>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        self.call(|extension, store| {
+            async move {
+                let labels = extension
+                    .call_labels_for_symbols(
+                        store,
+                        &language_server_id,
+                        symbols.into_iter().map(Into::into).collect(),
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(labels
+                    .into_iter()
+                    .map(|label| label.map(Into::into))
+                    .collect())
+            }
+            .boxed()
+        })
+        .await
     }
 
     async fn complete_slash_command_argument(
@@ -104,6 +231,25 @@ impl extension::Extension for WasmExtension {
                     .map_err(|err| anyhow!("{err}"))?;
 
                 Ok(output.into())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn context_server_command(
+        &self,
+        context_server_id: Arc<str>,
+        project: Arc<dyn ProjectDelegate>,
+    ) -> Result<Command> {
+        self.call(|extension, store| {
+            async move {
+                let project_resource = store.data_mut().table().push(project)?;
+                let command = extension
+                    .call_context_server_command(store, context_server_id.clone(), project_resource)
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+                anyhow::Ok(command.into())
             }
             .boxed()
         })
@@ -184,7 +330,7 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
-        registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
+        proxy: Arc<ExtensionHostProxy>,
         work_dir: PathBuf,
         cx: &mut AppContext,
     ) -> Arc<Self> {
@@ -200,7 +346,7 @@ impl WasmHost {
             work_dir,
             http_client,
             node_runtime,
-            registration_hooks,
+            proxy,
             release_channel: ReleaseChannel::global(cx),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
@@ -255,7 +401,7 @@ impl WasmHost {
 
             Ok(WasmExtension {
                 manifest: manifest.clone(),
-                work_dir: this.work_dir.clone().into(),
+                work_dir: this.work_dir.join(manifest.id.as_ref()).into(),
                 tx,
                 zed_api_version,
             })
@@ -284,11 +430,6 @@ impl WasmHost {
             .env("PWD", extension_work_dir.to_string_lossy())
             .env("RUST_BACKTRACE", "full")
             .build())
-    }
-
-    pub fn path_from_extension(&self, id: &Arc<str>, path: &Path) -> PathBuf {
-        let extension_work_dir = self.work_dir.join(id.as_ref());
-        normalize_path(&extension_work_dir.join(path))
     }
 
     pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {

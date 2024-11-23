@@ -61,7 +61,7 @@ impl RenderOnce for ImageContainer {
 }
 
 struct ImageShowcase {
-    local_resource: Arc<PathBuf>,
+    local_resource: Arc<std::path::Path>,
     remote_resource: SharedUri,
     asset_resource: SharedString,
 }
@@ -153,9 +153,10 @@ fn main() {
             cx.open_window(window_options, |cx| {
                 cx.new_view(|_cx| ImageShowcase {
                     // Relative path to your root project path
-                    local_resource: Arc::new(
-                        PathBuf::from_str("crates/gpui/examples/image/app-icon.png").unwrap(),
-                    ),
+                    local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
+                        .unwrap()
+                        .into(),
+
                     remote_resource: "https://picsum.photos/512/512".into(),
 
                     asset_resource: "image/color.svg".into(),

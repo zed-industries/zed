@@ -1,7 +1,8 @@
 use crate::{
-    point, px, size, Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics,
-    FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
-    RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
+    point, px, size, swap_rgba_pa_to_bgra, Bounds, DevicePixels, Font, FontFallbacks, FontFeatures,
+    FontId, FontMetrics, FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels,
+    PlatformTextSystem, Point, RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString,
+    Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
 use cocoa::appkit::CGFloat;
@@ -418,11 +419,7 @@ impl MacTextSystemState {
             if params.is_emoji {
                 // Convert from RGBA with premultiplied alpha to BGRA with straight alpha.
                 for pixel in bytes.chunks_exact_mut(4) {
-                    pixel.swap(0, 2);
-                    let a = pixel[3] as f32 / 255.;
-                    pixel[0] = (pixel[0] as f32 / a) as u8;
-                    pixel[1] = (pixel[1] as f32 / a) as u8;
-                    pixel[2] = (pixel[2] as f32 / a) as u8;
+                    swap_rgba_pa_to_bgra(pixel);
                 }
             }
 

@@ -126,6 +126,7 @@ pub struct ToolchainSelectorDelegate {
     workspace: WeakView<Workspace>,
     worktree_id: WorktreeId,
     worktree_abs_path_root: Arc<Path>,
+    placeholder_text: Arc<str>,
     _fetch_candidates_task: Task<Option<()>>,
 }
 
@@ -144,6 +145,17 @@ impl ToolchainSelectorDelegate {
         let _fetch_candidates_task = cx.spawn({
             let project = project.clone();
             move |this, mut cx| async move {
+                let term = project
+                    .update(&mut cx, |this, _| {
+                        Project::toolchain_term(this.languages().clone(), language_name.clone())
+                    })
+                    .ok()?
+                    .await?;
+                let placeholder_text = format!("Select a {}…", term.to_lowercase()).into();
+                let _ = this.update(&mut cx, move |this, cx| {
+                    this.delegate.placeholder_text = placeholder_text;
+                    this.refresh_placeholder(cx);
+                });
                 let available_toolchains = project
                     .update(&mut cx, |this, cx| {
                         this.available_toolchains(worktree_id, language_name, cx)
@@ -153,6 +165,7 @@ impl ToolchainSelectorDelegate {
 
                 let _ = this.update(&mut cx, move |this, cx| {
                     this.delegate.candidates = available_toolchains;
+
                     if let Some(active_toolchain) = active_toolchain {
                         if let Some(position) = this
                             .delegate
@@ -170,7 +183,7 @@ impl ToolchainSelectorDelegate {
                 Some(())
             }
         });
-
+        let placeholder_text = "Select a toolchain…".to_string().into();
         Self {
             toolchain_selector: language_selector,
             candidates: Default::default(),
@@ -179,6 +192,7 @@ impl ToolchainSelectorDelegate {
             workspace,
             worktree_id,
             worktree_abs_path_root,
+            placeholder_text,
             _fetch_candidates_task,
         }
     }
@@ -196,7 +210,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
-        "Select a toolchain...".into()
+        self.placeholder_text.clone()
     }
 
     fn match_count(&self) -> usize {

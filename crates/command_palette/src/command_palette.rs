@@ -11,7 +11,7 @@ use command_palette_hooks::{
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Global,
+    Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Global,
     ParentElement, Render, Styled, Task, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -21,9 +21,7 @@ use settings::Settings;
 use ui::{h_flex, prelude::*, v_flex, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
-use zed_actions::OpenZedUrl;
-
-actions!(command_palette, [Toggle]);
+use zed_actions::{command_palette::Toggle, OpenZedUrl};
 
 pub fn init(cx: &mut AppContext) {
     client::init_settings(cx);

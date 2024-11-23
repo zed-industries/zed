@@ -15,6 +15,7 @@ path = "src/context_servers.rs"
 anyhow.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
+extension.workspace = true
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true

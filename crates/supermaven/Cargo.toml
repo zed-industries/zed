@@ -16,24 +16,21 @@ doctest = false
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
-editor.workspace = true
-gpui.workspace = true
 futures.workspace = true
+gpui.workspace = true
+inline_completion.workspace = true
 language.workspace = true
 log.workspace = true
 postage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-supermaven_api.workspace = true
 smol.workspace = true
+supermaven_api.workspace = true
 text.workspace = true
 ui.workspace = true
 unicode-segmentation.workspace = true
 util.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use ui::{h_flex, ContextMenu, IconButton, Tooltip};
 use ui::{prelude::*, right_click_menu};
 
-const RESIZE_HANDLE_SIZE: Pixels = Pixels(6.);
+pub(crate) const RESIZE_HANDLE_SIZE: Pixels = Pixels(6.);
 
 pub enum PanelEvent {
     ZoomIn,
@@ -574,6 +574,7 @@ impl Dock {
     pub fn resize_active_panel(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
         if let Some(entry) = self.panel_entries.get_mut(self.active_panel_index) {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
+
             entry.panel.set_size(size, cx);
             cx.notify();
         }
@@ -592,6 +593,15 @@ impl Dock {
         dispatch_context.add("Dock");
 
         dispatch_context
+    }
+
+    pub fn clamp_panel_size(&mut self, max_size: Pixels, cx: &mut WindowContext) {
+        let max_size = px((max_size.0 - RESIZE_HANDLE_SIZE.0).abs());
+        for panel in self.panel_entries.iter().map(|entry| &entry.panel) {
+            if panel.size(cx) > max_size {
+                panel.set_size(Some(max_size.max(RESIZE_HANDLE_SIZE)), cx);
+            }
+        }
     }
 }
 

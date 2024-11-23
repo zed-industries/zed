@@ -7,7 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context as _, Result};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs::{copy_recursive, Fs, PathEvent, RemoveOptions, Watcher};
+use fs::{copy_recursive, Fs, MTime, PathEvent, RemoveOptions, Watcher};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -29,6 +29,7 @@ use gpui::{
     Task,
 };
 use ignore::IgnoreStack;
+use language::DiskState;
 use parking_lot::Mutex;
 use paths::local_settings_folder_relative_path;
 use postage::{
@@ -60,11 +61,14 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
-use util::{paths::home_dir, ResultExt};
+use util::{
+    paths::{home_dir, PathMatcher},
+    ResultExt,
+};
 pub use worktree_settings::WorktreeSettings;
 
 #[cfg(feature = "test-support")]
@@ -133,6 +137,7 @@ pub struct RemoteWorktree {
     background_snapshot: Arc<Mutex<(Snapshot, Vec<proto::UpdateWorktree>)>>,
     project_id: u64,
     client: AnyProtoClient,
+    file_scan_inclusions: PathMatcher,
     updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
     update_observer: Option<mpsc::UnboundedSender<proto::UpdateWorktree>>,
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
@@ -149,6 +154,7 @@ pub struct Snapshot {
     root_char_bag: CharBag,
     entries_by_path: SumTree<Entry>,
     entries_by_id: SumTree<PathEntry>,
+    always_included_entries: Vec<Arc<Path>>,
     repository_entries: TreeMap<RepositoryWorkDirectory, RepositoryEntry>,
 
     /// A number that increases every time the worktree begins scanning
@@ -432,7 +438,7 @@ impl Worktree {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 if let Self::Local(this) = this {
                     let settings = WorktreeSettings::get(settings_location, cx).clone();
-                    if settings != this.settings {
+                    if this.settings != settings {
                         this.settings = settings;
                         this.restart_background_scanners(cx);
                     }
@@ -479,11 +485,19 @@ impl Worktree {
             let (background_updates_tx, mut background_updates_rx) = mpsc::unbounded();
             let (mut snapshot_updated_tx, mut snapshot_updated_rx) = watch::channel();
 
+            let worktree_id = snapshot.id();
+            let settings_location = Some(SettingsLocation {
+                worktree_id,
+                path: Path::new(EMPTY_PATH),
+            });
+
+            let settings = WorktreeSettings::get(settings_location, cx).clone();
             let worktree = RemoteWorktree {
                 client,
                 project_id,
                 replica_id,
                 snapshot,
+                file_scan_inclusions: settings.file_scan_inclusions.clone(),
                 background_snapshot: background_snapshot.clone(),
                 updates_tx: Some(background_updates_tx),
                 update_observer: None,
@@ -499,7 +513,10 @@ impl Worktree {
                     while let Some(update) = background_updates_rx.next().await {
                         {
                             let mut lock = background_snapshot.lock();
-                            if let Err(error) = lock.0.apply_remote_update(update.clone()) {
+                            if let Err(error) = lock
+                                .0
+                                .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
+                            {
                                 log::error!("error applying worktree update: {}", error);
                             }
                             lock.1.push(update);
@@ -1021,7 +1038,17 @@ impl LocalWorktree {
         let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
         self.scan_requests_tx = scan_requests_tx;
         self.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
+
         self.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
+        let always_included_entries = mem::take(&mut self.snapshot.always_included_entries);
+        log::debug!(
+            "refreshing entries for the following always included paths: {:?}",
+            always_included_entries
+        );
+
+        // Cleans up old always included entries to ensure they get updated properly. Otherwise,
+        // nested always included entries may not get updated and will result in out-of-date info.
+        self.refresh_entries_for_paths(always_included_entries);
     }
 
     fn start_background_scanner(
@@ -1313,9 +1340,10 @@ impl LocalWorktree {
                         entry_id: None,
                         worktree,
                         path,
-                        mtime: Some(metadata.mtime),
+                        disk_state: DiskState::Present {
+                            mtime: metadata.mtime,
+                        },
                         is_local: true,
-                        is_deleted: false,
                         is_private,
                     })
                 }
@@ -1374,9 +1402,10 @@ impl LocalWorktree {
                         entry_id: None,
                         worktree,
                         path,
-                        mtime: Some(metadata.mtime),
+                        disk_state: DiskState::Present {
+                            mtime: metadata.mtime,
+                        },
                         is_local: true,
-                        is_deleted: false,
                         is_private,
                     })
                 }
@@ -1512,10 +1541,11 @@ impl LocalWorktree {
                 Ok(Arc::new(File {
                     worktree,
                     path,
-                    mtime: Some(metadata.mtime),
+                    disk_state: DiskState::Present {
+                        mtime: metadata.mtime,
+                    },
                     entry_id: None,
                     is_local: true,
-                    is_deleted: false,
                     is_private,
                 }))
             }
@@ -1967,7 +1997,7 @@ impl RemoteWorktree {
             this.update(&mut cx, |worktree, _| {
                 let worktree = worktree.as_remote_mut().unwrap();
                 let snapshot = &mut worktree.background_snapshot.lock().0;
-                let entry = snapshot.insert_entry(entry);
+                let entry = snapshot.insert_entry(entry, &worktree.file_scan_inclusions);
                 worktree.snapshot = snapshot.clone();
                 entry
             })?
@@ -2048,6 +2078,7 @@ impl Snapshot {
             abs_path,
             root_char_bag: root_name.chars().map(|c| c.to_ascii_lowercase()).collect(),
             root_name,
+            always_included_entries: Default::default(),
             entries_by_path: Default::default(),
             entries_by_id: Default::default(),
             repository_entries: Default::default(),
@@ -2111,8 +2142,12 @@ impl Snapshot {
         self.entries_by_id.get(&entry_id, &()).is_some()
     }
 
-    fn insert_entry(&mut self, entry: proto::Entry) -> Result<Entry> {
-        let entry = Entry::try_from((&self.root_char_bag, entry))?;
+    fn insert_entry(
+        &mut self,
+        entry: proto::Entry,
+        always_included_paths: &PathMatcher,
+    ) -> Result<Entry> {
+        let entry = Entry::try_from((&self.root_char_bag, always_included_paths, entry))?;
         let old_entry = self.entries_by_id.insert_or_replace(
             PathEntry {
                 id: entry.id,
@@ -2166,7 +2201,11 @@ impl Snapshot {
         }
     }
 
-    pub(crate) fn apply_remote_update(&mut self, mut update: proto::UpdateWorktree) -> Result<()> {
+    pub(crate) fn apply_remote_update(
+        &mut self,
+        mut update: proto::UpdateWorktree,
+        always_included_paths: &PathMatcher,
+    ) -> Result<()> {
         log::trace!(
             "applying remote worktree update. {} entries updated, {} removed",
             update.updated_entries.len(),
@@ -2189,7 +2228,7 @@ impl Snapshot {
         }
 
         for entry in update.updated_entries {
-            let entry = Entry::try_from((&self.root_char_bag, entry))?;
+            let entry = Entry::try_from((&self.root_char_bag, always_included_paths, entry))?;
             if let Some(PathEntry { path, .. }) = self.entries_by_id.get(&entry.id, &()) {
                 entries_by_path_edits.push(Edit::Remove(PathKey(path.clone())));
             }
@@ -2709,7 +2748,7 @@ impl LocalSnapshot {
         for entry in self.entries_by_path.cursor::<()>(&()) {
             if entry.is_file() {
                 assert_eq!(files.next().unwrap().inode, entry.inode);
-                if !entry.is_ignored && !entry.is_external {
+                if (!entry.is_ignored && !entry.is_external) || entry.is_always_included {
                     assert_eq!(visible_files.next().unwrap().inode, entry.inode);
                 }
             }
@@ -2792,7 +2831,7 @@ impl LocalSnapshot {
 
 impl BackgroundScannerState {
     fn should_scan_directory(&self, entry: &Entry) -> bool {
-        (!entry.is_external && !entry.is_ignored)
+        (!entry.is_external && (!entry.is_ignored || entry.is_always_included))
             || entry.path.file_name() == Some(*DOT_GIT)
             || entry.path.file_name() == Some(local_settings_folder_relative_path().as_os_str())
             || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
@@ -3178,10 +3217,9 @@ impl fmt::Debug for Snapshot {
 pub struct File {
     pub worktree: Model<Worktree>,
     pub path: Arc<Path>,
-    pub mtime: Option<SystemTime>,
+    pub disk_state: DiskState,
     pub entry_id: Option<ProjectEntryId>,
     pub is_local: bool,
-    pub is_deleted: bool,
     pub is_private: bool,
 }
 
@@ -3194,8 +3232,8 @@ impl language::File for File {
         }
     }
 
-    fn mtime(&self) -> Option<SystemTime> {
-        self.mtime
+    fn disk_state(&self) -> DiskState {
+        self.disk_state
     }
 
     fn path(&self) -> &Arc<Path> {
@@ -3238,10 +3276,6 @@ impl language::File for File {
         self.worktree.read(cx).id()
     }
 
-    fn is_deleted(&self) -> bool {
-        self.is_deleted
-    }
-
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -3251,8 +3285,8 @@ impl language::File for File {
             worktree_id: self.worktree.read(cx).id().to_proto(),
             entry_id: self.entry_id.map(|id| id.to_proto()),
             path: self.path.to_string_lossy().into(),
-            mtime: self.mtime.map(|time| time.into()),
-            is_deleted: self.is_deleted,
+            mtime: self.disk_state.mtime().map(|time| time.into()),
+            is_deleted: self.disk_state == DiskState::Deleted,
         }
     }
 
@@ -3293,10 +3327,13 @@ impl File {
         Arc::new(Self {
             worktree,
             path: entry.path.clone(),
-            mtime: entry.mtime,
+            disk_state: if let Some(mtime) = entry.mtime {
+                DiskState::Present { mtime }
+            } else {
+                DiskState::New
+            },
             entry_id: Some(entry.id),
             is_local: true,
-            is_deleted: false,
             is_private: entry.is_private,
         })
     }
@@ -3316,13 +3353,22 @@ impl File {
             return Err(anyhow!("worktree id does not match file"));
         }
 
+        let disk_state = if proto.is_deleted {
+            DiskState::Deleted
+        } else {
+            if let Some(mtime) = proto.mtime.map(&Into::into) {
+                DiskState::Present { mtime }
+            } else {
+                DiskState::New
+            }
+        };
+
         Ok(Self {
             worktree,
             path: Path::new(&proto.path).into(),
-            mtime: proto.mtime.map(|time| time.into()),
+            disk_state,
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
-            is_deleted: proto.is_deleted,
             is_private: false,
         })
     }
@@ -3336,21 +3382,20 @@ impl File {
     }
 
     pub fn project_entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
-        if self.is_deleted {
-            None
-        } else {
-            self.entry_id
+        match self.disk_state {
+            DiskState::Deleted => None,
+            _ => self.entry_id,
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub id: ProjectEntryId,
     pub kind: EntryKind,
     pub path: Arc<Path>,
     pub inode: u64,
-    pub mtime: Option<SystemTime>,
+    pub mtime: Option<MTime>,
 
     pub canonical_path: Option<Box<Path>>,
     /// Whether this entry is ignored by Git.
@@ -3358,6 +3403,12 @@ pub struct Entry {
     /// We only scan ignored entries once the directory is expanded and
     /// exclude them from searches.
     pub is_ignored: bool,
+
+    /// Whether this entry is always included in searches.
+    ///
+    /// This is used for entries that are always included in searches, even
+    /// if they are ignored by git. Overridden by file_scan_exclusions.
+    pub is_always_included: bool,
 
     /// Whether this entry's canonical path is outside of the worktree.
     /// This means the entry is only accessible from the worktree root via a
@@ -3376,7 +3427,7 @@ pub struct Entry {
     pub is_fifo: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
     UnloadedDir,
     PendingDir,
@@ -3430,6 +3481,7 @@ impl Entry {
             size: metadata.len,
             canonical_path,
             is_ignored: false,
+            is_always_included: false,
             is_external: false,
             is_private: false,
             git_status: None,
@@ -3476,7 +3528,8 @@ impl sum_tree::Item for Entry {
     type Summary = EntrySummary;
 
     fn summary(&self, _cx: &()) -> Self::Summary {
-        let non_ignored_count = if self.is_ignored || self.is_external {
+        let non_ignored_count = if (self.is_ignored || self.is_external) && !self.is_always_included
+        {
             0
         } else {
             1
@@ -4244,6 +4297,7 @@ impl BackgroundScanner {
 
             if child_entry.is_dir() {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
+                child_entry.is_always_included = self.settings.is_path_always_included(&child_path);
 
                 // Avoid recursing until crash in the case of a recursive symlink
                 if job.ancestor_inodes.contains(&child_entry.inode) {
@@ -4268,6 +4322,7 @@ impl BackgroundScanner {
                 }
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
+                child_entry.is_always_included = self.settings.is_path_always_included(&child_path);
                 if !child_entry.is_ignored {
                     if let Some(repo) = &containing_repository {
                         if let Ok(repo_path) = child_entry.path.strip_prefix(&repo.work_directory) {
@@ -4303,6 +4358,12 @@ impl BackgroundScanner {
                     entry.kind = EntryKind::UnloadedDir;
                     new_jobs.remove(job_ix);
                 }
+            }
+            if entry.is_always_included {
+                state
+                    .snapshot
+                    .always_included_entries
+                    .push(entry.path.clone());
             }
         }
 
@@ -4420,6 +4481,7 @@ impl BackgroundScanner {
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
                     fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
+                    fs_entry.is_always_included = self.settings.is_path_always_included(path);
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if state.should_scan_directory(&fs_entry)
@@ -5307,7 +5369,7 @@ impl<'a> Traversal<'a> {
             if let Some(entry) = self.cursor.item() {
                 if (self.include_files || !entry.is_file())
                     && (self.include_dirs || !entry.is_dir())
-                    && (self.include_ignored || !entry.is_ignored)
+                    && (self.include_ignored || !entry.is_ignored || entry.is_always_included)
                 {
                     return true;
                 }
@@ -5438,10 +5500,12 @@ impl<'a> From<&'a Entry> for proto::Entry {
     }
 }
 
-impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
+impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
     type Error = anyhow::Error;
 
-    fn try_from((root_char_bag, entry): (&'a CharBag, proto::Entry)) -> Result<Self> {
+    fn try_from(
+        (root_char_bag, always_included, entry): (&'a CharBag, &PathMatcher, proto::Entry),
+    ) -> Result<Self> {
         let kind = if entry.is_dir {
             EntryKind::Dir
         } else {
@@ -5452,7 +5516,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
             kind,
-            path,
+            path: path.clone(),
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
             size: entry.size.unwrap_or(0),
@@ -5460,6 +5524,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
                 .canonical_path
                 .map(|path_string| Box::from(Path::new(&path_string))),
             is_ignored: entry.is_ignored,
+            is_always_included: always_included.is_match(path.as_ref()),
             is_external: entry.is_external,
             git_status: git_status_from_proto(entry.git_status),
             is_private: false,
