@@ -5180,6 +5180,163 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_copy_paste_directory_with_sibling_file(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/test",
+            json!({
+                "dir1": {
+                    "a.txt": "",
+                    "b.txt": "",
+                },
+                "dir2": {},
+                "c.txt": "",
+                "d.txt": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "test/dir1", cx);
+
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        });
+
+        select_path_with_mark(&panel, "test/dir1", cx);
+        select_path_with_mark(&panel, "test/c.txt", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v test",
+                "    v dir1  <== marked",
+                "          a.txt",
+                "          b.txt",
+                "    > dir2",
+                "      c.txt  <== selected  <== marked",
+                "      d.txt",
+            ],
+            "Initial state before copying dir1 and c.txt"
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+        });
+        select_path(&panel, "test/dir2", cx);
+        panel.update(cx, |panel, cx| {
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+
+        toggle_expand_dir(&panel, "test/dir2/dir1", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v test",
+                "    v dir1  <== marked",
+                "          a.txt",
+                "          b.txt",
+                "    v dir2",
+                "        v dir1  <== selected",
+                "              a.txt",
+                "              b.txt",
+                "          c.txt",
+                "      c.txt  <== marked",
+                "      d.txt",
+            ],
+            "Should copy dir1 as well as c.txt into dir2"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_paste_nested_and_root_entries(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/test",
+            json!({
+                "dir1": {
+                    "a.txt": "",
+                    "b.txt": "",
+                },
+                "dir2": {},
+                "c.txt": "",
+                "d.txt": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "test/dir1", cx);
+
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        });
+
+        select_path_with_mark(&panel, "test/dir1/a.txt", cx);
+        select_path_with_mark(&panel, "test/dir1", cx);
+        select_path_with_mark(&panel, "test/c.txt", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v test",
+                "    v dir1  <== marked",
+                "          a.txt  <== marked",
+                "          b.txt",
+                "    > dir2",
+                "      c.txt  <== selected  <== marked",
+                "      d.txt",
+            ],
+            "Initial state before copying a.txt, dir1 and c.txt"
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+        });
+        select_path(&panel, "test/dir2", cx);
+        panel.update(cx, |panel, cx| {
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+
+        toggle_expand_dir(&panel, "test/dir2/dir1", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v test",
+                "    v dir1  <== marked",
+                "          a.txt  <== marked",
+                "          b.txt",
+                "    v dir2",
+                "        v dir1  <== selected",
+                "              a.txt",
+                "              b.txt",
+                "          c.txt",
+                "      c.txt  <== marked",
+                "      d.txt",
+            ],
+            "Should copy dir1 and c.txt into dir2. a.txt is already present in copied dir1."
+        );
+    }
+
+    #[gpui::test]
     async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
