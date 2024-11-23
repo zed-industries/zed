@@ -1,4 +1,5 @@
 mod assistant_panel;
+mod chat_editor;
 
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};

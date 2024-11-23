@@ -456,11 +456,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "command_palette_hooks",
+ "editor",
  "feature_flags",
  "gpui",
  "language_model",
  "language_model_selector",
  "proto",
+ "settings",
+ "theme",
  "ui",
  "workspace",
 ]
