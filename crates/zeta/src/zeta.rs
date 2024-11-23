@@ -68,7 +68,7 @@ impl Zeta {
             .expect("FIREWORKS_API_KEY must be set")
             .into();
         let fireworks_model = std::env::var("FIREWORKS_MODEL")
-            .unwrap_or_else(|_| "accounts/fireworks/models/qwen2p5-coder-32b-instruct".to_string())
+            .unwrap_or_else(|_| "accounts/fireworks/models/qwen2p5-coder-7b-instruct#accounts/antonio-01403c/deployments/39c3a4c6".to_string())
             .into();
         Self::new(
             fireworks_api_url,
@@ -1036,11 +1036,12 @@ mod tests {
         log::debug!("grading prompt: {}", prompt);
         let (api_url, api_key, http_client, request) = zeta.read_with(cx, |zeta, _cx| {
             (
-                zeta.api_url.clone(),
-                zeta.api_key.clone(),
+                std::env::var("GRADING_API_URL")
+                    .unwrap_or_else(|_| "https://api.fireworks.ai/inference/v1".into()),
+                std::env::var("GRADING_API_KEY").expect("GRADING_API_KEY must be set"),
                 zeta.http_client.clone(),
                 open_ai::Request {
-                    model: zeta.model.to_string(),
+                    model: std::env::var("GRADING_MODEL").expect("GRADING_MODEL must be set"),
                     messages: vec![open_ai::RequestMessage::User { content: prompt }],
                     stream: false,
                     max_tokens: None,
@@ -1089,7 +1090,7 @@ mod tests {
                         Arc::from("https://api.fireworks.ai/inference/v1"),
                         Arc::from(api_key),
                         Arc::from(std::env::var("FIREWORKS_MODEL").unwrap_or_else(|_| {
-                            "accounts/fireworks/models/qwen2p5-coder-32b-instruct".to_string()
+                            "accounts/fireworks/models/qwen2p5-coder-7b-instruct#accounts/antonio-01403c/deployments/39c3a4c6".to_string()
                         })),
                     ),
                     Err(_) => (
