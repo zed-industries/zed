@@ -9,6 +9,7 @@ use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{Pane, Workspace};
 
+use crate::chat_editor::ChatEditor;
 use crate::{NewChat, ToggleFocus, ToggleModelSelector};
 
 pub fn init(cx: &mut AppContext) {
@@ -24,6 +25,7 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct AssistantPanel {
     pane: View<Pane>,
+    chat_editor: View<ChatEditor>,
 }
 
 impl AssistantPanel {
@@ -54,7 +56,10 @@ impl AssistantPanel {
             pane
         });
 
-        Self { pane }
+        Self {
+            pane,
+            chat_editor: cx.new_view(ChatEditor::new),
+        }
     }
 }
 
@@ -231,10 +236,18 @@ impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .key_context("AssistantPanel2")
+            .justify_between()
             .size_full()
             .on_action(cx.listener(|_this, _: &NewChat, _cx| {
                 println!("Action: New Chat");
             }))
             .child(self.render_toolbar(cx))
+            .child(v_flex().bg(cx.theme().colors().panel_background))
+            .child(
+                h_flex()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(self.chat_editor.clone()),
+            )
     }
 }
