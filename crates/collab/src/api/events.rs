@@ -1420,8 +1420,6 @@ fn for_snowflake(
                     "enable screen share" => "Screen Share Enabled".to_string(),
                     "disable screen share" => "Screen Share Disabled".to_string(),
                     "decline incoming" => "Incoming Call Declined".to_string(),
-                    "enable camera" => "Camera Enabled".to_string(),
-                    "disable camera" => "Camera Disabled".to_string(),
                     _ => format!("Unknown Call Event: {}", e.operation),
                 };
 
