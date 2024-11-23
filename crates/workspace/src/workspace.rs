@@ -1099,7 +1099,13 @@ impl Workspace {
             let mut paths_to_open = Vec::with_capacity(abs_paths.len());
             for path in abs_paths.into_iter() {
                 if let Some(canonical) = app_state.fs.canonicalize(&path).await.ok() {
-                    paths_to_open.push(canonical)
+                    if cfg!(target_os = "windows") {
+                        paths_to_open.push(PathBuf::from(
+                            canonical.to_string_lossy().trim_start_matches("\\\\?\\"),
+                        ))
+                    } else {
+                        paths_to_open.push(canonical)
+                    }
                 } else {
                     paths_to_open.push(path)
                 }
