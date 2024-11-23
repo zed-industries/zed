@@ -533,6 +533,10 @@ impl Telemetry {
         self.state.lock().metrics_id.clone()
     }
 
+    pub fn system_id(self: &Arc<Self>) -> Option<Arc<str>> {
+        self.state.lock().system_id.clone()
+    }
+
     pub fn installation_id(self: &Arc<Self>) -> Option<Arc<str>> {
         self.state.lock().installation_id.clone()
     }
