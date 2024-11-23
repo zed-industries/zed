@@ -5,7 +5,6 @@ pub mod assistant_settings;
 mod context;
 pub mod context_store;
 mod inline_assistant;
-mod model_selector;
 mod patch;
 mod prompt_library;
 mod prompts;
@@ -37,7 +36,6 @@ pub(crate) use inline_assistant::*;
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
-pub(crate) use model_selector::*;
 pub use patch::*;
 pub use prompts::PromptBuilder;
 use prompts::PromptLoadingParams;

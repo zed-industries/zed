@@ -1,7 +1,7 @@
 use crate::{
     assistant_settings::AssistantSettings, humanize_token_count, prompts::PromptBuilder,
     AssistantPanel, AssistantPanelEvent, CharOperation, CycleNextInlineAssist,
-    CyclePreviousInlineAssist, LineDiff, LineOperation, ModelSelector, RequestType, StreamingDiff,
+    CyclePreviousInlineAssist, LineDiff, LineOperation, RequestType, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{telemetry::Telemetry, ErrorExt};
@@ -33,12 +33,13 @@ use language_model::{
     LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelTextStream, Role,
 };
+use language_model_selector::ModelSelector;
 use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
 use rope::Rope;
-use settings::{Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use smol::future::FutureExt;
 use std::{
     cmp,
@@ -1501,7 +1502,16 @@ impl Render for PromptEditor {
                     .gap_2()
                     .child(
                         ModelSelector::new(
-                            self.fs.clone(),
+                            {
+                                let fs = self.fs.clone();
+                                move |model, cx| {
+                                    update_settings_file::<AssistantSettings>(
+                                        fs.clone(),
+                                        cx,
+                                        move |settings, _| settings.set_model(model.clone()),
+                                    );
+                                }
+                            },
                             IconButton::new("context", IconName::SettingsAlt)
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::Small)

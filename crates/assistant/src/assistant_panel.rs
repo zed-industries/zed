@@ -17,9 +17,9 @@ use crate::{
     ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
     DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
     InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
-    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
-    ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    RequestType, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    MessageMetadata, MessageStatus, NewContext, ParsedSlashCommand, PendingSlashCommandStatus,
+    QuoteSelection, RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -55,6 +55,7 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role,
     ZED_CLOUD_PROVIDER_ID,
 };
+use language_model_selector::{ModelPickerDelegate, ModelSelector};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
@@ -4560,7 +4561,16 @@ impl Render for ContextEditorToolbarItem {
             // })
             .child(
                 ModelSelector::new(
-                    self.fs.clone(),
+                    {
+                        let fs = self.fs.clone();
+                        move |model, cx| {
+                            update_settings_file::<AssistantSettings>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| settings.set_model(model.clone()),
+                            );
+                        }
+                    },
                     ButtonLike::new("active-model")
                         .style(ButtonStyle::Subtle)
                         .child(
