@@ -1845,7 +1845,6 @@ fn unmatched_forward(
     char: char,
 ) -> DisplayPoint {
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1245
-    let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot);
 
@@ -1882,7 +1881,6 @@ fn unmatched_backward(
     char: char,
 ) -> DisplayPoint {
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1239
-    let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot);
 
@@ -1892,7 +1890,7 @@ fn unmatched_backward(
         let mut closest_distance = usize::MAX;
 
         for (start_range, _) in ranges {
-            if start_range.start <= offset {
+            if start_range.start < offset {
                 let mut chars = map.buffer_snapshot.chars_at(start_range.start);
                 if Some(char) == chars.next() {
                     let distance = offset - start_range.start;
@@ -2268,20 +2266,20 @@ mod test {
             }"});
 
         // test it works on immediate nesting
-        cx.set_shared_state("{ˇ{}{}}").await;
+        cx.set_shared_state("{ˇ {}{}}").await;
         cx.simulate_shared_keystrokes("] }").await;
-        cx.shared_state().await.assert_eq("{{}{}ˇ}");
-        cx.set_shared_state("(ˇ()())").await;
+        cx.shared_state().await.assert_eq("{ {}{}ˇ}");
+        cx.set_shared_state("(ˇ ()())").await;
         cx.simulate_shared_keystrokes("] )").await;
-        cx.shared_state().await.assert_eq("(()()ˇ)");
+        cx.shared_state().await.assert_eq("( ()()ˇ)");
 
         // test it works on immediate nesting inside braces
-        cx.set_shared_state("{\n    ˇ{()}\n}").await;
+        cx.set_shared_state("{\n    ˇ {()}\n}").await;
         cx.simulate_shared_keystrokes("] }").await;
-        cx.shared_state().await.assert_eq("{\n    {()}\nˇ}");
-        cx.set_shared_state("(\n    ˇ{()}\n)").await;
+        cx.shared_state().await.assert_eq("{\n     {()}\nˇ}");
+        cx.set_shared_state("(\n    ˇ {()}\n)").await;
         cx.simulate_shared_keystrokes("] )").await;
-        cx.shared_state().await.assert_eq("(\n    {()}\nˇ)");
+        cx.shared_state().await.assert_eq("(\n     {()}\nˇ)");
     }
 
     #[gpui::test]
@@ -2313,20 +2311,20 @@ mod test {
             }"});
 
         // test it works on immediate nesting
-        cx.set_shared_state("{{}{}ˇ}").await;
+        cx.set_shared_state("{{}{} ˇ }").await;
         cx.simulate_shared_keystrokes("[ {").await;
-        cx.shared_state().await.assert_eq("ˇ{{}{}}");
-        cx.set_shared_state("(()()ˇ)").await;
+        cx.shared_state().await.assert_eq("ˇ{{}{}  }");
+        cx.set_shared_state("(()() ˇ )").await;
         cx.simulate_shared_keystrokes("[ (").await;
-        cx.shared_state().await.assert_eq("ˇ(()())");
+        cx.shared_state().await.assert_eq("ˇ(()()  )");
 
         // test it works on immediate nesting inside braces
-        cx.set_shared_state("{\n    {()}ˇ\n}").await;
+        cx.set_shared_state("{\n    {()} ˇ\n}").await;
         cx.simulate_shared_keystrokes("[ {").await;
-        cx.shared_state().await.assert_eq("ˇ{\n    {()}\n}");
-        cx.set_shared_state("(\n    {()}ˇ\n)").await;
+        cx.shared_state().await.assert_eq("ˇ{\n    {()} \n}");
+        cx.set_shared_state("(\n    {()} ˇ\n)").await;
         cx.simulate_shared_keystrokes("[ (").await;
-        cx.shared_state().await.assert_eq("ˇ(\n    {()}\n)");
+        cx.shared_state().await.assert_eq("ˇ(\n    {()} \n)");
     }
 
     #[gpui::test]
