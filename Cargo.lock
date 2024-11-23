@@ -450,6 +450,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "assistant2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "command_palette_hooks",
+ "feature_flags",
+ "gpui",
+ "proto",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "assistant_slash_command"
 version = "0.1.0"
 dependencies = [
@@ -15549,6 +15562,7 @@ dependencies = [
  "ashpd",
  "assets",
  "assistant",
+ "assistant2",
  "async-watch",
  "audio",
  "auto_update",

@@ -19,6 +19,7 @@ activity_indicator.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
+assistant2.workspace = true
 async-watch.workspace = true
 audio.workspace = true
 auto_update.workspace = true
