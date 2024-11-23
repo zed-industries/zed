@@ -458,6 +458,8 @@ dependencies = [
  "command_palette_hooks",
  "feature_flags",
  "gpui",
+ "language_model",
+ "language_model_selector",
  "proto",
  "ui",
  "workspace",
