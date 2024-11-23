@@ -58,7 +58,7 @@ impl AssistantPanel {
 
         Self {
             pane,
-            chat_editor: cx.new_view(|cx| ChatEditor::new(cx)),
+            chat_editor: cx.new_view(ChatEditor::new),
         }
     }
 }
