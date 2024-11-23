@@ -36,6 +36,18 @@ impl Blame {
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
+        let current_user = get_git_user_name(git_binary, working_directory)?;
+
+        if let Some(username) = current_user {
+            for entry in &mut entries {
+                if let Some(ref author) = entry.author {
+                    if author == &username {
+                        entry.author = Some(format!("{} (You)", author));
+                    }
+                }
+            }
+        }
+
         let mut permalinks = HashMap::default();
         let mut unique_shas = HashSet::default();
         let parsed_remote_url = remote_url
@@ -117,6 +129,21 @@ fn run_git_blame(
     }
 
     Ok(String::from_utf8(output.stdout)?)
+}
+
+fn get_git_user_name(git_binary: &Path, working_directory: &Path) -> Result<Option<String>> {
+    let output = std::process::Command::new(git_binary)
+        .current_dir(working_directory)
+        .arg("config")
+        .arg("user.name")
+        .output()?;
+
+    if output.status.success() {
+        let name = String::from_utf8(output.stdout)?;
+        Ok(Some(name.trim().to_string()))
+    } else {
+        Ok(None)
+    }
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
