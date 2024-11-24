@@ -9,8 +9,8 @@ use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{Pane, Workspace};
 
-use crate::chat_editor::ChatEditor;
-use crate::{NewChat, ToggleFocus, ToggleModelSelector};
+use crate::message_editor::MessageEditor;
+use crate::{NewThread, ToggleFocus, ToggleModelSelector};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -25,7 +25,7 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct AssistantPanel {
     pane: View<Pane>,
-    chat_editor: View<ChatEditor>,
+    message_editor: View<MessageEditor>,
 }
 
 impl AssistantPanel {
@@ -47,7 +47,7 @@ impl AssistantPanel {
                 workspace.project().clone(),
                 Default::default(),
                 None,
-                NewChat.boxed_clone(),
+                NewThread.boxed_clone(),
                 cx,
             );
             pane.set_can_split(false, cx);
@@ -58,7 +58,7 @@ impl AssistantPanel {
 
         Self {
             pane,
-            chat_editor: cx.new_view(ChatEditor::new),
+            message_editor: cx.new_view(MessageEditor::new),
         }
     }
 }
@@ -136,25 +136,30 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
-            .child(h_flex().child(Label::new("Chat Title Goes Here")))
+            .child(h_flex().child(Label::new("Thread Title Goes Here")))
             .child(
                 h_flex()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .child(self.render_language_model_selector(cx))
                     .child(Divider::vertical())
                     .child(
-                        IconButton::new("new-chat", IconName::Plus)
+                        IconButton::new("new-thread", IconName::Plus)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
                                 move |cx| {
-                                    Tooltip::for_action_in("New Chat", &NewChat, &focus_handle, cx)
+                                    Tooltip::for_action_in(
+                                        "New Thread",
+                                        &NewThread,
+                                        &focus_handle,
+                                        cx,
+                                    )
                                 }
                             })
                             .on_click(move |_event, _cx| {
-                                println!("New Chat");
+                                println!("New Thread");
                             }),
                     )
                     .child(
@@ -238,8 +243,8 @@ impl Render for AssistantPanel {
             .key_context("AssistantPanel2")
             .justify_between()
             .size_full()
-            .on_action(cx.listener(|_this, _: &NewChat, _cx| {
-                println!("Action: New Chat");
+            .on_action(cx.listener(|_this, _: &NewThread, _cx| {
+                println!("Action: New Thread");
             }))
             .child(self.render_toolbar(cx))
             .child(v_flex().bg(cx.theme().colors().panel_background))
@@ -247,7 +252,7 @@ impl Render for AssistantPanel {
                 h_flex()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .child(self.chat_editor.clone()),
+                    .child(self.message_editor.clone()),
             )
     }
 }
