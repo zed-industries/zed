@@ -175,44 +175,47 @@ impl TestAppContext {
         f(&cx)
     }
 
+    /// todo!(Change the interface to take a render fn)
     /// Adds a new window. The Window will always be backed by a `TestWindow` which
     /// can be retrieved with `self.test_window(handle)`
-    pub fn add_window<F, V>(&mut self, build_window: F) -> WindowHandle<V>
+    pub fn add_window<F, V>(&mut self, build_window: F) -> AnyWindowHandle
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
         V: 'static + Render,
     {
-        let mut cx = self.app.borrow_mut();
+        todo!()
+        // let mut cx = self.app.borrow_mut();
 
-        // Some tests rely on the window size matching the bounds of the test display
-        let bounds = Bounds::maximized(None, &mut cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |cx| cx.new_view(build_window),
-        )
-        .unwrap()
+        // // Some tests rely on the window size matching the bounds of the test display
+        // let bounds = Bounds::maximized(None, &mut cx);
+        // cx.open_window(
+        //     WindowOptions {
+        //         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        //         ..Default::default()
+        //     },
+        //     |cx| cx.new_view(build_window),
+        // )
+        // .unwrap()
     }
 
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
-        let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(None, &mut cx);
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    ..Default::default()
-                },
-                |cx| cx.new_view(|_| Empty),
-            )
-            .unwrap();
-        drop(cx);
-        let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
-        cx.run_until_parked();
-        cx
+        todo!()
+        // let mut cx = self.app.borrow_mut();
+        // let bounds = Bounds::maximized(None, &mut cx);
+        // let window = cx
+        //     .open_window(
+        //         WindowOptions {
+        //             window_bounds: Some(WindowBounds::Windowed(bounds)),
+        //             ..Default::default()
+        //         },
+        //         |_window, _cx| Empty.into_any(),
+        //     )
+        //     .unwrap();
+        // drop(cx);
+        // let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
+        // cx.run_until_parked();
+        // cx
     }
 
     /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
@@ -223,24 +226,25 @@ impl TestAppContext {
         F: FnOnce(&mut ViewContext<V>) -> V,
         V: 'static + Render,
     {
-        let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(None, &mut cx);
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    ..Default::default()
-                },
-                |cx| cx.new_view(build_root_view),
-            )
-            .unwrap();
-        drop(cx);
-        let view = window.root_view(self).unwrap();
-        let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
-        cx.run_until_parked();
+        todo!()
+        // let mut cx = self.app.borrow_mut();
+        // let bounds = Bounds::maximized(None, &mut cx);
+        // let window = cx
+        //     .open_window(
+        //         WindowOptions {
+        //             window_bounds: Some(WindowBounds::Windowed(bounds)),
+        //             ..Default::default()
+        //         },
+        //         |cx| cx.new_view(build_root_view),
+        //     )
+        //     .unwrap();
+        // drop(cx);
+        // let view = window.root_view(self).unwrap();
+        // let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
+        // cx.run_until_parked();
 
-        // it might be nice to try and cleanup these at the end of each test.
-        (view, cx)
+        // // it might be nice to try and cleanup these at the end of each test.
+        // (view, cx)
     }
 
     /// returns the TextSystem

@@ -28,13 +28,14 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
-    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyElement, AnyView,
+    AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase,
+    DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, IntoElement, KeyBinding, Keymap,
+    Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    RenderablePromptHandle, Reservation, SharedString, SubscriberSet, Subscription, SvgRenderer,
+    Task, TextSystem, View, ViewContext, Window, WindowAppearance, WindowContext, WindowHandle,
+    WindowId,
 };
 
 mod async_context;
@@ -544,18 +545,23 @@ impl AppContext {
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
     /// functionality.
-    pub fn open_window<V: 'static + Render>(
+    pub fn open_window<F, E>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
-    ) -> anyhow::Result<WindowHandle<V>> {
+        render: F,
+    ) -> anyhow::Result<AnyWindowHandle>
+    where
+        F: 'static + Fn(&mut Window, &mut AppContext) -> E,
+        E: IntoElement,
+    {
         self.update(|cx| {
             let id = cx.windows.insert(None);
-            let handle = WindowHandle::new(id);
+            let handle = AnyWindowHandle::new(id);
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
-                    let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
-                    window.root_view.replace(root_view.into());
+                    window.render.replace(Box::new(move |window, cx| {
+                        render(window, cx).into_any_element()
+                    }));
                     WindowContext::new(cx, &mut window).defer(|cx| cx.appearance_changed());
                     cx.window_handles.insert(id, window.handle);
                     cx.windows.get_mut(id).unwrap().replace(window);
@@ -1474,29 +1480,30 @@ impl Context for AppContext {
     where
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
     {
-        self.update(|cx| {
-            let mut window = cx
-                .windows
-                .get_mut(handle.id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .take()
-                .ok_or_else(|| anyhow!("window not found"))?;
+        todo!()
+        // self.update(|cx| {
+        //     let mut window = cx
+        //         .windows
+        //         .get_mut(handle.id)
+        //         .ok_or_else(|| anyhow!("window not found"))?
+        //         .take()
+        //         .ok_or_else(|| anyhow!("window not found"))?;
 
-            let root_view = window.root_view.clone().unwrap();
-            let result = update(root_view, &mut WindowContext::new(cx, &mut window));
+        //     let root_view = window.root_view.clone().unwrap();
+        //     let result = update(root_view, &mut WindowContext::new(cx, &mut window));
 
-            if window.removed {
-                cx.window_handles.remove(&handle.id);
-                cx.windows.remove(handle.id);
-            } else {
-                cx.windows
-                    .get_mut(handle.id)
-                    .ok_or_else(|| anyhow!("window not found"))?
-                    .replace(window);
-            }
+        //     if window.removed {
+        //         cx.window_handles.remove(&handle.id);
+        //         cx.windows.remove(handle.id);
+        //     } else {
+        //         cx.windows
+        //             .get_mut(handle.id)
+        //             .ok_or_else(|| anyhow!("window not found"))?
+        //             .replace(window);
+        //     }
 
-            Ok(result)
-        })
+        //     Ok(result)
+        // })
     }
 
     fn read_window<T, R>(
@@ -1507,19 +1514,20 @@ impl Context for AppContext {
     where
         T: 'static,
     {
-        let window = self
-            .windows
-            .get(window.id)
-            .ok_or_else(|| anyhow!("window not found"))?
-            .as_ref()
-            .unwrap();
+        todo!()
+        // let window = self
+        //     .windows
+        //     .get(window.id)
+        //     .ok_or_else(|| anyhow!("window not found"))?
+        //     .as_ref()
+        //     .unwrap();
 
-        let root_view = window.root_view.clone().unwrap();
-        let view = root_view
-            .downcast::<T>()
-            .map_err(|_| anyhow!("root view's type has changed"))?;
+        // let root_view = window.root_view.clone().unwrap();
+        // let view = root_view
+        //     .downcast::<T>()
+        //     .map_err(|_| anyhow!("root view's type has changed"))?;
 
-        Ok(read(view, self))
+        // Ok(read(view, self))
     }
 }
 

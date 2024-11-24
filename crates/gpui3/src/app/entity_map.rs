@@ -421,6 +421,8 @@ impl<T: 'static> Model<T> {
     {
         cx.update_model(self, update)
     }
+
+    // pub fn listener<E>(&self, callback: Fn()) -> impl Fn()
 }
 
 impl<T> Clone for Model<T> {

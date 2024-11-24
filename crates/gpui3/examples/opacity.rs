@@ -30,35 +30,35 @@ impl AssetSource for Assets {
     }
 }
 
-struct HelloWorld {
+struct OpacityModel {
     _task: Option<Task<()>>,
     opacity: f32,
 }
 
-impl HelloWorld {
-    fn new(_: &mut ViewContext<Self>) -> Self {
+impl OpacityModel {
+    fn new(_: &mut ModelContext<Self>) -> Self {
         Self {
             _task: None,
             opacity: 0.5,
         }
     }
 
-    fn change_opacity(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn change_opacity(&mut self, _: &ClickEvent, cx: &mut ModelContext<Self>) {
         self.opacity = 0.0;
         cx.notify();
 
-        self._task = Some(cx.spawn(|view, mut cx| async move {
+        self._task = Some(cx.spawn(|model, cx| async move {
             loop {
                 Timer::after(Duration::from_secs_f32(0.05)).await;
                 let mut stop = false;
                 let _ = cx.update(|cx| {
-                    view.update(cx, |view, cx| {
-                        if view.opacity >= 1.0 {
+                    model.update(cx, |model, cx| {
+                        if model.opacity >= 1.0 {
                             stop = true;
                             return;
                         }
 
-                        view.opacity += 0.1;
+                        model.opacity += 0.1;
                         cx.notify();
                     })
                 });
@@ -71,8 +71,9 @@ impl HelloWorld {
     }
 }
 
-impl Render for HelloWorld {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+fn opacity_view(model: Model<OpacityModel>) -> impl Fn(&mut Window, &mut AppContext) -> Div {
+    move |_window, cx| {
+        let opacity_example = model.read(cx);
         div()
             .flex()
             .flex_row()
@@ -92,13 +93,19 @@ impl Render for HelloWorld {
             .child(
                 div()
                     .id("panel")
-                    .on_click(cx.listener(Self::change_opacity))
+                    .on_click({
+                        // todo!(define a Model::listener function to do this)
+                        let model = model.clone();
+                        move |event, cx| {
+                            model.update(cx, |model, cx| model.change_opacity(event, cx))
+                        }
+                    })
                     .absolute()
                     .top_8()
                     .left_8()
                     .right_8()
                     .bottom_8()
-                    .opacity(self.opacity)
+                    .opacity(opacity_example.opacity)
                     .flex()
                     .justify_center()
                     .items_center()
@@ -137,7 +144,7 @@ impl Render for HelloWorld {
                                     .text_decoration_2()
                                     .text_decoration_wavy()
                                     .text_decoration_color(gpui::red())
-                                    .child(format!("opacity: {:.1}", self.opacity)),
+                                    .child(format!("opacity: {:.1}", opacity_example.opacity)),
                             )
                             .child(
                                 svg()
@@ -160,12 +167,13 @@ fn main() {
         })
         .run(|cx: &mut AppContext| {
             let bounds = Bounds::centered(None, size(px(500.0), px(500.0)), cx);
+            let model = cx.new_model(OpacityModel::new);
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |cx| cx.new_view(HelloWorld::new),
+                opacity_view(model),
             )
             .unwrap();
         });

@@ -1,8 +1,8 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext, Context,
-    DismissEvent, FocusableView, ForegroundExecutor, Global, Model, ModelContext, PromptLevel,
-    Render, Reservation, Result, Task, View, ViewContext, VisualContext, WindowContext,
-    WindowHandle,
+    AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor,
+    BorrowAppContext, Context, DismissEvent, FocusableView, ForegroundExecutor, Global, Model,
+    ModelContext, PromptLevel, Render, Reservation, Result, Task, View, ViewContext, VisualContext,
+    Window, WindowContext, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
@@ -141,8 +141,8 @@ impl AsyncAppContext {
     pub fn open_window<V>(
         &self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
-    ) -> Result<WindowHandle<V>>
+        render: impl 'static + Fn(&mut Window, &mut AppContext) -> AnyElement,
+    ) -> Result<AnyWindowHandle>
     where
         V: 'static + Render,
     {
@@ -151,7 +151,7 @@ impl AsyncAppContext {
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.borrow_mut();
-        lock.open_window(options, build_root_view)
+        lock.open_window(options, render)
     }
 
     /// Schedule a future to be polled in the background.

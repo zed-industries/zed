@@ -67,8 +67,8 @@ struct ImageShowcase {
     asset_resource: SharedString,
 }
 
-impl Render for ImageShowcase {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+fn image_showcase_view(showcase: ImageShowcase) -> impl Fn(&mut Window, &mut AppContext) -> Div {
+    move |_window: &mut Window, _cx: &mut AppContext| {
         div()
             .size_full()
             .flex()
@@ -86,15 +86,15 @@ impl Render for ImageShowcase {
                     .gap_8()
                     .child(ImageContainer::new(
                         "Image loaded from a local file",
-                        self.local_resource.clone(),
+                        showcase.local_resource.clone(),
                     ))
                     .child(ImageContainer::new(
                         "Image loaded from a remote resource",
-                        self.remote_resource.clone(),
+                        showcase.remote_resource.clone(),
                     ))
                     .child(ImageContainer::new(
                         "Image loaded from an asset",
-                        self.asset_resource.clone(),
+                        showcase.asset_resource.clone(),
                     )),
             )
             .child(
@@ -151,8 +151,9 @@ fn main() {
                 ..Default::default()
             };
 
-            cx.open_window(window_options, |cx| {
-                cx.new_view(|_cx| ImageShowcase {
+            cx.open_window(
+                window_options,
+                image_showcase_view(ImageShowcase {
                     // Relative path to your root project path
                     local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
                         .unwrap()
@@ -161,8 +162,8 @@ fn main() {
                     remote_resource: "https://picsum.photos/512/512".into(),
 
                     asset_resource: "image/color.svg".into(),
-                })
-            })
+                }),
+            )
             .unwrap();
         });
 }

@@ -505,34 +505,35 @@ mod test {
 
     #[gpui::test]
     fn test_on_events(cx: &mut TestAppContext) {
-        let window = cx.update(|cx| {
-            cx.open_window(Default::default(), |cx| {
-                cx.new_view(|cx| TestView {
-                    saw_key_down: false,
-                    saw_action: false,
-                    focus_handle: cx.focus_handle(),
-                })
-            })
-            .unwrap()
-        });
+        todo!()
+        // let window = cx.update(|cx| {
+        //     cx.open_window(Default::default(), |_window, cx| {
+        //         cx.new_view(|cx| TestView {
+        //             saw_key_down: false,
+        //             saw_action: false,
+        //             focus_handle: cx.focus_handle(),
+        //         })
+        //     })
+        //     .unwrap()
+        // });
 
-        cx.update(|cx| {
-            cx.bind_keys(vec![KeyBinding::new("ctrl-g", TestAction, Some("parent"))]);
-        });
+        // cx.update(|cx| {
+        //     cx.bind_keys(vec![KeyBinding::new("ctrl-g", TestAction, Some("parent"))]);
+        // });
 
-        window
-            .update(cx, |test_view, cx| cx.focus(&test_view.focus_handle))
-            .unwrap();
+        // window
+        //     .update(cx, |test_view, cx| cx.focus(&test_view.focus_handle))
+        //     .unwrap();
 
-        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
-        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
+        // cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
+        // cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
 
-        window
-            .update(cx, |test_view, _| {
-                assert!(test_view.saw_key_down || test_view.saw_action);
-                assert!(test_view.saw_key_down);
-                assert!(test_view.saw_action);
-            })
-            .unwrap();
+        // window
+        //     .update(cx, |test_view, _| {
+        //         assert!(test_view.saw_key_down || test_view.saw_action);
+        //         assert!(test_view.saw_key_down);
+        //         assert!(test_view.saw_action);
+        //     })
+        //     .unwrap();
     }
 }
