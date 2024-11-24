@@ -5523,10 +5523,16 @@ impl LspStore {
                 .unwrap_or_default(),
             allow_binary_download,
         };
+        let toolchains = self.toolchain_store(cx);
         cx.spawn(|_, mut cx| async move {
             let binary_result = adapter
                 .clone()
-                .get_language_server_command(delegate.clone(), lsp_binary_options, &mut cx)
+                .get_language_server_command(
+                    delegate.clone(),
+                    toolchains,
+                    lsp_binary_options,
+                    &mut cx,
+                )
                 .await;
 
             delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
@@ -7783,6 +7789,7 @@ impl LspAdapter for SshLspAdapter {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         Some(self.binary.clone())
