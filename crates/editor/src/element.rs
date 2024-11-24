@@ -3242,7 +3242,7 @@ impl EditorElement {
                         );
                         Some((
                             hunk_bounds,
-                            cx.theme().status().modified_border,
+                            cx.theme().status().modified,
                             Corners::all(px(0.)),
                         ))
                     }
@@ -3250,12 +3250,12 @@ impl EditorElement {
                         hitbox.as_ref().map(|hunk_hitbox| match status {
                             DiffHunkStatus::Added => (
                                 hunk_hitbox.bounds,
-                                cx.theme().status().created_border,
+                                cx.theme().status().created,
                                 Corners::all(px(0.)),
                             ),
                             DiffHunkStatus::Modified => (
                                 hunk_hitbox.bounds,
-                                cx.theme().status().modified_border,
+                                cx.theme().status().modified,
                                 Corners::all(px(0.)),
                             ),
                             DiffHunkStatus::Removed => (
@@ -3266,7 +3266,7 @@ impl EditorElement {
                                     ),
                                     size(hunk_hitbox.size.width * px(2.5), hunk_hitbox.size.height),
                                 ),
-                                cx.theme().status().deleted_border,
+                                cx.theme().status().deleted,
                                 Corners::all(1. * line_height),
                             ),
                         })
@@ -3781,13 +3781,9 @@ impl EditorElement {
                                             end_display_row.0 -= 1;
                                         }
                                         let color = match hunk_status(&hunk) {
-                                            DiffHunkStatus::Added => theme.status().created_border,
-                                            DiffHunkStatus::Modified => {
-                                                theme.status().modified_border
-                                            }
-                                            DiffHunkStatus::Removed => {
-                                                theme.status().deleted_border
-                                            }
+                                            DiffHunkStatus::Added => theme.status().created,
+                                            DiffHunkStatus::Modified => theme.status().modified,
+                                            DiffHunkStatus::Removed => theme.status().deleted,
                                         };
                                         ColoredRange {
                                             start: start_display_row,

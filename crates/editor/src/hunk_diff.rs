@@ -415,9 +415,9 @@ impl Editor {
         let border_color = cx.theme().colors().border_variant;
         let bg_color = cx.theme().colors().editor_background;
         let gutter_color = match hunk.status {
-            DiffHunkStatus::Added => cx.theme().status().created_border,
-            DiffHunkStatus::Modified => cx.theme().status().modified_border,
-            DiffHunkStatus::Removed => cx.theme().status().deleted_border,
+            DiffHunkStatus::Added => cx.theme().status().created,
+            DiffHunkStatus::Modified => cx.theme().status().modified,
+            DiffHunkStatus::Removed => cx.theme().status().deleted,
         };
 
         BlockProperties {
@@ -694,8 +694,8 @@ impl Editor {
     ) -> BlockProperties<Anchor> {
         let gutter_color = match hunk.status {
             DiffHunkStatus::Added => unreachable!(),
-            DiffHunkStatus::Modified => cx.theme().status().modified_border,
-            DiffHunkStatus::Removed => cx.theme().status().deleted_border,
+            DiffHunkStatus::Modified => cx.theme().status().modified,
+            DiffHunkStatus::Removed => cx.theme().status().deleted,
         };
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
