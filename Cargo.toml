@@ -46,6 +46,7 @@ members = [
     "crates/go_to_line",
     "crates/google_ai",
     "crates/gpui",
+    "crates/gpui3",
     "crates/gpui_macros",
     "crates/html_to_markdown",
     "crates/http_client",
