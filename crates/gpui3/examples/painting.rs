@@ -1,8 +1,8 @@
 use gpui::{
-    canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, MouseDownEvent, Path,
-    Pixels, Point, Render, ViewContext, WindowOptions,
+    canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, Model, MouseDownEvent, Path,
+    Pixels, Point, WindowOptions,
 };
-use gpui3 as gpui;
+use gpui3::{self as gpui, Div, ModelContext};
 struct PaintingViewer {
     default_lines: Vec<Path<Pixels>>,
     lines: Vec<Vec<Point<Pixels>>>,
@@ -71,15 +71,16 @@ impl PaintingViewer {
         }
     }
 
-    fn clear(&mut self, cx: &mut ViewContext<Self>) {
+    fn clear(&mut self, cx: &mut ModelContext<Self>) {
         self.lines.clear();
         cx.notify();
     }
 }
-impl Render for PaintingViewer {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let default_lines = self.default_lines.clone();
-        let lines = self.lines.clone();
+
+fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppContext) -> Div {
+    move |_window, _cx| {
+        let default_lines = model.read(_cx).default_lines.clone();
+        let lines = model.read(_cx).lines.clone();
         div()
             .font_family(".SystemUIFont")
             .bg(gpui::white())
@@ -104,9 +105,11 @@ impl Render for PaintingViewer {
                             .flex()
                             .px_3()
                             .py_1()
-                            .on_click(cx.listener(|this, _, cx| {
-                                this.clear(cx);
-                            })),
+                            .on_click({
+                                let model = model.clone();
+                                move |_, cx| {
+                                model.update(cx, |viewer, cx| viewer.clear(cx));
+                            }}),
                     ),
             )
             .child(
@@ -115,12 +118,13 @@ impl Render for PaintingViewer {
                     .child(
                         canvas(
                             move |_, _| {},
-                            move |_, _, cx| {
+                            {
+                                move |_, _, cx| {
                                 const STROKE_WIDTH: Pixels = px(2.0);
-                                for path in default_lines {
-                                    cx.paint_path(path, gpui::black());
+                                for path in &default_lines {
+                                    cx.paint_path(path.clone(), gpui::black());
                                 }
-                                for points in lines {
+                                for points in &lines {
                                     let mut path = Path::new(points[0]);
                                     for p in points.iter().skip(1) {
                                         path.line_to(*p);
@@ -132,53 +136,56 @@ impl Render for PaintingViewer {
                                         if last.x == p.x {
                                             offset_x = STROKE_WIDTH;
                                         }
-                                        path.line_to(point(p.x + offset_x, p.y  + STROKE_WIDTH));
+                                        path.line_to(point(p.x + offset_x, p.y + STROKE_WIDTH));
                                         last = p;
                                     }
 
                                     cx.paint_path(path, gpui::black());
                                 }
-                            },
+                            }},
                         )
                         .size_full(),
                     )
                     .on_mouse_down(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, ev: &MouseDownEvent, _| {
-                            this._painting = true;
-                            this.start = ev.position;
+                        model.listener(|viewer, ev: &MouseDownEvent, cx| {
+                            viewer._painting = true;
+                            viewer.start = ev.position;
                             let path = vec![ev.position];
-                            this.lines.push(path);
+                            viewer.lines.push(path);
+                            cx.notify();
                         }),
                     )
-                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, cx| {
-                        if !this._painting {
-                            return;
-                        }
-
-                        let is_shifted = ev.modifiers.shift;
-                        let mut pos = ev.position;
-                        // When holding shift, draw a straight line
-                        if is_shifted {
-                            let dx = pos.x - this.start.x;
-                            let dy = pos.y - this.start.y;
-                            if dx.abs() > dy.abs() {
-                                pos.y = this.start.y;
-                            } else {
-                                pos.x = this.start.x;
+                    .on_mouse_move({
+                        model.listener(|viewer, ev: &gpui::MouseMoveEvent, cx| {
+                            if !viewer._painting {
+                                return;
                             }
-                        }
 
-                        if let Some(path) = this.lines.last_mut() {
-                            path.push(pos);
-                        }
+                            let is_shifted = ev.modifiers.shift;
+                            let mut pos = ev.position;
+                            // When holding shift, draw a straight line
+                            if is_shifted {
+                                let dx = pos.x - viewer.start.x;
+                                let dy = pos.y - viewer.start.y;
+                                if dx.abs() > dy.abs() {
+                                    pos.y = viewer.start.y;
+                                } else {
+                                    pos.x = viewer.start.x;
+                                }
+                            }
 
-                        cx.notify();
-                    }))
+                            if let Some(path) = viewer.lines.last_mut() {
+                                path.push(pos);
+                            }
+                            cx.notify();
+                        })
+                    })
                     .on_mouse_up(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, _, _| {
-                            this._painting = false;
+                        model.listener(|viewer, _, cx| {
+                            viewer._painting = false;
+                            cx.notify();
                         }),
                     ),
             )
@@ -187,12 +194,13 @@ impl Render for PaintingViewer {
 
 fn main() {
     App::new().run(|cx: &mut AppContext| {
+        let model = cx.new_model(|_| PaintingViewer::new());
         cx.open_window(
             WindowOptions {
                 focus: true,
                 ..Default::default()
             },
-            |cx| cx.new_view(|_| PaintingViewer::new()),
+            view(model),
         )
         .unwrap();
         cx.activate(true);

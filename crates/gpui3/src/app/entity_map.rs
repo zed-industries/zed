@@ -1,4 +1,4 @@
-use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext};
+use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext, WindowContext};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -422,7 +422,31 @@ impl<T: 'static> Model<T> {
         cx.update_model(self, update)
     }
 
-    // pub fn listener<E>(&self, callback: Fn()) -> impl Fn()
+    /// Creates a listener function that updates this model when an event is received.
+    ///
+    /// This method takes a callback function that will be called with the model, the event, and a mutable
+    /// reference to the `AppContext`. It returns a new function that can be used as an event listener.
+    ///
+    /// # Arguments
+    ///
+    /// * `callback` - A closure that takes a mutable reference to the model (`&mut T`), a reference to the event (`&E`),
+    ///   and a mutable reference to the `AppContext`.
+    ///
+    /// # Returns
+    ///
+    /// A new function that can be used as an event listener. This function takes a reference to the event (`&E`)
+    /// and a mutable reference to the `AppContext`.
+    pub fn listener<E>(
+        &self,
+        callback: impl Fn(&mut T, &E, &mut ModelContext<T>) + 'static,
+    ) -> impl Fn(&E, &mut WindowContext) {
+        let model = self.clone();
+        move |event: &E, cx: &mut WindowContext| {
+            model.update(cx, |model, cx| {
+                callback(model, event, cx);
+            });
+        }
+    }
 }
 
 impl<T> Clone for Model<T> {

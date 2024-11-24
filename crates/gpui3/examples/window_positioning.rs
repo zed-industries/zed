@@ -7,18 +7,18 @@ struct WindowContent {
     bg: Hsla,
 }
 
-impl Render for WindowContent {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let window_bounds = cx.bounds();
+fn content_renderer(content: WindowContent) -> impl Fn(&mut gpui::Window, &mut AppContext) -> Div {
+    move |window, _cx| {
+        let window_bounds = window.bounds();
 
         div()
             .flex()
             .flex_col()
-            .bg(self.bg)
+            .bg(content.bg)
             .size_full()
             .items_center()
             .text_color(rgb(0xffffff))
-            .child(self.text.clone())
+            .child(content.text.clone())
             .child(
                 div()
                     .flex()
@@ -28,10 +28,10 @@ impl Render for WindowContent {
                     .size_full()
                     .child(format!(
                         "origin: {}, {} size: {}, {}",
-                        self.bounds.origin.x,
-                        self.bounds.origin.y,
-                        self.bounds.size.width,
-                        self.bounds.size.height
+                        content.bounds.origin.x,
+                        content.bounds.origin.y,
+                        content.bounds.size.width,
+                        content.bounds.size.height
                     ))
                     .child(format!(
                         "cx.bounds() origin: {}, {} size {}, {}",
@@ -77,13 +77,14 @@ fn main() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |cx| {
-                cx.new_view(|_| WindowContent {
+            cx.open_window(
+                build_window_options(screen.id(), bounds),
+                content_renderer(WindowContent {
                     text: format!("Top Left {:?}", screen.id()).into(),
                     bg: gpui::red(),
                     bounds,
-                })
-            })
+                }),
+            )
             .unwrap();
 
             let bounds = Bounds {
@@ -92,13 +93,14 @@ fn main() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |cx| {
-                cx.new_view(|_| WindowContent {
+            cx.open_window(
+                build_window_options(screen.id(), bounds),
+                content_renderer(WindowContent {
                     text: format!("Top Right {:?}", screen.id()).into(),
                     bg: gpui::red(),
                     bounds,
-                })
-            })
+                }),
+            )
             .unwrap();
 
             let bounds = Bounds {
@@ -107,13 +109,14 @@ fn main() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |cx| {
-                cx.new_view(|_| WindowContent {
+            cx.open_window(
+                build_window_options(screen.id(), bounds),
+                content_renderer(WindowContent {
                     text: format!("Bottom Left {:?}", screen.id()).into(),
                     bg: gpui::blue(),
                     bounds,
-                })
-            })
+                }),
+            )
             .unwrap();
 
             let bounds = Bounds {
@@ -122,13 +125,14 @@ fn main() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |cx| {
-                cx.new_view(|_| WindowContent {
+            cx.open_window(
+                build_window_options(screen.id(), bounds),
+                content_renderer(WindowContent {
                     text: format!("Bottom Right {:?}", screen.id()).into(),
                     bg: gpui::blue(),
                     bounds,
-                })
-            })
+                }),
+            )
             .unwrap();
 
             let bounds = Bounds {
@@ -136,13 +140,14 @@ fn main() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |cx| {
-                cx.new_view(|_| WindowContent {
+            cx.open_window(
+                build_window_options(screen.id(), bounds),
+                content_renderer(WindowContent {
                     text: format!("Top Center {:?}", screen.id()).into(),
                     bg: gpui::black(),
                     bounds,
-                })
-            })
+                }),
+            )
             .unwrap();
 
             let bounds = Bounds {
@@ -150,13 +155,14 @@ fn main() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |cx| {
-                cx.new_view(|_| WindowContent {
+            cx.open_window(
+                build_window_options(screen.id(), bounds),
+                content_renderer(WindowContent {
                     text: format!("Left Center {:?}", screen.id()).into(),
                     bg: gpui::black(),
                     bounds,
-                })
-            })
+                }),
+            )
             .unwrap();
 
             let bounds = Bounds {
@@ -167,13 +173,14 @@ fn main() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |cx| {
-                cx.new_view(|_| WindowContent {
+            cx.open_window(
+                build_window_options(screen.id(), bounds),
+                content_renderer(WindowContent {
                     text: format!("Center {:?}", screen.id()).into(),
                     bg: gpui::black(),
                     bounds,
-                })
-            })
+                }),
+            )
             .unwrap();
 
             let bounds = Bounds {
@@ -184,13 +191,14 @@ fn main() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |cx| {
-                cx.new_view(|_| WindowContent {
+            cx.open_window(
+                build_window_options(screen.id(), bounds),
+                content_renderer(WindowContent {
                     text: format!("Right Center {:?}", screen.id()).into(),
                     bg: gpui::black(),
                     bounds,
-                })
-            })
+                }),
+            )
             .unwrap();
 
             let bounds = Bounds {
@@ -201,13 +209,14 @@ fn main() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |cx| {
-                cx.new_view(|_| WindowContent {
+            cx.open_window(
+                build_window_options(screen.id(), bounds),
+                content_renderer(WindowContent {
                     text: format!("Bottom Center {:?}", screen.id()).into(),
                     bg: gpui::black(),
                     bounds,
-                })
-            })
+                }),
+            )
             .unwrap();
         }
     });

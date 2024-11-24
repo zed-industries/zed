@@ -1,22 +1,6 @@
 use gpui::*;
 use gpui3 as gpui;
 
-struct SetMenus;
-
-impl Render for SetMenus {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .bg(rgb(0x2e7d32))
-            .size_full()
-            .justify_center()
-            .items_center()
-            .text_xl()
-            .text_color(rgb(0xffffff))
-            .child("Set Menus Example")
-    }
-}
-
 fn main() {
     App::new().run(|cx: &mut AppContext| {
         // Bring the menu bar to the foreground (so you can see the menu bar)
@@ -28,8 +12,16 @@ fn main() {
             name: "set_menus".into(),
             items: vec![MenuItem::action("Quit", Quit)],
         }]);
-        cx.open_window(WindowOptions::default(), |cx| {
-            cx.new_view(|_cx| SetMenus {})
+        cx.open_window(WindowOptions::default(), |_window, _cx| {
+            div()
+                .flex()
+                .bg(rgb(0x2e7d32))
+                .size_full()
+                .justify_center()
+                .items_center()
+                .text_xl()
+                .text_color(rgb(0xffffff))
+                .child("Set Menus Example")
         })
         .unwrap();
     });

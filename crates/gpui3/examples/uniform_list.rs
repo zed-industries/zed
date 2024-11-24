@@ -30,15 +30,16 @@ impl Render for UniformListExample {
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
-        let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |cx| cx.new_view(|_cx| UniformListExample {}),
-        )
-        .unwrap();
-    });
+    todo!()
+    // App::new().run(|cx: &mut AppContext| {
+    //     let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
+    //     cx.open_window(
+    //         WindowOptions {
+    //             window_bounds: Some(WindowBounds::Windowed(bounds)),
+    //             ..Default::default()
+    //         },
+    //         |cx| cx.new_view(|_cx| UniformListExample {}),
+    //     )
+    //     .unwrap();
+    // });
 }

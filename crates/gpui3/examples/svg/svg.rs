@@ -31,37 +31,33 @@ impl AssetSource for Assets {
     }
 }
 
-struct SvgExample;
-
-impl Render for SvgExample {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_row()
-            .size_full()
-            .justify_center()
-            .items_center()
-            .gap_8()
-            .bg(rgb(0xffffff))
-            .child(
-                svg()
-                    .path("svg/dragon.svg")
-                    .size_8()
-                    .text_color(rgb(0xff0000)),
-            )
-            .child(
-                svg()
-                    .path("svg/dragon.svg")
-                    .size_8()
-                    .text_color(rgb(0x00ff00)),
-            )
-            .child(
-                svg()
-                    .path("svg/dragon.svg")
-                    .size_8()
-                    .text_color(rgb(0x0000ff)),
-            )
-    }
+fn render(_window: &mut gpui::Window, _cx: &mut AppContext) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_row()
+        .size_full()
+        .justify_center()
+        .items_center()
+        .gap_8()
+        .bg(rgb(0xffffff))
+        .child(
+            svg()
+                .path("svg/dragon.svg")
+                .size_8()
+                .text_color(rgb(0xff0000)),
+        )
+        .child(
+            svg()
+                .path("svg/dragon.svg")
+                .size_8()
+                .text_color(rgb(0x00ff00)),
+        )
+        .child(
+            svg()
+                .path("svg/dragon.svg")
+                .size_8()
+                .text_color(rgb(0x0000ff)),
+        )
 }
 
 fn main() {
@@ -76,7 +72,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |cx| cx.new_view(|_cx| SvgExample),
+                render,
             )
             .unwrap();
         });
