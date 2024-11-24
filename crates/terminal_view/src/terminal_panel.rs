@@ -210,6 +210,7 @@ impl TerminalPanel {
                     panel.height = serialized_panel.height.map(|h| h.round());
                     panel.width = serialized_panel.width.map(|w| w.round());
                     // TODO kb (de)serialization of the center pane
+                    // TODO kb proper macos bindings
                     panel.active_pane.update(cx, |_, cx| {
                         serialized_panel
                             .items
@@ -805,7 +806,8 @@ fn new_terminal_pane(
 
         pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
             if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
-                let belongs_to_this_pane = &tab.pane == cx.view();
+                let this_pane = cx.view().clone();
+                let belongs_to_this_pane = tab.pane == this_pane;
                 let item = if belongs_to_this_pane {
                     pane.item_for_index(tab.ix)
                 } else {
@@ -823,7 +825,7 @@ fn new_terminal_pane(
                                 terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
                                 terminal_panel
                                     .center
-                                    .split(&source, &new_pane, split_direction)
+                                    .split(&this_pane, &new_pane, split_direction)
                                     .log_err()?;
                                 Some(new_pane)
                             })
@@ -843,7 +845,6 @@ fn new_terminal_pane(
                         // Destination pane may be the one currently updated, so defer the move.
                         cx.spawn(|_, mut cx| async move {
                             cx.update(|cx| {
-                                // TODO kb split right, then try to drag and drop the new pane into the original one, so that it splits — nothing happens
                                 move_item(
                                     &source,
                                     &destination,
