@@ -1,4 +1,4 @@
-use crate::{ApplyAllDiffHunks, Editor, EditorEvent, RevertFile, SemanticsProvider};
+use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
 use collections::HashSet;
 use futures::{channel::mpsc, future::join_all};
 use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription, Task, View};
@@ -235,13 +235,7 @@ impl ProposedChangesEditor {
     }
 
     fn all_changes_accepted(&self) -> bool {
-        let todo = (); // TODO actually compute this!
-        false
-    }
-
-    fn any_changes_applied(&self) -> bool {
-        let todo = (); // TODO actually compute this!
-        false
+        false // In the future, we plan to compute this based on the current state of patches.
     }
 }
 

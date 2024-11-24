@@ -421,11 +421,6 @@ impl Editor {
                 buffer.read(cx).diff_base_buffer().is_some()
             });
 
-        let bg_color = match hunk.status {
-            DiffHunkStatus::Added => added_hunk_color(cx),
-            DiffHunkStatus::Modified | DiffHunkStatus::Removed => deleted_hunk_color(cx),
-        };
-
         BlockProperties {
             placement: BlockPlacement::Above(hunk.multi_buffer_range.start),
             height: 0,
