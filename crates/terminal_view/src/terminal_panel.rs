@@ -210,7 +210,6 @@ impl TerminalPanel {
                     panel.height = serialized_panel.height.map(|h| h.round());
                     panel.width = serialized_panel.width.map(|w| w.round());
                     // TODO kb (de)serialization of the center pane
-                    // TODO kb proper macos bindings
                     panel.active_pane.update(cx, |_, cx| {
                         serialized_panel
                             .items
