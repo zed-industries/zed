@@ -481,6 +481,10 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn language_ids(&self) -> HashMap<String, String> {
         Default::default()
     }
+
+    fn initialization_callback(&self) -> Option<Box<dyn FnOnce(&mut Value)>> {
+        None
+    }
 }
 
 async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(

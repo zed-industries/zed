@@ -5,6 +5,7 @@ use gpui::AsyncAppContext;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::{LanguageServerBinary, LanguageServerName};
+use serde_json::Value;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
 use util::{fs::remove_matching, maybe, ResultExt};
@@ -256,6 +257,33 @@ impl super::LspAdapter for CLspAdapter {
             filter_range,
         })
     }
+
+    fn initialization_callback(&self) -> Option<Box<dyn FnOnce(&mut Value)>> {
+        // Enable clangd's dot-to-arrow feature.
+        Some(Box::new(|value| {
+            if let Some(completion) =
+                get_nested_value_mut(value, "capabilities.textDocument.completion")
+            {
+                completion["editsNearCursor"] = Value::Bool(true);
+            }
+        }))
+    }
+}
+
+fn get_nested_value_mut<'a>(value: &'a mut Value, path: &str) -> Option<&'a mut Value> {
+    let keys: Vec<&str> = path.split('.').collect();
+    let mut current_value = value;
+
+    for key in keys {
+        match current_value {
+            Value::Object(map) => {
+                current_value = map.get_mut(key)?;
+            }
+            _ => return None,
+        }
+    }
+
+    Some(current_value)
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {

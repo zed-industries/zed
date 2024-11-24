@@ -5653,6 +5653,7 @@ impl LspStore {
                             .initialization_options(&(delegate))
                             .await?;
 
+                        let initialization_callback = adapter.adapter.clone().initialization_callback();
                         Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
 
                         match (&mut initialization_options, override_options) {
@@ -5664,7 +5665,13 @@ impl LspStore {
                         }
 
                         let language_server = cx
-                            .update(|cx| language_server.initialize(initialization_options, cx))?
+                            .update(|cx| {
+                                language_server.initialize(
+                                    initialization_options,
+                                    initialization_callback,
+                                    cx,
+                                )
+                            })?
                             .await
                             .inspect_err(|_| {
                                 if let Some(this) = this.upgrade() {

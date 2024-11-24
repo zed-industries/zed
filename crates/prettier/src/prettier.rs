@@ -187,7 +187,7 @@ impl Prettier {
         )
         .context("prettier server creation")?;
         let server = cx
-            .update(|cx| executor.spawn(server.initialize(None, cx)))?
+            .update(|cx| executor.spawn(server.initialize(None, None, cx)))?
             .await
             .context("prettier server initialization")?;
         Ok(Self::Real(RealPrettier {

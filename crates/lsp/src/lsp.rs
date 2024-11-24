@@ -319,6 +319,15 @@ impl lsp_types::notification::Notification for ServerStatus {
     const METHOD: &'static str = "experimental/serverStatus";
 }
 
+#[derive(Debug)]
+pub enum LspInitialize {}
+
+impl request::Request for LspInitialize {
+    type Params = Value;
+    type Result = InitializeResult;
+    const METHOD: &'static str = "initialize";
+}
+
 impl LanguageServer {
     /// Starts a language server process.
     pub fn new(
@@ -606,6 +615,7 @@ impl LanguageServer {
     pub fn initialize(
         mut self,
         options: Option<Value>,
+        callback: Option<Box<dyn FnOnce(&mut Value)>>,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
         let root_uri = Url::from_file_path(&self.working_dir).unwrap();
@@ -781,7 +791,11 @@ impl LanguageServer {
         };
 
         cx.spawn(|_| async move {
-            let response = self.request::<request::Initialize>(params).await?;
+            let mut params = serde_json::to_value(params).unwrap();
+            if let Some(callback) = callback {
+                callback(&mut params);
+            }
+            let response = self.request::<LspInitialize>(params).await?;
             if let Some(info) = response.server_info {
                 self.process_name = info.name.into();
             }
@@ -1505,7 +1519,10 @@ mod tests {
             })
             .detach();
 
-        let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
+        let server = cx
+            .update(|cx| server.initialize(None, None, cx))
+            .await
+            .unwrap();
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
