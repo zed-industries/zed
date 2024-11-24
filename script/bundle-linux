@@ -69,7 +69,9 @@ strip --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server
 
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
-! ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'
+if ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'; then
+    echo "Error: remote_server still depends on libssl or libcrypto" && exit 1
+fi
 
 suffix=""
 if [ "$channel" != "stable" ]; then
@@ -89,8 +91,8 @@ cp "${target_dir}/${target_triple}/release/cli" "${zed_dir}/bin/zed"
 # Libs
 find_libs() {
     ldd ${target_dir}/${target_triple}/release/zed |\
-    cut -d' ' -f3 |\
-    grep -v '\<\(libstdc++.so\|libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\)'
+        cut -d' ' -f3 |\
+        grep -v '\<\(libstdc++.so\|libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\)'
 }
 
 mkdir -p "${zed_dir}/lib"

@@ -343,8 +343,10 @@ impl MacPlatform {
                                 ns_string(key_to_native(&keystroke.key).as_ref()),
                             )
                             .autorelease();
-                        let _: () =
-                            msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
+                        if MacPlatform::os_version().unwrap() >= SemanticVersion::new(12, 0, 0) {
+                            let _: () =
+                                msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
+                        }
                         item.setKeyEquivalentModifierMask_(mask);
                     }
                     // For multi-keystroke bindings, render the keystroke as part of the title.
@@ -842,7 +844,9 @@ impl Platform for MacPlatform {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            app.setMainMenu_(self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap));
+            let menu = self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap);
+            drop(state);
+            app.setMainMenu_(menu);
         }
     }
 

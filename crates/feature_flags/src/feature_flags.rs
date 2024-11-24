@@ -39,6 +39,16 @@ pub trait FeatureFlag {
     }
 }
 
+pub struct Assistant2FeatureFlag;
+
+impl FeatureFlag for Assistant2FeatureFlag {
+    const NAME: &'static str = "assistant2";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
 pub struct Remoting {}
 impl FeatureFlag for Remoting {
     const NAME: &'static str = "remoting";

@@ -3,16 +3,38 @@ use std::sync::{atomic::AtomicBool, Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use extension::{Extension, WorktreeDelegate};
-use gpui::{Task, WeakView, WindowContext};
+use extension::{Extension, ExtensionHostProxy, ExtensionSlashCommandProxy, WorktreeDelegate};
+use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use workspace::Workspace;
 
 use crate::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
-    SlashCommandResult,
+    SlashCommandRegistry, SlashCommandResult,
 };
+
+pub fn init(cx: &mut AppContext) {
+    let proxy = ExtensionHostProxy::default_global(cx);
+    proxy.register_slash_command_proxy(SlashCommandRegistryProxy {
+        slash_command_registry: SlashCommandRegistry::global(cx),
+    });
+}
+
+struct SlashCommandRegistryProxy {
+    slash_command_registry: Arc<SlashCommandRegistry>,
+}
+
+impl ExtensionSlashCommandProxy for SlashCommandRegistryProxy {
+    fn register_slash_command(
+        &self,
+        extension: Arc<dyn Extension>,
+        command: extension::SlashCommand,
+    ) {
+        self.slash_command_registry
+            .register_command(ExtensionSlashCommand::new(extension, command), false)
+    }
+}
 
 /// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
 struct WorktreeDelegateAdapter(Arc<dyn LspAdapterDelegate>);
