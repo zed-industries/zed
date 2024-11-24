@@ -1442,65 +1442,64 @@ fn for_snowflake(
             Event::App(e) => {
                 let mut properties = json!({});
                 let event_type = match e.operation.trim() {
-                    "extensions: install extension" => "Extension Installed".to_string(),
+                    // App
                     "open" => "App Opened".to_string(),
-                    "project search: open" => "Project Search Opened".to_string(),
-                    "first open" => {
-                        properties["is_first_open"] = json!(true);
-                        "App First Opened".to_string()
+                    "first open" => "App First Opened".to_string(),
+                    "first open for release channel" => {
+                        "App First Opened For Release Channel".to_string()
                     }
-                    "extensions: uninstall extension" => "Extension Uninstalled".to_string(),
-                    "welcome page: close" => "Welcome Page Closed".to_string(),
-                    "open project" => {
-                        properties["is_first_time"] = json!(false);
+                    "close" => "App Closed".to_string(),
+
+                    // Project
+                    "open project" => "Project Opened".to_string(),
+                    "open node project" => {
+                        properties["project_type"] = json!("node");
                         "Project Opened".to_string()
                     }
-                    "welcome page: install cli" => "CLI Installed".to_string(),
-                    "project diagnostics: open" => "Project Diagnostics Opened".to_string(),
-                    "extensions page: open" => "Extensions Page Opened".to_string(),
-                    "welcome page: change theme" => "Welcome Theme Changed".to_string(),
-                    "welcome page: toggle metric telemetry" => {
-                        properties["enabled"] = json!(false);
-                        "Welcome Telemetry Toggled".to_string()
+                    "open pnpm project" => {
+                        properties["project_type"] = json!("pnpm");
+                        "Project Opened".to_string()
                     }
+                    "open yarn project" => {
+                        properties["project_type"] = json!("yarn");
+                        "Project Opened".to_string()
+                    }
+
+                    // SSH
+                    "create ssh server" => "SSH Server Created".to_string(),
+                    "create ssh project" => "SSH Project Created".to_string(),
+                    "open ssh project" => "SSH Project Opened".to_string(),
+
+                    // Welcome Page
                     "welcome page: change keymap" => "Keymap Changed".to_string(),
-                    "welcome page: toggle vim" => {
-                        properties["enabled"] = json!(false);
-                        "Welcome Vim Mode Toggled".to_string()
-                    }
+                    "welcome page: change theme" => "Welcome Theme Changed".to_string(),
+                    "welcome page: close" => "Welcome Page Closed".to_string(),
+                    "welcome page: edit settings" => "Settings Edited".to_string(),
+                    "welcome page: install cli" => "CLI Installed".to_string(),
+                    "welcome page: open" => "Welcome Page Opened".to_string(),
+                    "welcome page: open extensions" => "Extensions Page Opened".to_string(),
                     "welcome page: sign in to copilot" => "Welcome Copilot Signed In".to_string(),
                     "welcome page: toggle diagnostic telemetry" => {
                         "Welcome Telemetry Toggled".to_string()
                     }
-                    "welcome page: open" => "Welcome Page Opened".to_string(),
-                    "close" => "App Closed".to_string(),
-                    "markdown preview: open" => "Markdown Preview Opened".to_string(),
-                    "welcome page: open extensions" => "Extensions Page Opened".to_string(),
-                    "open node project" | "open pnpm project" | "open yarn project" => {
-                        properties["project_type"] = json!("node");
-                        properties["is_first_time"] = json!(false);
-                        "Project Opened".to_string()
+                    "welcome page: toggle metric telemetry" => {
+                        "Welcome Telemetry Toggled".to_string()
                     }
-                    "repl sessions: open" => "REPL Session Started".to_string(),
-                    "welcome page: toggle helix" => {
-                        properties["enabled"] = json!(false);
-                        "Helix Mode Toggled".to_string()
-                    }
-                    "welcome page: edit settings" => {
-                        properties["changed_settings"] = json!([]);
-                        "Settings Edited".to_string()
-                    }
+                    "welcome page: toggle vim" => "Welcome Vim Mode Toggled".to_string(),
                     "welcome page: view docs" => "Documentation Viewed".to_string(),
-                    "open ssh project" => {
-                        properties["is_first_time"] = json!(false);
-                        "SSH Project Opened".to_string()
-                    }
-                    "create ssh server" => "SSH Server Created".to_string(),
-                    "create ssh project" => "SSH Project Created".to_string(),
-                    "first open for release channel" => {
-                        properties["is_first_for_channel"] = json!(true);
-                        "App First Opened For Release Channel".to_string()
-                    }
+
+                    // Extensions
+                    "extensions page: open" => "Extensions Page Opened".to_string(),
+                    "extensions: install extension" => "Extension Installed".to_string(),
+                    "extensions: uninstall extension" => "Extension Uninstalled".to_string(),
+
+                    // Misc
+                    "markdown preview: open" => "Markdown Preview Opened".to_string(),
+                    "project diagnostics: open" => "Project Diagnostics Opened".to_string(),
+                    "project search: open" => "Project Search Opened".to_string(),
+                    "repl sessions: open" => "REPL Session Started".to_string(),
+
+                    // Feature Upsell
                     "feature upsell: toggle vim" => {
                         properties["source"] = json!("Feature Upsell");
                         "Vim Mode Toggled".to_string()
