@@ -402,6 +402,7 @@ dependencies = [
  "indoc",
  "language",
  "language_model",
+ "language_model_selector",
  "language_models",
  "languages",
  "log",
@@ -447,6 +448,24 @@ dependencies = [
  "uuid",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "assistant2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "command_palette_hooks",
+ "editor",
+ "feature_flags",
+ "gpui",
+ "language_model",
+ "language_model_selector",
+ "proto",
+ "settings",
+ "theme",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -887,6 +906,20 @@ checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
 name = "async-tls"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfeefd0ca297cbbb3bd34fd6b228401c2a5177038257afd751bc29f0a2da4795"
+dependencies = [
+ "futures-core",
+ "futures-io",
+ "rustls 0.20.9",
+ "rustls-pemfile 1.0.4",
+ "webpki",
+ "webpki-roots 0.22.6",
+]
+
+[[package]]
+name = "async-tls"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2ae3c9eba89d472a0e4fe1dea433df78fbbe63d2b764addaf2ba3a6bde89a5e"
@@ -916,6 +949,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce01ac37fdc85f10a43c43bc582cbd566720357011578a935761075f898baf58"
 dependencies = [
  "async-std",
+ "async-tls 0.12.0",
  "futures-io",
  "futures-util",
  "log",
@@ -930,7 +964,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90e661b6cb0a6eb34d02c520b052daa3aa9ac0cc02495c9d066bbce13ead132b"
 dependencies = [
  "async-std",
- "async-tls",
+ "async-tls 0.13.0",
  "futures-io",
  "futures-util",
  "log",
@@ -1100,7 +1134,7 @@ dependencies = [
  "fastrand 2.2.0",
  "hex",
  "http 0.2.12",
- "ring",
+ "ring 0.17.8",
  "time",
  "tokio",
  "tracing",
@@ -1290,7 +1324,7 @@ dependencies = [
  "once_cell",
  "p256",
  "percent-encoding",
- "ring",
+ "ring 0.17.8",
  "sha2",
  "subtle",
  "time",
@@ -2601,6 +2635,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.5",
  "envy",
+ "extension",
  "file_finder",
  "fs",
  "futures 0.3.31",
@@ -2842,6 +2877,7 @@ dependencies = [
  "anyhow",
  "collections",
  "command_palette_hooks",
+ "extension",
  "futures 0.3.31",
  "gpui",
  "log",
@@ -4127,6 +4163,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "parking_lot",
  "semantic_version",
  "serde",
  "serde_json",
@@ -4178,6 +4215,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "language_extension",
  "log",
  "lsp",
  "node_runtime",
@@ -4196,6 +4234,7 @@ dependencies = [
  "task",
  "tempfile",
  "theme",
+ "theme_extension",
  "toml 0.8.19",
  "url",
  "util",
@@ -4209,21 +4248,15 @@ name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant_slash_command",
  "client",
  "collections",
- "context_servers",
  "db",
  "editor",
- "extension",
  "extension_host",
  "fs",
  "fuzzy",
  "gpui",
- "indexed_docs",
  "language",
- "log",
- "lsp",
  "num-format",
  "picker",
  "project",
@@ -4232,12 +4265,10 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
- "snippet_provider",
  "theme",
  "ui",
  "util",
  "vim_mode_setting",
- "wasmtime-wasi",
  "workspace",
  "zed_actions",
 ]
@@ -4460,7 +4491,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "nanorand",
- "spin",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -6373,7 +6404,7 @@ dependencies = [
  "base64 0.21.7",
  "js-sys",
  "pem",
- "ring",
+ "ring 0.17.8",
  "serde",
  "serde_json",
  "simple_asn1",
@@ -6381,9 +6412,9 @@ dependencies = [
 
 [[package]]
 name = "jupyter-protocol"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f3e9d36f282f7e0400de20921d283121a97c5a5a6db2c1bb0c0853defff9934"
+checksum = "3d4d496ac890e14efc12c5289818b3c39e3026a7bb02d5576b011e1a062d4bcc"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6399,9 +6430,9 @@ dependencies = [
 
 [[package]]
 name = "jupyter-serde"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11adb69edaf2eb03d5e84249f68f870dd03d4c8f955314b5a32b2db5798e9b9a"
+checksum = "32aa595c3912167b7eafcaa822b767ad1fa9605a18127fc9ac741241b796410e"
 dependencies = [
  "anyhow",
  "serde",
@@ -6412,9 +6443,9 @@ dependencies = [
 
 [[package]]
 name = "jupyter-websocket-client"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d315d037789a652084877b0919615e937d2f2e877b01aa4ba8fcc1ab07cb58b"
+checksum = "5850894210a3f033ff730d6f956b0335db38573ce7bb61c6abbf69dcbe284ba7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6535,6 +6566,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "extension",
+ "futures 0.3.31",
+ "gpui",
+ "language",
+ "lsp",
+ "serde",
+ "serde_json",
+ "util",
+]
+
+[[package]]
 name = "language_model"
 version = "0.1.0"
 dependencies = [
@@ -6559,6 +6607,20 @@ dependencies = [
  "strum 0.25.0",
  "ui",
  "util",
+]
+
+[[package]]
+name = "language_model_selector"
+version = "0.1.0"
+dependencies = [
+ "feature_flags",
+ "gpui",
+ "language_model",
+ "picker",
+ "proto",
+ "ui",
+ "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -6703,7 +6765,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
- "spin",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -7425,9 +7487,9 @@ dependencies = [
 
 [[package]]
 name = "nbformat"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "187de1b1f1430353ef9b5208096d84f7bf089ee1593f14213d122b7fbb1f3dee"
+checksum = "aa6827a3881aa100bb2241cd2633b3c79474dbc93704f1f2cf5cc85064cda4be"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9456,7 +9518,7 @@ dependencies = [
  "bytes 1.8.0",
  "getrandom 0.2.15",
  "rand 0.8.5",
- "ring",
+ "ring 0.17.8",
  "rustc-hash 2.0.0",
  "rustls 0.23.16",
  "rustls-pki-types",
@@ -9854,6 +9916,7 @@ dependencies = [
  "client",
  "clock",
  "env_logger 0.11.5",
+ "extension",
  "extension_host",
  "fork",
  "fs",
@@ -9863,6 +9926,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "language_extension",
  "languages",
  "libc",
  "log",
@@ -10099,6 +10163,21 @@ dependencies = [
 
 [[package]]
 name = "ring"
+version = "0.16.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3053cf52e236a3ed746dfc745aa9cacf1b791d846bdaf412f60a8d7d6e17c8fc"
+dependencies = [
+ "cc",
+ "libc",
+ "once_cell",
+ "spin 0.5.2",
+ "untrusted 0.7.1",
+ "web-sys",
+ "winapi",
+]
+
+[[package]]
+name = "ring"
 version = "0.17.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c17fa4cb658e3583423e915b9f3acc01cceaee1860e33d59ebae66adc3a2dc0d"
@@ -10107,8 +10186,8 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.15",
  "libc",
- "spin",
- "untrusted",
+ "spin 0.9.8",
+ "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
 
@@ -10244,9 +10323,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "0.21.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2db079f82c110e25c3202d20c7cd29dcbfa93d96de7c5bb8bb6f294f477567cf"
+checksum = "b3a8ab675beb5cf25c28f9c6ddb8f47bcf73b43872797e6ab6157865f44d1e19"
 dependencies = [
  "anyhow",
  "async-dispatcher",
@@ -10260,7 +10339,7 @@ dependencies = [
  "glob",
  "jupyter-protocol",
  "jupyter-serde",
- "ring",
+ "ring 0.17.8",
  "serde",
  "serde_json",
  "shellexpand 3.1.0",
@@ -10389,12 +10468,24 @@ dependencies = [
 
 [[package]]
 name = "rustls"
+version = "0.20.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b80e3dec595989ea8510028f30c408a4630db12c9cbb8de34203b89d6577e99"
+dependencies = [
+ "log",
+ "ring 0.16.20",
+ "sct",
+ "webpki",
+]
+
+[[package]]
+name = "rustls"
 version = "0.21.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f56a14d1f48b391359b22f731fd4bd7e43c97f3c50eee276f3aa09c94784d3e"
 dependencies = [
  "log",
- "ring",
+ "ring 0.17.8",
  "rustls-webpki 0.101.7",
  "sct",
 ]
@@ -10406,7 +10497,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eee87ff5d9b36712a58574e12e9f0ea80f915a5b0ac518d322b24a465617925e"
 dependencies = [
  "once_cell",
- "ring",
+ "ring 0.17.8",
  "rustls-pki-types",
  "rustls-webpki 0.102.8",
  "subtle",
@@ -10471,8 +10562,8 @@ version = "0.101.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
- "ring",
- "untrusted",
+ "ring 0.17.8",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -10481,9 +10572,9 @@ version = "0.102.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
 dependencies = [
- "ring",
+ "ring 0.17.8",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -10597,8 +10688,8 @@ version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da046153aa2352493d6cb7da4b6e5c0c057d8a1d0a9aa8560baffdd945acd414"
 dependencies = [
- "ring",
- "untrusted",
+ "ring 0.17.8",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -11305,6 +11396,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "extension",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -11358,6 +11450,12 @@ checksum = "bae30cc7bfe3656d60ee99bf6836f472b0c53dddcbf335e253329abb16e535a2"
 dependencies = [
  "smallvec",
 ]
+
+[[package]]
+name = "spin"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "spin"
@@ -12356,6 +12454,17 @@ dependencies = [
  "strum 0.25.0",
  "util",
  "uuid",
+]
+
+[[package]]
+name = "theme_extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "extension",
+ "fs",
+ "gpui",
+ "theme",
 ]
 
 [[package]]
@@ -13459,6 +13568,12 @@ checksum = "e1766d682d402817b5ac4490b3c3002d91dfa0d22812f341609f97b08757359c"
 
 [[package]]
 name = "untrusted"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
+
+[[package]]
+name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
@@ -14365,8 +14480,8 @@ version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed63aea5ce73d0ff405984102c42de94fc55a6b75765d621c65262469b3c9b53"
 dependencies = [
- "ring",
- "untrusted",
+ "ring 0.17.8",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -15467,7 +15582,7 @@ dependencies = [
  "ashpd",
  "assets",
  "assistant",
- "assistant_slash_command",
+ "assistant2",
  "async-watch",
  "audio",
  "auto_update",
@@ -15484,12 +15599,12 @@ dependencies = [
  "collections",
  "command_palette",
  "command_palette_hooks",
- "context_servers",
  "copilot",
  "db",
  "diagnostics",
  "editor",
  "env_logger 0.11.5",
+ "extension",
  "extension_host",
  "extensions_ui",
  "feature_flags",
@@ -15504,11 +15619,11 @@ dependencies = [
  "gpui",
  "http_client",
  "image_viewer",
- "indexed_docs",
  "inline_completion_button",
  "install_cli",
  "journal",
  "language",
+ "language_extension",
  "language_model",
  "language_models",
  "language_selector",
@@ -15557,6 +15672,7 @@ dependencies = [
  "telemetry_events",
  "terminal_view",
  "theme",
+ "theme_extension",
  "theme_selector",
  "time",
  "toolchain_selector",

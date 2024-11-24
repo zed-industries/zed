@@ -20,7 +20,7 @@ impl IndexedDocsRegistry {
         GlobalIndexedDocsRegistry::global(cx).0.clone()
     }
 
-    pub fn init_global(cx: &mut AppContext) {
+    pub(crate) fn init_global(cx: &mut AppContext) {
         GlobalIndexedDocsRegistry::set_global(
             cx,
             GlobalIndexedDocsRegistry(Arc::new(Self::new(cx.background_executor().clone()))),

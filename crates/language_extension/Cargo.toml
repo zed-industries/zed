@@ -1,0 +1,25 @@
+[package]
+name = "language_extension"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/language_extension.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+collections.workspace = true
+extension.workspace = true
+futures.workspace = true
+gpui.workspace = true
+language.workspace = true
+lsp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+util.workspace = true
