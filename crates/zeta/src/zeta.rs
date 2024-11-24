@@ -61,21 +61,21 @@ impl Zeta {
     }
 
     pub fn production(cx: &mut ModelContext<Self>) -> Self {
-        let fireworks_api_url = std::env::var("FIREWORKS_API_URL")
-            .unwrap_or_else(|_| "https://api.fireworks.ai/inference/v1".to_string())
-            .into();
-        let fireworks_api_key = std::env::var("FIREWORKS_API_KEY")
-            .expect("FIREWORKS_API_KEY must be set")
-            .into();
-        let fireworks_model = std::env::var("FIREWORKS_MODEL")
-            .unwrap_or_else(|_| "accounts/fireworks/models/qwen2p5-coder-7b-instruct#accounts/antonio-01403c/deployments/39c3a4c6".to_string())
-            .into();
-        Self::new(
-            fireworks_api_url,
-            fireworks_api_key,
-            fireworks_model,
-            cx.http_client(),
-        )
+        // let fireworks_api_url = std::env::var("FIREWORKS_API_URL")
+        //     .unwrap_or_else(|_| "https://api.fireworks.ai/inference/v1".to_string())
+        //     .into();
+        // let fireworks_api_key = std::env::var("FIREWORKS_API_KEY")
+        //     .expect("FIREWORKS_API_KEY must be set")
+        //     .into();
+        // let fireworks_model = std::env::var("FIREWORKS_MODEL")
+        //     .unwrap_or_else(|_| "accounts/fireworks/models/qwen2p5-coder-7b-instruct#accounts/antonio-01403c/deployments/39c3a4c6".to_string())
+        //     .into();
+        let (api_url, api_key, model) = (
+            Arc::from("http://localhost:11434/v1"),
+            Arc::from(""),
+            Arc::from("qwen2.5-coder:7b"),
+        );
+        Self::new(api_url, api_key, model, cx.http_client())
     }
 
     fn new(
@@ -269,13 +269,18 @@ impl Zeta {
             log::debug!("sanitized completion response: {}", content);
 
             let mut new_text = content.as_str();
-            if new_text.starts_with("```") {
-                let newline_ix = new_text.find('\n').context("could not find newline")?;
-                new_text = new_text[newline_ix + 1..]
-                    .trim_end()
-                    .strip_suffix("\n```")
-                    .context("could not find closing codefence")?;
-            }
+
+            let codefence_start = new_text
+                .find("```")
+                .context("could not find codefence start")?;
+            new_text = &new_text[codefence_start..];
+            let newline_ix = new_text.find('\n').context("could not find newline")?;
+            new_text = new_text[newline_ix + 1..].trim_end();
+
+            let codefence_end = new_text
+                .rfind("\n```")
+                .context("could not find codefence end")?;
+            new_text = &new_text[..codefence_end];
 
             let old_text = snapshot
                 .text_for_range(excerpt_range.clone())
@@ -490,57 +495,66 @@ impl Event {
                     writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
                 }
 
-                let mut edits = new_snapshot
-                    .edits_since::<Point>(&old_snapshot.version)
-                    .peekable();
+                let old_text = old_snapshot.text();
+                let new_text = new_snapshot.text();
+                writeln!(
+                    prompt,
+                    "```diff\n{}\n```\n",
+                    similar::TextDiff::from_lines(&old_text, &new_text).unified_diff()
+                )
+                .unwrap();
 
-                if edits.peek().is_some() {
-                    writeln!(prompt, "User edited {:?}:\n", new_path).unwrap();
-                }
+                // let mut edits = new_snapshot
+                //     .edits_since::<Point>(&old_snapshot.version)
+                //     .peekable();
 
-                while let Some(edit) = edits.next() {
-                    let mut old_start = edit.old.start.row;
-                    let mut old_end = edit.old.end.row;
-                    let mut new_start = edit.new.start.row;
-                    let mut new_end = edit.new.end.row;
+                // if edits.peek().is_some() {
+                //     writeln!(prompt, "User edited {:?}:\n", new_path).unwrap();
+                // }
 
-                    old_start = old_start.saturating_sub(2);
-                    old_end = cmp::min(old_end + 2, old_snapshot.max_point().row + 1);
+                // while let Some(edit) = edits.next() {
+                //     let mut old_start = edit.old.start.row;
+                //     let mut old_end = edit.old.end.row;
+                //     let mut new_start = edit.new.start.row;
+                //     let mut new_end = edit.new.end.row;
 
-                    // Peek at further edits and merge if they overlap
-                    while let Some(next_edit) = edits.peek() {
-                        if next_edit.old.start.row <= old_end {
-                            old_end = cmp::min(
-                                next_edit.old.end.row + 2,
-                                old_snapshot.max_point().row + 1,
-                            );
-                            new_end = next_edit.new.end.row;
-                            edits.next();
-                        } else {
-                            break;
-                        }
-                    }
+                //     old_start = old_start.saturating_sub(2);
+                //     old_end = cmp::min(old_end + 2, old_snapshot.max_point().row + 1);
 
-                    new_start = new_start.saturating_sub(2);
-                    new_end = cmp::min(new_end + 2, new_snapshot.max_point().row + 1);
+                //     // Peek at further edits and merge if they overlap
+                //     while let Some(next_edit) = edits.peek() {
+                //         if next_edit.old.start.row <= old_end {
+                //             old_end = cmp::min(
+                //                 next_edit.old.end.row + 2,
+                //                 old_snapshot.max_point().row + 1,
+                //             );
+                //             new_end = next_edit.new.end.row;
+                //             edits.next();
+                //         } else {
+                //             break;
+                //         }
+                //     }
 
-                    // Report the merged edit
-                    let edit = format_edit(
-                        &old_snapshot
-                            .text_for_range(
-                                Point::new(old_start, 0)
-                                    ..Point::new(old_end, old_snapshot.line_len(old_end)),
-                            )
-                            .collect::<String>(),
-                        &new_snapshot
-                            .text_for_range(
-                                Point::new(new_start, 0)
-                                    ..Point::new(new_end, new_snapshot.line_len(new_end)),
-                            )
-                            .collect::<String>(),
-                    );
-                    writeln!(prompt, "{}\n\n", edit).unwrap();
-                }
+                //     new_start = new_start.saturating_sub(2);
+                //     new_end = cmp::min(new_end + 2, new_snapshot.max_point().row + 1);
+
+                //     // Report the merged edit
+                //     let edit = format_edit(
+                //         &old_snapshot
+                //             .text_for_range(
+                //                 Point::new(old_start, 0)
+                //                     ..Point::new(old_end, old_snapshot.line_len(old_end)),
+                //             )
+                //             .collect::<String>(),
+                //         &new_snapshot
+                //             .text_for_range(
+                //                 Point::new(new_start, 0)
+                //                     ..Point::new(new_end, new_snapshot.line_len(new_end)),
+                //             )
+                //             .collect::<String>(),
+                //     );
+                //     writeln!(prompt, "{}\n\n", edit).unwrap();
+                // }
 
                 prompt
             }
@@ -1085,20 +1099,11 @@ mod tests {
     impl Zeta {
         fn test(cx: &mut TestAppContext) -> Model<Zeta> {
             cx.new_model(|_| {
-                let (api_url, api_key, model) = match std::env::var("FIREWORKS_API_KEY") {
-                    Ok(api_key) => (
-                        Arc::from("https://api.fireworks.ai/inference/v1"),
-                        Arc::from(api_key),
-                        Arc::from(std::env::var("FIREWORKS_MODEL").unwrap_or_else(|_| {
-                            "accounts/fireworks/models/qwen2p5-coder-7b-instruct#accounts/antonio-01403c/deployments/39c3a4c6".to_string()
-                        })),
-                    ),
-                    Err(_) => (
-                        Arc::from("http://localhost:11434/v1"),
-                        Arc::from(""),
-                        Arc::from("qwen2.5-coder:32b"),
-                    ),
-                };
+                let (api_url, api_key, model) = (
+                    Arc::from("http://localhost:11434/v1"),
+                    Arc::from(""),
+                    Arc::from("qwen2.5-coder:7b"),
+                );
                 Zeta::new(api_url, api_key, model, Arc::new(ReqwestClient::new()))
             })
         }
