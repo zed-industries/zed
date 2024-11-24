@@ -1471,13 +1471,13 @@ fn for_snowflake(
                     "open ssh project" => "SSH Project Opened".to_string(),
 
                     // Welcome Page
-                    "welcome page: change keymap" => "Keymap Changed".to_string(),
+                    "welcome page: change keymap" => "Welcome Keymap Changed".to_string(),
                     "welcome page: change theme" => "Welcome Theme Changed".to_string(),
                     "welcome page: close" => "Welcome Page Closed".to_string(),
-                    "welcome page: edit settings" => "Settings Edited".to_string(),
-                    "welcome page: install cli" => "CLI Installed".to_string(),
+                    "welcome page: edit settings" => "Welcome Settings Edited".to_string(),
+                    "welcome page: install cli" => "Welcome CLI Installed".to_string(),
                     "welcome page: open" => "Welcome Page Opened".to_string(),
-                    "welcome page: open extensions" => "Extensions Page Opened".to_string(),
+                    "welcome page: open extensions" => "Welcome Extensions Page Opened".to_string(),
                     "welcome page: sign in to copilot" => "Welcome Copilot Signed In".to_string(),
                     "welcome page: toggle diagnostic telemetry" => {
                         "Welcome Telemetry Toggled".to_string()
@@ -1486,7 +1486,7 @@ fn for_snowflake(
                         "Welcome Telemetry Toggled".to_string()
                     }
                     "welcome page: toggle vim" => "Welcome Vim Mode Toggled".to_string(),
-                    "welcome page: view docs" => "Documentation Viewed".to_string(),
+                    "welcome page: view docs" => "Welcome Documentation Viewed".to_string(),
 
                     // Extensions
                     "extensions page: open" => "Extensions Page Opened".to_string(),
