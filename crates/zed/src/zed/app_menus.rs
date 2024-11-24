@@ -30,7 +30,7 @@ pub fn app_menus() -> Vec<Menu> {
                     ],
                 }),
                 MenuItem::separator(),
-                MenuItem::submenu(Menu {
+                MenuItem::services_submenu(Menu {
                     name: "Services".into(),
                     items: vec![],
                 }),

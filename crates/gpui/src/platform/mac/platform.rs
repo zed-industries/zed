@@ -385,19 +385,11 @@ impl MacPlatform {
                 actions.push(action);
                 item
             }
-            MenuItem::Submenu(Menu { name, items }) => {
-                let item = NSMenuItem::new(nil).autorelease();
-                let submenu = NSMenu::new(nil).autorelease();
-                submenu.setDelegate_(delegate);
-                for item in items {
-                    submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
-                }
-                item.setSubmenu_(submenu);
-                item.setTitle_(ns_string(&name));
-                if name == "Services" {
-                    let app: id = msg_send![APP_CLASS, sharedApplication];
-                    app.setServicesMenu_(item);
-                }
+            MenuItem::Submenu(menu) => Self::create_submenu_item(delegate, menu, actions, keymap),
+            MenuItem::ServicesSubmenu(menu) => {
+                let item = Self::create_submenu_item(delegate, menu, actions, keymap);
+                let app: id = msg_send![APP_CLASS, sharedApplication];
+                app.setServicesMenu_(item);
 
                 item
             }
@@ -414,6 +406,26 @@ impl MacPlatform {
                 version.patchVersion as usize,
             ))
         }
+    }
+
+    unsafe fn create_submenu_item(
+        delegate: id,
+        menu: Menu,
+        actions: &mut Vec<Box<dyn Action>>,
+        keymap: &Keymap,
+    ) -> *mut Object {
+        let Menu { name, items } = menu;
+
+        let item = NSMenuItem::new(nil).autorelease();
+        let submenu = NSMenu::new(nil).autorelease();
+        submenu.setDelegate_(delegate);
+        for item in items {
+            submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
+        }
+        item.setSubmenu_(submenu);
+        item.setTitle_(ns_string(&name));
+
+        item
     }
 }
 
