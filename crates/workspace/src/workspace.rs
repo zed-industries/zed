@@ -1098,6 +1098,10 @@ impl Workspace {
         cx.spawn(|mut cx| async move {
             let mut paths_to_open = Vec::with_capacity(abs_paths.len());
             for path in abs_paths.into_iter() {
+                if cfg!(target_os = "windows") {
+                    paths_to_open.push(path);
+                    continue;
+                }
                 if let Some(canonical) = app_state.fs.canonicalize(&path).await.ok() {
                     paths_to_open.push(canonical)
                 } else {
