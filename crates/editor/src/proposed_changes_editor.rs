@@ -366,27 +366,9 @@ impl Render for ProposedChangesToolbarControls {
                 )
             };
 
-            let undo_all_button = if editor.any_changes_applied() {
-                None
-            } else {
-                let focus_handle = editor.focus_handle(cx);
-                let action = {
-                    let todo = (); // TODO Change this to Undo All, once we actually have that action.
-                    &RevertFile
-                };
-                let keybinding = KeyBinding::for_action_in(action, &focus_handle, cx);
-
-                Some(
-                    Button::new("undo-applied", "Undo Applied")
-                        .style(ButtonStyle::Filled)
-                        .key_binding(keybinding)
-                        .on_click(move |_event, cx| focus_handle.dispatch_action(action, cx)),
-                )
-            };
-
             h_flex()
                 .gap_1()
-                .children([undo_all_button, apply_all_button].into_iter().flatten())
+                .children([apply_all_button].into_iter().flatten())
                 .into_any_element()
         } else {
             gpui::Empty.into_any_element()
