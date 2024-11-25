@@ -1,6 +1,6 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId,
-    EventEmitter, Model, Reservation, Subscription, Task, View, WeakModel, WindowContext,
+    EventEmitter, Model, Reservation, Subscription, Task, View, WeakModel, Window, WindowContext,
     WindowHandle,
 };
 use anyhow::Result;
@@ -263,7 +263,7 @@ impl<'a, T> Context for ModelContext<'a, T> {
 
     fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> R,
+        F: FnOnce(&mut Window, &mut AppContext) -> R,
     {
         self.app.update_window(window, update)
     }

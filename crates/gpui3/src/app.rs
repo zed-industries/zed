@@ -811,7 +811,8 @@ impl AppContext {
                     })
                     .collect::<Vec<_>>()
                 {
-                    self.update_window(window, |_, cx| cx.draw()).unwrap();
+                    self.update_window(window, |window, cx| window.draw(cx))
+                        .unwrap();
                 }
 
                 if self.pending_effects.is_empty() {
@@ -845,10 +846,10 @@ impl AppContext {
     fn release_dropped_focus_handles(&mut self) {
         for window_handle in self.windows() {
             window_handle
-                .update(self, |_, cx| {
+                .update(self, |window, _cx| {
                     let mut blur_window = false;
-                    let focus = cx.window.focus;
-                    cx.window.focus_handles.write().retain(|handle_id, count| {
+                    let focus = window.focus;
+                    window.focus_handles.write().retain(|handle_id, count| {
                         if count.load(SeqCst) == 0 {
                             if focus == Some(handle_id) {
                                 blur_window = true;
@@ -860,7 +861,7 @@ impl AppContext {
                     });
 
                     if blur_window {
-                        cx.blur();
+                        window.blur();
                     }
                 })
                 .unwrap();
@@ -1290,7 +1291,9 @@ impl AppContext {
     pub fn dispatch_action(&mut self, action: &dyn Action) {
         if let Some(active_window) = self.active_window() {
             active_window
-                .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
+                .update(self, |window, cx| {
+                    window.dispatch_action(action.boxed_clone(), cx)
+                })
                 .log_err();
         } else {
             self.dispatch_global_action(action);
@@ -1478,7 +1481,7 @@ impl Context for AppContext {
 
     fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+        F: FnOnce(&mut Window, &mut AppContext) -> T,
     {
         todo!()
         // self.update(|cx| {

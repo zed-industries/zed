@@ -1,15 +1,15 @@
 use crate::{
-    Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, AvailableSpace,
+    Action, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, DrawPhase, Drawable,
-    Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
+    Element, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
     ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
-    TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext, WindowBounds,
-    WindowContext, WindowHandle, WindowOptions,
+    TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext, Window, WindowContext,
+    WindowHandle,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
-use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
+use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc, time::Duration};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
@@ -77,7 +77,7 @@ impl Context for TestAppContext {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+        F: FnOnce(&mut Window, &mut AppContext) -> T,
     {
         let mut lock = self.app.borrow_mut();
         lock.update_window(window, f)
@@ -363,7 +363,9 @@ impl TestAppContext {
         A: Action,
     {
         window
-            .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
+            .update(self, |window, cx| {
+                window.dispatch_action(action.boxed_clone(), cx)
+            })
             .unwrap();
 
         self.background_executor.run_until_parked()
@@ -399,8 +401,10 @@ impl TestAppContext {
 
     /// dispatches a single Keystroke (see also `simulate_keystrokes` and `simulate_input`)
     pub fn dispatch_keystroke(&mut self, window: AnyWindowHandle, keystroke: Keystroke) {
-        self.update_window(window, |_, cx| cx.dispatch_keystroke(keystroke))
-            .unwrap();
+        self.update_window(window, |window, cx| {
+            window.dispatch_keystroke(keystroke, cx)
+        })
+        .unwrap();
     }
 
     /// Returns the `TestWindow` backing the given handle.
@@ -657,7 +661,8 @@ impl VisualTestContext {
 
     /// Provides the `WindowContext` for the duration of the closure.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut WindowContext) -> R) -> R {
-        self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
+        todo!()
+        // self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
     }
 
     /// Creates a new VisualTestContext. You would typically shadow the passed in
@@ -822,30 +827,31 @@ impl VisualTestContext {
     /// Simulates the user closing the window.
     /// Returns true if the window was closed.
     pub fn simulate_close(&mut self) -> bool {
-        let handler = self
-            .cx
-            .update_window(self.window, |_, cx| {
-                cx.window
-                    .platform_window
-                    .as_test()
-                    .unwrap()
-                    .0
-                    .lock()
-                    .should_close_handler
-                    .take()
-            })
-            .unwrap();
-        if let Some(mut handler) = handler {
-            let should_close = handler();
-            self.cx
-                .update_window(self.window, |_, cx| {
-                    cx.window.platform_window.on_should_close(handler);
-                })
-                .unwrap();
-            should_close
-        } else {
-            false
-        }
+        todo!()
+        // let handler = self
+        //     .cx
+        //     .update_window(self.window, |_, cx| {
+        //         cx.window
+        //             .platform_window
+        //             .as_test()
+        //             .unwrap()
+        //             .0
+        //             .lock()
+        //             .should_close_handler
+        //             .take()
+        //     })
+        //     .unwrap();
+        // if let Some(mut handler) = handler {
+        //     let should_close = handler();
+        //     self.cx
+        //         .update_window(self.window, |_, cx| {
+        //             cx.window.platform_window.on_should_close(handler);
+        //         })
+        //         .unwrap();
+        //     should_close
+        // } else {
+        //     false
+        // }
     }
 
     /// Get an &mut VisualTestContext (which is mostly what you need to pass to other methods).
@@ -909,7 +915,7 @@ impl Context for VisualTestContext {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+        F: FnOnce(&mut Window, &mut AppContext) -> T,
     {
         self.cx.update_window(window, f)
     }
@@ -934,9 +940,10 @@ impl VisualContext for VisualTestContext {
     where
         V: 'static + Render,
     {
-        self.window
-            .update(&mut self.cx, |_, cx| cx.new_view(build_view))
-            .unwrap()
+        todo!("remove the trait")
+        // self.window
+        //     .update(&mut self.cx, |_, cx| cx.new_view(build_view))
+        //     .unwrap()
     }
 
     fn update_view<V: 'static, R>(
@@ -944,9 +951,11 @@ impl VisualContext for VisualTestContext {
         view: &View<V>,
         update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Self::Result<R> {
-        self.window
-            .update(&mut self.cx, |_, cx| cx.update_view(view, update))
-            .unwrap()
+        todo!("remove the trait")
+
+        // self.window
+        //     .update(&mut self.cx, |_, cx| cx.update_view(view, update))
+        //     .unwrap()
     }
 
     fn replace_root_view<V>(
@@ -956,28 +965,31 @@ impl VisualContext for VisualTestContext {
     where
         V: 'static + Render,
     {
-        self.window
-            .update(&mut self.cx, |_, cx| cx.replace_root_view(build_view))
-            .unwrap()
+        todo!("remove the trait")
+        // self.window
+        //     .update(&mut self.cx, |_, cx| cx.replace_root_view(build_view))
+        //     .unwrap()
     }
 
     fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
-        self.window
-            .update(&mut self.cx, |_, cx| {
-                view.read(cx).focus_handle(cx).clone().focus(cx)
-            })
-            .unwrap()
+        todo!("remove the trait")
+        // self.window
+        //     .update(&mut self.cx, |_, cx| {
+        //         view.read(cx).focus_handle(cx).clone().focus(cx)
+        //     })
+        //     .unwrap()
     }
 
     fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
     where
         V: crate::ManagedView,
     {
-        self.window
-            .update(&mut self.cx, |_, cx| {
-                view.update(cx, |_, cx| cx.emit(crate::DismissEvent))
-            })
-            .unwrap()
+        todo!("remove the trait")
+        // self.window
+        //     .update(&mut self.cx, |_, cx| {
+        //         view.update(cx, |_, cx| cx.emit(crate::DismissEvent))
+        //     })
+        //     .unwrap()
     }
 }
 
@@ -988,6 +1000,7 @@ impl AnyWindowHandle {
         cx: &mut TestAppContext,
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> View<V> {
-        self.update(cx, |_, cx| cx.new_view(build_view)).unwrap()
+        todo!("remove this method")
+        // self.update(cx, |_, cx| cx.new_view(build_view)).unwrap()
     }
 }

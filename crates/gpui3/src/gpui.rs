@@ -200,9 +200,9 @@ pub trait Context {
         T: 'static;
 
     /// Update a window for the given handle.
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T;
+        F: FnOnce(&mut Window, &mut AppContext) -> T;
 
     /// Read a window off of the application context.
     fn read_window<T, R>(

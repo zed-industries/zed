@@ -84,7 +84,7 @@ impl DispatchPhase {
     }
 }
 
-type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
+type AnyObserver = Box<dyn FnMut(&mut Window, &mut AppContext) -> bool + 'static>;
 
 type AnyWindowFocusListener =
     Box<dyn FnMut(&WindowFocusEvent, &mut WindowContext) -> bool + 'static>;
@@ -310,7 +310,7 @@ impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 /// Emitted by implementers of [`ManagedView`] to indicate the view should be dismissed, such as when a view is presented as a modal.
 pub struct DismissEvent;
 
-type FrameCallback = Box<dyn FnOnce(&mut WindowContext)>;
+type FrameCallback = Box<dyn FnOnce(&mut Window, &mut AppContext)>;
 
 pub(crate) type AnyMouseListener =
     Box<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
@@ -589,7 +589,7 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
     const DEFAULT_WINDOW_OFFSET: Point<Pixels> = point(px(0.), px(35.));
 
     cx.active_window()
-        .and_then(|w| w.update(cx, |_, cx| cx.bounds()).ok())
+        .and_then(|w| w.update(cx, |window, _cx| window.bounds()).ok())
         .map(|mut bounds| {
             bounds.origin += DEFAULT_WINDOW_OFFSET;
             bounds
@@ -671,7 +671,7 @@ impl Window {
         platform_window.on_close(Box::new({
             let mut cx = cx.to_async();
             move || {
-                let _ = handle.update(&mut cx, |_, cx| cx.remove_window());
+                let _ = handle.update(&mut cx, |window, _cx| window.remove_window());
             }
         }));
         platform_window.on_request_frame(Box::new({
@@ -685,9 +685,9 @@ impl Window {
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {
                     handle
-                        .update(&mut cx, |_, cx| {
+                        .update(&mut cx, |window, cx| {
                             for callback in next_frame_callbacks {
-                                callback(cx);
+                                callback(window, cx);
                             }
                         })
                         .log_err();
@@ -703,19 +703,21 @@ impl Window {
                 if dirty.get() {
                     measure("frame duration", || {
                         handle
-                            .update(&mut cx, |_, cx| {
-                                cx.draw();
-                                cx.present();
+                            .update(&mut cx, |window, cx| {
+                                window.draw(cx);
+                                window.present();
                             })
                             .log_err();
                     })
                 } else if needs_present {
-                    handle.update(&mut cx, |_, cx| cx.present()).log_err();
+                    handle
+                        .update(&mut cx, |window, _cx| window.present())
+                        .log_err();
                 }
 
                 handle
-                    .update(&mut cx, |_, cx| {
-                        cx.complete_frame();
+                    .update(&mut cx, |window, _cx| {
+                        window.complete_frame();
                     })
                     .log_err();
             }
@@ -724,7 +726,7 @@ impl Window {
             let mut cx = cx.to_async();
             move |_, _| {
                 handle
-                    .update(&mut cx, |_, cx| cx.bounds_changed())
+                    .update(&mut cx, |window, _cx| window.bounds_changed())
                     .log_err();
             }
         }));
@@ -732,7 +734,7 @@ impl Window {
             let mut cx = cx.to_async();
             move || {
                 handle
-                    .update(&mut cx, |_, cx| cx.bounds_changed())
+                    .update(&mut cx, |window, _cx| window.bounds_changed())
                     .log_err();
             }
         }));
@@ -740,7 +742,7 @@ impl Window {
             let mut cx = cx.to_async();
             move || {
                 handle
-                    .update(&mut cx, |_, cx| cx.appearance_changed())
+                    .update(&mut cx, |window, _cx| window.appearance_changed())
                     .log_err();
             }
         }));
@@ -748,12 +750,12 @@ impl Window {
             let mut cx = cx.to_async();
             move |active| {
                 handle
-                    .update(&mut cx, |_, cx| {
-                        cx.window.active.set(active);
-                        cx.window
+                    .update(&mut cx, |window, cx| {
+                        window.active.set(active);
+                        window
                             .activation_observers
                             .clone()
-                            .retain(&(), |callback| callback(cx));
+                            .retain(&(), |callback| callback(window, cx));
                         cx.refresh();
                     })
                     .log_err();
@@ -763,8 +765,8 @@ impl Window {
             let mut cx = cx.to_async();
             move |active| {
                 handle
-                    .update(&mut cx, |_, cx| {
-                        cx.window.hovered.set(active);
+                    .update(&mut cx, |window, cx| {
+                        window.hovered.set(active);
                         cx.refresh();
                     })
                     .log_err();
@@ -774,7 +776,7 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move |event| {
                 handle
-                    .update(&mut cx, |_, cx| cx.dispatch_event(event))
+                    .update(&mut cx, |window, cx| window.dispatch_event(event, cx))
                     .log_err()
                     .unwrap_or(DispatchEventResult::default())
             })
@@ -934,7 +936,7 @@ impl Window {
     }
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
-    pub fn on_next_frame(&self, callback: impl FnOnce(&mut WindowContext) + 'static) {
+    pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut AppContext) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
     }
 
@@ -945,8 +947,9 @@ impl Window {
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
     pub fn request_animation_frame(&self) {
-        let parent_id = self.parent_view_id();
-        self.on_next_frame(move |cx| cx.notify(parent_id));
+        todo!()
+        // let parent_id = self.parent_view_id();
+        // self.on_next_frame(move |_, cx| cx.notify(parent_id));
     }
 
     fn bounds_changed(&mut self) {
@@ -2692,7 +2695,7 @@ impl Window {
 
     /// Dispatch a given keystroke as though the user had typed it.
     /// You can create a keystroke with Keystroke::parse("").
-    pub fn dispatch_keystroke(&mut self, keystroke: Keystroke) -> bool {
+    pub fn dispatch_keystroke(&mut self, keystroke: Keystroke, cx: &mut AppContext) -> bool {
         todo!()
         // let keystroke = keystroke.with_simulated_ime();
         // let result = self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
@@ -2752,7 +2755,11 @@ impl Window {
 
     /// Dispatch a mouse or keyboard event on the window.
     #[profiling::function]
-    pub fn dispatch_event(&mut self, event: PlatformInput) -> DispatchEventResult {
+    pub fn dispatch_event(
+        &mut self,
+        event: PlatformInput,
+        cx: &mut AppContext,
+    ) -> DispatchEventResult {
         todo!()
         // self.last_input_timestamp.set(Instant::now());
         // // Handlers may set this to false by calling `stop_propagation`.
@@ -3144,7 +3151,36 @@ impl Window {
         // }
     }
 
-    fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: &dyn Action) {
+    /// Dispatch the given action on the currently focused element.
+    pub fn dispatch_action(&mut self, action: Box<dyn Action>, cx: &mut AppContext) {
+        todo!()
+        // let focus_handle = self.focused();
+
+        // let window = self.window.handle;
+        // self.app.defer(move |cx| {
+        //     window
+        //         .update(cx, |_, cx| {
+        //             let node_id = focus_handle
+        //                 .and_then(|handle| {
+        //                     cx.window
+        //                         .rendered_frame
+        //                         .dispatch_tree
+        //                         .focusable_node_id(handle.id)
+        //                 })
+        //                 .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
+
+        //             cx.dispatch_action_on_node(node_id, action.as_ref());
+        //         })
+        //         .log_err();
+        // })
+    }
+
+    fn dispatch_action_on_node(
+        &mut self,
+        node_id: DispatchNodeId,
+        action: &dyn Action,
+        cx: &mut AppContext,
+    ) {
         todo!()
         // let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
@@ -3627,25 +3663,26 @@ impl<'a> WindowContext<'a> {
 
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
-        let focus_handle = self.focused();
+        todo!("remove WindowContext")
+        // let focus_handle = self.focused();
 
-        let window = self.window.handle;
-        self.app.defer(move |cx| {
-            window
-                .update(cx, |_, cx| {
-                    let node_id = focus_handle
-                        .and_then(|handle| {
-                            cx.window
-                                .rendered_frame
-                                .dispatch_tree
-                                .focusable_node_id(handle.id)
-                        })
-                        .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
+        // let window = self.window.handle;
+        // self.app.defer(move |cx| {
+        //     window
+        //         .update(cx, |_, cx| {
+        //             let node_id = focus_handle
+        //                 .and_then(|handle| {
+        //                     cx.window
+        //                         .rendered_frame
+        //                         .dispatch_tree
+        //                         .focusable_node_id(handle.id)
+        //                 })
+        //                 .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
 
-                    cx.dispatch_action_on_node(node_id, action.as_ref());
-                })
-                .log_err();
-        })
+        //             cx.dispatch_action_on_node(node_id, action.as_ref());
+        //         })
+        //         .log_err();
+        // })
     }
 
     pub(crate) fn dispatch_keystroke_observers(
@@ -3673,10 +3710,11 @@ impl<'a> WindowContext<'a> {
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
     pub fn defer(&mut self, f: impl FnOnce(&mut WindowContext) + 'static) {
-        let handle = self.window.handle;
-        self.app.defer(move |cx| {
-            handle.update(cx, |_, cx| f(cx)).ok();
-        });
+        todo!("delete struct")
+        // let handle = self.window.handle;
+        // self.app.defer(move |cx| {
+        //     handle.update(cx, |_, cx| f(cx)).ok();
+        // });
     }
 
     /// Subscribe to events emitted by a model or view.
@@ -3690,24 +3728,25 @@ impl<'a> WindowContext<'a> {
     where
         E: Entity<T>,
     {
-        let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
-        let window_handle = self.window.handle;
-        self.app.new_observer(
-            entity_id,
-            Box::new(move |cx| {
-                window_handle
-                    .update(cx, |_, cx| {
-                        if let Some(handle) = E::upgrade_from(&entity) {
-                            on_notify(handle, cx);
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false)
-            }),
-        )
+        todo!()
+        // let entity_id = entity.entity_id();
+        // let entity = entity.downgrade();
+        // let window_handle = self.window.handle;
+        // self.app.new_observer(
+        //     entity_id,
+        //     Box::new(move |cx| {
+        //         window_handle
+        //             .update(cx, |_, cx| {
+        //                 if let Some(handle) = E::upgrade_from(&entity) {
+        //                     on_notify(handle, cx);
+        //                     true
+        //                 } else {
+        //                     false
+        //                 }
+        //             })
+        //             .unwrap_or(false)
+        //     }),
+        // )
     }
 
     /// Subscribe to events emitted by a model or view.
@@ -3723,28 +3762,29 @@ impl<'a> WindowContext<'a> {
         E: Entity<Emitter>,
         Evt: 'static,
     {
-        let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
-        let window_handle = self.window.handle;
-        self.app.new_subscription(
-            entity_id,
-            (
-                TypeId::of::<Evt>(),
-                Box::new(move |event, cx| {
-                    window_handle
-                        .update(cx, |_, cx| {
-                            if let Some(handle) = E::upgrade_from(&entity) {
-                                let event = event.downcast_ref().expect("invalid event type");
-                                on_event(handle, event, cx);
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false)
-                }),
-            ),
-        )
+        todo!("delete struct")
+        // let entity_id = entity.entity_id();
+        // let entity = entity.downgrade();
+        // let window_handle = self.window.handle;
+        // self.app.new_subscription(
+        //     entity_id,
+        //     (
+        //         TypeId::of::<Evt>(),
+        //         Box::new(move |event, cx| {
+        //             window_handle
+        //                 .update(cx, |_, cx| {
+        //                     if let Some(handle) = E::upgrade_from(&entity) {
+        //                         let event = event.downcast_ref().expect("invalid event type");
+        //                         on_event(handle, event, cx);
+        //                         true
+        //                     } else {
+        //                         false
+        //                     }
+        //                 })
+        //                 .unwrap_or(false)
+        //         }),
+        //     ),
+        // )
     }
 
     /// Register a callback to be invoked when the given Model or View is released.
@@ -3757,17 +3797,18 @@ impl<'a> WindowContext<'a> {
         E: Entity<T>,
         T: 'static,
     {
-        let entity_id = entity.entity_id();
-        let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.release_listeners.insert(
-            entity_id,
-            Box::new(move |entity, cx| {
-                let entity = entity.downcast_mut().expect("invalid entity type");
-                let _ = window_handle.update(cx, |_, cx| on_release(entity, cx));
-            }),
-        );
-        activate();
-        subscription
+        todo!("remove struct")
+        // let entity_id = entity.entity_id();
+        // let window_handle = self.window.handle;
+        // let (subscription, activate) = self.app.release_listeners.insert(
+        //     entity_id,
+        //     Box::new(move |entity, cx| {
+        //         let entity = entity.downcast_mut().expect("invalid entity type");
+        //         let _ = window_handle.update(cx, |_, cx| on_release(entity, cx));
+        //     }),
+        // );
+        // activate();
+        // subscription
     }
 
     /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
@@ -3778,7 +3819,8 @@ impl<'a> WindowContext<'a> {
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut WindowContext) + 'static) {
-        RefCell::borrow_mut(&self.window.next_frame_callbacks).push(Box::new(callback));
+        todo!()
+        // RefCell::borrow_mut(&self.window.next_frame_callbacks).push(Box::new(callback));
     }
 
     /// Schedule a frame to be drawn on the next animation frame.
@@ -3805,20 +3847,20 @@ impl<'a> WindowContext<'a> {
     }
 
     fn bounds_changed(&mut self) {
-        self.window.scale_factor = self.window.platform_window.scale_factor();
-        self.window.viewport_size = self.window.platform_window.content_size();
-        self.window.display_id = self
-            .window
-            .platform_window
-            .display()
-            .map(|display| display.id());
+        // self.window.scale_factor = self.window.platform_window.scale_factor();
+        // self.window.viewport_size = self.window.platform_window.content_size();
+        // self.window.display_id = self
+        //     .window
+        //     .platform_window
+        //     .display()
+        //     .map(|display| display.id());
 
-        self.refresh();
+        // self.refresh();
 
-        self.window
-            .bounds_observers
-            .clone()
-            .retain(&(), |callback| callback(self));
+        // self.window
+        //     .bounds_observers
+        //     .clone()
+        //     .retain(&(), |callback| callback(self));
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
@@ -3832,12 +3874,12 @@ impl<'a> WindowContext<'a> {
     }
 
     pub(crate) fn appearance_changed(&mut self) {
-        self.window.appearance = self.window.platform_window.appearance();
+        // self.window.appearance = self.window.platform_window.appearance();
 
-        self.window
-            .appearance_observers
-            .clone()
-            .retain(&(), |callback| callback(self));
+        // self.window
+        //     .appearance_observers
+        //     .clone()
+        //     .retain(&(), |callback| callback(self));
     }
 
     /// Returns the appearance of the current window.
@@ -4032,81 +4074,81 @@ impl<'a> WindowContext<'a> {
     /// the contents of the new [Scene], use [present].
     #[profiling::function]
     pub fn draw(&mut self) {
-        self.window.dirty.set(false);
-        self.window.requested_autoscroll = None;
+        // self.window.dirty.set(false);
+        // self.window.requested_autoscroll = None;
 
-        // Restore the previously-used input handler.
-        if let Some(input_handler) = self.window.platform_window.take_input_handler() {
-            self.window
-                .rendered_frame
-                .input_handlers
-                .push(Some(input_handler));
-        }
+        // // Restore the previously-used input handler.
+        // if let Some(input_handler) = self.window.platform_window.take_input_handler() {
+        //     self.window
+        //         .rendered_frame
+        //         .input_handlers
+        //         .push(Some(input_handler));
+        // }
 
-        self.draw_roots();
-        self.window.dirty_views.clear();
-        self.window.next_frame.window_active = self.window.active.get();
+        // self.draw_roots();
+        // self.window.dirty_views.clear();
+        // self.window.next_frame.window_active = self.window.active.get();
 
-        // Register requested input handler with the platform window.
-        if let Some(input_handler) = self.window.next_frame.input_handlers.pop() {
-            self.window
-                .platform_window
-                .set_input_handler(input_handler.unwrap());
-        }
+        // // Register requested input handler with the platform window.
+        // if let Some(input_handler) = self.window.next_frame.input_handlers.pop() {
+        //     self.window
+        //         .platform_window
+        //         .set_input_handler(input_handler.unwrap());
+        // }
 
-        self.window.layout_engine.as_mut().unwrap().clear();
-        self.text_system().finish_frame();
-        self.window
-            .next_frame
-            .finish(&mut self.window.rendered_frame);
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
-            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
-            if percentage >= 80. {
-                log::warn!("elevated element arena occupation: {}.", percentage);
-            }
-            element_arena.clear();
-        });
+        // self.window.layout_engine.as_mut().unwrap().clear();
+        // self.text_system().finish_frame();
+        // self.window
+        //     .next_frame
+        //     .finish(&mut self.window.rendered_frame);
+        // ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+        //     let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
+        //     if percentage >= 80. {
+        //         log::warn!("elevated element arena occupation: {}.", percentage);
+        //     }
+        //     element_arena.clear();
+        // });
 
-        self.window.draw_phase = DrawPhase::Focus;
-        let previous_focus_path = self.window.rendered_frame.focus_path();
-        let previous_window_active = self.window.rendered_frame.window_active;
-        mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
-        self.window.next_frame.clear();
-        let current_focus_path = self.window.rendered_frame.focus_path();
-        let current_window_active = self.window.rendered_frame.window_active;
+        // self.window.draw_phase = DrawPhase::Focus;
+        // let previous_focus_path = self.window.rendered_frame.focus_path();
+        // let previous_window_active = self.window.rendered_frame.window_active;
+        // mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
+        // self.window.next_frame.clear();
+        // let current_focus_path = self.window.rendered_frame.focus_path();
+        // let current_window_active = self.window.rendered_frame.window_active;
 
-        if previous_focus_path != current_focus_path
-            || previous_window_active != current_window_active
-        {
-            if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
-                self.window
-                    .focus_lost_listeners
-                    .clone()
-                    .retain(&(), |listener| listener(self));
-            }
+        // if previous_focus_path != current_focus_path
+        //     || previous_window_active != current_window_active
+        // {
+        //     if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
+        //         self.window
+        //             .focus_lost_listeners
+        //             .clone()
+        //             .retain(&(), |listener| listener(self));
+        //     }
 
-            let event = WindowFocusEvent {
-                previous_focus_path: if previous_window_active {
-                    previous_focus_path
-                } else {
-                    Default::default()
-                },
-                current_focus_path: if current_window_active {
-                    current_focus_path
-                } else {
-                    Default::default()
-                },
-            };
-            self.window
-                .focus_listeners
-                .clone()
-                .retain(&(), |listener| listener(&event, self));
-        }
+        //     let event = WindowFocusEvent {
+        //         previous_focus_path: if previous_window_active {
+        //             previous_focus_path
+        //         } else {
+        //             Default::default()
+        //         },
+        //         current_focus_path: if current_window_active {
+        //             current_focus_path
+        //         } else {
+        //             Default::default()
+        //         },
+        //     };
+        //     self.window
+        //         .focus_listeners
+        //         .clone()
+        //         .retain(&(), |listener| listener(&event, self));
+        // }
 
-        self.reset_cursor_style();
-        self.window.refreshing = false;
-        self.window.draw_phase = DrawPhase::None;
-        self.window.needs_present.set(true);
+        // self.reset_cursor_style();
+        // self.window.refreshing = false;
+        // self.window.draw_phase = DrawPhase::None;
+        // self.window.needs_present.set(true);
     }
 
     #[profiling::function]
@@ -6008,10 +6050,10 @@ impl<'a> WindowContext<'a> {
     }
 
     fn pending_input_changed(&mut self) {
-        self.window
-            .pending_input_observers
-            .clone()
-            .retain(&(), |callback| callback(self));
+        // self.window
+        //     .pending_input_observers
+        //     .clone()
+        //     .retain(&(), |callback| callback(self));
     }
 
     fn dispatch_key_down_up_event(
@@ -6230,13 +6272,14 @@ impl<'a> WindowContext<'a> {
         &mut self,
         f: impl Fn(&mut WindowContext<'_>) + 'static,
     ) -> Subscription {
-        let window_handle = self.window.handle;
-        let (subscription, activate) = self.global_observers.insert(
-            TypeId::of::<G>(),
-            Box::new(move |cx| window_handle.update(cx, |_, cx| f(cx)).is_ok()),
-        );
-        self.app.defer(move |_| activate());
-        subscription
+        todo!("delete struct")
+        // let window_handle = self.window.handle;
+        // let (subscription, activate) = self.global_observers.insert(
+        //     TypeId::of::<G>(),
+        //     Box::new(move |cx| window_handle.update(cx, |_, cx| f(cx)).is_ok()),
+        // );
+        // self.app.defer(move |_| activate());
+        // subscription
     }
 
     /// Focus the current window and bring it to the foreground at the platform level.
@@ -6513,7 +6556,7 @@ impl Context for WindowContext<'_> {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+        F: FnOnce(&mut Window, &mut AppContext) -> T,
     {
         todo!()
         // if window == self.window.handle {
@@ -6772,25 +6815,26 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         V: 'static,
         E: Entity<V2>,
     {
-        let view = self.view().downgrade();
-        let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
-        let window_handle = self.window.handle;
-        self.app.new_observer(
-            entity_id,
-            Box::new(move |cx| {
-                window_handle
-                    .update(cx, |_, cx| {
-                        if let Some(handle) = E::upgrade_from(&entity) {
-                            view.update(cx, |this, cx| on_notify(this, handle, cx))
-                                .is_ok()
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false)
-            }),
-        )
+        todo!("delete struct")
+        // let view = self.view().downgrade();
+        // let entity_id = entity.entity_id();
+        // let entity = entity.downgrade();
+        // let window_handle = self.window.handle;
+        // self.app.new_observer(
+        //     entity_id,
+        //     Box::new(move |cx| {
+        //         window_handle
+        //             .update(cx, |_, cx| {
+        //                 if let Some(handle) = E::upgrade_from(&entity) {
+        //                     view.update(cx, |this, cx| on_notify(this, handle, cx))
+        //                         .is_ok()
+        //                 } else {
+        //                     false
+        //                 }
+        //             })
+        //             .unwrap_or(false)
+        //     }),
+        // )
     }
 
     /// Subscribe to events emitted by another model or view.
@@ -6806,29 +6850,30 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         E: Entity<V2>,
         Evt: 'static,
     {
-        let view = self.view().downgrade();
-        let entity_id = entity.entity_id();
-        let handle = entity.downgrade();
-        let window_handle = self.window.handle;
-        self.app.new_subscription(
-            entity_id,
-            (
-                TypeId::of::<Evt>(),
-                Box::new(move |event, cx| {
-                    window_handle
-                        .update(cx, |_, cx| {
-                            if let Some(handle) = E::upgrade_from(&handle) {
-                                let event = event.downcast_ref().expect("invalid event type");
-                                view.update(cx, |this, cx| on_event(this, handle, event, cx))
-                                    .is_ok()
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false)
-                }),
-            ),
-        )
+        todo!()
+        // let view = self.view().downgrade();
+        // let entity_id = entity.entity_id();
+        // let handle = entity.downgrade();
+        // let window_handle = self.window.handle;
+        // self.app.new_subscription(
+        //     entity_id,
+        //     (
+        //         TypeId::of::<Evt>(),
+        //         Box::new(move |event, cx| {
+        //             window_handle
+        //                 .update(cx, |_, cx| {
+        //                     if let Some(handle) = E::upgrade_from(&handle) {
+        //                         let event = event.downcast_ref().expect("invalid event type");
+        //                         view.update(cx, |this, cx| on_event(this, handle, event, cx))
+        //                             .is_ok()
+        //                     } else {
+        //                         false
+        //                     }
+        //                 })
+        //                 .unwrap_or(false)
+        //         }),
+        //     ),
+        // )
     }
 
     /// Register a callback to be invoked when the view is released.
@@ -6862,20 +6907,21 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         V2: 'static,
         E: Entity<V2>,
     {
-        let view = self.view().downgrade();
-        let entity_id = entity.entity_id();
-        let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.release_listeners.insert(
-            entity_id,
-            Box::new(move |entity, cx| {
-                let entity = entity.downcast_mut().expect("invalid entity type");
-                let _ = window_handle.update(cx, |_, cx| {
-                    view.update(cx, |this, cx| on_release(this, entity, cx))
-                });
-            }),
-        );
-        activate();
-        subscription
+        todo!()
+        // let view = self.view().downgrade();
+        // let entity_id = entity.entity_id();
+        // let window_handle = self.window.handle;
+        // let (subscription, activate) = self.app.release_listeners.insert(
+        //     entity_id,
+        //     Box::new(move |entity, cx| {
+        //         let entity = entity.downcast_mut().expect("invalid entity type");
+        //         let _ = window_handle.update(cx, |_, cx| {
+        //             view.update(cx, |this, cx| on_release(this, entity, cx))
+        //         });
+        //     }),
+        // );
+        // activate();
+        // subscription
     }
 
     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
@@ -6889,13 +6935,14 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
-        let view = self.view.downgrade();
-        let (subscription, activate) = self.window.bounds_observers.insert(
-            (),
-            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
-        );
-        activate();
-        subscription
+        todo!()
+        // let view = self.view.downgrade();
+        // let (subscription, activate) = self.window.bounds_observers.insert(
+        //     (),
+        //     Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        // );
+        // activate();
+        // subscription
     }
 
     /// Register a callback to be invoked when the window is activated or deactivated.
@@ -6903,13 +6950,14 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
-        let view = self.view.downgrade();
-        let (subscription, activate) = self.window.activation_observers.insert(
-            (),
-            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
-        );
-        activate();
-        subscription
+        todo!()
+        // let view = self.view.downgrade();
+        // let (subscription, activate) = self.window.activation_observers.insert(
+        //     (),
+        //     Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        // );
+        // activate();
+        // subscription
     }
 
     /// Registers a callback to be invoked when the window appearance changes.
@@ -6917,13 +6965,14 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
-        let view = self.view.downgrade();
-        let (subscription, activate) = self.window.appearance_observers.insert(
-            (),
-            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
-        );
-        activate();
-        subscription
+        todo!()
+        // let view = self.view.downgrade();
+        // let (subscription, activate) = self.window.appearance_observers.insert(
+        //     (),
+        //     Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        // );
+        // activate();
+        // subscription
     }
 
     /// Register a callback to be invoked when a keystroke is received by the application
@@ -6961,13 +7010,14 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
-        let view = self.view.downgrade();
-        let (subscription, activate) = self.window.pending_input_observers.insert(
-            (),
-            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
-        );
-        activate();
-        subscription
+        todo!()
+        // let view = self.view.downgrade();
+        // let (subscription, activate) = self.window.pending_input_observers.insert(
+        //     (),
+        //     Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        // );
+        // activate();
+        // subscription
     }
 
     /// Register a listener to be called when the given focus handle receives focus.
@@ -7049,13 +7099,14 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &self,
         mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
-        let view = self.view.downgrade();
-        let (subscription, activate) = self.window.focus_lost_listeners.insert(
-            (),
-            Box::new(move |cx| view.update(cx, |view, cx| listener(view, cx)).is_ok()),
-        );
-        activate();
-        subscription
+        todo!()
+        // let view = self.view.downgrade();
+        // let (subscription, activate) = self.window.focus_lost_listeners.insert(
+        //     (),
+        //     Box::new(move |window, cx| view.update(cx, |view, cx| listener(view, cx)).is_ok()),
+        // );
+        // activate();
+        // subscription
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
@@ -7106,18 +7157,19 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &mut self,
         mut f: impl FnMut(&mut V, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription {
-        let window_handle = self.window.handle;
-        let view = self.view().downgrade();
-        let (subscription, activate) = self.global_observers.insert(
-            TypeId::of::<G>(),
-            Box::new(move |cx| {
-                window_handle
-                    .update(cx, |_, cx| view.update(cx, |view, cx| f(view, cx)).is_ok())
-                    .unwrap_or(false)
-            }),
-        );
-        self.app.defer(move |_| activate());
-        subscription
+        todo!("remove struct")
+        // let window_handle = self.window.handle;
+        // let view = self.view().downgrade();
+        // let (subscription, activate) = self.global_observers.insert(
+        //     TypeId::of::<G>(),
+        //     Box::new(move |cx| {
+        //         window_handle
+        //             .update(cx, |_, cx| view.update(cx, |view, cx| f(view, cx)).is_ok())
+        //             .unwrap_or(false)
+        //     }),
+        // );
+        // self.app.defer(move |_| activate());
+        // subscription
     }
 
     /// Register a callback to be invoked when the given Action type is dispatched to the window.
@@ -7216,7 +7268,7 @@ impl<V> Context for ViewContext<'_, V> {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+        F: FnOnce(&mut Window, &mut AppContext) -> T,
     {
         self.window_cx.update_window(window, update)
     }
@@ -7332,9 +7384,11 @@ impl<V: 'static + Render> WindowHandle<V> {
         C: Context,
     {
         Flatten::flatten(cx.update_window(self.any_handle, |root_view, _| {
-            root_view
-                .downcast::<V>()
-                .map_err(|_| anyhow!("the type of the window's root view has changed"))
+            Ok(todo!("remove typed window handles"))
+            // root_view
+            //     .downcast::<V>()
+            //     .map_err(|_| anyhow!("the type of the window's root view has changed"))
+            //
         }))
     }
 
@@ -7350,10 +7404,11 @@ impl<V: 'static + Render> WindowHandle<V> {
         C: Context,
     {
         cx.update_window(self.any_handle, |root_view, cx| {
-            let view = root_view
-                .downcast::<V>()
-                .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
-            Ok(cx.update_view(&view, update))
+            Ok(todo!("remove typed window handles"))
+            // let view = root_view
+            //     .downcast::<V>()
+            //     .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
+            // Ok(cx.update_view(&view, update))
         })?
     }
 
@@ -7402,7 +7457,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// Will return `None` if the window is closed or currently
     /// borrowed.
     pub fn is_active(&self, cx: &mut AppContext) -> Option<bool> {
-        cx.update_window(self.any_handle, |_, cx| cx.is_window_active())
+        cx.update_window(self.any_handle, |window, _cx| window.is_window_active())
             .ok()
     }
 }
@@ -7478,7 +7533,7 @@ impl AnyWindowHandle {
     pub fn update<C, R>(
         self,
         cx: &mut C,
-        update: impl FnOnce(AnyView, &mut WindowContext<'_>) -> R,
+        update: impl FnOnce(&mut Window, &mut AppContext) -> R,
     ) -> Result<R>
     where
         C: Context,
