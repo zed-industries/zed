@@ -234,7 +234,7 @@ impl Render for AssistantPanel {
                     .p_2()
                     .overflow_y_scroll()
                     .bg(cx.theme().colors().panel_background)
-                    .children(self.thread.read(cx).messages.iter().map(|message| {
+                    .children(self.thread.read(cx).messages().map(|message| {
                         v_flex()
                             .p_2()
                             .border_1()
