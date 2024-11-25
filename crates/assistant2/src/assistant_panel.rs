@@ -1,7 +1,7 @@
 use anyhow::Result;
 use gpui::{
     prelude::*, px, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
-    FocusableView, Model, Pixels, Task, View, ViewContext, WeakView, WindowContext,
+    FocusableView, Model, Pixels, Subscription, Task, View, ViewContext, WeakView, WindowContext,
 };
 use language_model::LanguageModelRegistry;
 use language_model_selector::LanguageModelSelector;
@@ -28,6 +28,7 @@ pub struct AssistantPanel {
     pane: View<Pane>,
     thread: Model<Thread>,
     message_editor: View<MessageEditor>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl AssistantPanel {
@@ -59,11 +60,13 @@ impl AssistantPanel {
         });
 
         let thread = cx.new_model(Thread::new);
+        let subscriptions = vec![cx.observe(&thread, |_, _, cx| cx.notify())];
 
         Self {
             pane,
             thread: thread.clone(),
             message_editor: cx.new_view(|cx| MessageEditor::new(thread, cx)),
+            _subscriptions: subscriptions,
         }
     }
 }

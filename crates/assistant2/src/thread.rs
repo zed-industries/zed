@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{ModelContext, Task};
+use gpui::{EventEmitter, ModelContext, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, Role, StopReason,
 };
@@ -39,40 +39,51 @@ impl Thread {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
 
-                let mut text = String::new();
-
                 while let Some(event) = events.next().await {
                     let event = event?;
-                    match event {
-                        LanguageModelCompletionEvent::StartMessage { .. } => {}
-                        LanguageModelCompletionEvent::Stop(reason) => {
-                            stop_reason = reason;
+
+                    this.update(&mut cx, |thread, cx| {
+                        match event {
+                            LanguageModelCompletionEvent::StartMessage { .. } => {
+                                thread.messages.push(Message {
+                                    role: Role::Assistant,
+                                    text: String::new(),
+                                });
+                            }
+                            LanguageModelCompletionEvent::Stop(reason) => {
+                                stop_reason = reason;
+                            }
+                            LanguageModelCompletionEvent::Text(chunk) => {
+                                if let Some(last_message) = thread.messages.last_mut() {
+                                    if last_message.role == Role::Assistant {
+                                        last_message.text.push_str(&chunk);
+                                    }
+                                }
+                            }
+                            LanguageModelCompletionEvent::ToolUse(_tool_use) => {}
                         }
-                        LanguageModelCompletionEvent::Text(chunk) => {
-                            text.push_str(&chunk);
-                        }
-                        LanguageModelCompletionEvent::ToolUse(_tool_use) => {}
-                    }
+
+                        cx.emit(ThreadEvent::StreamedCompletion);
+                        cx.notify();
+                    })?;
 
                     smol::future::yield_now().await;
                 }
 
-                anyhow::Ok((stop_reason, text))
+                anyhow::Ok(stop_reason)
             };
 
             let result = stream_completion.await;
-
-            this.update(&mut cx, |thread, _cx| {
-                if let Some((_stop_reason, text)) = result.log_err() {
-                    thread.messages.push(Message {
-                        role: Role::Assistant,
-                        text,
-                    });
-                }
-            })
-            .ok();
+            let _ = result.log_err();
         });
 
         self.pending_completion_tasks.push(task);
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum ThreadEvent {
+    StreamedCompletion,
+}
+
+impl EventEmitter<ThreadEvent> for Thread {}
