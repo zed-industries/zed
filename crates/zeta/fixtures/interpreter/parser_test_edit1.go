@@ -8,7 +8,7 @@ import (
 	"github.com/mrnugget/monkey/lexer"
 )
 
-func WhileStatements(t *testing.T) {
+func TestWhileStatements(t *testing.T) {
     <|user_cursor_is_here|>
 }
 
