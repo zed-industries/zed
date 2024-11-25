@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use anyhow::Context as _;
 use gpui::{View, ViewContext, WindowContext};
 use language::Language;
@@ -54,9 +52,9 @@ pub fn switch_source_header(
     cx.spawn(|_editor, mut cx| async move {
         let switch_source_header = switch_source_header_task
             .await
-            .with_context(|| format!("Switch source/header LSP request for path \"{}\" failed", source_file))?;
+            .with_context(|| format!("Switch source/header LSP request for path \"{source_file}\" failed"))?;
         if switch_source_header.0.is_empty() {
-            log::info!("Clangd returned an empty string when requesting to switch source/header from \"{}\"", source_file);
+            log::info!("Clangd returned an empty string when requesting to switch source/header from \"{source_file}\"" );
             return Ok(());
         }
 
@@ -67,14 +65,17 @@ pub fn switch_source_header(
             )
         })?;
 
+        let path = goto.to_file_path().map_err(|()| {
+            anyhow::anyhow!("URL conversion to file path failed for \"{goto}\"")
+        })?;
+
         workspace
             .update(&mut cx, |workspace, view_cx| {
-                workspace.open_abs_path(PathBuf::from(goto.path()), false, view_cx)
+                workspace.open_abs_path(path, false, view_cx)
             })
             .with_context(|| {
                 format!(
-                    "Switch source/header could not open \"{}\" in workspace",
-                    goto.path()
+                    "Switch source/header could not open \"{goto}\" in workspace"
                 )
             })?
             .await

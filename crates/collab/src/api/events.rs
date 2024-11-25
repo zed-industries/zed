@@ -15,6 +15,7 @@ use chrono::Duration;
 use rpc::ExtensionMetadata;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize, Serializer};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
 use telemetry_events::{
@@ -417,9 +418,8 @@ pub async fn post_events(
     if let Some(kinesis_client) = app.kinesis_client.clone() {
         if let Some(stream) = app.config.kinesis_stream.clone() {
             let mut request = kinesis_client.put_records().stream_name(stream);
-            for row in for_snowflake(request_body.clone(), first_event_at) {
+            for row in for_snowflake(request_body.clone(), first_event_at, country_code.clone()) {
                 if let Some(data) = serde_json::to_vec(&row).log_err() {
-                    println!("{}", String::from_utf8_lossy(&data));
                     request = request.records(
                         aws_sdk_kinesis::types::PutRecordsRequestEntry::builder()
                             .partition_key(request_body.system_id.clone().unwrap_or_default())
@@ -483,20 +483,7 @@ pub async fn post_events(
                         checksum_matched,
                     ))
             }
-            Event::Cpu(event) => to_upload.cpu_events.push(CpuEventRow::from_event(
-                event.clone(),
-                wrapper,
-                &request_body,
-                first_event_at,
-                checksum_matched,
-            )),
-            Event::Memory(event) => to_upload.memory_events.push(MemoryEventRow::from_event(
-                event.clone(),
-                wrapper,
-                &request_body,
-                first_event_at,
-                checksum_matched,
-            )),
+            Event::Cpu(_) | Event::Memory(_) => continue,
             Event::App(event) => to_upload.app_events.push(AppEventRow::from_event(
                 event.clone(),
                 wrapper,
@@ -947,6 +934,7 @@ pub struct CpuEventRow {
 }
 
 impl CpuEventRow {
+    #[allow(unused)]
     fn from_event(
         event: CpuEvent,
         wrapper: &EventWrapper,
@@ -1001,6 +989,7 @@ pub struct MemoryEventRow {
 }
 
 impl MemoryEventRow {
+    #[allow(unused)]
     fn from_event(
         event: MemoryEvent,
         wrapper: &EventWrapper,
@@ -1392,155 +1381,246 @@ pub fn calculate_json_checksum(app: Arc<AppState>, json: &impl AsRef<[u8]>) -> O
 fn for_snowflake(
     body: EventRequestBody,
     first_event_at: chrono::DateTime<chrono::Utc>,
+    country_code: Option<String>,
 ) -> impl Iterator<Item = SnowflakeRow> {
-    body.events.into_iter().map(move |event| SnowflakeRow {
-        event: match &event.event {
-            Event::Editor(editor_event) => format!("editor_{}", editor_event.operation),
-            Event::InlineCompletion(inline_completion_event) => format!(
-                "inline_completion_{}",
-                if inline_completion_event.suggestion_accepted {
-                    "accept "
-                } else {
-                    "discard"
-                }
+    body.events.into_iter().flat_map(move |event| {
+        let timestamp =
+            first_event_at + Duration::milliseconds(event.milliseconds_since_first_event);
+        let (event_type, mut event_properties) = match &event.event {
+            Event::Editor(e) => (
+                match e.operation.as_str() {
+                    "open" => "Editor Opened".to_string(),
+                    "save" => "Editor Saved".to_string(),
+                    _ => format!("Unknown Editor Event: {}", e.operation),
+                },
+                serde_json::to_value(e).unwrap(),
             ),
-            Event::Call(call_event) => format!("call_{}", call_event.operation.replace(" ", "_")),
-            Event::Assistant(assistant_event) => {
+            Event::InlineCompletion(e) => (
                 format!(
-                    "assistant_{}",
-                    match assistant_event.phase {
-                        telemetry_events::AssistantPhase::Response => "response",
-                        telemetry_events::AssistantPhase::Invoked => "invoke",
-                        telemetry_events::AssistantPhase::Accepted => "accept",
-                        telemetry_events::AssistantPhase::Rejected => "reject",
+                    "Inline Completion {}",
+                    if e.suggestion_accepted {
+                        "Accepted"
+                    } else {
+                        "Discarded"
                     }
-                )
+                ),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Call(e) => {
+                let event_type = match e.operation.trim() {
+                    "unshare project" => "Project Unshared".to_string(),
+                    "open channel notes" => "Channel Notes Opened".to_string(),
+                    "share project" => "Project Shared".to_string(),
+                    "join channel" => "Channel Joined".to_string(),
+                    "hang up" => "Call Ended".to_string(),
+                    "accept incoming" => "Incoming Call Accepted".to_string(),
+                    "invite" => "Participant Invited".to_string(),
+                    "disable microphone" => "Microphone Disabled".to_string(),
+                    "enable microphone" => "Microphone Enabled".to_string(),
+                    "enable screen share" => "Screen Share Enabled".to_string(),
+                    "disable screen share" => "Screen Share Disabled".to_string(),
+                    "decline incoming" => "Incoming Call Declined".to_string(),
+                    _ => format!("Unknown Call Event: {}", e.operation),
+                };
+
+                (event_type, serde_json::to_value(e).unwrap())
             }
-            Event::Cpu(_) => "system_cpu".to_string(),
-            Event::Memory(_) => "system_memory".to_string(),
-            Event::App(app_event) => app_event.operation.replace(" ", "_"),
-            Event::Setting(_) => "setting_change".to_string(),
-            Event::Extension(_) => "extension_load".to_string(),
-            Event::Edit(_) => "edit".to_string(),
-            Event::Action(_) => "command_palette_action".to_string(),
-            Event::Repl(_) => "repl".to_string(),
-        },
-        system_id: body.system_id.clone(),
-        timestamp: first_event_at + Duration::milliseconds(event.milliseconds_since_first_event),
-        data: SnowflakeData {
-            installation_id: body.installation_id.clone(),
-            session_id: body.session_id.clone(),
-            metrics_id: body.metrics_id.clone(),
-            is_staff: body.is_staff,
-            app_version: body.app_version.clone(),
-            os_name: body.os_name.clone(),
-            os_version: body.os_version.clone(),
-            architecture: body.architecture.clone(),
-            release_channel: body.release_channel.clone(),
-            signed_in: event.signed_in,
-            editor_event: match &event.event {
-                Event::Editor(editor_event) => Some(editor_event.clone()),
-                _ => None,
-            },
-            inline_completion_event: match &event.event {
-                Event::InlineCompletion(inline_completion_event) => {
-                    Some(inline_completion_event.clone())
-                }
-                _ => None,
-            },
-            call_event: match &event.event {
-                Event::Call(call_event) => Some(call_event.clone()),
-                _ => None,
-            },
-            assistant_event: match &event.event {
-                Event::Assistant(assistant_event) => Some(assistant_event.clone()),
-                _ => None,
-            },
-            cpu_event: match &event.event {
-                Event::Cpu(cpu_event) => Some(cpu_event.clone()),
-                _ => None,
-            },
-            memory_event: match &event.event {
-                Event::Memory(memory_event) => Some(memory_event.clone()),
-                _ => None,
-            },
-            app_event: match &event.event {
-                Event::App(app_event) => Some(app_event.clone()),
-                _ => None,
-            },
-            setting_event: match &event.event {
-                Event::Setting(setting_event) => Some(setting_event.clone()),
-                _ => None,
-            },
-            extension_event: match &event.event {
-                Event::Extension(extension_event) => Some(extension_event.clone()),
-                _ => None,
-            },
-            edit_event: match &event.event {
-                Event::Edit(edit_event) => Some(edit_event.clone()),
-                _ => None,
-            },
-            repl_event: match &event.event {
-                Event::Repl(repl_event) => Some(repl_event.clone()),
-                _ => None,
-            },
-            action_event: match event.event {
-                Event::Action(action_event) => Some(action_event.clone()),
-                _ => None,
-            },
-        },
+            Event::Assistant(e) => (
+                match e.phase {
+                    telemetry_events::AssistantPhase::Response => "Assistant Responded".to_string(),
+                    telemetry_events::AssistantPhase::Invoked => "Assistant Invoked".to_string(),
+                    telemetry_events::AssistantPhase::Accepted => {
+                        "Assistant Response Accepted".to_string()
+                    }
+                    telemetry_events::AssistantPhase::Rejected => {
+                        "Assistant Response Rejected".to_string()
+                    }
+                },
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Cpu(_) | Event::Memory(_) => return None,
+            Event::App(e) => {
+                let mut properties = json!({});
+                let event_type = match e.operation.trim() {
+                    // App
+                    "open" => "App Opened".to_string(),
+                    "first open" => "App First Opened".to_string(),
+                    "first open for release channel" => {
+                        "App First Opened For Release Channel".to_string()
+                    }
+                    "close" => "App Closed".to_string(),
+
+                    // Project
+                    "open project" => "Project Opened".to_string(),
+                    "open node project" => {
+                        properties["project_type"] = json!("node");
+                        "Project Opened".to_string()
+                    }
+                    "open pnpm project" => {
+                        properties["project_type"] = json!("pnpm");
+                        "Project Opened".to_string()
+                    }
+                    "open yarn project" => {
+                        properties["project_type"] = json!("yarn");
+                        "Project Opened".to_string()
+                    }
+
+                    // SSH
+                    "create ssh server" => "SSH Server Created".to_string(),
+                    "create ssh project" => "SSH Project Created".to_string(),
+                    "open ssh project" => "SSH Project Opened".to_string(),
+
+                    // Welcome Page
+                    "welcome page: change keymap" => "Welcome Keymap Changed".to_string(),
+                    "welcome page: change theme" => "Welcome Theme Changed".to_string(),
+                    "welcome page: close" => "Welcome Page Closed".to_string(),
+                    "welcome page: edit settings" => "Welcome Settings Edited".to_string(),
+                    "welcome page: install cli" => "Welcome CLI Installed".to_string(),
+                    "welcome page: open" => "Welcome Page Opened".to_string(),
+                    "welcome page: open extensions" => "Welcome Extensions Page Opened".to_string(),
+                    "welcome page: sign in to copilot" => "Welcome Copilot Signed In".to_string(),
+                    "welcome page: toggle diagnostic telemetry" => {
+                        "Welcome Diagnostic Telemetry Toggled".to_string()
+                    }
+                    "welcome page: toggle metric telemetry" => {
+                        "Welcome Metric Telemetry Toggled".to_string()
+                    }
+                    "welcome page: toggle vim" => "Welcome Vim Mode Toggled".to_string(),
+                    "welcome page: view docs" => "Welcome Documentation Viewed".to_string(),
+
+                    // Extensions
+                    "extensions page: open" => "Extensions Page Opened".to_string(),
+                    "extensions: install extension" => "Extension Installed".to_string(),
+                    "extensions: uninstall extension" => "Extension Uninstalled".to_string(),
+
+                    // Misc
+                    "markdown preview: open" => "Markdown Preview Opened".to_string(),
+                    "project diagnostics: open" => "Project Diagnostics Opened".to_string(),
+                    "project search: open" => "Project Search Opened".to_string(),
+                    "repl sessions: open" => "REPL Session Started".to_string(),
+
+                    // Feature Upsell
+                    "feature upsell: toggle vim" => {
+                        properties["source"] = json!("Feature Upsell");
+                        "Vim Mode Toggled".to_string()
+                    }
+                    _ => e
+                        .operation
+                        .strip_prefix("feature upsell: viewed docs (")
+                        .and_then(|s| s.strip_suffix(')'))
+                        .map_or_else(
+                            || format!("Unknown App Event: {}", e.operation),
+                            |docs_url| {
+                                properties["url"] = json!(docs_url);
+                                properties["source"] = json!("Feature Upsell");
+                                "Documentation Viewed".to_string()
+                            },
+                        ),
+                };
+                (event_type, properties)
+            }
+            Event::Setting(e) => (
+                "Settings Changed".to_string(),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Extension(e) => (
+                "Extension Loaded".to_string(),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Edit(e) => (
+                "Editor Edited".to_string(),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Action(e) => (
+                "Action Invoked".to_string(),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::Repl(e) => (
+                "Kernel Status Changed".to_string(),
+                serde_json::to_value(e).unwrap(),
+            ),
+        };
+
+        if let serde_json::Value::Object(ref mut map) = event_properties {
+            map.insert("app_version".to_string(), body.app_version.clone().into());
+            map.insert("os_name".to_string(), body.os_name.clone().into());
+            map.insert("os_version".to_string(), body.os_version.clone().into());
+            map.insert("architecture".to_string(), body.architecture.clone().into());
+            map.insert(
+                "release_channel".to_string(),
+                body.release_channel.clone().into(),
+            );
+            map.insert("signed_in".to_string(), event.signed_in.into());
+            if let Some(country_code) = country_code.as_ref() {
+                map.insert("country".to_string(), country_code.clone().into());
+            }
+        }
+
+        // NOTE: most amplitude user properties are read out of our event_properties
+        // dictionary. See https://app.amplitude.com/data/zed/Zed/sources/detail/production/falcon%3A159998
+        // for how that is configured.
+        let user_properties = Some(serde_json::json!({
+            "is_staff": body.is_staff,
+        }));
+
+        Some(SnowflakeRow {
+            time: timestamp,
+            user_id: body.metrics_id.clone(),
+            device_id: body.system_id.clone(),
+            event_type,
+            event_properties,
+            user_properties,
+            insert_id: Some(Uuid::new_v4().to_string()),
+        })
     })
 }
 
-#[derive(Serialize, Deserialize)]
-struct SnowflakeRow {
-    pub event: String,
-    pub system_id: Option<String>,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub data: SnowflakeData,
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SnowflakeRow {
+    pub time: chrono::DateTime<chrono::Utc>,
+    pub user_id: Option<String>,
+    pub device_id: Option<String>,
+    pub event_type: String,
+    pub event_properties: serde_json::Value,
+    pub user_properties: Option<serde_json::Value>,
+    pub insert_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct SnowflakeData {
-    /// Identifier unique to each Zed installation (differs for stable, preview, dev)
-    pub installation_id: Option<String>,
-    /// Identifier unique to each logged in Zed user (randomly generated on first sign in)
-    /// Identifier unique to each Zed session (differs for each time you open Zed)
-    pub session_id: Option<String>,
-    pub metrics_id: Option<String>,
-    /// True for Zed staff, otherwise false
-    pub is_staff: Option<bool>,
-    /// Zed version number
-    pub app_version: String,
-    pub os_name: String,
-    pub os_version: Option<String>,
-    pub architecture: String,
-    /// Zed release channel (stable, preview, dev)
-    pub release_channel: Option<String>,
-    pub signed_in: bool,
+impl SnowflakeRow {
+    pub fn new(
+        event_type: impl Into<String>,
+        metrics_id: Option<Uuid>,
+        is_staff: bool,
+        system_id: Option<String>,
+        event_properties: serde_json::Value,
+    ) -> Self {
+        Self {
+            time: chrono::Utc::now(),
+            event_type: event_type.into(),
+            device_id: system_id,
+            user_id: metrics_id.map(|id| id.to_string()),
+            insert_id: Some(uuid::Uuid::new_v4().to_string()),
+            event_properties,
+            user_properties: Some(json!({"is_staff": is_staff})),
+        }
+    }
 
-    #[serde(flatten)]
-    pub editor_event: Option<EditorEvent>,
-    #[serde(flatten)]
-    pub inline_completion_event: Option<InlineCompletionEvent>,
-    #[serde(flatten)]
-    pub call_event: Option<CallEvent>,
-    #[serde(flatten)]
-    pub assistant_event: Option<AssistantEvent>,
-    #[serde(flatten)]
-    pub cpu_event: Option<CpuEvent>,
-    #[serde(flatten)]
-    pub memory_event: Option<MemoryEvent>,
-    #[serde(flatten)]
-    pub app_event: Option<AppEvent>,
-    #[serde(flatten)]
-    pub setting_event: Option<SettingEvent>,
-    #[serde(flatten)]
-    pub extension_event: Option<ExtensionEvent>,
-    #[serde(flatten)]
-    pub edit_event: Option<EditEvent>,
-    #[serde(flatten)]
-    pub repl_event: Option<ReplEvent>,
-    #[serde(flatten)]
-    pub action_event: Option<ActionEvent>,
+    pub async fn write(
+        self,
+        client: &Option<aws_sdk_kinesis::Client>,
+        stream: &Option<String>,
+    ) -> anyhow::Result<()> {
+        let Some((client, stream)) = client.as_ref().zip(stream.as_ref()) else {
+            return Ok(());
+        };
+        let row = serde_json::to_vec(&self)?;
+        client
+            .put_record()
+            .stream_name(stream)
+            .partition_key(&self.user_id.unwrap_or_default())
+            .data(row.into())
+            .send()
+            .await?;
+        Ok(())
+    }
 }

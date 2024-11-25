@@ -228,6 +228,9 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn is_dirty(&self, _: &AppContext) -> bool {
         false
     }
+    fn has_deleted_file(&self, _: &AppContext) -> bool {
+        false
+    }
     fn has_conflict(&self, _: &AppContext) -> bool {
         false
     }
@@ -275,7 +278,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
         ToolbarItemLocation::Hidden
     }
 
@@ -405,6 +408,7 @@ pub trait ItemHandle: 'static + Send {
     fn item_id(&self) -> EntityId;
     fn to_any(&self) -> AnyView;
     fn is_dirty(&self, cx: &AppContext) -> bool;
+    fn has_deleted_file(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
     fn save(
@@ -768,6 +772,10 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).is_dirty(cx)
     }
 
+    fn has_deleted_file(&self, cx: &AppContext) -> bool {
+        self.read(cx).has_deleted_file(cx)
+    }
+
     fn has_conflict(&self, cx: &AppContext) -> bool {
         self.read(cx).has_conflict(cx)
     }
@@ -819,7 +827,7 @@ impl<T: Item> ItemHandle for View<T> {
     }
 
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {
-        self.read(cx).breadcrumb_location()
+        self.read(cx).breadcrumb_location(cx)
     }
 
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {

@@ -5,6 +5,14 @@
 ; Type alias
 (type_alias_statement "type" @keyword)
 
+; Identifier naming conventions
+
+((identifier) @type.class
+ (#match? @type.class "^[A-Z]"))
+
+((identifier) @constant
+ (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+
 ; TypeVar with constraints in type parameters
 (type
   (tuple (identifier) @type)
@@ -12,25 +20,28 @@
 
 ; Function calls
 
-(decorator) @function
+(decorator
+  "@" @punctuation.special
+  (identifier) @function.decorator)
 
 (call
-  function: (attribute attribute: (identifier) @function.method))
+  function: (attribute attribute: (identifier) @function.method.call))
 (call
-  function: (identifier) @function)
+  function: (identifier) @function.call)
 
-; Function definitions
+; Function and class definitions
 
 (function_definition
-  name: (identifier) @function)
+  name: (identifier) @function.definition)
 
-; Identifier naming conventions
+; Class definitions and calling: needs to come after the regex matching above
 
-((identifier) @type
- (#match? @type "^[A-Z]"))
+(class_definition
+  name: (identifier) @type.class.definition)
 
-((identifier) @constant
- (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+(call
+  function: (identifier) @type.class.call
+  (#match? @type.class.call "^[A-Z][A-Z0-9_]*[a-z]"))
 
 ; Builtin functions
 
@@ -46,6 +57,7 @@
   (none)
   (true)
   (false)
+  (ellipsis)
 ] @constant.builtin
 
 [
@@ -58,7 +70,7 @@
 [
   (parameters (identifier) @variable.special)
   (attribute (identifier) @variable.special)
-  (#match? @variable.special "^self$")
+  (#match? @variable.special "^self|cls$")
 ]
 
 (comment) @comment
@@ -84,7 +96,35 @@
   "def"
   name: (_)
   (parameters)?
-  body: (block (expression_statement (string) @string.doc)))
+  body: (block . (expression_statement (string) @string.doc)))
+
+(class_definition
+  body: (block
+    . (comment) @comment*
+    . (expression_statement (string) @string.doc)))
+
+(module
+  . (comment) @comment*
+  . (expression_statement (string) @string.doc))
+
+(module
+  (expression_statement (assignment))
+  . (expression_statement (string) @string.doc))
+
+(class_definition
+  body: (block
+    (expression_statement (assignment))
+    . (expression_statement (string) @string.doc)))
+
+(class_definition
+  body: (block
+    (function_definition
+      name: (identifier) @function.method.constructor
+      (#eq? @function.method.constructor "__init__")
+      body: (block
+        (expression_statement (assignment))
+        . (expression_statement (string) @string.doc)))))
+
 
 [
   "-"

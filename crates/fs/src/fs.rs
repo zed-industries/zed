@@ -27,13 +27,14 @@ use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git::repository::{GitRepository, RealGitRepository};
 use gpui::{AppContext, Global, ReadGlobal};
 use rope::Rope;
+use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
 use std::{
     io::{self, Write},
     path::{Component, Path, PathBuf},
     pin::Pin,
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tempfile::{NamedTempFile, TempDir};
 use text::LineEnding;
@@ -179,11 +180,60 @@ pub struct RemoveOptions {
 #[derive(Copy, Clone, Debug)]
 pub struct Metadata {
     pub inode: u64,
-    pub mtime: SystemTime,
+    pub mtime: MTime,
     pub is_symlink: bool,
     pub is_dir: bool,
     pub len: u64,
     pub is_fifo: bool,
+}
+
+/// Filesystem modification time. The purpose of this newtype is to discourage use of operations
+/// that do not make sense for mtimes. In particular, it is not always valid to compare mtimes using
+/// `<` or `>`, as there are many things that can cause the mtime of a file to be earlier than it
+/// was. See ["mtime comparison considered harmful" - apenwarr](https://apenwarr.ca/log/20181113).
+///
+/// Do not derive Ord, PartialOrd, or arithmetic operation traits.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct MTime(SystemTime);
+
+impl MTime {
+    /// Conversion intended for persistence and testing.
+    pub fn from_seconds_and_nanos(secs: u64, nanos: u32) -> Self {
+        MTime(UNIX_EPOCH + Duration::new(secs, nanos))
+    }
+
+    /// Conversion intended for persistence.
+    pub fn to_seconds_and_nanos_for_persistence(self) -> Option<(u64, u32)> {
+        self.0
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|duration| (duration.as_secs(), duration.subsec_nanos()))
+    }
+
+    /// Returns the value wrapped by this `MTime`, for presentation to the user. The name including
+    /// "_for_user" is to discourage misuse - this method should not be used when making decisions
+    /// about file dirtiness.
+    pub fn timestamp_for_user(self) -> SystemTime {
+        self.0
+    }
+
+    /// Temporary method to split out the behavior changes from introduction of this newtype.
+    pub fn bad_is_greater_than(self, other: MTime) -> bool {
+        self.0 > other.0
+    }
+}
+
+impl From<proto::Timestamp> for MTime {
+    fn from(timestamp: proto::Timestamp) -> Self {
+        MTime(timestamp.into())
+    }
+}
+
+impl From<MTime> for proto::Timestamp {
+    fn from(mtime: MTime) -> Self {
+        mtime.0.into()
+    }
 }
 
 #[derive(Default)]
@@ -558,7 +608,7 @@ impl Fs for RealFs {
 
         Ok(Some(Metadata {
             inode,
-            mtime: metadata.modified().unwrap(),
+            mtime: MTime(metadata.modified().unwrap()),
             len: metadata.len(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
@@ -818,13 +868,13 @@ struct FakeFsState {
 enum FakeFsEntry {
     File {
         inode: u64,
-        mtime: SystemTime,
+        mtime: MTime,
         len: u64,
         content: Vec<u8>,
     },
     Dir {
         inode: u64,
-        mtime: SystemTime,
+        mtime: MTime,
         len: u64,
         entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
         git_repo_state: Option<Arc<Mutex<git::repository::FakeGitRepositoryState>>>,
@@ -836,6 +886,18 @@ enum FakeFsEntry {
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFsState {
+    fn get_and_increment_mtime(&mut self) -> MTime {
+        let mtime = self.next_mtime;
+        self.next_mtime += FakeFs::SYSTEMTIME_INTERVAL;
+        MTime(mtime)
+    }
+
+    fn get_and_increment_inode(&mut self) -> u64 {
+        let inode = self.next_inode;
+        self.next_inode += 1;
+        inode
+    }
+
     fn read_path(&self, target: &Path) -> Result<Arc<Mutex<FakeFsEntry>>> {
         Ok(self
             .try_read_path(target, true)
@@ -959,7 +1021,7 @@ pub static FS_DOT_GIT: std::sync::LazyLock<&'static OsStr> =
 impl FakeFs {
     /// We need to use something large enough for Windows and Unix to consider this a new file.
     /// https://doc.rust-lang.org/nightly/std/time/struct.SystemTime.html#platform-specific-behavior
-    const SYSTEMTIME_INTERVAL: u64 = 100;
+    const SYSTEMTIME_INTERVAL: Duration = Duration::from_nanos(100);
 
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
         let (tx, mut rx) = smol::channel::bounded::<PathBuf>(10);
@@ -969,13 +1031,13 @@ impl FakeFs {
             state: Mutex::new(FakeFsState {
                 root: Arc::new(Mutex::new(FakeFsEntry::Dir {
                     inode: 0,
-                    mtime: SystemTime::UNIX_EPOCH,
+                    mtime: MTime(UNIX_EPOCH),
                     len: 0,
                     entries: Default::default(),
                     git_repo_state: None,
                 })),
                 git_event_tx: tx,
-                next_mtime: SystemTime::UNIX_EPOCH,
+                next_mtime: UNIX_EPOCH + Self::SYSTEMTIME_INTERVAL,
                 next_inode: 1,
                 event_txs: Default::default(),
                 buffered_events: Vec::new(),
@@ -1007,13 +1069,16 @@ impl FakeFs {
         state.next_mtime = next_mtime;
     }
 
+    pub fn get_and_increment_mtime(&self) -> MTime {
+        let mut state = self.state.lock();
+        state.get_and_increment_mtime()
+    }
+
     pub async fn touch_path(&self, path: impl AsRef<Path>) {
         let mut state = self.state.lock();
         let path = path.as_ref();
-        let new_mtime = state.next_mtime;
-        let new_inode = state.next_inode;
-        state.next_inode += 1;
-        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
+        let new_mtime = state.get_and_increment_mtime();
+        let new_inode = state.get_and_increment_inode();
         state
             .write_path(path, move |entry| {
                 match entry {
@@ -1062,19 +1127,14 @@ impl FakeFs {
 
     fn write_file_internal(&self, path: impl AsRef<Path>, content: Vec<u8>) -> Result<()> {
         let mut state = self.state.lock();
-        let path = path.as_ref();
-        let inode = state.next_inode;
-        let mtime = state.next_mtime;
-        state.next_inode += 1;
-        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
-            inode,
-            mtime,
+            inode: state.get_and_increment_inode(),
+            mtime: state.get_and_increment_mtime(),
             len: content.len() as u64,
             content,
         }));
         let mut kind = None;
-        state.write_path(path, {
+        state.write_path(path.as_ref(), {
             let kind = &mut kind;
             move |entry| {
                 match entry {
@@ -1090,7 +1150,7 @@ impl FakeFs {
                 Ok(())
             }
         })?;
-        state.emit_event([(path, kind)]);
+        state.emit_event([(path.as_ref(), kind)]);
         Ok(())
     }
 
@@ -1383,16 +1443,6 @@ impl FakeFsEntry {
         }
     }
 
-    fn set_file_content(&mut self, path: &Path, new_content: Vec<u8>) -> Result<()> {
-        if let Self::File { content, mtime, .. } = self {
-            *mtime = SystemTime::now();
-            *content = new_content;
-            Ok(())
-        } else {
-            Err(anyhow!("not a file: {}", path.display()))
-        }
-    }
-
     fn dir_entries(
         &mut self,
         path: &Path,
@@ -1456,10 +1506,8 @@ impl Fs for FakeFs {
             }
             let mut state = self.state.lock();
 
-            let inode = state.next_inode;
-            let mtime = state.next_mtime;
-            state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
-            state.next_inode += 1;
+            let inode = state.get_and_increment_inode();
+            let mtime = state.get_and_increment_mtime();
             state.write_path(&cur_path, |entry| {
                 entry.or_insert_with(|| {
                     created_dirs.push((cur_path.clone(), Some(PathEventKind::Created)));
@@ -1482,10 +1530,8 @@ impl Fs for FakeFs {
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()> {
         self.simulate_random_delay().await;
         let mut state = self.state.lock();
-        let inode = state.next_inode;
-        let mtime = state.next_mtime;
-        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
-        state.next_inode += 1;
+        let inode = state.get_and_increment_inode();
+        let mtime = state.get_and_increment_mtime();
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
             mtime,
@@ -1625,13 +1671,12 @@ impl Fs for FakeFs {
         let source = normalize_path(source);
         let target = normalize_path(target);
         let mut state = self.state.lock();
-        let mtime = state.next_mtime;
-        let inode = util::post_inc(&mut state.next_inode);
-        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
+        let mtime = state.get_and_increment_mtime();
+        let inode = state.get_and_increment_inode();
         let source_entry = state.read_path(&source)?;
         let content = source_entry.lock().file_content(&source)?.clone();
         let mut kind = Some(PathEventKind::Created);
-        let entry = state.write_path(&target, |e| match e {
+        state.write_path(&target, |e| match e {
             btree_map::Entry::Occupied(e) => {
                 if options.overwrite {
                     kind = Some(PathEventKind::Changed);
@@ -1647,14 +1692,11 @@ impl Fs for FakeFs {
                     inode,
                     mtime,
                     len: content.len() as u64,
-                    content: Vec::new(),
+                    content,
                 })))
                 .clone(),
             )),
         })?;
-        if let Some(entry) = entry {
-            entry.lock().set_file_content(&target, content)?;
-        }
         state.emit_event([(target, kind)]);
         Ok(())
     }

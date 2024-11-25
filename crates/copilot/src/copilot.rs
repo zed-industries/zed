@@ -38,8 +38,8 @@ use std::{
 };
 use util::{fs::remove_matching, maybe, ResultExt};
 
-pub use copilot_completion_provider::CopilotCompletionProvider;
-pub use sign_in::CopilotCodeVerification;
+pub use crate::copilot_completion_provider::CopilotCompletionProvider;
+pub use crate::sign_in::{initiate_sign_in, CopilotCodeVerification};
 
 actions!(
     copilot,
@@ -1229,8 +1229,10 @@ mod tests {
             Some(self)
         }
 
-        fn mtime(&self) -> Option<std::time::SystemTime> {
-            unimplemented!()
+        fn disk_state(&self) -> language::DiskState {
+            language::DiskState::Present {
+                mtime: ::fs::MTime::from_seconds_and_nanos(100, 42),
+            }
         }
 
         fn path(&self) -> &Arc<Path> {
@@ -1242,10 +1244,6 @@ mod tests {
         }
 
         fn file_name<'a>(&'a self, _: &'a AppContext) -> &'a std::ffi::OsStr {
-            unimplemented!()
-        }
-
-        fn is_deleted(&self) -> bool {
             unimplemented!()
         }
 

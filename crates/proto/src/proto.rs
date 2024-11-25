@@ -314,6 +314,8 @@ messages!(
     (UsersResponse, Foreground),
     (LspExtExpandMacro, Background),
     (LspExtExpandMacroResponse, Background),
+    (LspExtOpenDocs, Background),
+    (LspExtOpenDocsResponse, Background),
     (SetRoomParticipantRole, Foreground),
     (BlameBuffer, Foreground),
     (BlameBufferResponse, Foreground),
@@ -366,7 +368,10 @@ messages!(
     (GetPanicFiles, Background),
     (GetPanicFilesResponse, Background),
     (CancelLanguageServerWork, Foreground),
-    (SynchronizeBreakpoints, Foreground),
+    (SyncExtensions, Background),
+    (SyncExtensionsResponse, Background),
+    (InstallExtension, Background),
+    (SynchronizeBreakpoints, Background),
 );
 
 request_messages!(
@@ -465,6 +470,7 @@ request_messages!(
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
+    (LspExtOpenDocs, LspExtOpenDocsResponse),
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
@@ -489,6 +495,8 @@ request_messages!(
     (GetPathMetadata, GetPathMetadataResponse),
     (GetPanicFiles, GetPanicFilesResponse),
     (CancelLanguageServerWork, Ack),
+    (SyncExtensions, SyncExtensionsResponse),
+    (InstallExtension, Ack),
 );
 
 entity_messages!(
@@ -553,6 +561,7 @@ entity_messages!(
     UpdateWorktree,
     UpdateWorktreeSettings,
     LspExtExpandMacro,
+    LspExtOpenDocs,
     AdvertiseContexts,
     OpenContext,
     CreateContext,

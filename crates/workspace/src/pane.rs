@@ -48,7 +48,7 @@ use ui::{v_flex, ContextMenu};
 use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
 
 /// A selected entry in e.g. project panel.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SelectedEntry {
     pub worktree_id: WorktreeId,
     pub entry_id: ProjectEntryId,
@@ -1548,18 +1548,25 @@ impl Pane {
         const CONFLICT_MESSAGE: &str =
                 "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
+        const DELETED_MESSAGE: &str =
+                        "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
+
         if save_intent == SaveIntent::Skip {
             return Ok(true);
         }
 
-        let (mut has_conflict, mut is_dirty, mut can_save, can_save_as) = cx.update(|cx| {
-            (
-                item.has_conflict(cx),
-                item.is_dirty(cx),
-                item.can_save(cx),
-                item.is_singleton(cx),
-            )
-        })?;
+        let (mut has_conflict, mut is_dirty, mut can_save, is_singleton, has_deleted_file) = cx
+            .update(|cx| {
+                (
+                    item.has_conflict(cx),
+                    item.is_dirty(cx),
+                    item.can_save(cx),
+                    item.is_singleton(cx),
+                    item.has_deleted_file(cx),
+                )
+            })?;
+
+        let can_save_as = is_singleton;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
         if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
@@ -1579,22 +1586,45 @@ impl Pane {
         let should_format = save_intent != SaveIntent::SaveWithoutFormat;
 
         if has_conflict && can_save {
-            let answer = pane.update(cx, |pane, cx| {
-                pane.activate_item(item_ix, true, true, cx);
-                cx.prompt(
-                    PromptLevel::Warning,
-                    CONFLICT_MESSAGE,
-                    None,
-                    &["Overwrite", "Discard", "Cancel"],
-                )
-            })?;
-            match answer.await {
-                Ok(0) => {
-                    pane.update(cx, |_, cx| item.save(should_format, project, cx))?
-                        .await?
+            if has_deleted_file && is_singleton {
+                let answer = pane.update(cx, |pane, cx| {
+                    pane.activate_item(item_ix, true, true, cx);
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        DELETED_MESSAGE,
+                        None,
+                        &["Save", "Close", "Cancel"],
+                    )
+                })?;
+                match answer.await {
+                    Ok(0) => {
+                        pane.update(cx, |_, cx| item.save(should_format, project, cx))?
+                            .await?
+                    }
+                    Ok(1) => {
+                        pane.update(cx, |pane, cx| pane.remove_item(item_ix, false, false, cx))?;
+                    }
+                    _ => return Ok(false),
                 }
-                Ok(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
-                _ => return Ok(false),
+                return Ok(true);
+            } else {
+                let answer = pane.update(cx, |pane, cx| {
+                    pane.activate_item(item_ix, true, true, cx);
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        CONFLICT_MESSAGE,
+                        None,
+                        &["Overwrite", "Discard", "Cancel"],
+                    )
+                })?;
+                match answer.await {
+                    Ok(0) => {
+                        pane.update(cx, |_, cx| item.save(should_format, project, cx))?
+                            .await?
+                    }
+                    Ok(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
+                    _ => return Ok(false),
+                }
             }
         } else if is_dirty && (can_save || can_save_as) {
             if save_intent == SaveIntent::Close {
@@ -2236,7 +2266,6 @@ impl Pane {
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
-            .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .on_click({
                 let view = cx.view().clone();
@@ -2249,7 +2278,6 @@ impl Pane {
             });
 
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
-            .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .on_click({
                 let view = cx.view().clone();
@@ -2434,6 +2462,8 @@ impl Pane {
                         to_pane = workspace.split_pane(to_pane, split_direction, cx);
                     }
                     let old_ix = from_pane.read(cx).index_for_item_id(item_id);
+                    let old_len = to_pane.read(cx).items.len();
+                    move_item(&from_pane, &to_pane, item_id, ix, cx);
                     if to_pane == from_pane {
                         if let Some(old_index) = old_ix {
                             to_pane.update(cx, |this, _| {
@@ -2451,7 +2481,10 @@ impl Pane {
                         }
                     } else {
                         to_pane.update(cx, |this, _| {
-                            if this.has_pinned_tabs() && ix < this.pinned_tab_count {
+                            if this.items.len() > old_len // Did we not deduplicate on drag?
+                                && this.has_pinned_tabs()
+                                && ix < this.pinned_tab_count
+                            {
                                 this.pinned_tab_count += 1;
                             }
                         });
@@ -2463,7 +2496,6 @@ impl Pane {
                             }
                         })
                     }
-                    move_item(&from_pane, &to_pane, item_id, ix, cx);
                 });
             })
             .log_err();

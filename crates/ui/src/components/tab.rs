@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use gpui::{AnyElement, IntoElement, Stateful};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, BASE_REM_SIZE_IN_PX};
+use crate::prelude::*;
 
 /// The position of a [`Tab`] within a list of tabs.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -54,10 +54,6 @@ impl Tab {
         }
     }
 
-    pub const CONTAINER_HEIGHT_IN_REMS: f32 = 29. / BASE_REM_SIZE_IN_PX;
-
-    const CONTENT_HEIGHT_IN_REMS: f32 = 28. / BASE_REM_SIZE_IN_PX;
-
     pub fn position(mut self, position: TabPosition) -> Self {
         self.position = position;
         self
@@ -76,6 +72,14 @@ impl Tab {
     pub fn end_slot<E: IntoElement>(mut self, element: impl Into<Option<E>>) -> Self {
         self.end_slot = element.into().map(IntoElement::into_any_element);
         self
+    }
+
+    pub fn content_height(cx: &mut WindowContext) -> Pixels {
+        DynamicSpacing::Base32.px(cx) - px(1.)
+    }
+
+    pub fn container_height(cx: &mut WindowContext) -> Pixels {
+        DynamicSpacing::Base32.px(cx)
     }
 }
 
@@ -130,7 +134,7 @@ impl RenderOnce for Tab {
         };
 
         self.div
-            .h(rems(Self::CONTAINER_HEIGHT_IN_REMS))
+            .h(Tab::container_height(cx))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
             .map(|this| match self.position {
@@ -157,7 +161,7 @@ impl RenderOnce for Tab {
                 h_flex()
                     .group("")
                     .relative()
-                    .h(rems(Self::CONTENT_HEIGHT_IN_REMS))
+                    .h(Tab::content_height(cx))
                     .px(DynamicSpacing::Base04.px(cx))
                     .gap(DynamicSpacing::Base04.rems(cx))
                     .text_color(text_color)

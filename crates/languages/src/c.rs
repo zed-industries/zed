@@ -24,6 +24,7 @@ impl super::LspAdapter for CLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
@@ -85,7 +86,7 @@ impl super::LspAdapter for CLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            let unzip_status = smol::process::Command::new("unzip")
+            let unzip_status = util::command::new_smol_command("unzip")
                 .current_dir(&container_dir)
                 .arg(&zip_path)
                 .output()

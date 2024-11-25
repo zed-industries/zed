@@ -60,6 +60,10 @@ pub struct SpawnInTerminal {
     pub shell: Shell,
     /// Tells debug tasks which program to debug
     pub program: Option<String>,
+    /// Whether to show the task summary line in the task output (sucess/failure).
+    pub show_summary: bool,
+    /// Whether to show the command line in the task output.
+    pub show_command: bool,
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.

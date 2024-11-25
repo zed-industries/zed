@@ -1,4 +1,5 @@
 pub mod client;
+mod extension_context_server;
 pub mod manager;
 pub mod protocol;
 mod registry;
@@ -19,6 +20,7 @@ pub const CONTEXT_SERVERS_NAMESPACE: &'static str = "context_servers";
 pub fn init(cx: &mut AppContext) {
     ContextServerSettings::register(cx);
     ContextServerFactoryRegistry::default_global(cx);
+    extension_context_server::init(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);

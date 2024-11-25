@@ -225,6 +225,8 @@ impl Prettier {
                                 prettier_plugin_dir.join("dist").join("index.mjs"),
                                 prettier_plugin_dir.join("dist").join("index.js"),
                                 prettier_plugin_dir.join("dist").join("plugin.js"),
+                                prettier_plugin_dir.join("src").join("plugin.js"),
+                                prettier_plugin_dir.join("lib").join("index.js"),
                                 prettier_plugin_dir.join("index.mjs"),
                                 prettier_plugin_dir.join("index.js"),
                                 prettier_plugin_dir.join("plugin.js"),

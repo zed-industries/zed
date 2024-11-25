@@ -16,7 +16,8 @@ use gpui::{
     VisualContext, WeakView, WindowContext,
 };
 use language::{
-    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, Point, SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
+    SelectionGoal,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::AnchorRangeExt;
@@ -635,12 +636,13 @@ impl Item for Editor {
             Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
         });
 
-        let is_deleted: bool = self
+        // Whether the file was saved in the past but is now deleted.
+        let was_deleted: bool = self
             .buffer()
             .read(cx)
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
-            .map_or(true, |file| file.is_deleted());
+            .map_or(false, |file| file.disk_state() == DiskState::Deleted);
 
         h_flex()
             .gap_2()
@@ -648,7 +650,7 @@ impl Item for Editor {
                 Label::new(self.title(cx).to_string())
                     .color(label_color)
                     .italic(params.preview)
-                    .strikethrough(is_deleted),
+                    .strikethrough(was_deleted),
             )
             .when_some(description, |this, description| {
                 this.child(
@@ -706,6 +708,10 @@ impl Item for Editor {
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
         self.buffer().read(cx).read(cx).is_dirty()
+    }
+
+    fn has_deleted_file(&self, cx: &AppContext) -> bool {
+        self.buffer().read(cx).read(cx).has_deleted_file()
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
@@ -835,7 +841,7 @@ impl Item for Editor {
         self.pixel_position_of_newest_cursor
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
         if self.show_breadcrumbs {
             ToolbarItemLocation::PrimaryLeft
         } else {
@@ -1612,15 +1618,14 @@ fn path_for_file<'a>(
 #[cfg(test)]
 mod tests {
     use crate::editor_tests::init_test;
+    use fs::Fs;
 
     use super::*;
+    use fs::MTime;
     use gpui::{AppContext, VisualTestContext};
     use language::{LanguageMatcher, TestFile};
     use project::FakeFs;
-    use std::{
-        path::{Path, PathBuf},
-        time::SystemTime,
-    };
+    use std::path::{Path, PathBuf};
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut AppContext) {
@@ -1673,9 +1678,7 @@ mod tests {
     async fn test_deserialize(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
 
-        let now = SystemTime::now();
         let fs = FakeFs::new(cx.executor());
-        fs.set_next_mtime(now);
         fs.insert_file("/file.rs", Default::default()).await;
 
         // Test case 1: Deserialize with path and contents
@@ -1684,12 +1687,18 @@ mod tests {
             let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
+            let mtime = fs
+                .metadata(Path::new("/file.rs"))
+                .await
+                .unwrap()
+                .unwrap()
+                .mtime;
 
             let serialized_editor = SerializedEditor {
                 abs_path: Some(PathBuf::from("/file.rs")),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
-                mtime: Some(now),
+                mtime: Some(mtime),
             };
 
             DB.save_serialized_editor(item_id, workspace_id, serialized_editor.clone())
@@ -1786,9 +1795,7 @@ mod tests {
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
             let item_id = 9345 as ItemId;
-            let old_mtime = now
-                .checked_sub(std::time::Duration::from_secs(60 * 60 * 24))
-                .unwrap();
+            let old_mtime = MTime::from_seconds_and_nanos(0, 50);
             let serialized_editor = SerializedEditor {
                 abs_path: Some(PathBuf::from("/file.rs")),
                 contents: Some("fn main() {}".to_string()),
