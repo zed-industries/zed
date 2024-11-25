@@ -31,20 +31,19 @@ impl Blame {
         content: &Rope,
         remote_url: Option<String>,
         provider_registry: Arc<GitHostingProviderRegistry>,
+        author_display_replace: Option<&str>
     ) -> Result<Self> {
         let output = run_git_blame(git_binary, working_directory, path, content)?;
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
-        let current_user = get_git_user_name(git_binary, working_directory)?;
-
-        if let Some(username) = current_user {
-            for entry in &mut entries {
-                if let Some(ref author) = entry.author {
-                    if author == &username {
-                        entry.author = Some(format!("{} (You)", author));
-                    }
-                }
+        if let Some(replacement) = author_display_replace {
+            if let Some(username) = get_git_user_name(git_binary, working_directory)? {
+                let new_author = replacement.replace("{}", &username);
+                entries
+                    .iter_mut()
+                    .filter(|e| e.author.as_deref() == Some(&username))
+                    .for_each(|e| e.author = Some(new_author.clone()));
             }
         }
 
