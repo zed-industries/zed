@@ -411,8 +411,7 @@ async fn perform_completion(
                 .boxed()
         }
         LanguageModelProvider::Bedrock => {
-            // TODO: implement this
-            unimplemented!()
+            Err("Unimplemented").boxed()
         }
     };
 

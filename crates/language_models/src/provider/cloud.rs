@@ -73,7 +73,6 @@ pub enum AvailableProvider {
     Anthropic,
     OpenAi,
     Google,
-    Bedrock,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -292,11 +291,6 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     models.insert(model.id().to_string(), CloudModel::Google(model));
                 }
             }
-            for model in bedrock::Model::iter() {
-                if !matches!(model, bedrock::Model::Custom { .. }) {
-                    models.insert(model.id().to_string(), CloudModel::Bedrock(model));
-                }
-            }
         } else {
             models.insert(
                 anthropic::Model::Claude3_5Sonnet.id().to_string(),
@@ -346,14 +340,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
-                }),
-                AvailableProvider::Bedrock => CloudModel::Bedrock(bedrock::Model::Custom {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    max_output_tokens: model.max_output_tokens,
-                    default_temperature: model.default_temperature,
-                }),
+                })
             };
             models.insert(model.id().to_string(), model.clone());
         }
@@ -585,8 +572,7 @@ impl LanguageModel for CloudLanguageModel {
                         min_total_token: cache.min_total_token,
                     })
             }
-            CloudModel::OpenAi(_) | CloudModel::Google(_) => None,
-            CloudModel::Bedrock(_) => unimplemented!()
+            CloudModel::OpenAi(_) | CloudModel::Google(_) => None
         }
     }
 
@@ -616,7 +602,6 @@ impl LanguageModel for CloudLanguageModel {
                 }
                 .boxed()
             }
-            CloudModel::Bedrock(_) => get_bedrock_tokens(request, cx),
         }
     }
 
@@ -708,9 +693,6 @@ impl LanguageModel for CloudLanguageModel {
                         .boxed())
                 }
                 .boxed()
-            }
-            CloudModel::Bedrock(_) => {
-                todo!()
             }
         }
     }
@@ -813,7 +795,6 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::Google(_) => {
                 future::ready(Err(anyhow!("tool use not implemented for Google AI"))).boxed()
             }
-            CloudModel::Bedrock(_) => { todo!() }
         }
     }
 }
