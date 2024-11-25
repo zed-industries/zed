@@ -406,11 +406,7 @@ fn main() {
             stdout_is_a_pty(),
             cx,
         );
-<<<<<<< HEAD
         assistant2::init(cx);
-        assistant_hints::init(cx);
-=======
->>>>>>> parent of aae39071ef (editor: Show hints for using AI features on empty lines (#20824))
         repl::init(
             app_state.fs.clone(),
             app_state.client.telemetry().clone(),
