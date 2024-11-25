@@ -1,5 +1,6 @@
 use crate::{
     search::SearchQuery,
+    ProjectSettings, project_settings::GitAuthorDisplaySetting,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     Item, ProjectPath,
 };
@@ -23,6 +24,7 @@ use language::{
     Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
 };
 use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
+use settings::Settings;
 use smol::channel::Receiver;
 use std::{io, ops::Range, path::Path, str::FromStr as _, sync::Arc, time::Instant};
 use text::BufferId;
@@ -1124,11 +1126,25 @@ impl BufferStore {
                     anyhow::Ok(Some((repo, relative_path, content)))
                 });
 
+                let author_display_setting = ProjectSettings::get_global(cx)
+                    .git
+                    .inline_blame
+                    .unwrap_or_default()
+                    .author_display
+                    .unwrap_or_default();
+
                 cx.background_executor().spawn(async move {
                     let Some((repo, relative_path, content)) = blame_params? else {
                         return Ok(None);
                     };
-                    repo.blame(&relative_path, content)
+
+                    let author_display_replace = match author_display_setting {
+                        GitAuthorDisplaySetting::Author => None,
+                        GitAuthorDisplaySetting::You => Some("You"),
+                        GitAuthorDisplaySetting::AuthorYou => Some("{} (You)"),
+                    };
+
+                    repo.blame(&relative_path, content, author_display_replace)
                         .with_context(|| format!("Failed to blame {:?}", relative_path.0))
                         .map(Some)
                 })

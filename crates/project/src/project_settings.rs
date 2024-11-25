@@ -156,6 +156,22 @@ pub struct InlineBlameSettings {
     /// Default: false
     #[serde(default = "false_value")]
     pub show_commit_summary: bool,
+    /// Author display format for git blame.
+    ///
+    /// Default: author
+    pub author_display: Option<GitAuthorDisplaySetting>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitAuthorDisplaySetting {
+    /// Only Author name.
+    #[default]
+    Author,
+    /// You
+    You,
+    /// Author (You)
+    AuthorYou,
 }
 
 const fn true_value() -> bool {
