@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use futures::StreamExt as _;
 use gpui::{EventEmitter, ModelContext, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, Role, StopReason,
 };
-use smol::stream::StreamExt as _;
 use util::ResultExt as _;
 
 /// A message in a [`Thread`].
