@@ -3,7 +3,7 @@ use anyhow::Result;
 use client::telemetry::Telemetry;
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
-use inline_completion::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
+use inline_completion::{CompletionEdit, CompletionProposal, Direction, InlineCompletionProvider};
 use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
 use std::{
     ops::{AddAssign, Range},
@@ -57,7 +57,13 @@ fn completion_state_from_diff(
         .text_for_range(delete_range.clone())
         .collect::<String>();
 
-    let mut inlays: Vec<InlayProposal> = Vec::new();
+    let delete_range = if buffer_text.is_empty() {
+        None
+    } else {
+        Some(delete_range)
+    };
+
+    let mut edits: Vec<CompletionEdit> = Vec::new();
 
     let completion_graphemes: Vec<&str> = completion_text.graphemes(true).collect();
     let buffer_graphemes: Vec<&str> = buffer_text.graphemes(true).collect();
@@ -75,10 +81,11 @@ fn completion_state_from_diff(
             Some(k) => {
                 if k != 0 {
                     // the range from the current position to item is an inlay.
-                    inlays.push(InlayProposal::Suggestion(
-                        snapshot.anchor_after(offset),
-                        completion_graphemes[i..i + k].join("").into(),
-                    ));
+                    edits.push(CompletionEdit {
+                        position: snapshot.anchor_after(offset),
+                        text: Some(completion_graphemes[i..i + k].join("").into()),
+                        delete_range: delete_range.clone(),
+                    });
                 }
                 i += k + 1;
                 j += 1;
@@ -94,17 +101,14 @@ fn completion_state_from_diff(
 
     if j == buffer_graphemes.len() && i < completion_graphemes.len() {
         // there is leftover completion text, so drop it as an inlay.
-        inlays.push(InlayProposal::Suggestion(
-            snapshot.anchor_after(offset),
-            completion_graphemes[i..].join("").into(),
-        ));
+        edits.push(CompletionEdit {
+            position: snapshot.anchor_after(offset),
+            text: Some(completion_graphemes[i..].join("").into()),
+            delete_range,
+        });
     }
 
-    CompletionProposal {
-        inlays,
-        text: completion_text.into(),
-        delete_range: Some(delete_range),
-    }
+    CompletionProposal { edits }
 }
 
 impl InlineCompletionProvider for SupermavenCompletionProvider {

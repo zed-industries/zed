@@ -31,7 +31,7 @@ use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
+    FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, View, ViewContext,
@@ -2734,6 +2734,58 @@ impl EditorElement {
         true
     }
 
+    fn layout_inline_completion_popover(
+        &self,
+        content_origin: gpui::Point<Pixels>,
+        editor_snapshot: &EditorSnapshot,
+        start_row: DisplayRow,
+        line_layouts: &[LineWithInvisibles],
+        line_height: Pixels,
+        text_style: &gpui::TextStyle,
+        cx: &mut WindowContext,
+    ) -> Option<AnyElement> {
+        const X_OFFSET: f32 = 25.;
+
+        let popover = self
+            .editor
+            .read(cx)
+            .active_inline_completion_popover
+            .as_ref()?;
+
+        let upper_left = popover.position.to_display_point(editor_snapshot);
+        let first_line = &line_layouts[upper_left.row().minus(start_row) as usize];
+        let origin = content_origin
+            + point(
+                first_line.width + px(X_OFFSET),
+                upper_left.row().as_f32() * line_height,
+            );
+
+        let text = gpui::StyledText::new(popover.text.to_string()).with_highlights(
+            text_style,
+            popover.additions.iter().map(|range| {
+                (
+                    range.clone(),
+                    HighlightStyle {
+                        background_color: Some(cx.theme().status().created_background),
+                        ..Default::default()
+                    },
+                )
+            }),
+        );
+
+        let mut element = div()
+            .bg(cx.theme().colors().editor_background)
+            .p_1()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_md()
+            .child(text)
+            .into_any();
+
+        element.prepaint_as_root(origin, AvailableSpace::min_size(), cx);
+        Some(element)
+    }
+
     fn layout_mouse_context_menu(
         &self,
         editor_snapshot: &EditorSnapshot,
@@ -3959,6 +4011,16 @@ impl EditorElement {
     fn paint_blocks(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         for mut block in layout.blocks.drain(..) {
             block.element.paint(cx);
+        }
+    }
+
+    fn paint_inline_completion_popover(
+        &mut self,
+        layout: &mut EditorLayout,
+        cx: &mut WindowContext,
+    ) {
+        if let Some(inline_completion_popover) = layout.inline_completion_popover.as_mut() {
+            inline_completion_popover.paint(cx);
         }
     }
 
@@ -5592,6 +5654,16 @@ impl Element for EditorElement {
                         );
                     }
 
+                    let inline_completion_popover = self.layout_inline_completion_popover(
+                        content_origin,
+                        &snapshot,
+                        start_row,
+                        &line_layouts,
+                        line_height,
+                        &style.text,
+                        cx,
+                    );
+
                     let mouse_context_menu =
                         self.layout_mouse_context_menu(&snapshot, start_row..end_row, cx);
 
@@ -5674,6 +5746,7 @@ impl Element for EditorElement {
                         cursors,
                         visible_cursors,
                         selections,
+                        inline_completion_popover,
                         mouse_context_menu,
                         test_indicators,
                         code_actions_indicator,
@@ -5763,6 +5836,7 @@ impl Element for EditorElement {
                     }
 
                     self.paint_scrollbar(layout, cx);
+                    self.paint_inline_completion_popover(layout, cx);
                     self.paint_mouse_context_menu(layout, cx);
                 });
             })
@@ -5818,6 +5892,7 @@ pub struct EditorLayout {
     test_indicators: Vec<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
+    inline_completion_popover: Option<AnyElement>,
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
