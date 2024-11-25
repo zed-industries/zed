@@ -1,14 +1,11 @@
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::StreamExt;
 use gpui::{AppContext, Model, TextStyle, View};
 use language_model::{
-    LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, MessageContent, Role, StopReason,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
-use util::ResultExt;
 
 use crate::thread::{self, Thread};
 use crate::Chat;
@@ -71,50 +68,8 @@ impl MessageEditor {
             editor.clear(cx);
         });
 
-        let task = cx.spawn(|this, mut cx| async move {
-            let stream = model.stream_completion(request, &cx);
-            let stream_completion = async {
-                let mut events = stream.await?;
-                let mut stop_reason = StopReason::EndTurn;
-
-                let mut text = String::new();
-
-                while let Some(event) = events.next().await {
-                    let event = event?;
-                    match event {
-                        LanguageModelCompletionEvent::StartMessage { .. } => {}
-                        LanguageModelCompletionEvent::Stop(reason) => {
-                            stop_reason = reason;
-                        }
-                        LanguageModelCompletionEvent::Text(chunk) => {
-                            text.push_str(&chunk);
-                        }
-                        LanguageModelCompletionEvent::ToolUse(_tool_use) => {}
-                    }
-
-                    smol::future::yield_now().await;
-                }
-
-                anyhow::Ok((stop_reason, text))
-            };
-
-            let result = stream_completion.await;
-
-            this.update(&mut cx, |this, cx| {
-                if let Some((_stop_reason, text)) = result.log_err() {
-                    this.thread.update(cx, |thread, _cx| {
-                        thread.messages.push(thread::Message {
-                            role: Role::Assistant,
-                            text,
-                        });
-                    });
-                }
-            })
-            .ok();
-        });
-
-        self.thread.update(cx, |thread, _cx| {
-            thread.pending_completion_tasks.push(task);
+        self.thread.update(cx, |thread, cx| {
+            thread.stream_completion(request, model, cx)
         });
 
         None
