@@ -710,6 +710,33 @@ impl Database {
             worktrees.push(worktree);
         }
 
+        let mut breakpoints: HashMap<proto::ProjectPath, HashSet<proto::Breakpoint>> =
+            HashMap::default();
+
+        let db_breakpoints = project.find_related(breakpoints::Entity).all(tx).await?;
+
+        for breakpoint in db_breakpoints.iter() {
+            let project_path = proto::ProjectPath {
+                worktree_id: breakpoint.worktree_id as u64,
+                path: breakpoint.path.clone(),
+            };
+
+            breakpoints
+                .entry(project_path)
+                .or_default()
+                .insert(proto::Breakpoint {
+                    position: None,
+                    cached_position: breakpoint.position as u32,
+                    kind: match breakpoint.kind {
+                        breakpoints::BreakpointKind::Standard => {
+                            proto::BreakpointKind::Standard.into()
+                        }
+                        breakpoints::BreakpointKind::Log => proto::BreakpointKind::Log.into(),
+                    },
+                    message: breakpoint.log_message.clone(),
+                });
+        }
+
         let language_servers = project
             .find_related(language_server::Entity)
             .all(tx)
@@ -779,6 +806,7 @@ impl Database {
             collaborators,
             worktrees,
             language_servers,
+            breakpoints,
         }))
     }
 

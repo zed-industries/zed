@@ -49,7 +49,7 @@ impl AssistantPanel {
                 workspace.project().clone(),
                 Default::default(),
                 None,
-                NewThread.boxed_clone(),
+                Some(NewThread.boxed_clone()),
                 cx,
             );
             pane.set_can_split(false, cx);

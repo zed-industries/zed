@@ -371,6 +371,7 @@ messages!(
     (SyncExtensions, Background),
     (SyncExtensionsResponse, Background),
     (InstallExtension, Background),
+    (SynchronizeBreakpoints, Background),
 );
 
 request_messages!(
@@ -580,6 +581,7 @@ entity_messages!(
     ActiveToolchain,
     GetPathMetadata,
     CancelLanguageServerWork,
+    SynchronizeBreakpoints,
 );
 
 entity_messages!(

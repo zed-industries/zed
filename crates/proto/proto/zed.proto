@@ -301,7 +301,9 @@ message Envelope {
 
         SyncExtensions sync_extensions = 285;
         SyncExtensionsResponse sync_extensions_response = 286;
-        InstallExtension install_extension = 287; // current max
+        InstallExtension install_extension = 287;
+
+        SynchronizeBreakpoints Synchronize_breakpoints = 288; // current max
     }
 
     reserved 87 to 88;
@@ -420,6 +422,7 @@ message RejoinedProject {
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
+    repeated SynchronizeBreakpoints breakpoints = 5;
 }
 
 message LeaveRoom {}
@@ -557,6 +560,7 @@ message JoinProjectResponse {
     repeated LanguageServer language_servers = 4;
     ChannelRole role = 6;
     reserved 7;
+    repeated SynchronizeBreakpoints breakpoints = 8;
 }
 
 message LeaveProject {
@@ -2384,6 +2388,26 @@ message GetLlmTokenResponse {
 }
 
 message RefreshLlmToken {}
+
+// Remote debugging
+
+enum BreakpointKind {
+    Standard = 0;
+    Log = 1;
+}
+
+message Breakpoint {
+    Anchor position = 1;
+    uint32 cached_position = 2;
+    BreakpointKind kind = 3;
+    optional string message = 4;
+}
+
+message SynchronizeBreakpoints {
+    uint64 project_id = 1;
+    ProjectPath project_path = 2;
+    repeated Breakpoint breakpoints = 3;
+}
 
 // Remote FS
 

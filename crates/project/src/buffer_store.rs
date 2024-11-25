@@ -1,4 +1,5 @@
 use crate::{
+    dap_store::DapStore,
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     Item, ProjectPath,
@@ -78,6 +79,7 @@ struct LocalBufferStore {
     local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
     buffer_store: WeakModel<BufferStore>,
+    dap_store: Model<DapStore>,
     worktree_store: Model<WorktreeStore>,
     _subscription: Subscription,
 }
@@ -754,6 +756,10 @@ impl LocalBufferStore {
             .clone()
     }
 
+    fn buffer_id_for_project_path(&self, project_path: &ProjectPath) -> Option<&BufferId> {
+        self.local_buffer_ids_by_path.get(project_path)
+    }
+
     fn buffer_changed_file(&mut self, buffer: Model<Buffer>, cx: &mut AppContext) -> Option<()> {
         let file = File::from_dyn(buffer.read(cx).file())?;
 
@@ -953,7 +959,11 @@ impl BufferStore {
     }
 
     /// Creates a buffer store, optionally retaining its buffers.
-    pub fn local(worktree_store: Model<WorktreeStore>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn local(
+        worktree_store: Model<WorktreeStore>,
+        dap_store: Model<DapStore>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let this = cx.weak_model();
         Self {
             state: Box::new(cx.new_model(|cx| {
@@ -972,6 +982,7 @@ impl BufferStore {
                     buffer_store: this,
                     worktree_store: worktree_store.clone(),
                     _subscription: subscription,
+                    dap_store,
                 }
             })),
             downstream_client: None,
@@ -1007,6 +1018,21 @@ impl BufferStore {
         }
     }
 
+    pub fn dap_on_buffer_open(
+        &mut self,
+        project_path: &ProjectPath,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(local_store_model) = self.state.as_local() {
+            local_store_model.update(cx, |local_store, cx| {
+                local_store.dap_store.update(cx, |store, cx| {
+                    store.on_open_buffer(&project_path, buffer, cx);
+                });
+            });
+        }
+    }
+
     pub fn open_buffer(
         &mut self,
         project_path: ProjectPath,
@@ -1014,6 +1040,8 @@ impl BufferStore {
     ) -> Task<Result<Model<Buffer>>> {
         let existing_buffer = self.get_by_path(&project_path, cx);
         if let Some(existing_buffer) = existing_buffer {
+            self.dap_on_buffer_open(&project_path, &existing_buffer, cx);
+
             return Task::ready(Ok(existing_buffer));
         }
 
@@ -1042,10 +1070,11 @@ impl BufferStore {
 
                 cx.spawn(move |this, mut cx| async move {
                     let load_result = load_buffer.await;
-                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _cx| {
+                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, cx| {
                         // Record the fact that the buffer is no longer loading.
                         this.loading_buffers_by_path.remove(&project_path);
                         let buffer = load_result.map_err(Arc::new)?;
+                        this.dap_on_buffer_open(&project_path, &buffer, cx);
                         Ok(buffer)
                     })?);
                     anyhow::Ok(())
@@ -1282,6 +1311,16 @@ impl BufferStore {
         self.loading_buffers_by_path
             .iter()
             .map(|(path, rx)| (path, rx.clone()))
+    }
+
+    pub fn buffer_id_for_project_path<'a>(
+        &'a self,
+        project_path: &'a ProjectPath,
+        cx: &'a AppContext,
+    ) -> Option<&'a BufferId> {
+        self.state
+            .as_local()
+            .and_then(move |state| state.read(cx).buffer_id_for_project_path(project_path))
     }
 
     pub fn get_by_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Model<Buffer>> {

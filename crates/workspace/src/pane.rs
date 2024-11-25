@@ -214,7 +214,7 @@ pub enum Event {
         idx: usize,
     },
     RemovedItem {
-        item_id: EntityId,
+        item: Box<dyn ItemHandle>,
     },
     Split(SplitDirection),
     JoinAll,
@@ -242,9 +242,9 @@ impl fmt::Debug for Event {
                 .finish(),
             Event::Remove { .. } => f.write_str("Remove"),
             Event::RemoveItem { idx } => f.debug_struct("RemoveItem").field("idx", idx).finish(),
-            Event::RemovedItem { item_id } => f
+            Event::RemovedItem { item } => f
                 .debug_struct("RemovedItem")
-                .field("item_id", item_id)
+                .field("item", &item.item_id())
                 .finish(),
             Event::Split(direction) => f
                 .debug_struct("Split")
@@ -300,8 +300,9 @@ pub struct Pane {
     /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
     /// Otherwise, when `display_nav_history_buttons` is Some, it determines whether nav buttons should be displayed.
     display_nav_history_buttons: Option<bool>,
-    double_click_dispatch_action: Box<dyn Action>,
+    double_click_dispatch_action: Option<Box<dyn Action>>,
     save_modals_spawned: HashSet<EntityId>,
+    close_pane_if_empty: bool,
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
@@ -371,7 +372,7 @@ impl Pane {
         project: Model<Project>,
         next_timestamp: Arc<AtomicUsize>,
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool + 'static>>,
-        double_click_dispatch_action: Box<dyn Action>,
+        double_click_dispatch_action: Option<Box<dyn Action>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -501,6 +502,7 @@ impl Pane {
             _subscriptions: subscriptions,
             double_click_dispatch_action,
             save_modals_spawned: HashSet::default(),
+            close_pane_if_empty: true,
             split_item_context_menu_handle: Default::default(),
             new_item_context_menu_handle: Default::default(),
             pinned_tab_count: 0,
@@ -625,6 +627,15 @@ impl Pane {
 
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
         self.can_split = can_split;
+        cx.notify();
+    }
+
+    pub fn set_close_pane_if_empty(
+        &mut self,
+        close_pane_if_empty: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.close_pane_if_empty = close_pane_if_empty;
         cx.notify();
     }
 
@@ -1388,7 +1399,7 @@ impl Pane {
                         .iter()
                         .position(|i| i.item_id() == item.item_id())
                     {
-                        pane.remove_item(item_ix, false, true, cx);
+                        pane.remove_item(item_ix, false, pane.close_pane_if_empty, cx);
                     }
                 })
                 .ok();
@@ -1471,13 +1482,9 @@ impl Pane {
             }
         }
 
-        cx.emit(Event::RemoveItem { idx: item_index });
-
         let item = self.items.remove(item_index);
 
-        cx.emit(Event::RemovedItem {
-            item_id: item.item_id(),
-        });
+        cx.emit(Event::RemovedItem { item: item.clone() });
         if self.items.is_empty() {
             item.deactivated(cx);
             if close_pane_if_empty {
@@ -2355,9 +2362,9 @@ impl Pane {
                             }))
                             .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
                                 if event.up.click_count == 2 {
-                                    cx.dispatch_action(
-                                        this.double_click_dispatch_action.boxed_clone(),
-                                    )
+                                    if let Some(action) = &this.double_click_dispatch_action {
+                                        cx.dispatch_action(action.boxed_clone());
+                                    }
                                 }
                             })),
                     ),
