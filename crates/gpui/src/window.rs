@@ -2685,6 +2685,20 @@ impl<'a> WindowContext<'a> {
         });
     }
 
+    /// Removes an image from the sprite atlas.
+    pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
+        for frame_index in 0..data.frame_count() {
+            let params = RenderImageParams {
+                image_id: data.id,
+                frame_index,
+            };
+
+            self.window.sprite_atlas.remove(&params.clone().into());
+        }
+
+        Ok(())
+    }
+
     #[must_use]
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during

@@ -52,8 +52,8 @@ use language::{
     Transaction, Unclipped,
 };
 use lsp::{
-    CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
-    LanguageServerName, MessageActionItem,
+    CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer,
+    LanguageServerId, LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -2843,12 +2843,13 @@ impl Project {
         &mut self,
         buffer_handle: &Model<Buffer>,
         range: Range<T>,
+        kinds: Option<Vec<CodeActionKind>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.code_actions(buffer_handle, range, cx)
+            lsp_store.code_actions(buffer_handle, range, kinds, cx)
         })
     }
 

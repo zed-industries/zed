@@ -96,7 +96,16 @@
   "def"
   name: (_)
   (parameters)?
-  body: (block (expression_statement (string) @string.doc)))
+  body: (block . (expression_statement (string) @string.doc)))
+
+(class_definition
+  body: (block
+    . (comment) @comment*
+    . (expression_statement (string) @string.doc)))
+
+(module
+  . (comment) @comment*
+  . (expression_statement (string) @string.doc))
 
 (module
   (expression_statement (assignment))

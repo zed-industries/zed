@@ -13811,7 +13811,9 @@ impl CodeActionProvider for Model<Project> {
         range: Range<text::Anchor>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<CodeAction>>> {
-        self.update(cx, |project, cx| project.code_actions(buffer, range, cx))
+        self.update(cx, |project, cx| {
+            project.code_actions(buffer, range, None, cx)
+        })
     }
 
     fn apply_code_action(

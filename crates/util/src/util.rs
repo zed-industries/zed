@@ -149,6 +149,12 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
             }
         }
 
+        (Value::Array(source), Value::Array(target)) => {
+            for value in source {
+                target.push(value);
+            }
+        }
+
         (source, target) => *target = source,
     }
 }

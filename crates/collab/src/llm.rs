@@ -3,9 +3,11 @@ pub mod db;
 mod telemetry;
 mod token;
 
+use crate::api::events::SnowflakeRow;
+use crate::api::CloudflareIpCountryHeader;
+use crate::build_kinesis_client;
 use crate::{
-    api::CloudflareIpCountryHeader, build_clickhouse_client, db::UserId, executor::Executor, Cents,
-    Config, Error, Result,
+    build_clickhouse_client, db::UserId, executor::Executor, Cents, Config, Error, Result,
 };
 use anyhow::{anyhow, Context as _};
 use authorization::authorize_access_to_language_model;
@@ -28,6 +30,7 @@ use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
 };
 use rpc::{ListModelsResponse, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME};
+use serde_json::json;
 use std::{
     pin::Pin,
     sync::Arc,
@@ -45,6 +48,7 @@ pub struct LlmState {
     pub executor: Executor,
     pub db: Arc<LlmDatabase>,
     pub http_client: ReqwestClient,
+    pub kinesis_client: Option<aws_sdk_kinesis::Client>,
     pub clickhouse_client: Option<clickhouse::Client>,
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
@@ -77,6 +81,11 @@ impl LlmState {
             executor,
             db,
             http_client,
+            kinesis_client: if config.kinesis_access_key.is_some() {
+                build_kinesis_client(&config).await.log_err()
+            } else {
+                None
+            },
             clickhouse_client: config
                 .clickhouse_url
                 .as_ref()
@@ -521,25 +530,50 @@ async fn check_usage_limit(
                 UsageMeasure::TokensPerDay => "tokens_per_day",
             };
 
-            if let Some(client) = state.clickhouse_client.as_ref() {
-                tracing::info!(
-                    target: "user rate limit",
-                    user_id = claims.user_id,
-                    login = claims.github_user_login,
-                    authn.jti = claims.jti,
-                    is_staff = claims.is_staff,
-                    provider = provider.to_string(),
-                    model = model.name,
-                    requests_this_minute = usage.requests_this_minute,
-                    tokens_this_minute = usage.tokens_this_minute,
-                    tokens_this_day = usage.tokens_this_day,
-                    users_in_recent_minutes = users_in_recent_minutes,
-                    users_in_recent_days = users_in_recent_days,
-                    max_requests_per_minute = per_user_max_requests_per_minute,
-                    max_tokens_per_minute = per_user_max_tokens_per_minute,
-                    max_tokens_per_day = per_user_max_tokens_per_day,
-                );
+            tracing::info!(
+                target: "user rate limit",
+                user_id = claims.user_id,
+                login = claims.github_user_login,
+                authn.jti = claims.jti,
+                is_staff = claims.is_staff,
+                provider = provider.to_string(),
+                model = model.name,
+                requests_this_minute = usage.requests_this_minute,
+                tokens_this_minute = usage.tokens_this_minute,
+                tokens_this_day = usage.tokens_this_day,
+                users_in_recent_minutes = users_in_recent_minutes,
+                users_in_recent_days = users_in_recent_days,
+                max_requests_per_minute = per_user_max_requests_per_minute,
+                max_tokens_per_minute = per_user_max_tokens_per_minute,
+                max_tokens_per_day = per_user_max_tokens_per_day,
+            );
 
+            SnowflakeRow::new(
+                "Language Model Rate Limited",
+                claims.metrics_id,
+                claims.is_staff,
+                claims.system_id.clone(),
+                json!({
+                    "usage": usage,
+                    "users_in_recent_minutes": users_in_recent_minutes,
+                    "users_in_recent_days": users_in_recent_days,
+                    "max_requests_per_minute": per_user_max_requests_per_minute,
+                    "max_tokens_per_minute": per_user_max_tokens_per_minute,
+                    "max_tokens_per_day": per_user_max_tokens_per_day,
+                    "plan": match claims.plan {
+                        Plan::Free => "free".to_string(),
+                        Plan::ZedPro => "zed_pro".to_string(),
+                    },
+                    "model": model.name.clone(),
+                    "provider": provider.to_string(),
+                    "usage_measure": resource.to_string(),
+                }),
+            )
+            .write(&state.kinesis_client, &state.config.kinesis_stream)
+            .await
+            .log_err();
+
+            if let Some(client) = state.clickhouse_client.as_ref() {
                 report_llm_rate_limit(
                     client,
                     LlmRateLimitEventRow {
@@ -651,6 +685,27 @@ impl<S> Drop for TokenCountingStream<S> {
                     requests_this_minute = usage.requests_this_minute,
                     tokens_this_minute = usage.tokens_this_minute,
                 );
+
+                let properties = json!({
+                    "plan": match claims.plan {
+                        Plan::Free => "free".to_string(),
+                        Plan::ZedPro => "zed_pro".to_string(),
+                    },
+                    "model": model,
+                    "provider": provider,
+                    "usage": usage,
+                    "tokens": tokens
+                });
+                SnowflakeRow::new(
+                    "Language Model Used",
+                    claims.metrics_id,
+                    claims.is_staff,
+                    claims.system_id.clone(),
+                    properties,
+                )
+                .write(&state.kinesis_client, &state.config.kinesis_stream)
+                .await
+                .log_err();
 
                 if let Some(clickhouse_client) = state.clickhouse_client.as_ref() {
                     report_llm_usage(

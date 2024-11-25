@@ -2015,6 +2015,7 @@ impl LspStore {
         &mut self,
         buffer_handle: &Model<Buffer>,
         range: Range<Anchor>,
+        kinds: Option<Vec<CodeActionKind>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
@@ -2028,7 +2029,7 @@ impl LspStore {
                 request: Some(proto::multi_lsp_query::Request::GetCodeActions(
                     GetCodeActions {
                         range: range.clone(),
-                        kinds: None,
+                        kinds: kinds.clone(),
                     }
                     .to_proto(project_id, buffer_handle.read(cx)),
                 )),
@@ -2054,7 +2055,7 @@ impl LspStore {
                         .map(|code_actions_response| {
                             GetCodeActions {
                                 range: range.clone(),
-                                kinds: None,
+                                kinds: kinds.clone(),
                             }
                             .response_from_proto(
                                 code_actions_response,
@@ -2079,7 +2080,7 @@ impl LspStore {
                 Some(range.start),
                 GetCodeActions {
                     range: range.clone(),
-                    kinds: None,
+                    kinds: kinds.clone(),
                 },
                 cx,
             );
@@ -5522,10 +5523,16 @@ impl LspStore {
                 .unwrap_or_default(),
             allow_binary_download,
         };
+        let toolchains = self.toolchain_store(cx);
         cx.spawn(|_, mut cx| async move {
             let binary_result = adapter
                 .clone()
-                .get_language_server_command(delegate.clone(), lsp_binary_options, &mut cx)
+                .get_language_server_command(
+                    delegate.clone(),
+                    toolchains,
+                    lsp_binary_options,
+                    &mut cx,
+                )
                 .await;
 
             delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
@@ -7782,6 +7789,7 @@ impl LspAdapter for SshLspAdapter {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         Some(self.binary.clone())
