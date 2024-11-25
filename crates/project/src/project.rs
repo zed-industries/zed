@@ -516,6 +516,7 @@ enum EntitySubscription {
     WorktreeStore(PendingEntitySubscription<WorktreeStore>),
     LspStore(PendingEntitySubscription<LspStore>),
     SettingsObserver(PendingEntitySubscription<SettingsObserver>),
+    DapStore(PendingEntitySubscription<DapStore>),
 }
 
 #[derive(Clone)]
@@ -611,6 +612,7 @@ impl Project {
         SettingsObserver::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
+        DapStore::init(&client);
     }
 
     pub fn local(
@@ -634,9 +636,9 @@ impl Project {
             let environment = ProjectEnvironment::new(&worktree_store, env, cx);
 
             let dap_store = cx.new_model(|cx| {
-                DapStore::new(
-                    Some(client.http_client()),
-                    Some(node.clone()),
+                DapStore::new_local(
+                    client.http_client(),
+                    node.clone(),
                     fs.clone(),
                     languages.clone(),
                     environment.clone(),
@@ -827,16 +829,8 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let dap_store = cx.new_model(|cx| {
-                DapStore::new(
-                    Some(client.http_client()),
-                    Some(node.clone()),
-                    fs.clone(),
-                    languages.clone(),
-                    environment.clone(),
-                    cx,
-                )
-            });
+            let dap_store =
+                cx.new_model(|cx| DapStore::new_remote(SSH_PROJECT_ID, client.clone().into(), cx));
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
@@ -898,6 +892,7 @@ impl Project {
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.dap_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
 
             ssh_proto.add_model_message_handler(Self::handle_create_buffer_for_peer);
@@ -912,6 +907,7 @@ impl Project {
             SettingsObserver::init(&ssh_proto);
             TaskStore::init(Some(&ssh_proto));
             ToolchainStore::init(&ssh_proto);
+            DapStore::init(&ssh_proto);
 
             this
         })
@@ -955,6 +951,7 @@ impl Project {
             EntitySubscription::SettingsObserver(
                 client.subscribe_to_entity::<SettingsObserver>(remote_id)?,
             ),
+            EntitySubscription::DapStore(client.subscribe_to_entity::<DapStore>(remote_id)?),
         ];
         let response = client
             .request_envelope(proto::JoinProject {
@@ -977,7 +974,7 @@ impl Project {
     #[allow(clippy::too_many_arguments)]
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscriptions: [EntitySubscription; 5],
+        subscriptions: [EntitySubscription; 6],
         client: Arc<Client>,
         run_tasks: bool,
         user_store: Model<UserStore>,
@@ -1001,14 +998,10 @@ impl Project {
         let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
 
         let dap_store = cx.new_model(|cx| {
-            DapStore::new(
-                Some(client.http_client()),
-                None,
-                fs.clone(),
-                languages.clone(),
-                environment.clone(),
-                cx,
-            )
+            let mut dap_store = DapStore::new_remote(remote_id, client.clone().into(), cx);
+
+            dap_store.set_breakpoints_from_proto(response.payload.breakpoints, cx);
+            dap_store
         })?;
 
         let lsp_store = cx.new_model(|cx| {
@@ -1097,7 +1090,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                dap_store,
+                dap_store: dap_store.clone(),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1133,6 +1126,9 @@ impl Project {
                 EntitySubscription::Project(subscription) => subscription.set_model(&this, &mut cx),
                 EntitySubscription::LspStore(subscription) => {
                     subscription.set_model(&lsp_store, &mut cx)
+                }
+                EntitySubscription::DapStore(subscription) => {
+                    subscription.set_model(&dap_store, &mut cx)
                 }
             })
             .collect::<Vec<_>>();
@@ -1859,6 +1855,9 @@ impl Project {
                 .set_model(&self.lsp_store, &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
+                .set_model(&self.dap_store, &mut cx.to_async()),
+            self.client
+                .subscribe_to_entity(project_id)?
                 .set_model(&self.settings_observer, &mut cx.to_async()),
         ]);
 
@@ -1870,6 +1869,9 @@ impl Project {
         });
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.shared(project_id, self.client.clone().into(), cx)
+        });
+        self.dap_store.update(cx, |dap_store, cx| {
+            dap_store.shared(project_id, self.client.clone().into(), cx);
         });
         self.task_store.update(cx, |task_store, cx| {
             task_store.shared(project_id, self.client.clone().into(), cx);
@@ -1926,6 +1928,9 @@ impl Project {
         self.lsp_store.update(cx, |lsp_store, _| {
             lsp_store.set_language_server_statuses_from_proto(message.language_servers)
         });
+        self.dap_store.update(cx, |dap_store, cx| {
+            dap_store.set_breakpoints_from_proto(message.breakpoints, cx);
+        });
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();
         cx.emit(Event::Rejoined);
@@ -1957,6 +1962,9 @@ impl Project {
             });
             self.task_store.update(cx, |task_store, cx| {
                 task_store.unshared(cx);
+            });
+            self.dap_store.update(cx, |dap_store, cx| {
+                dap_store.unshared(cx);
             });
             self.settings_observer.update(cx, |settings_observer, cx| {
                 settings_observer.unshared(cx);
@@ -2410,10 +2418,15 @@ impl Project {
                     message: message.clone(),
                 });
             }
-            DapStoreEvent::Notification(message) => cx.emit(Event::Toast {
-                notification_id: "dap".into(),
-                message: message.clone(),
-            }),
+            DapStoreEvent::Notification(message) => {
+                cx.emit(Event::Toast {
+                    notification_id: "dap".into(),
+                    message: message.clone(),
+                });
+            }
+            DapStoreEvent::BreakpointsChanged => {
+                cx.notify();
+            }
         }
     }
 

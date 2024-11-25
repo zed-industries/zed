@@ -5272,7 +5272,7 @@ impl Element for EditorElement {
                                         .display_point_to_breakpoint_anchor(gutter_breakpoint_point)
                                         .text_anchor,
                                 ),
-                                cache_position: 0,
+                                cached_position: 0,
                                 kind: BreakpointKind::Standard,
                             });
                     }

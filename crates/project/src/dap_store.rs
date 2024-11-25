@@ -1,6 +1,7 @@
 use crate::{project_settings::ProjectSettings, ProjectEnvironment, ProjectPath};
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
+
 use collections::HashMap;
 use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
 use dap::{
@@ -26,11 +27,15 @@ use dap_adapters::build_adapter;
 use fs::Fs;
 use futures::future::Shared;
 use futures::FutureExt;
-use gpui::{EventEmitter, Model, ModelContext, SharedString, Task};
+use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, SharedString, Task};
 use http_client::HttpClient;
-use language::{Buffer, BufferSnapshot, LanguageRegistry, LanguageServerBinaryStatus};
+use language::{
+    proto::{deserialize_anchor, serialize_anchor as serialize_text_anchor},
+    Buffer, BufferSnapshot, LanguageRegistry, LanguageServerBinaryStatus,
+};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
+use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use serde_json::Value;
 use settings::{Settings, WorktreeId};
 use smol::lock::Mutex;
@@ -56,6 +61,7 @@ pub enum DapStoreEvent {
         message: Message,
     },
     Notification(String),
+    BreakpointsChanged,
 }
 
 pub enum DebugAdapterClientState {
@@ -69,15 +75,31 @@ pub struct DebugPosition {
     pub column: u32,
 }
 
-pub struct DapStore {
-    next_client_id: AtomicUsize,
+#[allow(clippy::large_enum_variant)]
+pub enum DapStoreMode {
+    Local(LocalDapStore),   // ssh host and collab host
+    Remote(RemoteDapStore), // collab guest
+}
+
+pub struct LocalDapStore {
     delegate: DapAdapterDelegate,
+    environment: Model<ProjectEnvironment>,
+}
+
+pub struct RemoteDapStore {
+    upstream_client: Option<AnyProtoClient>,
+    upstream_project_id: u64,
+}
+
+pub struct DapStore {
+    mode: DapStoreMode,
+    next_client_id: AtomicUsize,
+    downstream_client: Option<(AnyProtoClient, u64)>,
     ignore_breakpoints: HashSet<DebugAdapterClientId>,
     breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
-    active_debug_line: Option<(DebugAdapterClientId, ProjectPath, DebugPosition)>,
     capabilities: HashMap<DebugAdapterClientId, Capabilities>,
-    environment: Model<ProjectEnvironment>,
     clients: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
+    active_debug_line: Option<(DebugAdapterClientId, ProjectPath, DebugPosition)>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
@@ -85,9 +107,13 @@ impl EventEmitter<DapStoreEvent> for DapStore {}
 impl DapStore {
     const INDEX_STARTS_AT_ONE: bool = true;
 
-    pub fn new(
-        http_client: Option<Arc<dyn HttpClient>>,
-        node_runtime: Option<NodeRuntime>,
+    pub fn init(client: &AnyProtoClient) {
+        client.add_model_message_handler(DapStore::handle_synchronize_breakpoints);
+    }
+
+    pub fn new_local(
+        http_client: Arc<dyn HttpClient>,
+        node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
         environment: Model<ProjectEnvironment>,
@@ -95,40 +121,82 @@ impl DapStore {
     ) -> Self {
         cx.on_app_quit(Self::shutdown_clients).detach();
 
-        let load_shell_env_task = Task::ready(None).shared();
-
         Self {
+            mode: DapStoreMode::Local(LocalDapStore {
+                environment,
+                delegate: DapAdapterDelegate::new(
+                    Some(http_client.clone()),
+                    Some(node_runtime.clone()),
+                    fs.clone(),
+                    languages.clone(),
+                    Task::ready(None).shared(),
+                ),
+            }),
+            downstream_client: None,
             active_debug_line: None,
-            clients: Default::default(),
+            clients: HashMap::default(),
             breakpoints: Default::default(),
             capabilities: HashMap::default(),
             next_client_id: Default::default(),
             ignore_breakpoints: Default::default(),
-            delegate: DapAdapterDelegate::new(
-                http_client.clone(),
-                node_runtime.clone(),
-                fs.clone(),
-                languages.clone(),
-                load_shell_env_task,
-            ),
-            environment,
         }
     }
 
-    pub fn delegate(
-        &self,
-        cwd: &Option<PathBuf>,
-        cx: &mut ModelContext<Self>,
-    ) -> Arc<DapAdapterDelegate> {
-        let worktree_abs_path = cwd.as_ref().map(|p| Arc::from(p.as_path()));
-        let task = self.environment.update(cx, |env, cx| {
-            env.get_environment(None, worktree_abs_path, cx)
-        });
+    pub fn new_remote(
+        project_id: u64,
+        upstream_client: AnyProtoClient,
+        _: &mut ModelContext<Self>,
+    ) -> Self {
+        Self {
+            mode: DapStoreMode::Remote(RemoteDapStore {
+                upstream_client: Some(upstream_client),
+                upstream_project_id: project_id,
+            }),
+            downstream_client: None,
+            active_debug_line: None,
+            clients: HashMap::default(),
+            breakpoints: Default::default(),
+            capabilities: HashMap::default(),
+            next_client_id: Default::default(),
+            ignore_breakpoints: Default::default(),
+        }
+    }
 
-        let mut delegate = self.delegate.clone();
-        delegate.refresh_shell_env_task(task);
+    pub fn as_remote(&self) -> Option<&RemoteDapStore> {
+        match &self.mode {
+            DapStoreMode::Remote(remote_dap_store) => Some(remote_dap_store),
+            _ => None,
+        }
+    }
 
-        Arc::new(delegate)
+    pub fn as_local(&self) -> Option<&LocalDapStore> {
+        match &self.mode {
+            DapStoreMode::Local(local_dap_store) => Some(local_dap_store),
+            _ => None,
+        }
+    }
+
+    pub fn as_local_mut(&mut self) -> Option<&mut LocalDapStore> {
+        match &mut self.mode {
+            DapStoreMode::Local(local_dap_store) => Some(local_dap_store),
+            _ => None,
+        }
+    }
+
+    pub fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
+        match &self.mode {
+            DapStoreMode::Remote(RemoteDapStore {
+                upstream_client: Some(upstream_client),
+                upstream_project_id,
+                ..
+            }) => Some((upstream_client.clone(), *upstream_project_id)),
+
+            DapStoreMode::Remote(RemoteDapStore {
+                upstream_client: None,
+                ..
+            }) => None,
+            DapStoreMode::Local(_) => None,
+        }
     }
 
     pub fn next_client_id(&self) -> DebugAdapterClientId {
@@ -276,7 +344,7 @@ impl DapStore {
                 .or_default()
                 .insert(Breakpoint {
                     active_position: None,
-                    cache_position: serialize_breakpoint.position,
+                    cached_position: serialize_breakpoint.position,
                     kind: serialize_breakpoint.kind,
                 });
         }
@@ -289,7 +357,7 @@ impl DapStore {
     ) {
         if let Some(breakpoint_set) = self.breakpoints.remove(project_path) {
             let breakpoint_iter = breakpoint_set.into_iter().map(|mut bp| {
-                bp.cache_position = bp.point_for_buffer(&buffer).row;
+                bp.cached_position = bp.point_for_buffer(&buffer).row;
                 bp.active_position = None;
                 bp
             });
@@ -302,8 +370,18 @@ impl DapStore {
     }
 
     pub fn start_client(&mut self, config: DebugAdapterConfig, cx: &mut ModelContext<Self>) {
+        let Some(local_store) = self.as_local_mut() else {
+            return;
+        };
+
+        let mut adapter_delegate = local_store.delegate.clone();
+        let worktree_abs_path = config.cwd.as_ref().map(|p| Arc::from(p.as_path()));
+        adapter_delegate.refresh_shell_env_task(local_store.environment.update(cx, |env, cx| {
+            env.get_environment(None, worktree_abs_path, cx)
+        }));
+        let adapter_delegate = Arc::new(adapter_delegate);
+
         let client_id = self.next_client_id();
-        let adapter_delegate = self.delegate(&config.cwd, cx);
 
         let start_client_task = cx.spawn(|this, mut cx| async move {
             let dap_store = this.clone();
@@ -417,11 +495,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         cx.spawn(|this, mut cx| async move {
@@ -606,11 +680,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         let capabilities = self.capabilities_by_id(client_id);
@@ -638,11 +708,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         cx.spawn(|this, mut cx| async move {
@@ -696,11 +762,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         cx.background_executor().spawn(async move {
@@ -729,11 +791,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         cx.background_executor().spawn(async move {
@@ -756,11 +814,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         let capabilities = self.capabilities_by_id(client_id);
@@ -791,11 +845,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         let capabilities = self.capabilities_by_id(client_id);
@@ -827,11 +877,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         let capabilities = self.capabilities_by_id(client_id);
@@ -861,11 +907,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Variable>>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         cx.background_executor().spawn(async move {
@@ -891,11 +933,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<EvaluateResponse>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         cx.background_executor().spawn(async move {
@@ -922,11 +960,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<CompletionItem>>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         cx.background_executor().spawn(async move {
@@ -954,11 +988,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         let supports_set_expression = self
@@ -998,11 +1028,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         cx.background_executor()
@@ -1016,11 +1042,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         let capabilities = self.capabilities_by_id(client_id);
@@ -1045,11 +1067,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         cx.background_executor().spawn(async move {
@@ -1070,11 +1088,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         let supports_restart = self
@@ -1119,11 +1133,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.clients.remove(&client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         cx.emit(DapStoreEvent::DebugClientStopped(*client_id));
@@ -1164,6 +1174,63 @@ impl DapStore {
         })
     }
 
+    pub fn set_breakpoints_from_proto(
+        &mut self,
+        breakpoints: Vec<proto::SynchronizeBreakpoints>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.breakpoints.clear();
+
+        for project_breakpoints in breakpoints {
+            let Some(project_path) = project_breakpoints.project_path else {
+                continue;
+            };
+
+            self.breakpoints.insert(
+                ProjectPath::from_proto(project_path),
+                project_breakpoints
+                    .breakpoints
+                    .into_iter()
+                    .filter_map(Breakpoint::from_proto)
+                    .collect::<HashSet<_>>(),
+            );
+        }
+
+        cx.notify();
+    }
+
+    async fn handle_synchronize_breakpoints(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::SynchronizeBreakpoints>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let project_path = ProjectPath::from_proto(
+            envelope
+                .payload
+                .project_path
+                .context("Invalid Breakpoint call")?,
+        );
+
+        this.update(&mut cx, |store, cx| {
+            let breakpoints = envelope
+                .payload
+                .breakpoints
+                .into_iter()
+                .filter_map(Breakpoint::from_proto)
+                .collect::<HashSet<_>>();
+
+            if breakpoints.is_empty() {
+                store.breakpoints.remove(&project_path);
+            } else {
+                store.breakpoints.insert(project_path, breakpoints);
+            }
+
+            cx.emit(DapStoreEvent::BreakpointsChanged);
+
+            cx.notify();
+        })
+    }
+
     pub fn toggle_breakpoint_for_buffer(
         &mut self,
         project_path: &ProjectPath,
@@ -1173,6 +1240,8 @@ impl DapStore {
         edit_action: BreakpointEditAction,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
+        let upstream_client = self.upstream_client();
+
         let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
 
         match edit_action {
@@ -1189,6 +1258,19 @@ impl DapStore {
 
         cx.notify();
 
+        if let Some((client, project_id)) = upstream_client.or(self.downstream_client.clone()) {
+            client
+                .send(client::proto::SynchronizeBreakpoints {
+                    project_id,
+                    project_path: Some(project_path.to_proto()),
+                    breakpoints: breakpoint_set
+                        .iter()
+                        .filter_map(|breakpoint| breakpoint.to_proto())
+                        .collect(),
+                })
+                .log_err();
+        }
+
         self.send_changed_breakpoints(project_path, buffer_path, buffer_snapshot, cx)
     }
 
@@ -1201,11 +1283,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!(
-                "Could not find client: file: {}:{}",
-                file!(),
-                line!()
-            )));
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
         if Self::INDEX_STARTS_AT_ONE {
@@ -1276,6 +1354,34 @@ impl DapStore {
             Ok(())
         })
     }
+
+    pub fn shared(
+        &mut self,
+        project_id: u64,
+        downstream_client: AnyProtoClient,
+        _: &mut ModelContext<Self>,
+    ) {
+        self.downstream_client = Some((downstream_client.clone(), project_id));
+
+        for (project_path, breakpoints) in self.breakpoints.iter() {
+            downstream_client
+                .send(proto::SynchronizeBreakpoints {
+                    project_id,
+                    project_path: Some(project_path.to_proto()),
+                    breakpoints: breakpoints
+                        .iter()
+                        .filter_map(|breakpoint| breakpoint.to_proto())
+                        .collect(),
+                })
+                .log_err();
+        }
+    }
+
+    pub fn unshared(&mut self, cx: &mut ModelContext<Self>) {
+        self.downstream_client.take();
+
+        cx.notify();
+    }
 }
 
 type LogMessage = Arc<str>;
@@ -1325,7 +1431,7 @@ impl Hash for BreakpointKind {
 #[derive(Clone, Debug)]
 pub struct Breakpoint {
     pub active_position: Option<text::Anchor>,
-    pub cache_position: u32,
+    pub cached_position: u32,
     pub kind: BreakpointKind,
 }
 
@@ -1336,7 +1442,7 @@ pub struct Breakpoint {
 impl PartialEq for Breakpoint {
     fn eq(&self, other: &Self) -> bool {
         match (&self.active_position, &other.active_position) {
-            (None, None) => self.cache_position == other.cache_position,
+            (None, None) => self.cached_position == other.cached_position,
             (None, Some(_)) => false,
             (Some(_), None) => false,
             (Some(self_position), Some(other_position)) => self_position == other_position,
@@ -1351,7 +1457,7 @@ impl Hash for Breakpoint {
         if self.active_position.is_some() {
             self.active_position.hash(state);
         } else {
-            self.cache_position.hash(state);
+            self.cached_position.hash(state);
         }
     }
 }
@@ -1361,7 +1467,7 @@ impl Breakpoint {
         let line = self
             .active_position
             .map(|position| buffer.summary_for_anchor::<Point>(&position).row)
-            .unwrap_or(self.cache_position) as u64;
+            .unwrap_or(self.cached_position) as u64;
 
         let log_message = match &self.kind {
             BreakpointKind::Standard => None,
@@ -1381,27 +1487,27 @@ impl Breakpoint {
     pub fn set_active_position(&mut self, buffer: &Buffer) {
         if self.active_position.is_none() {
             self.active_position =
-                Some(buffer.breakpoint_anchor(Point::new(self.cache_position, 0)));
+                Some(buffer.breakpoint_anchor(Point::new(self.cached_position, 0)));
         }
     }
 
     pub fn point_for_buffer(&self, buffer: &Buffer) -> Point {
         self.active_position
             .map(|position| buffer.summary_for_anchor::<Point>(&position))
-            .unwrap_or(Point::new(self.cache_position, 0))
+            .unwrap_or(Point::new(self.cached_position, 0))
     }
 
     pub fn point_for_buffer_snapshot(&self, buffer_snapshot: &BufferSnapshot) -> Point {
         self.active_position
             .map(|position| buffer_snapshot.summary_for_anchor::<Point>(&position))
-            .unwrap_or(Point::new(self.cache_position, 0))
+            .unwrap_or(Point::new(self.cached_position, 0))
     }
 
     pub fn source_for_snapshot(&self, snapshot: &BufferSnapshot) -> SourceBreakpoint {
         let line = self
             .active_position
             .map(|position| snapshot.summary_for_anchor::<Point>(&position).row)
-            .unwrap_or(self.cache_position) as u64;
+            .unwrap_or(self.cached_position) as u64;
 
         let log_message = match &self.kind {
             BreakpointKind::Standard => None,
@@ -1424,16 +1530,53 @@ impl Breakpoint {
                 position: self
                     .active_position
                     .map(|position| buffer.summary_for_anchor::<Point>(&position).row)
-                    .unwrap_or(self.cache_position),
+                    .unwrap_or(self.cached_position),
                 path,
                 kind: self.kind.clone(),
             },
             None => SerializedBreakpoint {
-                position: self.cache_position,
+                position: self.cached_position,
                 path,
                 kind: self.kind.clone(),
             },
         }
+    }
+
+    pub fn to_proto(&self) -> Option<client::proto::Breakpoint> {
+        Some(client::proto::Breakpoint {
+            position: if let Some(position) = &self.active_position {
+                Some(serialize_text_anchor(position))
+            } else {
+                None
+            },
+            cached_position: self.cached_position,
+            kind: match self.kind {
+                BreakpointKind::Standard => proto::BreakpointKind::Standard.into(),
+                BreakpointKind::Log(_) => proto::BreakpointKind::Log.into(),
+            },
+            message: if let BreakpointKind::Log(message) = &self.kind {
+                Some(message.to_string())
+            } else {
+                None
+            },
+        })
+    }
+
+    pub fn from_proto(breakpoint: client::proto::Breakpoint) -> Option<Self> {
+        Some(Self {
+            active_position: if let Some(position) = breakpoint.position.clone() {
+                deserialize_anchor(position)
+            } else {
+                None
+            },
+            cached_position: breakpoint.cached_position,
+            kind: match proto::BreakpointKind::from_i32(breakpoint.kind) {
+                Some(proto::BreakpointKind::Log) => {
+                    BreakpointKind::Log(breakpoint.message.clone().unwrap_or_default().into())
+                }
+                None | Some(proto::BreakpointKind::Standard) => BreakpointKind::Standard,
+            },
+        })
     }
 }
 

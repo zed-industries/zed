@@ -76,9 +76,9 @@ impl HeadlessProject {
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
 
         let dap_store = cx.new_model(|cx| {
-            DapStore::new(
-                None,
-                None,
+            DapStore::new_local(
+                http_client.clone(),
+                node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
                 environment.clone(),
@@ -171,6 +171,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &dap_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
 
         client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
@@ -195,6 +196,7 @@ impl HeadlessProject {
         LspStore::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
+        DapStore::init(&client);
 
         HeadlessProject {
             session: client,

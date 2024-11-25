@@ -299,6 +299,7 @@ impl TestServer {
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
             language_model::LanguageModelRegistry::test(cx);
             assistant::context_store::init(&client.clone().into());
+            project::dap_store::DapStore::init(&client.clone().into());
         });
 
         client

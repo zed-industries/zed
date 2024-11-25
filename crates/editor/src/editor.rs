@@ -6858,7 +6858,7 @@ impl Editor {
             project.toggle_breakpoint(
                 buffer_id,
                 Breakpoint {
-                    cache_position,
+                    cached_position: cache_position,
                     active_position: Some(breakpoint_position),
                     kind,
                 },

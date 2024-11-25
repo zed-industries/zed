@@ -366,6 +366,7 @@ messages!(
     (GetPanicFiles, Background),
     (GetPanicFilesResponse, Background),
     (CancelLanguageServerWork, Foreground),
+    (SynchronizeBreakpoints, Foreground),
 );
 
 request_messages!(
@@ -571,6 +572,7 @@ entity_messages!(
     ActiveToolchain,
     GetPathMetadata,
     CancelLanguageServerWork,
+    SynchronizeBreakpoints,
 );
 
 entity_messages!(
