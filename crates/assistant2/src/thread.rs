@@ -1,11 +1,17 @@
 use std::sync::Arc;
 
 use futures::StreamExt as _;
-use gpui::{EventEmitter, ModelContext, Task};
+use gpui::{AppContext, EventEmitter, ModelContext, Task};
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, Role, StopReason,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
+    MessageContent, Role, StopReason,
 };
 use util::ResultExt as _;
+
+#[derive(Debug, Clone, Copy)]
+pub enum RequestKind {
+    Chat,
+}
 
 /// A message in a [`Thread`].
 pub struct Message {
@@ -15,8 +21,8 @@ pub struct Message {
 
 /// A thread of conversation with the LLM.
 pub struct Thread {
-    pub messages: Vec<Message>,
-    pub pending_completion_tasks: Vec<Task<()>>,
+    messages: Vec<Message>,
+    pending_completion_tasks: Vec<Task<()>>,
 }
 
 impl Thread {
@@ -25,6 +31,46 @@ impl Thread {
             messages: Vec::new(),
             pending_completion_tasks: Vec::new(),
         }
+    }
+
+    pub fn messages(&self) -> impl Iterator<Item = &Message> {
+        self.messages.iter()
+    }
+
+    pub fn insert_user_message(&mut self, text: impl Into<String>) {
+        self.messages.push(Message {
+            role: Role::User,
+            text: text.into(),
+        });
+    }
+
+    pub fn to_completion_request(
+        &self,
+        _request_kind: RequestKind,
+        _cx: &AppContext,
+    ) -> LanguageModelRequest {
+        let mut request = LanguageModelRequest {
+            messages: vec![],
+            tools: Vec::new(),
+            stop: Vec::new(),
+            temperature: None,
+        };
+
+        for message in &self.messages {
+            let mut request_message = LanguageModelRequestMessage {
+                role: message.role,
+                content: Vec::new(),
+                cache: false,
+            };
+
+            request_message
+                .content
+                .push(MessageContent::Text(message.text.clone()));
+
+            request.messages.push(request_message);
+        }
+
+        request
     }
 
     pub fn stream_completion(

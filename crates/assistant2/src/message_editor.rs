@@ -1,19 +1,12 @@
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AppContext, FocusableView, Model, TextStyle, View};
-use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
-};
+use language_model::LanguageModelRegistry;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
 
-use crate::thread::{self, Thread};
+use crate::thread::{RequestKind, Thread};
 use crate::Chat;
-
-#[derive(Debug, Clone, Copy)]
-pub enum RequestKind {
-    Chat,
-}
 
 pub struct MessageEditor {
     thread: Model<Thread>,
@@ -54,46 +47,19 @@ impl MessageEditor {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let model = model_registry.active_model()?;
 
-        let request = self.build_completion_request(request_kind, cx);
-
-        let user_message = self.editor.read(cx).text(cx);
-        self.thread.update(cx, |thread, _cx| {
-            thread.messages.push(thread::Message {
-                role: Role::User,
-                text: user_message,
-            });
-        });
-
-        self.editor.update(cx, |editor, cx| {
+        let user_message = self.editor.update(cx, |editor, cx| {
+            let text = editor.text(cx);
             editor.clear(cx);
+            text
         });
 
         self.thread.update(cx, |thread, cx| {
+            thread.insert_user_message(user_message);
+            let request = thread.to_completion_request(request_kind, cx);
             thread.stream_completion(request, model, cx)
         });
 
         None
-    }
-
-    fn build_completion_request(
-        &self,
-        _request_kind: RequestKind,
-        cx: &AppContext,
-    ) -> LanguageModelRequest {
-        let text = self.editor.read(cx).text(cx);
-
-        let request = LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text(text)],
-                cache: false,
-            }],
-            tools: Vec::new(),
-            stop: Vec::new(),
-            temperature: None,
-        };
-
-        request
     }
 }
 
