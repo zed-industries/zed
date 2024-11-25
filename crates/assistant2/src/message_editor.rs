@@ -4,11 +4,11 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::prelude::*;
 
-pub struct ChatEditor {
+pub struct MessageEditor {
     editor: View<Editor>,
 }
 
-impl ChatEditor {
+impl MessageEditor {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
             editor: cx.new_view(|cx| {
@@ -21,7 +21,7 @@ impl ChatEditor {
     }
 }
 
-impl Render for ChatEditor {
+impl Render for MessageEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
