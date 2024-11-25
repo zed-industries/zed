@@ -507,6 +507,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "assistant_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant_tool",
+ "chrono",
+ "gpui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "workspace",
+]
+
+[[package]]
 name = "async-attributes"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2613,6 +2627,7 @@ dependencies = [
  "anthropic",
  "anyhow",
  "assistant",
+ "assistant_tool",
  "async-stripe",
  "async-trait",
  "async-tungstenite 0.28.0",
@@ -2878,6 +2893,7 @@ name = "context_servers"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_tool",
  "collections",
  "command_palette_hooks",
  "extension",
@@ -2892,8 +2908,10 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "ui",
  "url",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -15586,6 +15604,7 @@ dependencies = [
  "assets",
  "assistant",
  "assistant2",
+ "assistant_tools",
  "async-watch",
  "audio",
  "auto_update",

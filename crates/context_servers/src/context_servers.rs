@@ -1,4 +1,5 @@
 pub mod client;
+mod context_server_tool;
 mod extension_context_server;
 pub mod manager;
 pub mod protocol;
@@ -9,6 +10,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use gpui::{actions, AppContext};
 use settings::Settings;
 
+pub use crate::context_server_tool::ContextServerTool;
 use crate::manager::ContextServerSettings;
 pub use crate::registry::ContextServerFactoryRegistry;
 

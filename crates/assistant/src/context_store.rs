@@ -1,15 +1,16 @@
 use crate::slash_command::context_server_command;
+use crate::SlashCommandId;
 use crate::{
     prompts::PromptBuilder, slash_command_working_set::SlashCommandWorkingSet, Context,
     ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext, SavedContextMetadata,
 };
-use crate::{tools, SlashCommandId, ToolId, ToolWorkingSet};
 use anyhow::{anyhow, Context as _, Result};
+use assistant_tool::{ToolId, ToolWorkingSet};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
 use collections::HashMap;
 use context_servers::manager::ContextServerManager;
-use context_servers::ContextServerFactoryRegistry;
+use context_servers::{ContextServerFactoryRegistry, ContextServerTool};
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
@@ -858,7 +859,7 @@ impl ContextStore {
                                     let tool_ids = tools.tools.into_iter().map(|tool| {
                                         log::info!("registering context server tool: {:?}", tool.name);
                                         tool_working_set.insert(
-                                            Arc::new(tools::context_server_tool::ContextServerTool::new(
+                                            Arc::new(ContextServerTool::new(
                                                 context_server_manager.clone(),
                                                 server.id(),
                                                 tool,

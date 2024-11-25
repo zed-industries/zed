@@ -2,7 +2,7 @@
 mod context_tests;
 
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
+use assistant_tool::ToolWorkingSet;
 use crate::{
     prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
