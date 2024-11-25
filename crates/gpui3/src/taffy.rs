@@ -1,6 +1,5 @@
 use crate::{
-    AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style,
-    WindowContext,
+    AbsoluteLength, AppContext, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style,
 };
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -13,7 +12,7 @@ use taffy::{
 };
 
 type NodeMeasureFn =
-    Box<dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>>;
+    Box<dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut AppContext) -> Size<Pixels>>;
 
 struct NodeContext {
     measure: NodeMeasureFn,
@@ -71,7 +70,7 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
-        measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>
+        measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut AppContext) -> Size<Pixels>
             + 'static,
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);
@@ -140,7 +139,7 @@ impl TaffyLayoutEngine {
         &mut self,
         id: LayoutId,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) {
         // Leaving this here until we have a better instrumentation approach.
         // println!("Laying out {} children", self.count_all_children(id)?);

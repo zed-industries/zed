@@ -1,7 +1,6 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId,
-    EventEmitter, Model, Reservation, Subscription, Task, View, WeakModel, Window, WindowContext,
-    WindowHandle,
+    AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId, EventEmitter,
+    Model, Reservation, Subscription, Task, WeakModel, Window, WindowHandle,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};

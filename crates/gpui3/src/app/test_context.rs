@@ -1,11 +1,10 @@
 use crate::{
     Action, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, DrawPhase, Drawable,
-    Element, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
-    ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
-    TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext, Window, WindowContext,
-    WindowHandle,
+    Element, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, IntoElement, Keystroke,
+    Model, ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Result, Size, Task, TestDispatcher,
+    TestPlatform, TestWindow, TextSystem, Window,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -175,10 +174,10 @@ impl TestAppContext {
     /// todo!(Change the interface to take a render fn)
     /// Adds a new window. The Window will always be backed by a `TestWindow` which
     /// can be retrieved with `self.test_window(handle)`
-    pub fn add_window<F, V>(&mut self, build_window: F) -> AnyWindowHandle
+    pub fn add_window<F, E>(&mut self, render: F) -> AnyWindowHandle
     where
-        F: FnOnce(&mut ViewContext<V>) -> V,
-        V: 'static + Render,
+        F: Fn(&mut Window, &mut AppContext) -> E,
+        E: IntoElement,
     {
         todo!()
         // let mut cx = self.app.borrow_mut();
@@ -215,34 +214,34 @@ impl TestAppContext {
         // cx
     }
 
-    /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
-    /// as a `WindowContext` for the rest of the test. Typically you would shadow this context with
-    /// the returned one. `let (view, cx) = cx.add_window_view(...);`
-    pub fn add_window_view<F, V>(&mut self, build_root_view: F) -> (View<V>, &mut VisualTestContext)
-    where
-        F: FnOnce(&mut ViewContext<V>) -> V,
-        V: 'static + Render,
-    {
-        todo!()
-        // let mut cx = self.app.borrow_mut();
-        // let bounds = Bounds::maximized(None, &mut cx);
-        // let window = cx
-        //     .open_window(
-        //         WindowOptions {
-        //             window_bounds: Some(WindowBounds::Windowed(bounds)),
-        //             ..Default::default()
-        //         },
-        //         |cx| cx.new_view(build_root_view),
-        //     )
-        //     .unwrap();
-        // drop(cx);
-        // let view = window.root_view(self).unwrap();
-        // let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
-        // cx.run_until_parked();
+    // /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
+    // /// as a `WindowContext` for the rest of the test. Typically you would shadow this context with
+    // /// the returned one. `let (view, cx) = cx.add_window_view(...);`
+    // pub fn add_window_view<F, V>(&mut self, build_root_view: F) -> (View<V>, &mut VisualTestContext)
+    // where
+    //     F: FnOnce(&mut ViewContext<V>) -> V,
+    //     V: 'static + Render,
+    // {
+    //     todo!()
+    //     // let mut cx = self.app.borrow_mut();
+    //     // let bounds = Bounds::maximized(None, &mut cx);
+    //     // let window = cx
+    //     //     .open_window(
+    //     //         WindowOptions {
+    //     //             window_bounds: Some(WindowBounds::Windowed(bounds)),
+    //     //             ..Default::default()
+    //     //         },
+    //     //         |cx| cx.new_view(build_root_view),
+    //     //     )
+    //     //     .unwrap();
+    //     // drop(cx);
+    //     // let view = window.root_view(self).unwrap();
+    //     // let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
+    //     // cx.run_until_parked();
 
-        // // it might be nice to try and cleanup these at the end of each test.
-        // (view, cx)
-    }
+    //     // // it might be nice to try and cleanup these at the end of each test.
+    //     // (view, cx)
+    // }
 
     /// returns the TextSystem
     pub fn text_system(&self) -> &Arc<TextSystem> {
@@ -541,102 +540,102 @@ impl<T: 'static> Model<T> {
     }
 }
 
-impl<V: 'static> View<V> {
-    /// Returns a future that resolves when the view is next updated.
-    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
-        use postage::prelude::{Sink as _, Stream as _};
+// impl<V: 'static> View<V> {
+//     /// Returns a future that resolves when the view is next updated.
+//     pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+//         use postage::prelude::{Sink as _, Stream as _};
 
-        let (mut tx, mut rx) = postage::mpsc::channel(1);
-        let mut cx = cx.app.app.borrow_mut();
-        let subscription = cx.observe(self, move |_, _| {
-            tx.try_send(()).ok();
-        });
+//         let (mut tx, mut rx) = postage::mpsc::channel(1);
+//         let mut cx = cx.app.app.borrow_mut();
+//         let subscription = cx.observe(self, move |_, _| {
+//             tx.try_send(()).ok();
+//         });
 
-        let duration = if std::env::var("CI").is_ok() {
-            Duration::from_secs(5)
-        } else {
-            Duration::from_secs(1)
-        };
+//         let duration = if std::env::var("CI").is_ok() {
+//             Duration::from_secs(5)
+//         } else {
+//             Duration::from_secs(1)
+//         };
 
-        async move {
-            let notification = crate::util::timeout(duration, rx.recv())
-                .await
-                .expect("next notification timed out");
-            drop(subscription);
-            notification.expect("model dropped while test was waiting for its next notification")
-        }
-    }
-}
+//         async move {
+//             let notification = crate::util::timeout(duration, rx.recv())
+//                 .await
+//                 .expect("next notification timed out");
+//             drop(subscription);
+//             notification.expect("model dropped while test was waiting for its next notification")
+//         }
+//     }
+// }
 
-impl<V> View<V> {
-    /// Returns a future that resolves when the condition becomes true.
-    pub fn condition<Evt>(
-        &self,
-        cx: &TestAppContext,
-        mut predicate: impl FnMut(&V, &AppContext) -> bool,
-    ) -> impl Future<Output = ()>
-    where
-        Evt: 'static,
-        V: EventEmitter<Evt>,
-    {
-        use postage::prelude::{Sink as _, Stream as _};
+// impl<V> View<V> {
+//     /// Returns a future that resolves when the condition becomes true.
+//     pub fn condition<Evt>(
+//         &self,
+//         cx: &TestAppContext,
+//         mut predicate: impl FnMut(&V, &AppContext) -> bool,
+//     ) -> impl Future<Output = ()>
+//     where
+//         Evt: 'static,
+//         V: EventEmitter<Evt>,
+//     {
+//         use postage::prelude::{Sink as _, Stream as _};
 
-        let (tx, mut rx) = postage::mpsc::channel(1024);
-        let timeout_duration = if cfg!(target_os = "macos") {
-            Duration::from_millis(100)
-        } else {
-            Duration::from_secs(1)
-        };
+//         let (tx, mut rx) = postage::mpsc::channel(1024);
+//         let timeout_duration = if cfg!(target_os = "macos") {
+//             Duration::from_millis(100)
+//         } else {
+//             Duration::from_secs(1)
+//         };
 
-        let mut cx = cx.app.borrow_mut();
-        let subscriptions = (
-            cx.observe(self, {
-                let mut tx = tx.clone();
-                move |_, _| {
-                    tx.blocking_send(()).ok();
-                }
-            }),
-            cx.subscribe(self, {
-                let mut tx = tx.clone();
-                move |_, _: &Evt, _| {
-                    tx.blocking_send(()).ok();
-                }
-            }),
-        );
+//         let mut cx = cx.app.borrow_mut();
+//         let subscriptions = (
+//             cx.observe(self, {
+//                 let mut tx = tx.clone();
+//                 move |_, _| {
+//                     tx.blocking_send(()).ok();
+//                 }
+//             }),
+//             cx.subscribe(self, {
+//                 let mut tx = tx.clone();
+//                 move |_, _: &Evt, _| {
+//                     tx.blocking_send(()).ok();
+//                 }
+//             }),
+//         );
 
-        let cx = cx.this.upgrade().unwrap();
-        let handle = self.downgrade();
+//         let cx = cx.this.upgrade().unwrap();
+//         let handle = self.downgrade();
 
-        async move {
-            crate::util::timeout(timeout_duration, async move {
-                loop {
-                    {
-                        let cx = cx.borrow();
-                        let cx = &*cx;
-                        if predicate(
-                            handle
-                                .upgrade()
-                                .expect("view dropped with pending condition")
-                                .read(cx),
-                            cx,
-                        ) {
-                            break;
-                        }
-                    }
+//         async move {
+//             crate::util::timeout(timeout_duration, async move {
+//                 loop {
+//                     {
+//                         let cx = cx.borrow();
+//                         let cx = &*cx;
+//                         if predicate(
+//                             handle
+//                                 .upgrade()
+//                                 .expect("view dropped with pending condition")
+//                                 .read(cx),
+//                             cx,
+//                         ) {
+//                             break;
+//                         }
+//                     }
 
-                    cx.borrow().background_executor().start_waiting();
-                    rx.recv()
-                        .await
-                        .expect("view dropped with pending condition");
-                    cx.borrow().background_executor().finish_waiting();
-                }
-            })
-            .await
-            .expect("condition timed out");
-            drop(subscriptions);
-        }
-    }
-}
+//                     cx.borrow().background_executor().start_waiting();
+//                     rx.recv()
+//                         .await
+//                         .expect("view dropped with pending condition");
+//                     cx.borrow().background_executor().finish_waiting();
+//                 }
+//             })
+//             .await
+//             .expect("condition timed out");
+//             drop(subscriptions);
+//         }
+//     }
+// }
 
 use derive_more::{Deref, DerefMut};
 #[derive(Deref, DerefMut, Clone)]
@@ -657,9 +656,10 @@ impl VisualTestContext {
     }
 
     /// Provides the `WindowContext` for the duration of the closure.
-    pub fn update<R>(&mut self, f: impl FnOnce(&mut WindowContext) -> R) -> R {
-        todo!()
-        // self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
+    pub fn update<R>(&mut self, f: impl FnOnce(&mut Window, &mut AppContext) -> R) -> R {
+        self.cx
+            .update_window(self.window, |window, cx| f(window, cx))
+            .unwrap()
     }
 
     /// Creates a new VisualTestContext. You would typically shadow the passed in
@@ -776,7 +776,7 @@ impl VisualTestContext {
 
     /// debug_bounds returns the bounds of the element with the given selector.
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
-        self.update(|cx| cx.window.rendered_frame.debug_bounds.get(selector).copied())
+        self.update(|window, cx| window.rendered_frame.debug_bounds.get(selector).copied())
     }
 
     /// Draw an element to the window. Useful for simulating events or actions
@@ -784,21 +784,21 @@ impl VisualTestContext {
         &mut self,
         origin: Point<Pixels>,
         space: impl Into<Size<AvailableSpace>>,
-        f: impl FnOnce(&mut WindowContext) -> E,
+        f: impl FnOnce(&mut Window, &mut AppContext) -> E,
     ) -> (E::RequestLayoutState, E::PrepaintState)
     where
         E: Element,
     {
-        self.update(|cx| {
-            cx.window.draw_phase = DrawPhase::Prepaint;
-            let mut element = Drawable::new(f(cx));
-            element.layout_as_root(space.into(), cx);
-            cx.with_absolute_element_offset(origin, |cx| element.prepaint(cx));
+        self.update(|window, cx| {
+            window.draw_phase = DrawPhase::Prepaint;
+            let mut element = Drawable::new(f(window, cx));
+            element.layout_as_root(space.into(), window, cx);
+            window.with_absolute_element_offset(origin, |window| element.prepaint(window, cx));
 
-            cx.window.draw_phase = DrawPhase::Paint;
-            let (request_layout_state, prepaint_state) = element.paint(cx);
+            window.draw_phase = DrawPhase::Paint;
+            let (request_layout_state, prepaint_state) = element.paint(window, cx);
 
-            cx.window.draw_phase = DrawPhase::None;
+            window.draw_phase = DrawPhase::None;
             cx.refresh();
 
             (request_layout_state, prepaint_state)
@@ -923,78 +923,5 @@ impl Context for VisualTestContext {
         read: impl FnOnce(&Window, &AppContext) -> R,
     ) -> Result<R> {
         self.cx.read_window(window, read)
-    }
-}
-
-impl VisualContext for VisualTestContext {
-    fn new_view<V>(
-        &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
-    ) -> Self::Result<View<V>>
-    where
-        V: 'static + Render,
-    {
-        todo!("remove the trait")
-        // self.window
-        //     .update(&mut self.cx, |_, cx| cx.new_view(build_view))
-        //     .unwrap()
-    }
-
-    fn update_view<V: 'static, R>(
-        &mut self,
-        view: &View<V>,
-        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
-    ) -> Self::Result<R> {
-        todo!("remove the trait")
-
-        // self.window
-        //     .update(&mut self.cx, |_, cx| cx.update_view(view, update))
-        //     .unwrap()
-    }
-
-    fn replace_root_view<V>(
-        &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
-    ) -> Self::Result<View<V>>
-    where
-        V: 'static + Render,
-    {
-        todo!("remove the trait")
-        // self.window
-        //     .update(&mut self.cx, |_, cx| cx.replace_root_view(build_view))
-        //     .unwrap()
-    }
-
-    fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
-        todo!("remove the trait")
-        // self.window
-        //     .update(&mut self.cx, |_, cx| {
-        //         view.read(cx).focus_handle(cx).clone().focus(cx)
-        //     })
-        //     .unwrap()
-    }
-
-    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
-    where
-        V: crate::ManagedView,
-    {
-        todo!("remove the trait")
-        // self.window
-        //     .update(&mut self.cx, |_, cx| {
-        //         view.update(cx, |_, cx| cx.emit(crate::DismissEvent))
-        //     })
-        //     .unwrap()
-    }
-}
-
-impl AnyWindowHandle {
-    /// Creates the given view in this window.
-    pub fn build_view<V: Render + 'static>(
-        &self,
-        cx: &mut TestAppContext,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
-    ) -> View<V> {
-        todo!("remove this method")
-        // self.update(cx, |_, cx| cx.new_view(build_view)).unwrap()
     }
 }

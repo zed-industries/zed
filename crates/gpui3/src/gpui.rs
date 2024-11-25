@@ -96,7 +96,6 @@ mod taffy;
 pub mod test;
 mod text_system;
 mod util;
-mod view;
 mod window;
 
 /// Do not touch, here be dragons for use by gpui_macros and such.
@@ -149,7 +148,6 @@ pub use taffy::{AvailableSpace, LayoutId};
 pub use test::*;
 pub use text_system::*;
 pub use util::arc_cow::ArcCow;
-pub use view::*;
 pub use window::*;
 
 use std::{any::Any, borrow::BorrowMut};
@@ -221,43 +219,6 @@ impl<T: 'static> Reservation<T> {
     pub fn entity_id(&self) -> EntityId {
         self.0.entity_id()
     }
-}
-
-/// This trait is used for the different visual contexts in GPUI that
-/// require a window to be present.
-pub trait VisualContext: Context {
-    /// Construct a new view in the window referenced by this context.
-    fn new_view<V>(
-        &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
-    ) -> Self::Result<View<V>>
-    where
-        V: 'static + Render;
-
-    /// Update a view with the given callback
-    fn update_view<V: 'static, R>(
-        &mut self,
-        view: &View<V>,
-        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
-    ) -> Self::Result<R>;
-
-    /// Replace the root view of a window with a new view.
-    fn replace_root_view<V>(
-        &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
-    ) -> Self::Result<View<V>>
-    where
-        V: 'static + Render;
-
-    /// Focus a view in the window, if it implements the [`FocusableView`] trait.
-    fn focus_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
-    where
-        V: FocusableView;
-
-    /// Dismiss a view in the window, if it implements the [`ManagedView`] trait.
-    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
-    where
-        V: ManagedView;
 }
 
 /// A trait that allows models and views to be interchangeable in certain operations

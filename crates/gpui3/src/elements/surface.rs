@@ -1,6 +1,6 @@
 use crate::{
-    Bounds, Element, ElementId, GlobalElementId, IntoElement, LayoutId, ObjectFit, Pixels, Style,
-    StyleRefinement, Styled, WindowContext,
+    AppContext, Bounds, Element, ElementId, GlobalElementId, IntoElement, LayoutId, ObjectFit,
+    Pixels, Style, StyleRefinement, Styled,
 };
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
@@ -56,7 +56,7 @@ impl Element for Surface {
     fn request_layout(
         &mut self,
         _global_id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.refine(&self.style);
@@ -69,7 +69,7 @@ impl Element for Surface {
         _global_id: Option<&GlobalElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _cx: &mut WindowContext,
+        _cx: &mut AppContext,
     ) -> Self::PrepaintState {
     }
 
@@ -79,7 +79,7 @@ impl Element for Surface {
         #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] cx: &mut WindowContext,
+        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] cx: &mut AppContext,
     ) {
         match &self.source {
             #[cfg(target_os = "macos")]

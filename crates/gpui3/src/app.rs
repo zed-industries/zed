@@ -28,14 +28,12 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyElement, AnyView,
+    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyElement,
     AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase,
     DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, IntoElement, KeyBinding, Keymap,
     Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
-    RenderablePromptHandle, Reservation, SharedString, SubscriberSet, Subscription, SvgRenderer,
-    Task, TextSystem, View, ViewContext, Window, WindowAppearance, WindowContext, WindowHandle,
-    WindowId,
+    PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Reservation, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowId,
 };
 
 mod async_context;
@@ -214,10 +212,9 @@ impl App {
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
 pub(crate) type KeystrokeObserver =
-    Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) -> bool + 'static>;
+    Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut AppContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
-type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
 type NewModelListener = Box<dyn FnMut(AnyModel, &mut AppContext) + 'static>;
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
@@ -240,7 +237,6 @@ pub struct AppContext {
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_model_observers: SubscriberSet<TypeId, NewModelListener>,
-    pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
@@ -301,7 +297,6 @@ impl AppContext {
                 http_client,
                 globals_by_type: FxHashMap::default(),
                 entities,
-                new_view_observers: SubscriberSet::new(),
                 new_model_observers: SubscriberSet::new(),
                 window_handles: FxHashMap::default(),
                 windows: SlotMap::with_key(),
@@ -562,7 +557,7 @@ impl AppContext {
                     window.render.replace(Box::new(move |window, cx| {
                         render(window, cx).into_any_element()
                     }));
-                    WindowContext::new(cx, &mut window).defer(|cx| cx.appearance_changed());
+                    window.appearance_changed();
                     cx.window_handles.insert(id, window.handle);
                     cx.windows.get_mut(id).unwrap().replace(window);
                     Ok(handle)
@@ -1060,31 +1055,6 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
-    pub(crate) fn new_view_observer(&self, key: TypeId, value: NewViewListener) -> Subscription {
-        let (subscription, activate) = self.new_view_observers.insert(key, value);
-        activate();
-        subscription
-    }
-
-    /// Arrange for the given function to be invoked whenever a view of the specified type is created.
-    /// The function will be passed a mutable reference to the view along with an appropriate context.
-    pub fn observe_new_views<V: 'static>(
-        &self,
-        on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
-    ) -> Subscription {
-        self.new_view_observer(
-            TypeId::of::<V>(),
-            Box::new(move |any_view: AnyView, cx: &mut WindowContext| {
-                any_view
-                    .downcast::<V>()
-                    .unwrap()
-                    .update(cx, |view_state, cx| {
-                        on_new(view_state, cx);
-                    })
-            }),
-        )
-    }
-
     pub(crate) fn new_model_observer(&self, key: TypeId, value: NewModelListener) -> Subscription {
         let (subscription, activate) = self.new_model_observers.insert(key, value);
         activate();
@@ -1137,7 +1107,7 @@ impl AppContext {
     /// and that this API will not be invoked if the event's propagation is stopped.
     pub fn observe_keystrokes(
         &mut self,
-        mut f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
+        mut f: impl FnMut(&KeystrokeEvent, &mut Window, &mut AppContext) + 'static,
     ) -> Subscription {
         fn inner(
             keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
@@ -1353,22 +1323,24 @@ impl AppContext {
         self.active_drag.is_some()
     }
 
-    /// Set the prompt renderer for GPUI. This will replace the default or platform specific
-    /// prompts with this custom implementation.
-    pub fn set_prompt_builder(
-        &mut self,
-        renderer: impl Fn(
-                PromptLevel,
-                &str,
-                Option<&str>,
-                &[&str],
-                PromptHandle,
-                &mut WindowContext,
-            ) -> RenderablePromptHandle
-            + 'static,
-    ) {
-        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
-    }
+    // todo!(restore this functionality)
+    // /// Set the prompt renderer for GPUI. This will replace the default or platform specific
+    // /// prompts with this custom implementation.
+    // pub fn set_prompt_builder(
+    //     &mut self,
+    //     renderer: impl Fn(
+    //             PromptLevel,
+    //             &str,
+    //             Option<&str>,
+    //             &[&str],
+    //             PromptHandle,
+    //             &mut Window,
+    //             &mut AppContext,
+    //         ) -> RenderablePromptHandle
+    //         + 'static,
+    // ) {
+    //     self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
+    // }
 
     /// Remove an asset from GPUI's cache
     pub fn remove_asset<A: Asset>(&mut self, source: &A::Source) {
@@ -1574,8 +1546,8 @@ impl<G: Global> DerefMut for GlobalLease<G> {
 /// Contains state associated with an active drag operation, started by dragging an element
 /// within the window or by dragging into the app from the underlying platform.
 pub struct AnyDrag {
-    /// The view used to render this drag
-    pub view: AnyView,
+    /// How this drag is displayed on screen
+    pub render: Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
 
     /// The value of the dragged item, to be dropped
     pub value: Box<dyn Any>,
@@ -1589,8 +1561,8 @@ pub struct AnyDrag {
 /// tooltip behavior on a custom element. Otherwise, use [Div::tooltip].
 #[derive(Clone)]
 pub struct AnyTooltip {
-    /// The view used to display the tooltip
-    pub view: AnyView,
+    /// How this tooltip is displayed on screen
+    pub render: Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
 
     /// The absolute position of the mouse when the tooltip was deployed.
     pub mouse_position: Point<Pixels>,

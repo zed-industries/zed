@@ -1,4 +1,4 @@
-use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext, WindowContext};
+use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext, Window};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -438,12 +438,12 @@ impl<T: 'static> Model<T> {
     /// and a mutable reference to the `AppContext`.
     pub fn listener<E>(
         &self,
-        callback: impl Fn(&mut T, &E, &mut ModelContext<T>) + 'static,
-    ) -> impl Fn(&E, &mut WindowContext) {
+        callback: impl Fn(&mut T, &E, &mut Window, &mut ModelContext<T>) + 'static,
+    ) -> impl Fn(&E, &mut Window, &mut AppContext) {
         let model = self.clone();
-        move |event: &E, cx: &mut WindowContext| {
+        move |event: &E, window: &mut Window, cx: &mut AppContext| {
             model.update(cx, |model, cx| {
-                callback(model, event, cx);
+                callback(model, event, window, cx);
             });
         }
     }

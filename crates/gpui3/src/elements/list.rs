@@ -8,9 +8,9 @@
 //! If all of your elements are the same height, see [`UniformList`] for a simpler API
 
 use crate::{
-    point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent,
-    Size, Style, StyleRefinement, Styled, WindowContext,
+    point, px, size, AnyElement, AppContext, AvailableSpace, Bounds, ContentMask, DispatchPhase,
+    Edges, Element, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point,
+    ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -49,14 +49,14 @@ pub struct ListState(Rc<RefCell<StateInner>>);
 struct StateInner {
     last_layout_bounds: Option<Bounds<Pixels>>,
     last_padding: Option<Edges<Pixels>>,
-    render_item: Box<dyn FnMut(usize, &mut WindowContext) -> AnyElement>,
+    render_item: Box<dyn FnMut(usize, &mut AppContext) -> AnyElement>,
     items: SumTree<ListItem>,
     logical_scroll_top: Option<ListOffset>,
     alignment: ListAlignment,
     overdraw: Pixels,
     reset: bool,
     #[allow(clippy::type_complexity)]
-    scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut WindowContext)>>,
+    scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut AppContext)>>,
 }
 
 /// Whether the list is scrolling from top to bottom or bottom to top.
@@ -146,7 +146,7 @@ impl ListItem {
         }
     }
 
-    fn contains_focused(&self, cx: &WindowContext) -> bool {
+    fn contains_focused(&self, cx: &AppContext) -> bool {
         match self {
             ListItem::Unmeasured { focus_handle } | ListItem::Measured { focus_handle, .. } => {
                 focus_handle
@@ -186,7 +186,7 @@ impl ListState {
         render_item: R,
     ) -> Self
     where
-        R: 'static + FnMut(usize, &mut WindowContext) -> AnyElement,
+        R: 'static + FnMut(usize, &mut AppContext) -> AnyElement,
     {
         let this = Self(Rc::new(RefCell::new(StateInner {
             last_layout_bounds: None,
@@ -272,7 +272,7 @@ impl ListState {
     /// Set a handler that will be called when the list is scrolled.
     pub fn set_scroll_handler(
         &self,
-        handler: impl FnMut(&ListScrollEvent, &mut WindowContext) + 'static,
+        handler: impl FnMut(&ListScrollEvent, &mut AppContext) + 'static,
     ) {
         self.0.borrow_mut().scroll_handler = Some(Box::new(handler))
     }
@@ -371,7 +371,7 @@ impl StateInner {
         scroll_top: &ListOffset,
         height: Pixels,
         delta: Point<Pixels>,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) {
         // Drop scroll events after a reset, since we can't calculate
         // the new logical scroll top without the item heights
@@ -439,7 +439,7 @@ impl StateInner {
         available_width: Option<Pixels>,
         available_height: Pixels,
         padding: &Edges<Pixels>,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> LayoutItemsResponse {
         let old_items = self.items.clone();
         let mut measured_items = VecDeque::new();
@@ -614,7 +614,7 @@ impl StateInner {
         bounds: Bounds<Pixels>,
         padding: Edges<Pixels>,
         autoscroll: bool,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> Result<LayoutItemsResponse, ListOffset> {
         cx.transact(|cx| {
             let mut layout_response =
@@ -716,7 +716,7 @@ impl Element for List {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        cx: &mut crate::WindowContext,
+        cx: &mut crate::AppContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
@@ -783,7 +783,7 @@ impl Element for List {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> ListPrepaintState {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
@@ -827,7 +827,7 @@ impl Element for List {
         bounds: Bounds<crate::Pixels>,
         _: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        cx: &mut crate::WindowContext,
+        cx: &mut crate::AppContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             for item in &mut prepaint.layout.item_layouts {
@@ -845,7 +845,7 @@ impl Element for List {
                     &scroll_top,
                     height,
                     event.delta.pixel_delta(px(20.)),
-                    cx,
+                    todo!(),
                 )
             }
         });

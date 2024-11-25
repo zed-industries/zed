@@ -1,7 +1,7 @@
 use crate::{
-    geometry::Negate as _, point, px, radians, size, Bounds, Element, GlobalElementId, Hitbox,
-    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString,
-    Size, StyleRefinement, Styled, TransformationMatrix, WindowContext,
+    geometry::Negate as _, point, px, radians, size, AppContext, Bounds, Element, GlobalElementId,
+    Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Radians,
+    SharedString, Size, StyleRefinement, Styled, TransformationMatrix,
 };
 use util::ResultExt;
 
@@ -47,7 +47,7 @@ impl Element for Svg {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id = self
             .interactivity
@@ -60,7 +60,7 @@ impl Element for Svg {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> Option<Hitbox> {
         self.interactivity
             .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
@@ -72,7 +72,7 @@ impl Element for Svg {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) where
         Self: Sized,
     {

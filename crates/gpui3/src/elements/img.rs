@@ -2,7 +2,7 @@ use crate::{
     px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, AppContext, Asset, AssetLogger, Bounds,
     DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, WindowContext,
+    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
 };
 use anyhow::{anyhow, Result};
 
@@ -44,7 +44,7 @@ pub enum ImageSource {
     /// Cached image data
     Image(Arc<Image>),
     /// A custom loading function to use
-    Custom(Arc<dyn Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
+    Custom(Arc<dyn Fn(&mut AppContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
 }
 
 fn is_uri(uri: &str) -> bool {
@@ -113,13 +113,13 @@ impl From<Arc<Image>> for ImageSource {
     }
 }
 
-impl<F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static>
-    From<F> for ImageSource
-{
-    fn from(value: F) -> Self {
-        Self::Custom(Arc::new(value))
-    }
-}
+// impl<F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static>
+//     From<F> for ImageSource
+// {
+//     fn from(value: F) -> Self {
+//         Self::Custom(Arc::new(value))
+//     }
+// }
 
 /// The style of an image element.
 pub struct ImageStyle {
@@ -247,7 +247,7 @@ impl Element for Img {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut layout_state = ImgLayoutState {
             frame_index: 0,
@@ -375,7 +375,7 @@ impl Element for Img {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> Self::PrepaintState {
         self.interactivity
             .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, cx| {
@@ -393,7 +393,7 @@ impl Element for Img {
         bounds: Bounds<Pixels>,
         layout_state: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) {
         let source = self.source.clone();
         self.interactivity
@@ -447,7 +447,7 @@ impl StatefulInteractiveElement for Img {}
 impl ImageSource {
     pub(crate) fn use_data(
         &self,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
             ImageSource::Resource(resource) => cx.use_asset::<ImgResourceLoader>(&resource),
