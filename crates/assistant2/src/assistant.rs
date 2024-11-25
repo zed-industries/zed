@@ -1,5 +1,6 @@
 mod assistant_panel;
 mod message_editor;
+mod thread;
 
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
@@ -7,7 +8,10 @@ use gpui::{actions, AppContext};
 
 pub use crate::assistant_panel::AssistantPanel;
 
-actions!(assistant2, [ToggleFocus, NewThread, ToggleModelSelector]);
+actions!(
+    assistant2,
+    [ToggleFocus, NewThread, ToggleModelSelector, Chat]
+);
 
 const NAMESPACE: &str = "assistant2";
 

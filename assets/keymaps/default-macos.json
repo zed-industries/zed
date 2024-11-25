@@ -210,6 +210,18 @@
     }
   },
   {
+    "context": "AssistantPanel2",
+    "bindings": {
+      "cmd-n": "assistant2::NewThread"
+    }
+  },
+  {
+    "context": "MessageEditor > Editor",
+    "bindings": {
+      "cmd-enter": "assistant2::Chat"
+    }
+  },
+  {
     "context": "PromptLibrary",
     "bindings": {
       "cmd-n": "prompt_library::NewPrompt",

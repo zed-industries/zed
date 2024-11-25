@@ -458,13 +458,16 @@ dependencies = [
  "command_palette_hooks",
  "editor",
  "feature_flags",
+ "futures 0.3.31",
  "gpui",
  "language_model",
  "language_model_selector",
  "proto",
  "settings",
+ "smol",
  "theme",
  "ui",
+ "util",
  "workspace",
 ]
 

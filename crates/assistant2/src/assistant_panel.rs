@@ -1,7 +1,7 @@
 use anyhow::Result;
 use gpui::{
     prelude::*, px, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
-    FocusableView, Pixels, Task, View, ViewContext, WeakView, WindowContext,
+    FocusableView, Model, Pixels, Task, View, ViewContext, WeakView, WindowContext,
 };
 use language_model::LanguageModelRegistry;
 use language_model_selector::LanguageModelSelector;
@@ -10,6 +10,7 @@ use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{Pane, Workspace};
 
 use crate::message_editor::MessageEditor;
+use crate::thread::Thread;
 use crate::{NewThread, ToggleFocus, ToggleModelSelector};
 
 pub fn init(cx: &mut AppContext) {
@@ -25,6 +26,7 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct AssistantPanel {
     pane: View<Pane>,
+    thread: Model<Thread>,
     message_editor: View<MessageEditor>,
 }
 
@@ -56,9 +58,12 @@ impl AssistantPanel {
             pane
         });
 
+        let thread = cx.new_model(Thread::new);
+
         Self {
             pane,
-            message_editor: cx.new_view(MessageEditor::new),
+            thread: thread.clone(),
+            message_editor: cx.new_view(|cx| MessageEditor::new(thread, cx)),
         }
     }
 }
@@ -247,7 +252,24 @@ impl Render for AssistantPanel {
                 println!("Action: New Thread");
             }))
             .child(self.render_toolbar(cx))
-            .child(v_flex().bg(cx.theme().colors().panel_background))
+            .child(
+                v_flex()
+                    .id("message-list")
+                    .gap_2()
+                    .size_full()
+                    .p_2()
+                    .overflow_y_scroll()
+                    .bg(cx.theme().colors().panel_background)
+                    .children(self.thread.read(cx).messages.iter().map(|message| {
+                        v_flex()
+                            .p_2()
+                            .border_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .rounded_md()
+                            .child(Label::new(message.role.to_string()))
+                            .child(Label::new(message.text.clone()))
+                    })),
+            )
             .child(
                 h_flex()
                     .border_t_1()
