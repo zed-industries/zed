@@ -83,6 +83,8 @@ struct DiagnosticGroupState {
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 
+const DIAGNOSTICS_UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+
 impl Render for ProjectDiagnosticsEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let child = if self.path_states.is_empty() {
@@ -200,7 +202,7 @@ impl ProjectDiagnosticsEditor {
         let project_handle = self.project.clone();
         self.update_excerpts_task = Some(cx.spawn(|this, mut cx| async move {
             cx.background_executor()
-                .timer(Duration::from_millis(50))
+                .timer(DIAGNOSTICS_UPDATE_DEBOUNCE)
                 .await;
             loop {
                 let Some((path, language_server_id)) = this.update(&mut cx, |this, _| {
