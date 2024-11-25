@@ -241,25 +241,6 @@ pub fn initialize_workspace(
 
         let prompt_builder = prompt_builder.clone();
         cx.spawn(|workspace_handle, mut cx| async move {
-            let is_assistant2_enabled = if cfg!(test) {
-                false
-            } else {
-                let is_assistant2_feature_flag_enabled = assistant2_feature_flag.await;
-                release_channel == ReleaseChannel::Dev && is_assistant2_feature_flag_enabled
-            };
-
-            let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
-                let assistant2_panel =
-                    assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?;
-
-                (None, Some(assistant2_panel))
-            } else {
-                let assistant_panel =
-                    assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone()).await?;
-
-                (Some(assistant_panel), None)
-            };
-
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
@@ -289,6 +270,33 @@ pub fn initialize_workspace(
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
+                workspace.add_panel(project_panel, cx);
+                workspace.add_panel(outline_panel, cx);
+                workspace.add_panel(terminal_panel, cx);
+                workspace.add_panel(channels_panel, cx);
+                workspace.add_panel(chat_panel, cx);
+                workspace.add_panel(notification_panel, cx);
+            })?;
+            let is_assistant2_enabled =
+                if cfg!(test) || release_channel != ReleaseChannel::Dev {
+                    false
+                } else {
+                    assistant2_feature_flag.await
+                }
+            ;
+
+            let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
+                let assistant2_panel =
+                    assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?;
+
+                (None, Some(assistant2_panel))
+            } else {
+                let assistant_panel =
+                    assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone()).await?;
+
+                (Some(assistant_panel), None)
+            };
+            workspace_handle.update(&mut cx, |workspace, cx| {
                 if let Some(assistant_panel) = assistant_panel {
                     workspace.add_panel(assistant_panel, cx);
                 }
@@ -296,13 +304,6 @@ pub fn initialize_workspace(
                 if let Some(assistant2_panel) = assistant2_panel {
                     workspace.add_panel(assistant2_panel, cx);
                 }
-
-                workspace.add_panel(project_panel, cx);
-                workspace.add_panel(outline_panel, cx);
-                workspace.add_panel(terminal_panel, cx);
-                workspace.add_panel(channels_panel, cx);
-                workspace.add_panel(chat_panel, cx);
-                workspace.add_panel(notification_panel, cx);
             })
         })
         .detach();
