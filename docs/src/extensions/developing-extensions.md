@@ -7,6 +7,7 @@ Extensions can add the following capabilities to Zed:
 - [Languages](./languages.md)
 - [Themes](./themes.md)
 - [Slash Commands](./slash-commands.md)
+- [Context Servers](./context-servers.md)
 
 ## Directory Structure of a Zed Extension
 
