@@ -33,6 +33,7 @@ use std::{
     mem,
     ops::Range,
     sync::Arc,
+    time::Duration,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
@@ -198,6 +199,9 @@ impl ProjectDiagnosticsEditor {
         }
         let project_handle = self.project.clone();
         self.update_excerpts_task = Some(cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
             loop {
                 let Some((path, language_server_id)) = this.update(&mut cx, |this, _| {
                     let Some((path, language_server_id)) = this.paths_to_update.pop_first() else {
