@@ -1316,7 +1316,7 @@ impl AssistantPanel {
 
     fn restart_context_servers(
         workspace: &mut Workspace,
-        _action: &context_servers::Restart,
+        _action: &context_server::Restart,
         cx: &mut ViewContext<Workspace>,
     ) {
         let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {

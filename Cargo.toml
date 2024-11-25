@@ -23,7 +23,8 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
-    "crates/context_servers",
+    "crates/context_server",
+    "crates/context_server_settings",
     "crates/copilot",
     "crates/db",
     "crates/diagnostics",
@@ -207,7 +208,8 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
-context_servers = { path = "crates/context_servers" }
+context_server = { path = "crates/context_server" }
+context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }

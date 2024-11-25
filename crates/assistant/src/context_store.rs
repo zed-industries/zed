@@ -9,8 +9,8 @@ use assistant_tool::{ToolId, ToolWorkingSet};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
 use collections::HashMap;
-use context_servers::manager::ContextServerManager;
-use context_servers::{ContextServerFactoryRegistry, ContextServerTool};
+use context_server::manager::ContextServerManager;
+use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
@@ -809,13 +809,13 @@ impl ContextStore {
     fn handle_context_server_event(
         &mut self,
         context_server_manager: Model<ContextServerManager>,
-        event: &context_servers::manager::Event,
+        event: &context_server::manager::Event,
         cx: &mut ModelContext<Self>,
     ) {
         let slash_command_working_set = self.slash_commands.clone();
         let tool_working_set = self.tools.clone();
         match event {
-            context_servers::manager::Event::ServerStarted { server_id } => {
+            context_server::manager::Event::ServerStarted { server_id } => {
                 if let Some(server) = context_server_manager.read(cx).get_server(server_id) {
                     let context_server_manager = context_server_manager.clone();
                     cx.spawn({
@@ -826,7 +826,7 @@ impl ContextStore {
                                 return;
                             };
 
-                            if protocol.capable(context_servers::protocol::ServerCapability::Prompts) {
+                            if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
                                 if let Some(prompts) = protocol.list_prompts().await.log_err() {
                                     let slash_command_ids = prompts
                                         .into_iter()
@@ -854,7 +854,7 @@ impl ContextStore {
                                 }
                             }
 
-                            if protocol.capable(context_servers::protocol::ServerCapability::Tools) {
+                            if protocol.capable(context_server::protocol::ServerCapability::Tools) {
                                 if let Some(tools) = protocol.list_tools().await.log_err() {
                                     let tool_ids = tools.tools.into_iter().map(|tool| {
                                         log::info!("registering context server tool: {:?}", tool.name);
@@ -881,7 +881,7 @@ impl ContextStore {
                     .detach();
                 }
             }
-            context_servers::manager::Event::ServerStopped { server_id } => {
+            context_server::manager::Event::ServerStopped { server_id } => {
                 if let Some(slash_command_ids) =
                     self.context_server_slash_command_ids.remove(server_id)
                 {

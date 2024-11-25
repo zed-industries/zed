@@ -242,7 +242,7 @@ pub fn init(
     assistant_slash_command::init(cx);
     assistant_tool::init(cx);
     assistant_panel::init(cx);
-    context_servers::init(cx);
+    context_server::init(cx);
 
     let prompt_builder = prompts::PromptBuilder::new(Some(PromptLoadingParams {
         fs: fs.clone(),
