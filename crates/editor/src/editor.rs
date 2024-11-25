@@ -540,15 +540,6 @@ pub enum IsVimMode {
     No,
 }
 
-pub trait ActiveLineTrailerProvider {
-    fn render_active_line_trailer(
-        &mut self,
-        style: &EditorStyle,
-        focus_handle: &FocusHandle,
-        cx: &mut WindowContext,
-    ) -> Option<AnyElement>;
-}
-
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
 /// See the [module level documentation](self) for more information.
@@ -676,7 +667,6 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
-    active_line_trailer_provider: Option<Box<dyn ActiveLineTrailerProvider>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2215,7 +2205,6 @@ impl Editor {
             addons: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             text_style_refinement: None,
-            active_line_trailer_provider: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -2502,16 +2491,6 @@ impl Editor {
                 provider: Arc::new(provider),
             });
         self.refresh_inline_completion(false, false, cx);
-    }
-
-    pub fn set_active_line_trailer_provider<T>(
-        &mut self,
-        provider: Option<T>,
-        _cx: &mut ViewContext<Self>,
-    ) where
-        T: ActiveLineTrailerProvider + 'static,
-    {
-        self.active_line_trailer_provider = provider.map(|provider| Box::new(provider) as Box<_>);
     }
 
     pub fn placeholder_text(&self, _cx: &WindowContext) -> Option<&str> {
@@ -11868,29 +11847,6 @@ impl Editor {
             && self.focus_handle.is_focused(cx)
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
-    }
-
-    pub fn render_active_line_trailer(
-        &mut self,
-        style: &EditorStyle,
-        cx: &mut WindowContext,
-    ) -> Option<AnyElement> {
-        let selection = self.selections.newest::<Point>(cx);
-        if !selection.is_empty() {
-            return None;
-        };
-
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let buffer_row = MultiBufferRow(selection.head().row);
-
-        if snapshot.line_len(buffer_row) != 0 || self.has_active_inline_completion(cx) {
-            return None;
-        }
-
-        let focus_handle = self.focus_handle.clone();
-        self.active_line_trailer_provider
-            .as_mut()?
-            .render_active_line_trailer(style, &focus_handle, cx)
     }
 
     fn has_blame_entries(&self, cx: &mut WindowContext) -> bool {
