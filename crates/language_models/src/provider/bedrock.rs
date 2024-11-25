@@ -1,5 +1,5 @@
 use crate::AllLanguageModelSettings;
-use bedrock::{BedrockError, BedrockEvent, bedrock_client, Model};
+use bedrock::{BedrockError, BedrockEvent, bedrock_client, Model, BedrockStreamingResponse};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use editor::{Editor, EditorElement, EditorStyle};
@@ -27,6 +27,7 @@ use aws_credential_types::Credentials;
 use serde_json::Value;
 use strum::IntoEnumIterator;
 use bedrock::bedrock_client::Config;
+use bedrock::bedrock_client::types::{ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput};
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::{maybe, ResultExt};
@@ -215,6 +216,7 @@ impl BedrockLanguageModelProvider {
 struct BedrockModel {
     id: LanguageModelId,
     model: Model,
+    runtime_client: bedrock_client::Client,
     state: gpui::Model<State>,
     request_limiter: RateLimiter,
 }
@@ -224,8 +226,14 @@ impl BedrockModel {
         &self,
         request: bedrock::Request,
         cx: &AsyncAppContext
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<BedrockEvent, BedrockError>>>> {
-        todo!()
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>> {
+        let bedrock_client = self.runtime_client.clone();
+
+        async move {
+            let request = bedrock::stream_completion(&bedrock_client, request);
+
+            request.await.context("failed to perform stream completion")
+        }.boxed()
     }
 }
 
@@ -278,11 +286,8 @@ impl LanguageModel for BedrockModel {
         );
 
         let request = self.stream_completion(request, cx);
-        let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
-            Ok(map_to_language_model_completion_events(response))
-        });
-        async move { Ok(future.await?.boxed()) }.boxed()
+        let future
+        async move { Ok(request.await?.boxed()) }.boxed()
     }
 
     fn use_any_tool(&self, request: LanguageModelRequest, name: String, description: String, schema: Value, cx: &AsyncAppContext) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
@@ -301,10 +306,10 @@ pub fn get_bedrock_tokens(request: LanguageModelRequest, cx: &AppContext) -> Box
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockEvent, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockEvent, BedrockError>>>>
+        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>
     }
 
     futures::stream::unfold(
@@ -315,11 +320,54 @@ pub fn map_to_language_model_completion_events(
             while let Some(event) = state.events.next().await {
                 match event {
                     Ok(event) => match event {
-                        BedrockEvent::ContentBlockDelta(_) => {}
-                        BedrockEvent::ContentBlockStart(_) => {}
-                        BedrockEvent::MessageStart(_) => {}
-                        BedrockEvent::MessageStop(_) => {}
-                        BedrockEvent::Metadata(_) => {}
+                        ConverseStreamOutput::ContentBlockDelta(cb_delta) => {
+                            match cb_delta.delta {
+                                Some(delta) => {
+                                    match delta {
+                                        ContentBlockDelta::Text(text_out) => {
+                                            return Some((
+                                                Some(Ok(LanguageModelCompletionEvent::Text(text_out))),
+                                                state
+                                            ));
+                                        }
+                                        ContentBlockDelta::ToolUse(_) => unimplemented!("The Bedrock provider has not implemented tool use yet"),
+                                        ContentBlockDelta::Unknown => {
+                                            return Some((Some(Err(anyhow!("Unknown Delta type, Update the Bedrock SDK"))), state))
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                None => return Some((None, state))
+                            }
+                        }
+                        ConverseStreamOutput::ContentBlockStart(cb_start) => {
+                            match cb_start.start {
+                                Some(start) => {
+                                    match start {
+                                        ContentBlockStart::ToolUse(_) => unimplemented!("The Bedrock provider has not implemented tool use yet"),
+                                        ContentBlockStart::Unknown => {
+                                            return Some((Some(Err(anyhow!("Unknown Delta type, Update the Bedrock SDK"))), state))
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                None => {}
+                            }
+                        }
+                        ConverseStreamOutput::ContentBlockStop(cb_stop) => {
+                            unimplemented!("The Bedrock provider has not implemented tool use yet, this event will only be received on tool use")
+                        }
+                        ConverseStreamOutput::MessageStart(message) => {}
+                        ConverseStreamOutput::MessageStop(_) => {
+                            // This contains information if response generation has stopped for any reason
+                        }
+                        ConverseStreamOutput::Metadata(metadata) => {
+                            // This contains stream metadata including token usage, metrics and traces for guardrail behaviour
+                        }
+                        ConverseStreamOutput::Unknown => {
+                            return Some((Some(Err(anyhow!("Unknown event type, Update the Bedrock SDK"))), state))
+                        }
+                        _ => {}
                     },
                     Err(err) => {
                         return Some((Some(Err(anyhow!(err))), state));
