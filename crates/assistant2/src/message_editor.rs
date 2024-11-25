@@ -1,8 +1,20 @@
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{TextStyle, View};
+use futures::StreamExt;
+use gpui::{AppContext, TextStyle, View};
+use language_model::{
+    LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, MessageContent, Role, StopReason,
+};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
+
+use crate::Chat;
+
+#[derive(Debug, Clone, Copy)]
+pub enum RequestKind {
+    Chat,
+}
 
 pub struct MessageEditor {
     editor: View<Editor>,
@@ -19,14 +31,108 @@ impl MessageEditor {
             }),
         }
     }
+
+    fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
+        self.send_to_model(RequestKind::Chat, cx);
+    }
+
+    fn send_to_model(
+        &mut self,
+        request_kind: RequestKind,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<()> {
+        dbg!("here");
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        if provider
+            .as_ref()
+            .map_or(false, |provider| provider.must_accept_terms(cx))
+        {
+            dbg!("must accept terms");
+            cx.notify();
+            return None;
+        }
+
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let provider = model_registry.active_provider()?;
+        let model = model_registry.active_model()?;
+
+        let mut request = self.build_completion_request(request_kind, cx);
+
+        let task = cx.spawn(|this, mut cx| async move {
+            dbg!("streaming completion");
+            let stream = model.stream_completion(request, &cx);
+            let stream_completion = async {
+                let mut events = stream.await?;
+                let mut stop_reason = StopReason::EndTurn;
+
+                let mut text = String::new();
+
+                while let Some(event) = events.next().await {
+                    let event = event?;
+
+                    dbg!(&event);
+                    match event {
+                        LanguageModelCompletionEvent::StartMessage { .. } => {}
+                        LanguageModelCompletionEvent::Stop(reason) => {
+                            stop_reason = reason;
+                        }
+                        LanguageModelCompletionEvent::Text(chunk) => {
+                            text.push_str(&chunk);
+                        }
+                        LanguageModelCompletionEvent::ToolUse(_tool_use) => {}
+                    }
+
+                    smol::future::yield_now().await;
+                }
+
+                anyhow::Ok((stop_reason, text))
+            };
+
+            let result = stream_completion.await;
+
+            this.update(&mut cx, |this, cx| {
+                println!("Finished completion: {result:?}");
+            })
+            .ok();
+        });
+
+        dbg!("detach task");
+        task.detach();
+
+        None
+    }
+
+    fn build_completion_request(
+        &self,
+        _request_kind: RequestKind,
+        cx: &AppContext,
+    ) -> LanguageModelRequest {
+        let text = self.editor.read(cx).text(cx);
+
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text(text)],
+                cache: false,
+            }],
+            tools: Vec::new(),
+            stop: Vec::new(),
+            temperature: None,
+        };
+
+        request
+    }
 }
 
 impl Render for MessageEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
+        let focus_handle = self.editor.focus_handle(cx);
 
         v_flex()
+            .key_context("MessageEditor")
+            .on_action(cx.listener(Self::chat))
             .size_full()
             .gap_2()
             .p_2()
@@ -69,7 +175,19 @@ impl Render for MessageEditor {
                             .gap_2()
                             .child(Button::new("codebase", "Codebase").style(ButtonStyle::Filled))
                             .child(Label::new("or"))
-                            .child(Button::new("chat", "Chat").style(ButtonStyle::Filled)),
+                            .child(
+                                ButtonLike::new("chat")
+                                    .style(ButtonStyle::Filled)
+                                    .layer(ElevationIndex::ModalSurface)
+                                    .child(Label::new("Chat"))
+                                    .children(
+                                        KeyBinding::for_action_in(&Chat, &focus_handle, cx)
+                                            .map(|binding| binding.into_any_element()),
+                                    )
+                                    .on_click(move |_event, cx| {
+                                        focus_handle.dispatch_action(&Chat, cx);
+                                    }),
+                            ),
                     ),
             )
     }

@@ -7,7 +7,10 @@ use gpui::{actions, AppContext};
 
 pub use crate::assistant_panel::AssistantPanel;
 
-actions!(assistant2, [ToggleFocus, NewThread, ToggleModelSelector]);
+actions!(
+    assistant2,
+    [ToggleFocus, NewThread, ToggleModelSelector, Chat]
+);
 
 const NAMESPACE: &str = "assistant2";
 
