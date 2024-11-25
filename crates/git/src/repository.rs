@@ -44,7 +44,12 @@ pub trait GitRepository: Send + Sync {
     fn create_branch(&self, _: &str) -> Result<()>;
     fn branch_exits(&self, _: &str) -> Result<bool>;
 
-    fn blame(&self, path: &Path, content: Rope, author_display_replace: Option<&str>) -> Result<crate::blame::Blame>;
+    fn blame(
+        &self,
+        path: &Path,
+        content: Rope,
+        author_display_replace: Option<&str>,
+    ) -> Result<crate::blame::Blame>;
 
     fn path(&self) -> PathBuf;
 }
@@ -204,7 +209,12 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
-    fn blame(&self, path: &Path, content: Rope, author_display_replace: Option<&str>) -> Result<crate::blame::Blame> {
+    fn blame(
+        &self,
+        path: &Path,
+        content: Rope,
+        author_display_replace: Option<&str>,
+    ) -> Result<crate::blame::Blame> {
         let working_directory = self
             .repository
             .lock()
@@ -350,7 +360,12 @@ impl GitRepository for FakeGitRepository {
         Ok(())
     }
 
-    fn blame(&self, path: &Path, _content: Rope, _author_replace_display: Option<&str>) -> Result<crate::blame::Blame> {
+    fn blame(
+        &self,
+        path: &Path,
+        _content: Rope,
+        _author_replace_display: Option<&str>,
+    ) -> Result<crate::blame::Blame> {
         let state = self.state.lock();
         state
             .blames

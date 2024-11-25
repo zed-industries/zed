@@ -31,7 +31,7 @@ impl Blame {
         content: &Rope,
         remote_url: Option<String>,
         provider_registry: Arc<GitHostingProviderRegistry>,
-        author_display_replace: Option<&str>
+        author_display_replace: Option<&str>,
     ) -> Result<Self> {
         let output = run_git_blame(git_binary, working_directory, path, content)?;
         let mut entries = parse_git_blame(&output)?;

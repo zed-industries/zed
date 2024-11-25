@@ -1,8 +1,8 @@
 use crate::{
+    project_settings::GitAuthorDisplaySetting,
     search::SearchQuery,
-    ProjectSettings, project_settings::GitAuthorDisplaySetting,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    Item, ProjectPath,
+    Item, ProjectPath, ProjectSettings,
 };
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 use anyhow::{anyhow, Context as _, Result};
