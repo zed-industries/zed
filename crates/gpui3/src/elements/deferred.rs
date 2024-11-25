@@ -51,7 +51,7 @@ impl Element for Deferred {
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        _cx: &mut AppContext,
     ) {
         let child = self.child.take().unwrap();
         let element_offset = window.element_offset();
@@ -64,7 +64,7 @@ impl Element for Deferred {
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        window: &mut Window,
+        _window: &mut Window,
         _cx: &mut AppContext,
     ) {
     }

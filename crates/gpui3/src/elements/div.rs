@@ -33,7 +33,6 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     mem,
-    ops::DerefMut,
     rc::Rc,
     time::Duration,
 };
@@ -85,7 +84,9 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && event.button == button && hitbox.is_hovered(cx)
+                if phase == DispatchPhase::Bubble
+                    && event.button == button
+                    && hitbox.is_hovered(window)
                 {
                     (listener)(event, window, cx)
                 }
@@ -102,7 +103,7 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_hovered(cx) {
+                if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -118,7 +119,7 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -135,7 +136,9 @@ impl Interactivity {
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && event.button == button && hitbox.is_hovered(cx)
+                if phase == DispatchPhase::Bubble
+                    && event.button == button
+                    && hitbox.is_hovered(window)
                 {
                     (listener)(event, window, cx)
                 }
@@ -152,7 +155,7 @@ impl Interactivity {
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_hovered(cx) {
+                if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -484,7 +487,7 @@ impl Interactivity {
         self.drag_listener = Some((
             Box::new(value),
             Box::new(move |value, offset, window, cx| {
-                constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
+                constructor(value.downcast_ref().unwrap(), offset, window, cx)
             }),
         ));
     }
@@ -1201,18 +1204,18 @@ impl Element for Div {
         cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut child_layout_ids = SmallVec::new();
-        let layout_id = self
-            .interactivity
-            .request_layout(global_id, cx, |style, window, cx| {
-                window.with_text_style(style.text_style().cloned(), cx, |window, cx| {
-                    child_layout_ids = self
-                        .children
-                        .iter_mut()
-                        .map(|child| child.request_layout(window, cx))
-                        .collect::<SmallVec<_>>();
-                    window.request_layout(style, child_layout_ids.iter().copied(), cx)
-                })
-            });
+        let layout_id =
+            self.interactivity
+                .request_layout(global_id, window, cx, |style, window, cx| {
+                    window.with_text_style(style.text_style().cloned(), |window| {
+                        child_layout_ids = self
+                            .children
+                            .iter_mut()
+                            .map(|child| child.request_layout(window, cx))
+                            .collect::<SmallVec<_>>();
+                        window.request_layout(style, child_layout_ids.iter().copied(), cx)
+                    })
+                });
         (layout_id, DivFrameState { child_layout_ids })
     }
 
@@ -1267,7 +1270,7 @@ impl Element for Div {
             window,
             cx,
             |_style, scroll_offset, hitbox, window, cx| {
-                window.with_element_offset(scroll_offset, |window, cx| {
+                window.with_element_offset(scroll_offset, |window| {
                     for child in &mut self.children {
                         child.prepaint(window, cx);
                     }
@@ -1476,7 +1479,7 @@ impl Interactivity {
                                 None
                             };
 
-                            let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
+                            let scroll_offset = self.clamp_scroll_position(bounds, &style, window);
                             let result = f(&style, scroll_offset, hitbox, window, cx);
                             (result, element_state)
                         },
@@ -1563,10 +1566,10 @@ impl Interactivity {
         cx: &mut AppContext,
         f: impl FnOnce(&Style, &mut Window, &mut AppContext),
     ) {
-        self.hovered = hitbox.map(|hitbox| hitbox.is_hovered(cx));
-        cx.with_optional_element_state::<InteractiveElementState, _>(
+        self.hovered = hitbox.map(|hitbox| hitbox.is_hovered(window));
+        window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
-            |element_state, cx| {
+            |element_state, window| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
@@ -1592,17 +1595,19 @@ impl Interactivity {
                         window,
                         cx,
                         |window: &mut Window, cx: &mut AppContext| {
-                            cx.with_text_style(style.text_style().cloned(), |cx| {
-                                cx.with_content_mask(
-                                    style.overflow_mask(bounds, cx.rem_size()),
-                                    |cx| {
+                            window.with_text_style(style.text_style().cloned(), |window| {
+                                window.with_content_mask(
+                                    style.overflow_mask(bounds, window.rem_size()),
+                                    |window| {
                                         if let Some(hitbox) = hitbox {
                                             #[cfg(debug_assertions)]
-                                            self.paint_debug_info(global_id, hitbox, &style, cx);
+                                            self.paint_debug_info(
+                                                global_id, hitbox, &style, window, cx,
+                                            );
 
                                             if !cx.has_active_drag() {
                                                 if let Some(mouse_cursor) = style.mouse_cursor {
-                                                    cx.set_cursor_style(mouse_cursor, hitbox);
+                                                    window.set_cursor_style(mouse_cursor, hitbox);
                                                 }
                                             }
 
@@ -1616,11 +1621,11 @@ impl Interactivity {
                                                 window,
                                                 cx,
                                             );
-                                            self.paint_scroll_listener(hitbox, &style, cx);
+                                            self.paint_scroll_listener(hitbox, &style, window, cx);
                                         }
 
                                         self.paint_keyboard_listeners(window, cx);
-                                        f(&style, cx);
+                                        f(&style, window, cx);
 
                                         if hitbox.is_some() {
                                             if let Some(group) = self.group.as_ref() {
@@ -1668,7 +1673,7 @@ impl Interactivity {
                     .ok()
                     .and_then(|mut text| text.pop())
                 {
-                    text.paint(hitbox.origin, FONT_SIZE, cx).ok();
+                    text.paint(hitbox.origin, FONT_SIZE, window, cx).ok();
 
                     let text_bounds = crate::Bounds {
                         origin: hitbox.origin,
@@ -1746,8 +1751,7 @@ impl Interactivity {
                     background_color: Some(crate::white()),
                     ..Default::default()
                 }),
-                cx,
-                render_debug_text,
+                |window| render_debug_text(window, cx),
             )
         }
     }
@@ -1966,7 +1970,7 @@ impl Interactivity {
                     }
                     let is_hovered = has_mouse_down.borrow().is_none()
                         && !cx.has_active_drag()
-                        && hitbox.is_hovered(cx);
+                        && hitbox.is_hovered(window);
                     let mut was_hovered = was_hovered.borrow_mut();
 
                     if is_hovered != *was_hovered {
@@ -1998,11 +2002,11 @@ impl Interactivity {
                     let active_tooltip = active_tooltip.clone();
                     let hitbox = hitbox.clone();
                     let tooltip_id = self.tooltip_id;
-                    move |_: &MouseMoveEvent, phase, cx| {
+                    move |_: &MouseMoveEvent, phase, window, cx| {
                         let is_hovered =
-                            pending_mouse_down.borrow().is_none() && hitbox.is_hovered(cx);
+                            pending_mouse_down.borrow().is_none() && hitbox.is_hovered(window);
                         let tooltip_is_hovered =
-                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
+                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(window));
                         if !is_hovered && (!tooltip_is_hoverable || !tooltip_is_hovered) {
                             if active_tooltip.borrow_mut().take().is_some() {
                                 cx.refresh();
@@ -2025,7 +2029,7 @@ impl Interactivity {
                                         active_tooltip.borrow_mut().replace(ActiveTooltip {
                                             tooltip: Some(AnyTooltip {
                                                 render: build_tooltip(cx),
-                                                mouse_position: cx.mouse_position(),
+                                                mouse_position: window.mouse_position(),
                                             }),
                                             _task: None,
                                         });
@@ -2216,7 +2220,7 @@ impl Interactivity {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Style {
-        window.with_optional_element_state(global_id, |element_state, cx| {
+        window.with_optional_element_state(global_id, |element_state, window| {
             let mut element_state =
                 element_state.map(|element_state| element_state.unwrap_or_default());
             let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
@@ -2275,7 +2279,7 @@ impl Interactivity {
                 if can_drop {
                     for (state_type, group_drag_style) in &self.group_drag_over_styles {
                         if let Some(group_hitbox_id) =
-                            GroupHitboxes::get(&group_drag_style.group, cx.deref_mut())
+                            GroupHitboxes::get(&group_drag_style.group, cx)
                         {
                             if *state_type == drag.value.as_ref().type_id()
                                 && group_hitbox_id.is_hovered(window)
@@ -2422,9 +2426,10 @@ where
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, cx)
+        self.element.request_layout(id, window, cx)
     }
 
     fn prepaint(
@@ -2432,9 +2437,10 @@ where
         id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> E::PrepaintState {
-        self.element.prepaint(id, bounds, state, cx)
+        self.element.prepaint(id, bounds, state, window, cx)
     }
 
     fn paint(
@@ -2443,9 +2449,11 @@ where
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
-        self.element.paint(id, bounds, request_layout, prepaint, cx)
+        self.element
+            .paint(id, bounds, request_layout, prepaint, window, cx)
     }
 }
 
@@ -2515,9 +2523,10 @@ where
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, cx)
+        self.element.request_layout(id, window, cx)
     }
 
     fn prepaint(
@@ -2525,9 +2534,10 @@ where
         id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> E::PrepaintState {
-        self.element.prepaint(id, bounds, state, cx)
+        self.element.prepaint(id, bounds, state, window, cx)
     }
 
     fn paint(
@@ -2536,9 +2546,11 @@ where
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
-        self.element.paint(id, bounds, request_layout, prepaint, cx);
+        self.element
+            .paint(id, bounds, request_layout, prepaint, window, cx);
     }
 }
 

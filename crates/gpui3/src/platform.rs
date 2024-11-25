@@ -31,7 +31,7 @@ use crate::{
     DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
     GPUSpecs, GlyphId, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
     RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
-    SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, DEFAULT_WINDOW_SIZE,
+    SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window, DEFAULT_WINDOW_SIZE,
 };
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
@@ -1315,9 +1315,9 @@ impl Image {
     }
 
     /// Use the GPUI `use_asset` API to make this image renderable
-    pub fn use_render_image(self: Arc<Self>, cx: &mut AppContext) -> Option<Arc<RenderImage>> {
+    pub fn use_render_image(self: Arc<Self>, window: &mut Window) -> Option<Arc<RenderImage>> {
         ImageSource::Image(self)
-            .use_data(cx)
+            .use_data(window)
             .and_then(|result| result.ok())
     }
 

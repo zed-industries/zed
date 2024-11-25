@@ -1,6 +1,7 @@
 use crate::{
     black, fill, point, px, size, AppContext, Bounds, Half, Hsla, LineLayout, Pixels, Point,
-    Result, SharedString, StrikethroughStyle, UnderlineStyle, WrapBoundary, WrappedLineLayout,
+    Result, SharedString, StrikethroughStyle, UnderlineStyle, Window, WrapBoundary,
+    WrappedLineLayout,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -63,6 +64,7 @@ impl ShapedLine {
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Result<()> {
         paint_line(
@@ -71,6 +73,7 @@ impl ShapedLine {
             line_height,
             &self.decoration_runs,
             &[],
+            window,
             cx,
         )?;
 
@@ -101,6 +104,7 @@ impl WrappedLine {
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Result<()> {
         paint_line(
@@ -109,6 +113,7 @@ impl WrappedLine {
             line_height,
             &self.decoration_runs,
             &self.wrap_boundaries,
+            window,
             cx,
         )?;
 
@@ -122,6 +127,7 @@ fn paint_line(
     line_height: Pixels,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
+    window: &mut Window,
     cx: &mut AppContext,
 ) -> Result<()> {
     let line_bounds = Bounds::new(
@@ -131,7 +137,7 @@ fn paint_line(
             line_height * (wrap_boundaries.len() as f32 + 1.),
         ),
     );
-    cx.paint_layer(line_bounds, |cx| {
+    window.paint_layer(line_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let mut decoration_runs = decoration_runs.iter();
@@ -158,7 +164,7 @@ fn paint_line(
                         if glyph_origin.x == background_origin.x {
                             background_origin.x -= max_glyph_size.width.half()
                         }
-                        cx.paint_quad(fill(
+                        window.paint_quad(fill(
                             Bounds {
                                 origin: *background_origin,
                                 size: size(glyph_origin.x - background_origin.x, line_height),
@@ -172,7 +178,7 @@ fn paint_line(
                         if glyph_origin.x == underline_origin.x {
                             underline_origin.x -= max_glyph_size.width.half();
                         };
-                        cx.paint_underline(
+                        window.paint_underline(
                             *underline_origin,
                             glyph_origin.x - underline_origin.x,
                             underline_style,
@@ -186,7 +192,7 @@ fn paint_line(
                         if glyph_origin.x == strikethrough_origin.x {
                             strikethrough_origin.x -= max_glyph_size.width.half();
                         };
-                        cx.paint_strikethrough(
+                        window.paint_strikethrough(
                             *strikethrough_origin,
                             glyph_origin.x - strikethrough_origin.x,
                             strikethrough_style,
@@ -280,7 +286,7 @@ fn paint_line(
                     if background_origin.x == glyph_origin.x {
                         background_origin.x -= max_glyph_size.width.half();
                     };
-                    cx.paint_quad(fill(
+                    window.paint_quad(fill(
                         Bounds {
                             origin: background_origin,
                             size: size(width, line_height),
@@ -293,7 +299,7 @@ fn paint_line(
                     if underline_origin.x == glyph_origin.x {
                         underline_origin.x -= max_glyph_size.width.half();
                     };
-                    cx.paint_underline(
+                    window.paint_underline(
                         underline_origin,
                         glyph_origin.x - underline_origin.x,
                         &underline_style,
@@ -306,7 +312,7 @@ fn paint_line(
                     if strikethrough_origin.x == glyph_origin.x {
                         strikethrough_origin.x -= max_glyph_size.width.half();
                     };
-                    cx.paint_strikethrough(
+                    window.paint_strikethrough(
                         strikethrough_origin,
                         glyph_origin.x - strikethrough_origin.x,
                         &strikethrough_style,
@@ -318,17 +324,17 @@ fn paint_line(
                     size: max_glyph_size,
                 };
 
-                let content_mask = cx.content_mask();
+                let content_mask = window.content_mask();
                 if max_glyph_bounds.intersects(&content_mask.bounds) {
                     if glyph.is_emoji {
-                        cx.paint_emoji(
+                        window.paint_emoji(
                             glyph_origin + baseline_offset,
                             run.font_id,
                             glyph.id,
                             layout.font_size,
                         )?;
                     } else {
-                        cx.paint_glyph(
+                        window.paint_glyph(
                             glyph_origin + baseline_offset,
                             run.font_id,
                             glyph.id,
@@ -351,7 +357,7 @@ fn paint_line(
             if last_line_end_x == background_origin.x {
                 background_origin.x -= max_glyph_size.width.half()
             };
-            cx.paint_quad(fill(
+            window.paint_quad(fill(
                 Bounds {
                     origin: background_origin,
                     size: size(last_line_end_x - background_origin.x, line_height),
@@ -364,7 +370,7 @@ fn paint_line(
             if last_line_end_x == underline_start.x {
                 underline_start.x -= max_glyph_size.width.half()
             };
-            cx.paint_underline(
+            window.paint_underline(
                 underline_start,
                 last_line_end_x - underline_start.x,
                 &underline_style,
@@ -375,7 +381,7 @@ fn paint_line(
             if last_line_end_x == strikethrough_start.x {
                 strikethrough_start.x -= max_glyph_size.width.half()
             };
-            cx.paint_strikethrough(
+            window.paint_strikethrough(
                 strikethrough_start,
                 last_line_end_x - strikethrough_start.x,
                 &strikethrough_style,

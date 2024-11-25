@@ -349,12 +349,13 @@ pub struct TooltipId(usize);
 
 impl TooltipId {
     /// Checks if the tooltip is currently hovered.
-    pub fn is_hovered(&self, cx: &Window) -> bool {
-        cx.window
+    pub fn is_hovered(&self, window: &Window) -> bool {
+        window
             .tooltip_bounds
             .as_ref()
             .map_or(false, |tooltip_bounds| {
-                tooltip_bounds.id == *self && tooltip_bounds.bounds.contains(&cx.mouse_position())
+                tooltip_bounds.id == *self
+                    && tooltip_bounds.bounds.contains(&window.mouse_position())
             })
     }
 }
@@ -2387,12 +2388,7 @@ impl Window {
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
     pub fn request_measured_layout<
-        F: FnMut(
-                Size<Option<Pixels>>,
-                Size<AvailableSpace>,
-                &mut Window,
-                &mut AppContext,
-            ) -> Size<Pixels>
+        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut AppContext) -> Size<Pixels>
             + 'static,
     >(
         &mut self,
@@ -2570,7 +2566,7 @@ impl Window {
                   window: &mut Window,
                   cx: &mut AppContext| {
                 if let Some(event) = event.downcast_ref() {
-                    handler(event, phase, cx)
+                    handler(event, phase, window, cx)
                 }
             },
         )));
@@ -2597,7 +2593,7 @@ impl Window {
         self.next_frame.dispatch_tree.on_key_event(Rc::new(
             move |event: &dyn Any, phase, window: &mut Window, cx: &mut AppContext| {
                 if let Some(event) = event.downcast_ref::<Event>() {
-                    listener(event, phase, cx)
+                    listener(event, phase, window, cx)
                 }
             },
         ));
@@ -2620,7 +2616,9 @@ impl Window {
         );
 
         self.next_frame.dispatch_tree.on_modifiers_changed(Rc::new(
-            move |event: &ModifiersChangedEvent, cx: &mut AppContext<'_>| listener(event, cx),
+            move |event: &ModifiersChangedEvent, window: &mut Window, cx: &mut AppContext| {
+                listener(event, window, cx)
+            },
         ));
     }
 

@@ -246,8 +246,8 @@ impl Element for Img {
 
     fn request_layout(
         &mut self,
-        window: &mut Window,
         global_id: Option<&GlobalElementId>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut layout_state = ImgLayoutState {
@@ -255,7 +255,7 @@ impl Element for Img {
             replacement: None,
         };
 
-        window.with_optional_element_state(global_id, |state, cx| {
+        window.with_optional_element_state(global_id, |state, window| {
             let mut state = state.map(|state| {
                 state.unwrap_or(ImgState {
                     frame_index: 0,
@@ -266,107 +266,108 @@ impl Element for Img {
 
             let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
 
-            let layout_id =
-                self.interactivity
-                    .request_layout(global_id, window, cx, |mut style, cx| {
-                        let mut replacement_id = None;
+            let layout_id = self.interactivity.request_layout(
+                global_id,
+                window,
+                cx,
+                |mut style, window, cx| {
+                    let mut replacement_id = None;
 
-                        match self.source.use_data(cx) {
-                            Some(Ok(data)) => {
-                                if let Some(state) = &mut state {
-                                    let frame_count = data.frame_count();
-                                    if frame_count > 1 {
-                                        let current_time = Instant::now();
-                                        if let Some(last_frame_time) = state.last_frame_time {
-                                            let elapsed = current_time - last_frame_time;
-                                            let frame_duration =
-                                                Duration::from(data.delay(state.frame_index));
+                    match self.source.use_data(window) {
+                        Some(Ok(data)) => {
+                            if let Some(state) = &mut state {
+                                let frame_count = data.frame_count();
+                                if frame_count > 1 {
+                                    let current_time = Instant::now();
+                                    if let Some(last_frame_time) = state.last_frame_time {
+                                        let elapsed = current_time - last_frame_time;
+                                        let frame_duration =
+                                            Duration::from(data.delay(state.frame_index));
 
-                                            if elapsed >= frame_duration {
-                                                state.frame_index =
-                                                    (state.frame_index + 1) % frame_count;
-                                                state.last_frame_time =
-                                                    Some(current_time - (elapsed - frame_duration));
-                                            }
-                                        } else {
-                                            state.last_frame_time = Some(current_time);
-                                        }
-                                    }
-                                    state.started_loading = None;
-                                }
-
-                                let image_size = data.size(frame_index);
-
-                                if let Length::Auto = style.size.width {
-                                    style.size.width = match style.size.height {
-                                        Length::Definite(DefiniteLength::Absolute(
-                                            AbsoluteLength::Pixels(height),
-                                        )) => Length::Definite(
-                                            px(image_size.width.0 as f32 * height.0
-                                                / image_size.height.0 as f32)
-                                            .into(),
-                                        ),
-                                        _ => Length::Definite(px(image_size.width.0 as f32).into()),
-                                    };
-                                }
-
-                                if let Length::Auto = style.size.height {
-                                    style.size.height = match style.size.width {
-                                        Length::Definite(DefiniteLength::Absolute(
-                                            AbsoluteLength::Pixels(width),
-                                        )) => Length::Definite(
-                                            px(image_size.height.0 as f32 * width.0
-                                                / image_size.width.0 as f32)
-                                            .into(),
-                                        ),
-                                        _ => {
-                                            Length::Definite(px(image_size.height.0 as f32).into())
-                                        }
-                                    };
-                                }
-
-                                if global_id.is_some() && data.frame_count() > 1 {
-                                    cx.request_animation_frame();
-                                }
-                            }
-                            Some(_err) => {
-                                if let Some(fallback) = self.style.fallback.as_ref() {
-                                    let mut element = fallback();
-                                    replacement_id = Some(element.request_layout(window, cx));
-                                    layout_state.replacement = Some(element);
-                                }
-                                if let Some(state) = &mut state {
-                                    state.started_loading = None;
-                                }
-                            }
-                            None => {
-                                if let Some(state) = &mut state {
-                                    if let Some((started_loading, _)) = state.started_loading {
-                                        if started_loading.elapsed() > LOADING_DELAY {
-                                            if let Some(loading) = self.style.loading.as_ref() {
-                                                let mut element = loading();
-                                                replacement_id =
-                                                    Some(element.request_layout(window, cx));
-                                                layout_state.replacement = Some(element);
-                                            }
+                                        if elapsed >= frame_duration {
+                                            state.frame_index =
+                                                (state.frame_index + 1) % frame_count;
+                                            state.last_frame_time =
+                                                Some(current_time - (elapsed - frame_duration));
                                         }
                                     } else {
-                                        let parent_view_id = cx.parent_view_id();
-                                        let task = cx.spawn(|mut cx| async move {
-                                            cx.background_executor().timer(LOADING_DELAY).await;
-                                            cx.update(|cx| {
-                                                cx.notify(parent_view_id);
-                                            })
-                                            .ok();
-                                        });
-                                        state.started_loading = Some((Instant::now(), task));
+                                        state.last_frame_time = Some(current_time);
                                     }
+                                }
+                                state.started_loading = None;
+                            }
+
+                            let image_size = data.size(frame_index);
+
+                            if let Length::Auto = style.size.width {
+                                style.size.width = match style.size.height {
+                                    Length::Definite(DefiniteLength::Absolute(
+                                        AbsoluteLength::Pixels(height),
+                                    )) => Length::Definite(
+                                        px(image_size.width.0 as f32 * height.0
+                                            / image_size.height.0 as f32)
+                                        .into(),
+                                    ),
+                                    _ => Length::Definite(px(image_size.width.0 as f32).into()),
+                                };
+                            }
+
+                            if let Length::Auto = style.size.height {
+                                style.size.height = match style.size.width {
+                                    Length::Definite(DefiniteLength::Absolute(
+                                        AbsoluteLength::Pixels(width),
+                                    )) => Length::Definite(
+                                        px(image_size.height.0 as f32 * width.0
+                                            / image_size.width.0 as f32)
+                                        .into(),
+                                    ),
+                                    _ => Length::Definite(px(image_size.height.0 as f32).into()),
+                                };
+                            }
+
+                            if global_id.is_some() && data.frame_count() > 1 {
+                                window.request_animation_frame();
+                            }
+                        }
+                        Some(_err) => {
+                            if let Some(fallback) = self.style.fallback.as_ref() {
+                                let mut element = fallback();
+                                replacement_id = Some(element.request_layout(window, cx));
+                                layout_state.replacement = Some(element);
+                            }
+                            if let Some(state) = &mut state {
+                                state.started_loading = None;
+                            }
+                        }
+                        None => {
+                            if let Some(state) = &mut state {
+                                if let Some((started_loading, _)) = state.started_loading {
+                                    if started_loading.elapsed() > LOADING_DELAY {
+                                        if let Some(loading) = self.style.loading.as_ref() {
+                                            let mut element = loading();
+                                            replacement_id =
+                                                Some(element.request_layout(window, cx));
+                                            layout_state.replacement = Some(element);
+                                        }
+                                    }
+                                } else {
+                                    let parent_view_id = cx.parent_view_id();
+                                    let task = cx.spawn(|mut cx| async move {
+                                        cx.background_executor().timer(LOADING_DELAY).await;
+                                        cx.update(|cx| {
+                                            cx.notify(parent_view_id);
+                                        })
+                                        .ok();
+                                    });
+                                    state.started_loading = Some((Instant::now(), task));
                                 }
                             }
                         }
+                    }
 
-                        cx.request_layout(style, replacement_id)
-                    });
+                    window.request_layout(style, replacement_id, cx)
+                },
+            );
 
             layout_state.frame_index = frame_index;
 
@@ -417,7 +418,7 @@ impl Element for Img {
             |style, window, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, window.rem_size());
 
-                if let Some(Ok(data)) = source.use_data(cx) {
+                if let Some(Ok(data)) = source.use_data(window) {
                     let new_bounds = self
                         .style
                         .object_fit

@@ -755,7 +755,7 @@ impl Element for List {
 
                     window.request_measured_layout(
                         style,
-                        move |known_dimensions, available_space, _window, _cx| {
+                        move |known_dimensions, available_space, _cx| {
                             let width =
                                 known_dimensions
                                     .width
