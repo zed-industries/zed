@@ -83,14 +83,11 @@ impl Context for TestAppContext {
         lock.update_window(window, f)
     }
 
-    fn read_window<T, R>(
+    fn read_window<R>(
         &self,
-        window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
-    ) -> Result<R>
-    where
-        T: 'static,
-    {
+        window: AnyWindowHandle,
+        read: impl FnOnce(&Window, &AppContext) -> R,
+    ) -> Result<R> {
         let app = self.app.borrow();
         app.read_window(window, read)
     }
@@ -920,14 +917,11 @@ impl Context for VisualTestContext {
         self.cx.update_window(window, f)
     }
 
-    fn read_window<T, R>(
+    fn read_window<R>(
         &self,
-        window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
-    ) -> Result<R>
-    where
-        T: 'static,
-    {
+        window: AnyWindowHandle,
+        read: impl FnOnce(&Window, &AppContext) -> R,
+    ) -> Result<R> {
         self.cx.read_window(window, read)
     }
 }

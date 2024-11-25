@@ -205,13 +205,11 @@ pub trait Context {
         F: FnOnce(&mut Window, &mut AppContext) -> T;
 
     /// Read a window off of the application context.
-    fn read_window<T, R>(
+    fn read_window<R>(
         &self,
-        window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
-    ) -> Result<R>
-    where
-        T: 'static;
+        window: AnyWindowHandle,
+        read: impl FnOnce(&Window, &AppContext) -> R,
+    ) -> Result<R>;
 }
 
 /// Returned by [Context::reserve_model] to later be passed to [Context::insert_model].

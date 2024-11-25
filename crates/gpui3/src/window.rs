@@ -6567,14 +6567,11 @@ impl Context for WindowContext<'_> {
         // }
     }
 
-    fn read_window<T, R>(
+    fn read_window<R>(
         &self,
-        window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
-    ) -> Result<R>
-    where
-        T: 'static,
-    {
+        window: AnyWindowHandle,
+        read: impl FnOnce(&Window, &AppContext) -> R,
+    ) -> Result<R> {
         todo!()
         // if window.any_handle == self.window.handle {
         //     let root_view = self
@@ -7273,14 +7270,11 @@ impl<V> Context for ViewContext<'_, V> {
         self.window_cx.update_window(window, update)
     }
 
-    fn read_window<T, R>(
+    fn read_window<R>(
         &self,
-        window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
-    ) -> Result<R>
-    where
-        T: 'static,
-    {
+        window: AnyWindowHandle,
+        read: impl FnOnce(&Window, &AppContext) -> R,
+    ) -> Result<R> {
         self.window_cx.read_window(window, read)
     }
 }
@@ -7416,7 +7410,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     ///
     /// This will fail if the window is closed or if the root view's type does not match `V`.
     pub fn read<'a>(&self, cx: &'a AppContext) -> Result<&'a V> {
-        todo!()
+        todo!("delete typed window handles")
         // let x = cx
         //     .windows
         //     .get(self.id)
@@ -7439,7 +7433,8 @@ impl<V: 'static + Render> WindowHandle<V> {
     where
         C: Context,
     {
-        cx.read_window(self, |root_view, cx| read_with(root_view.read(cx), cx))
+        todo!("delete typed window handles")
+        // cx.read_window(self, |root_view, cx| read_with(root_view.read(cx), cx))
     }
 
     /// Read the root view pointer off of this window.
@@ -7449,7 +7444,8 @@ impl<V: 'static + Render> WindowHandle<V> {
     where
         C: Context,
     {
-        cx.read_window(self, |root_view, _cx| root_view.clone())
+        todo!("delete typed window handles")
+        // cx.read_window(self, |root_view, _cx| root_view.clone())
     }
 
     /// Check if this window is 'active'.
@@ -7544,16 +7540,12 @@ impl AnyWindowHandle {
     /// Read the state of the root view of this window.
     ///
     /// This will fail if the window has been closed.
-    pub fn read<T, C, R>(self, cx: &C, read: impl FnOnce(View<T>, &AppContext) -> R) -> Result<R>
+    pub fn read<T, C, R>(self, cx: &C, read: impl FnOnce(&Window, &AppContext) -> R) -> Result<R>
     where
         C: Context,
         T: 'static,
     {
-        let view = self
-            .downcast::<T>()
-            .context("the type of the window's root view has changed")?;
-
-        cx.read_window(&view, read)
+        cx.read_window(self, read)
     }
 }
 

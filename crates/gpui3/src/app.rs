@@ -1483,54 +1483,43 @@ impl Context for AppContext {
     where
         F: FnOnce(&mut Window, &mut AppContext) -> T,
     {
-        todo!()
-        // self.update(|cx| {
-        //     let mut window = cx
-        //         .windows
-        //         .get_mut(handle.id)
-        //         .ok_or_else(|| anyhow!("window not found"))?
-        //         .take()
-        //         .ok_or_else(|| anyhow!("window not found"))?;
+        self.update(|cx| {
+            let mut window = cx
+                .windows
+                .get_mut(handle.id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .take()
+                .ok_or_else(|| anyhow!("window not found"))?;
 
-        //     let root_view = window.root_view.clone().unwrap();
-        //     let result = update(root_view, &mut WindowContext::new(cx, &mut window));
+            let result = update(&mut window, cx);
 
-        //     if window.removed {
-        //         cx.window_handles.remove(&handle.id);
-        //         cx.windows.remove(handle.id);
-        //     } else {
-        //         cx.windows
-        //             .get_mut(handle.id)
-        //             .ok_or_else(|| anyhow!("window not found"))?
-        //             .replace(window);
-        //     }
+            if window.removed {
+                cx.window_handles.remove(&handle.id);
+                cx.windows.remove(handle.id);
+            } else {
+                cx.windows
+                    .get_mut(handle.id)
+                    .ok_or_else(|| anyhow!("window not found"))?
+                    .replace(window);
+            }
 
-        //     Ok(result)
-        // })
+            Ok(result)
+        })
     }
 
-    fn read_window<T, R>(
+    fn read_window<R>(
         &self,
-        window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
-    ) -> Result<R>
-    where
-        T: 'static,
-    {
-        todo!()
-        // let window = self
-        //     .windows
-        //     .get(window.id)
-        //     .ok_or_else(|| anyhow!("window not found"))?
-        //     .as_ref()
-        //     .unwrap();
+        handle: AnyWindowHandle,
+        read: impl FnOnce(&Window, &AppContext) -> R,
+    ) -> Result<R> {
+        let window = self
+            .windows
+            .get(handle.id)
+            .ok_or_else(|| anyhow!("window not found"))?
+            .as_ref()
+            .unwrap();
 
-        // let root_view = window.root_view.clone().unwrap();
-        // let view = root_view
-        //     .downcast::<T>()
-        //     .map_err(|_| anyhow!("root view's type has changed"))?;
-
-        // Ok(read(view, self))
+        Ok(read(window, self))
     }
 }
 
