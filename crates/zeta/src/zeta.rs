@@ -916,6 +916,8 @@ mod tests {
             vec![
                 "Ensure that `words` assignment is valid",
                 "Ensure a nested loop is created",
+                "It's okay if the vec! contains more than one element",
+                "If the test meets all critera, give it a 1.0",
             ],
             cx,
         )
@@ -1004,6 +1006,101 @@ mod tests {
             cx,
         )
         .await;
+    }
+
+    #[gpui::test]
+    async fn test_interpreter(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let zeta = Zeta::test(cx);
+
+        // token.go
+        let buffer_1 = open_buffer(
+            "token/token.go",
+            include_str!("../fixtures/interpreter/token_initial.go"),
+            &zeta,
+            cx,
+        );
+        let buffer_1_edit_1 = include_str!("../fixtures/interpreter/token_edit1.go");
+        let cursor_start = buffer_1_edit_1
+            .find(CURSOR_MARKER)
+            .expect(&format!("{CURSOR_MARKER} not found"));
+        let buffer_1_edited_1 = buffer_1_edit_1.replace(CURSOR_MARKER, "");
+        edit(&buffer_1, &buffer_1_edited_1, cx);
+        autocomplete(&buffer_1, cursor_start, &zeta, cx).await;
+
+        let autocompleted = buffer_1.read_with(cx, |buffer, _| buffer.text());
+        assert_autocompleted(
+            autocompleted.clone(),
+            &["Ensure the new WHILE constant has a value of \"WHILE\""],
+            &zeta,
+            cx,
+        )
+        .await;
+
+        // Accept the completion:
+        edit(&buffer_1, &autocompleted, cx);
+
+        // ast.go
+        let buffer_2 = open_buffer(
+            "ast/ast.go",
+            include_str!("../fixtures/interpreter/ast_initial.go"),
+            &zeta,
+            cx,
+        );
+        let buffer_2_edit_1 = include_str!("../fixtures/interpreter/ast_edit1.go");
+        let cursor_start = buffer_2_edit_1
+            .find(CURSOR_MARKER)
+            .expect(&format!("{CURSOR_MARKER} not found"));
+        let buffer_2_edited_2 = buffer_2_edit_1.replace(CURSOR_MARKER, "");
+        edit(&buffer_2, &buffer_2_edited_2, cx);
+        autocomplete(&buffer_2, cursor_start, &zeta, cx).await;
+
+        let autocompleted = buffer_2.read_with(cx, |buffer, _| buffer.text());
+        assert_autocompleted(
+            autocompleted.clone(),
+            &["Ensure the new WhileStatement struct has fields for the token, condition, and body",
+          "Ensure the condition field is an Expression",
+          "Ensure the body is a BlockStatement",
+          "Ensure the code is syntactically valid",
+          "The code has defined methods on the WhileStatment struct to make it a valid AST node",
+            ],
+            &zeta,
+            cx,
+        )
+        .await;
+
+        // Accept the completion:
+        edit(&buffer_2, &autocompleted, cx);
+
+        // parser_test.go
+        let buffer_3 = open_buffer(
+            "parser/parser_test.go",
+            include_str!("../fixtures/interpreter/parser_test_initial.go"),
+            &zeta,
+            cx,
+        );
+        let buffer_3_edit_1 = include_str!("../fixtures/interpreter/parser_test_edit1.go");
+        let cursor_start = buffer_3_edit_1
+            .find(CURSOR_MARKER)
+            .expect(&format!("{CURSOR_MARKER} not found"));
+        let buffer_3_edited_2 = buffer_3_edit_1.replace(CURSOR_MARKER, "");
+        edit(&buffer_3, &buffer_3_edited_2, cx);
+        autocomplete(&buffer_3, cursor_start, &zeta, cx).await;
+
+        let autocompleted = buffer_3.read_with(cx, |buffer, _| buffer.text());
+        assert_autocompleted(
+            autocompleted.clone(),
+            &[
+                "Ensure the TestWhileStatements function has at least one valid test case in its body",
+                "Ensure the code is syntactically valid",
+            ],
+            &zeta,
+            cx,
+        )
+        .await;
+
+        edit(&buffer_3, &autocompleted, cx);
     }
 
     async fn assert_open_edit_complete_full(
