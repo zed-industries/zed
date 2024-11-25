@@ -1547,7 +1547,7 @@ impl<G: Global> DerefMut for GlobalLease<G> {
 /// within the window or by dragging into the app from the underlying platform.
 pub struct AnyDrag {
     /// How this drag is displayed on screen
-    pub render: Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
+    pub render: Box<dyn Fn(&mut dyn Any, &mut Window, &mut AppContext) -> AnyElement>,
 
     /// The value of the dragged item, to be dropped
     pub value: Box<dyn Any>,

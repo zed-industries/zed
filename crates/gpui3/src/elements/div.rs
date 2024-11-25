@@ -473,11 +473,11 @@ impl Interactivity {
     pub fn on_drag<T, F, E>(
         &mut self,
         value: T,
-        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> F,
+        listener: impl 'static + Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> F,
     ) where
         Self: Sized,
         T: 'static,
-        F: Fn(&mut Window, &mut AppContext) -> E,
+        F: 'static + Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> E,
         E: IntoElement,
     {
         debug_assert!(
@@ -487,7 +487,10 @@ impl Interactivity {
         self.drag_listener = Some((
             Box::new(value),
             Box::new(move |value, offset, window, cx| {
-                constructor(value.downcast_ref().unwrap(), offset, window, cx)
+                let renderer = listener(value.downcast_ref().unwrap(), offset, window, cx);
+                Box::new(move |value, offset, window, cx| {
+                    renderer(value.downcast_ref().unwrap(), offset, window, cx).into_any_element()
+                })
             }),
         ));
     }
@@ -1113,8 +1116,11 @@ pub(crate) type ScrollWheelListener =
 
 pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static>;
 
+pub(crate) type DragRenderer =
+    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut AppContext) -> AnyElement>;
+
 pub(crate) type DragListener =
-    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut AppContext) -> AnyElement + 'static>;
+    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut AppContext) -> DragRenderer>;
 
 type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut AppContext) + 'static>;
 
@@ -1903,14 +1909,16 @@ impl Interactivity {
                                 if let Some((drag_value, drag_listener)) = drag_listener.take() {
                                     *clicked_state.borrow_mut() = ElementClickedState::default();
                                     let cursor_offset = event.position - hitbox.origin;
-                                    let drag = (drag_listener)(
+                                    let render_drag = (drag_listener)(
                                         drag_value.as_ref(),
                                         cursor_offset,
                                         window,
                                         cx,
                                     );
                                     cx.active_drag = Some(AnyDrag {
-                                        render: drag,
+                                        render: Box::new(|value, window, cx| {
+                                            render_drag(value, cursor_offset, window, cx)
+                                        }),
                                         value: drag_value,
                                         cursor_offset,
                                     });
