@@ -467,6 +467,7 @@ dependencies = [
  "smol",
  "theme",
  "ui",
+ "util",
  "workspace",
 ]
 
