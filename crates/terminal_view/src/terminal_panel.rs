@@ -1,19 +1,18 @@
 use std::{cmp, ops::ControlFlow, path::PathBuf, sync::Arc};
 
-use crate::{default_working_directory, TerminalView};
+use crate::{default_working_directory, persistence::SerializedTerminalPanel, TerminalView};
 use breadcrumbs::Breadcrumbs;
 use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, Entity, EventEmitter,
+    actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
     Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use project::{terminals::TerminalKind, Fs, Project, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
-use serde::{Deserialize, Serialize};
 use settings::Settings;
 use task::{RevealStrategy, Shell, SpawnInTerminal, TaskId};
 use terminal::{
@@ -209,7 +208,6 @@ impl TerminalPanel {
                     cx.notify();
                     panel.height = serialized_panel.height.map(|h| h.round());
                     panel.width = serialized_panel.width.map(|w| w.round());
-                    // TODO kb (de)serialization of the center pane
                     panel.active_pane.update(cx, |_, cx| {
                         serialized_panel
                             .items
@@ -1160,14 +1158,6 @@ impl Render for InlineAssistTabBarButton {
                 Tooltip::for_action_in("Inline Assist", &InlineAssist::default(), &focus_handle, cx)
             })
     }
-}
-
-#[derive(Serialize, Deserialize)]
-struct SerializedTerminalPanel {
-    items: Vec<u64>,
-    active_item_id: Option<u64>,
-    width: Option<Pixels>,
-    height: Option<Pixels>,
 }
 
 fn retrieve_system_shell() -> Option<String> {
