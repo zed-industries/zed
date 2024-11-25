@@ -14,16 +14,12 @@ pub mod slash_command_settings;
 mod slash_command_working_set;
 mod streaming_diff;
 mod terminal_inline_assistant;
-mod tool_working_set;
-mod tools;
 
 use crate::slash_command::project_command::ProjectSlashCommandFeatureFlag;
 pub use crate::slash_command_working_set::{SlashCommandId, SlashCommandWorkingSet};
-pub use crate::tool_working_set::{ToolId, ToolWorkingSet};
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
-use assistant_tool::ToolRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
@@ -246,7 +242,7 @@ pub fn init(
     assistant_slash_command::init(cx);
     assistant_tool::init(cx);
     assistant_panel::init(cx);
-    context_servers::init(cx);
+    context_server::init(cx);
 
     let prompt_builder = prompts::PromptBuilder::new(Some(PromptLoadingParams {
         fs: fs.clone(),
@@ -259,7 +255,6 @@ pub fn init(
     .map(Arc::new)
     .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
     register_slash_commands(Some(prompt_builder.clone()), cx);
-    register_tools(cx);
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
@@ -421,11 +416,6 @@ fn update_slash_commands_from_settings(cx: &mut AppContext) {
         slash_command_registry
             .unregister_command(cargo_workspace_command::CargoWorkspaceSlashCommand);
     }
-}
-
-fn register_tools(cx: &mut AppContext) {
-    let tool_registry = ToolRegistry::global(cx);
-    tool_registry.register_tool(tools::now_tool::NowTool);
 }
 
 pub fn humanize_token_count(count: usize) -> String {

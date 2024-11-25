@@ -383,7 +383,7 @@ dependencies = [
  "clock",
  "collections",
  "command_palette_hooks",
- "context_servers",
+ "context_server",
  "ctor",
  "db",
  "editor",
@@ -501,6 +501,20 @@ dependencies = [
  "derive_more",
  "gpui",
  "parking_lot",
+ "serde",
+ "serde_json",
+ "workspace",
+]
+
+[[package]]
+name = "assistant_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant_tool",
+ "chrono",
+ "gpui",
+ "schemars",
  "serde",
  "serde_json",
  "workspace",
@@ -2613,6 +2627,7 @@ dependencies = [
  "anthropic",
  "anyhow",
  "assistant",
+ "assistant_tool",
  "async-stripe",
  "async-trait",
  "async-tungstenite 0.28.0",
@@ -2631,7 +2646,7 @@ dependencies = [
  "clock",
  "collab_ui",
  "collections",
- "context_servers",
+ "context_server",
  "ctor",
  "dashmap 6.1.0",
  "derive_more",
@@ -2874,12 +2889,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
-name = "context_servers"
+name = "context_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_tool",
  "collections",
  "command_palette_hooks",
+ "context_server_settings",
  "extension",
  "futures 0.3.31",
  "gpui",
@@ -2887,13 +2904,27 @@ dependencies = [
  "parking_lot",
  "postage",
  "project",
- "schemars",
  "serde",
  "serde_json",
  "settings",
  "smol",
+ "ui",
  "url",
  "util",
+ "workspace",
+]
+
+[[package]]
+name = "context_server_settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "gpui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
 ]
 
 [[package]]
@@ -4209,7 +4240,7 @@ dependencies = [
  "async-trait",
  "client",
  "collections",
- "context_servers",
+ "context_server_settings",
  "ctor",
  "env_logger 0.11.5",
  "extension",
@@ -15586,6 +15617,7 @@ dependencies = [
  "assets",
  "assistant",
  "assistant2",
+ "assistant_tools",
  "async-watch",
  "audio",
  "auto_update",

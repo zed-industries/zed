@@ -79,7 +79,8 @@ uuid.workspace = true
 
 [dev-dependencies]
 assistant = { workspace = true, features = ["test-support"] }
-context_servers.workspace = true
+assistant_tool.workspace = true
+context_server.workspace = true
 async-trait.workspace = true
 audio.workspace = true
 call = { workspace = true, features = ["test-support"] }

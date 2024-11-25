@@ -407,6 +407,7 @@ fn main() {
             cx,
         );
         assistant2::init(cx);
+        assistant_tools::init(cx);
         repl::init(
             app_state.fs.clone(),
             app_state.client.telemetry().clone(),

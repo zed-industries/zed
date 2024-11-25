@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ReadGlobal, Task};
 use project::Project;
 
-use crate::manager::ServerCommand;
+use crate::ServerCommand;
 
 pub type ContextServerFactory = Arc<
     dyn Fn(Model<Project>, &AsyncAppContext) -> Task<Result<ServerCommand>> + Send + Sync + 'static,

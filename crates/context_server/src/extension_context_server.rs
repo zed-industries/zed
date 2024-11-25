@@ -3,8 +3,7 @@ use std::sync::Arc;
 use extension::{Extension, ExtensionContextServerProxy, ExtensionHostProxy, ProjectDelegate};
 use gpui::{AppContext, Model};
 
-use crate::manager::ServerCommand;
-use crate::ContextServerFactoryRegistry;
+use crate::{ContextServerFactoryRegistry, ServerCommand};
 
 struct ExtensionProject {
     worktree_ids: Vec<u64>,

@@ -8,6 +8,7 @@ members = [
     "crates/assistant2",
     "crates/assistant_slash_command",
     "crates/assistant_tool",
+    "crates/assistant_tools",
     "crates/audio",
     "crates/auto_update",
     "crates/auto_update_ui",
@@ -22,7 +23,8 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
-    "crates/context_servers",
+    "crates/context_server",
+    "crates/context_server_settings",
     "crates/copilot",
     "crates/db",
     "crates/diagnostics",
@@ -191,6 +193,7 @@ assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tool = { path = "crates/assistant_tool" }
+assistant_tools = { path = "crates/assistant_tools" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 auto_update_ui = { path = "crates/auto_update_ui" }
@@ -205,7 +208,8 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
-context_servers = { path = "crates/context_servers" }
+context_server = { path = "crates/context_server" }
+context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
