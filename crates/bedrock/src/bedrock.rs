@@ -2,14 +2,17 @@ mod models;
 
 use std::{str::FromStr};
 use std::any::Any;
-use anyhow::{Context, Result};
-use aws_sdk_bedrockruntime::types::{ContentBlockDeltaEvent, ContentBlockStartEvent, ConverseStreamMetadataEvent, ConverseStreamOutput, Message, MessageStartEvent, MessageStopEvent};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt, Stream, StreamExt};
+use std::io::BufReader;
+use anyhow::{anyhow, Context, Result};
+use aws_sdk_bedrockruntime::types::{ContentBlockDeltaEvent, ContentBlockStart, ContentBlockStartEvent, ConverseStreamMetadataEvent, ConverseStreamOutput, Message, MessageStartEvent, MessageStopEvent};
+use futures::{stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
+use aws_sdk_bedrockruntime::types::error::ConverseStreamOutputError;
+pub use bedrock::types::ConverseStreamOutput as BedrockStreamingResponse;
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 pub use bedrock::types::ContentBlock as BedrockRequestContent;
 use bedrock::types::ConverseOutput as Response;
@@ -44,7 +47,7 @@ pub async fn complete(
 pub async fn stream_completion(
     client: &bedrock::Client,
     request: Request,
-) -> Result<BoxStream<'static, Result<BedrockEvent, BedrockError>>, BedrockError> { // There is no generic Bedrock event Type?
+) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>, BedrockError> { // There is no generic Bedrock event Type?
 
     let response = bedrock::Client::converse_stream(client)
         .model_id(request.model)
@@ -52,29 +55,15 @@ pub async fn stream_completion(
 
 
     let mut stream = match response {
-        Ok(output) => Ok(output.stream),
+        Ok(output) => Ok(output.stream()),
         Err(e) => Err(
-            BedrockError::SdkError(e.as_service_error().unwrap())
+            BedrockError::ClientError(anyhow!(e))
         ),
     }?;
 
-    loop {
-        let token = stream.recv().await;
-        match token {
-            Ok(Some(text)) => {
-                let next = get_converse_output_text(text)?;
-                print!("{}", next);
-                Ok(())
-            }
-            Ok(None) => break,
-            Err(e) => Err(e
-                .as_service_error()
-                .map(BedrockConverseStreamError::from)
-                .unwrap_or(BedrockConverseStreamError(
-                    "Unknown error receiving stream".into(),
-                ))),
-        }?
-    }
+
+
+    Ok()
 }
 
 fn get_converse_output_text(
@@ -120,14 +109,7 @@ pub struct Metadata {
 
 #[derive(Error, Debug)]
 pub enum BedrockError {
-    SdkError(bedrock::Error),
+    ClientError(anyhow::Error),
+    ExtensionError(anyhow::Error),
     Other(anyhow::Error)
-}
-
-pub enum BedrockEvent {
-    ContentBlockDelta(ContentBlockDeltaEvent),
-    ContentBlockStart(ContentBlockStartEvent),
-    MessageStart(MessageStartEvent),
-    MessageStop(MessageStopEvent),
-    Metadata(ConverseStreamMetadataEvent),
 }

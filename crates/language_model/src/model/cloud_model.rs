@@ -12,7 +12,6 @@ pub enum CloudModel {
     Anthropic(anthropic::Model),
     OpenAi(open_ai::Model),
     Google(google_ai::Model),
-    Bedrock(bedrock::Model)
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, EnumIter)]
@@ -33,7 +32,6 @@ impl CloudModel {
             Self::Anthropic(model) => model.id(),
             Self::OpenAi(model) => model.id(),
             Self::Google(model) => model.id(),
-            Self::Bedrock(model) => model.id(),
         }
     }
 
@@ -42,7 +40,6 @@ impl CloudModel {
             Self::Anthropic(model) => model.display_name(),
             Self::OpenAi(model) => model.display_name(),
             Self::Google(model) => model.display_name(),
-            Self::Bedrock(model) => model.display_name(),
         }
     }
 
@@ -58,7 +55,6 @@ impl CloudModel {
             Self::Anthropic(model) => model.max_token_count(),
             Self::OpenAi(model) => model.max_token_count(),
             Self::Google(model) => model.max_token_count(),
-            Self::Bedrock(model) => model.max_token_count(),
         }
     }
 
@@ -96,14 +92,7 @@ impl CloudModel {
                 | google_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
-            },
-            Self::Bedrock(model) => match model {
-                /*
-                  TODO: Get guidance from the Zed team on what Pro means, since they're technically
-                    all pay per use
-                 */
-                _ => LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
-            },
+            }
         }
     }
 }
