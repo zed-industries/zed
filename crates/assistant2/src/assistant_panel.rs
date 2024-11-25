@@ -52,6 +52,17 @@ impl AssistantPanel {
             _subscriptions: subscriptions,
         }
     }
+
+    fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
+        let thread = cx.new_model(Thread::new);
+        let subscriptions = vec![cx.observe(&thread, |_, _, cx| cx.notify())];
+
+        self.message_editor = cx.new_view(|cx| MessageEditor::new(thread.clone(), cx));
+        self.thread = thread;
+        self._subscriptions = subscriptions;
+
+        self.message_editor.focus_handle(cx).focus(cx);
+    }
 }
 
 impl FocusableView for AssistantPanel {
@@ -222,8 +233,8 @@ impl Render for AssistantPanel {
             .key_context("AssistantPanel2")
             .justify_between()
             .size_full()
-            .on_action(cx.listener(|_this, _: &NewThread, _cx| {
-                println!("Action: New Thread");
+            .on_action(cx.listener(|this, _: &NewThread, cx| {
+                this.new_thread(cx);
             }))
             .child(self.render_toolbar(cx))
             .child(
