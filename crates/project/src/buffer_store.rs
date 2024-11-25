@@ -8,7 +8,9 @@ use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
-use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt};
+use futures::{
+    channel::oneshot, future::Shared, stream::FuturesUnordered, Future, FutureExt as _, StreamExt,
+};
 use git::blame::Blame;
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Subscription,
@@ -33,10 +35,7 @@ use worktree::{File, PathChange, ProjectEntryId, UpdatedGitRepositoriesSet, Work
 pub struct BufferStore {
     state: BufferStoreState,
     #[allow(clippy::type_complexity)]
-    loading_buffers_by_path: HashMap<
-        ProjectPath,
-        postage::watch::Receiver<Option<Result<Model<Buffer>, Arc<anyhow::Error>>>>,
-    >,
+    loading_buffers: HashMap<ProjectPath, Shared<Task<Result<Model<Buffer>, Arc<anyhow::Error>>>>>,
     worktree_store: Model<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
     downstream_client: Option<(AnyProtoClient, u64)>,
@@ -466,7 +465,7 @@ impl LocalBufferStore {
         // Identify the loading buffers whose containing repository that has changed.
         let future_buffers = this
             .loading_buffers()
-            .filter_map(|(project_path, receiver)| {
+            .filter_map(|(project_path, future)| {
                 if project_path.worktree_id != worktree_handle.read(cx).id() {
                     return None;
                 }
@@ -475,12 +474,7 @@ impl LocalBufferStore {
                     .iter()
                     .find(|(work_dir, _)| path.starts_with(work_dir))?;
                 let path = path.clone();
-                Some(async move {
-                    BufferStore::wait_for_loading_buffer(receiver)
-                        .await
-                        .ok()
-                        .map(|buffer| (buffer, path))
-                })
+                Some(async move { future.await.ok().map(|buffer| (buffer, path)) })
             })
             .collect::<FuturesUnordered<_>>();
 
@@ -885,7 +879,7 @@ impl BufferStore {
             downstream_client: None,
             opened_buffers: Default::default(),
             shared_buffers: Default::default(),
-            loading_buffers_by_path: Default::default(),
+            loading_buffers: Default::default(),
             worktree_store,
         }
     }
@@ -907,7 +901,7 @@ impl BufferStore {
             }),
             downstream_client: None,
             opened_buffers: Default::default(),
-            loading_buffers_by_path: Default::default(),
+            loading_buffers: Default::default(),
             shared_buffers: Default::default(),
             worktree_store,
         }
@@ -944,50 +938,45 @@ impl BufferStore {
             return Task::ready(Ok(existing_buffer));
         }
 
-        let Some(worktree) = self
-            .worktree_store
-            .read(cx)
-            .worktree_for_id(project_path.worktree_id, cx)
-        else {
-            return Task::ready(Err(anyhow!("no such worktree")));
-        };
-
-        let loading_watch = match self.loading_buffers_by_path.entry(project_path.clone()) {
+        let task = match self.loading_buffers.entry(project_path.clone()) {
             // If the given path is already being loaded, then wait for that existing
             // task to complete and return the same buffer.
             hash_map::Entry::Occupied(e) => e.get().clone(),
 
             // Otherwise, record the fact that this path is now being loaded.
             hash_map::Entry::Vacant(entry) => {
-                let (mut tx, rx) = postage::watch::channel();
-                entry.insert(rx.clone());
-
                 let path = project_path.path.clone();
+                let Some(worktree) = self
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(project_path.worktree_id, cx)
+                else {
+                    return Task::ready(Err(anyhow!("no such worktree")));
+                };
                 let load_buffer = match &self.state {
                     BufferStoreState::Local(this) => this.open_buffer(path, worktree, cx),
                     BufferStoreState::Remote(this) => this.open_buffer(path, worktree, cx),
                 };
 
-                cx.spawn(move |this, mut cx| async move {
-                    let load_result = load_buffer.await;
-                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _cx| {
-                        // Record the fact that the buffer is no longer loading.
-                        this.loading_buffers_by_path.remove(&project_path);
-                        let buffer = load_result.map_err(Arc::new)?;
-                        Ok(buffer)
-                    })?);
-                    anyhow::Ok(())
-                })
-                .detach();
-                rx
+                entry
+                    .insert(
+                        cx.spawn(move |this, mut cx| async move {
+                            let load_result = load_buffer.await;
+                            this.update(&mut cx, |this, _cx| {
+                                // Record the fact that the buffer is no longer loading.
+                                this.loading_buffers.remove(&project_path);
+                            })
+                            .ok();
+                            load_result.map_err(Arc::new)
+                        })
+                        .shared(),
+                    )
+                    .clone()
             }
         };
 
-        cx.background_executor().spawn(async move {
-            Self::wait_for_loading_buffer(loading_watch)
-                .await
-                .map_err(|e| e.cloned())
-        })
+        cx.background_executor()
+            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
     pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Model<Buffer>>> {
@@ -1212,15 +1201,11 @@ impl BufferStore {
 
     pub fn loading_buffers(
         &self,
-    ) -> impl Iterator<
-        Item = (
-            &ProjectPath,
-            postage::watch::Receiver<Option<Result<Model<Buffer>, Arc<anyhow::Error>>>>,
-        ),
-    > {
-        self.loading_buffers_by_path
-            .iter()
-            .map(|(path, rx)| (path, rx.clone()))
+    ) -> impl Iterator<Item = (&ProjectPath, impl Future<Output = Result<Model<Buffer>>>)> {
+        self.loading_buffers.iter().map(|(path, task)| {
+            let task = task.clone();
+            (path, async move { task.await.map_err(|e| anyhow!("{e}")) })
+        })
     }
 
     pub fn get_by_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Model<Buffer>> {
@@ -1777,20 +1762,6 @@ impl BufferStore {
         Ok(proto::GetPermalinkToLineResponse {
             permalink: permalink.to_string(),
         })
-    }
-
-    pub async fn wait_for_loading_buffer(
-        mut receiver: postage::watch::Receiver<Option<Result<Model<Buffer>, Arc<anyhow::Error>>>>,
-    ) -> Result<Model<Buffer>, Arc<anyhow::Error>> {
-        loop {
-            if let Some(result) = receiver.borrow().as_ref() {
-                match result {
-                    Ok(buffer) => return Ok(buffer.to_owned()),
-                    Err(e) => return Err(e.to_owned()),
-                }
-            }
-            receiver.next().await;
-        }
     }
 
     pub fn reload_buffers(
