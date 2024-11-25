@@ -1197,6 +1197,7 @@ impl Element for Div {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut child_layout_ids = SmallVec::new();
@@ -1207,7 +1208,7 @@ impl Element for Div {
                     child_layout_ids = self
                         .children
                         .iter_mut()
-                        .map(|child| child.request_layout(cx))
+                        .map(|child| child.request_layout(window, cx))
                         .collect::<SmallVec<_>>();
                     window.request_layout(style, child_layout_ids.iter().copied(), cx)
                 })
@@ -1220,12 +1221,13 @@ impl Element for Div {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Hitbox> {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
         if let Some(handle) = self.interactivity.scroll_anchor.as_ref() {
-            *handle.last_origin.borrow_mut() = bounds.origin - cx.element_offset();
+            *handle.last_origin.borrow_mut() = bounds.origin - window.element_offset();
         }
         let content_size = if request_layout.child_layout_ids.is_empty() {
             bounds.size
@@ -1236,7 +1238,7 @@ impl Element for Div {
             let requested = state.requested_scroll_top.take();
 
             for (ix, child_layout_id) in request_layout.child_layout_ids.iter().enumerate() {
-                let child_bounds = cx.layout_bounds(*child_layout_id);
+                let child_bounds = window.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.lower_right());
                 state.child_bounds.push(child_bounds);
@@ -1251,7 +1253,7 @@ impl Element for Div {
             (child_max - child_min).into()
         } else {
             for child_layout_id in &request_layout.child_layout_ids {
-                let child_bounds = cx.layout_bounds(*child_layout_id);
+                let child_bounds = window.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.lower_right());
             }
@@ -1262,11 +1264,12 @@ impl Element for Div {
             global_id,
             bounds,
             content_size,
+            window,
             cx,
-            |_style, scroll_offset, hitbox, cx| {
-                cx.with_element_offset(scroll_offset, |cx| {
+            |_style, scroll_offset, hitbox, window, cx| {
+                window.with_element_offset(scroll_offset, |window, cx| {
                     for child in &mut self.children {
-                        child.prepaint(cx);
+                        child.prepaint(window, cx);
                     }
                 });
                 hitbox
@@ -1280,14 +1283,21 @@ impl Element for Div {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
-        self.interactivity
-            .paint(global_id, bounds, hitbox.as_ref(), cx, |_style, cx| {
+        self.interactivity.paint(
+            global_id,
+            bounds,
+            hitbox.as_ref(),
+            window,
+            cx,
+            |_style, window, cx| {
                 for child in &mut self.children {
-                    child.paint(cx);
+                    child.paint(window, cx);
                 }
-            });
+            },
+        );
     }
 }
 
@@ -1361,12 +1371,13 @@ impl Interactivity {
     pub fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        window: &mut Window,
         cx: &mut AppContext,
         f: impl FnOnce(Style, &mut Window, &mut AppContext) -> LayoutId,
     ) -> LayoutId {
-        cx.with_optional_element_state::<InteractiveElementState, _>(
+        window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
-            |element_state, cx| {
+            |element_state, window| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
@@ -1391,7 +1402,7 @@ impl Interactivity {
                         self.tracked_focus_handle = Some(
                             element_state
                                 .focus_handle
-                                .get_or_insert_with(|| cx.focus_handle())
+                                .get_or_insert_with(|| window.focus_handle())
                                 .clone(),
                         );
                     }
@@ -1412,8 +1423,8 @@ impl Interactivity {
                     }
                 }
 
-                let style = self.compute_style_internal(None, element_state.as_mut(), cx);
-                let layout_id = f(style, cx);
+                let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
+                let layout_id = f(style, window, cx);
                 (layout_id, element_state)
             },
         )
@@ -1425,19 +1436,20 @@ impl Interactivity {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
+        window: &mut Window,
         cx: &mut AppContext,
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut Window, &mut AppContext) -> R,
     ) -> R {
         self.content_size = content_size;
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            cx.set_focus_handle(focus_handle);
+            window.set_focus_handle(focus_handle);
         }
-        cx.with_optional_element_state::<InteractiveElementState, _>(
+        window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
-            |element_state, cx| {
+            |element_state, window| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
-                let style = self.compute_style_internal(None, element_state.as_mut(), cx);
+                let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
 
                 if let Some(element_state) = element_state.as_ref() {
                     if let Some(clicked_state) = element_state.clicked_state.as_ref() {
@@ -1448,24 +1460,27 @@ impl Interactivity {
                     if let Some(active_tooltip) = element_state.active_tooltip.as_ref() {
                         if let Some(active_tooltip) = active_tooltip.borrow().as_ref() {
                             if let Some(tooltip) = active_tooltip.tooltip.clone() {
-                                self.tooltip_id = Some(cx.set_tooltip(tooltip));
+                                self.tooltip_id = Some(window.set_tooltip(tooltip));
                             }
                         }
                     }
                 }
 
-                cx.with_text_style(style.text_style().cloned(), |cx| {
-                    cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
-                        let hitbox = if self.should_insert_hitbox(&style) {
-                            Some(cx.insert_hitbox(bounds, self.occlude_mouse))
-                        } else {
-                            None
-                        };
+                window.with_text_style(style.text_style().cloned(), |window| {
+                    window.with_content_mask(
+                        style.overflow_mask(bounds, window.rem_size()),
+                        |window| {
+                            let hitbox = if self.should_insert_hitbox(&style) {
+                                Some(window.insert_hitbox(bounds, self.occlude_mouse))
+                            } else {
+                                None
+                            };
 
-                        let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
-                        let result = f(&style, scroll_offset, hitbox, cx);
-                        (result, element_state)
-                    })
+                            let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
+                            let result = f(&style, scroll_offset, hitbox, window, cx);
+                            (result, element_state)
+                        },
+                    )
                 })
             },
         )
@@ -1493,14 +1508,14 @@ impl Interactivity {
         &self,
         bounds: Bounds<Pixels>,
         style: &Style,
-        cx: &mut AppContext,
+        window: &mut Window,
     ) -> Point<Pixels> {
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             if let Some(scroll_handle) = &self.tracked_scroll_handle {
                 scroll_handle.0.borrow_mut().overflow = style.overflow;
             }
 
-            let rem_size = cx.rem_size();
+            let rem_size = window.rem_size();
             let padding_size = size(
                 style
                     .padding
@@ -1544,6 +1559,7 @@ impl Interactivity {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         hitbox: Option<&Hitbox>,
+        window: &mut Window,
         cx: &mut AppContext,
         f: impl FnOnce(&Style, &mut Window, &mut AppContext),
     ) {
@@ -1554,63 +1570,68 @@ impl Interactivity {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
-                let style = self.compute_style_internal(hitbox, element_state.as_mut(), cx);
+                let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
 
                 #[cfg(any(feature = "test-support", test))]
                 if let Some(debug_selector) = &self.debug_selector {
-                    cx.window
+                    window
                         .next_frame
                         .debug_bounds
                         .insert(debug_selector.clone(), bounds);
                 }
 
-                self.paint_hover_group_handler(cx);
+                self.paint_hover_group_handler(window, cx);
 
                 if style.visibility == Visibility::Hidden {
                     return ((), element_state);
                 }
 
-                cx.with_element_opacity(style.opacity, |cx| {
-                    style.paint(bounds, cx, |window: &mut Window, cx: &mut AppContext| {
-                        cx.with_text_style(style.text_style().cloned(), |cx| {
-                            cx.with_content_mask(
-                                style.overflow_mask(bounds, cx.rem_size()),
-                                |cx| {
-                                    if let Some(hitbox) = hitbox {
-                                        #[cfg(debug_assertions)]
-                                        self.paint_debug_info(global_id, hitbox, &style, cx);
+                window.with_element_opacity(style.opacity, |window| {
+                    style.paint(
+                        bounds,
+                        window,
+                        cx,
+                        |window: &mut Window, cx: &mut AppContext| {
+                            cx.with_text_style(style.text_style().cloned(), |cx| {
+                                cx.with_content_mask(
+                                    style.overflow_mask(bounds, cx.rem_size()),
+                                    |cx| {
+                                        if let Some(hitbox) = hitbox {
+                                            #[cfg(debug_assertions)]
+                                            self.paint_debug_info(global_id, hitbox, &style, cx);
 
-                                        if !cx.has_active_drag() {
-                                            if let Some(mouse_cursor) = style.mouse_cursor {
-                                                cx.set_cursor_style(mouse_cursor, hitbox);
+                                            if !cx.has_active_drag() {
+                                                if let Some(mouse_cursor) = style.mouse_cursor {
+                                                    cx.set_cursor_style(mouse_cursor, hitbox);
+                                                }
+                                            }
+
+                                            if let Some(group) = self.group.clone() {
+                                                GroupHitboxes::push(group, hitbox.id, cx);
+                                            }
+
+                                            self.paint_mouse_listeners(
+                                                hitbox,
+                                                element_state.as_mut(),
+                                                window,
+                                                cx,
+                                            );
+                                            self.paint_scroll_listener(hitbox, &style, cx);
+                                        }
+
+                                        self.paint_keyboard_listeners(window, cx);
+                                        f(&style, cx);
+
+                                        if hitbox.is_some() {
+                                            if let Some(group) = self.group.as_ref() {
+                                                GroupHitboxes::pop(group, cx);
                                             }
                                         }
-
-                                        if let Some(group) = self.group.clone() {
-                                            GroupHitboxes::push(group, hitbox.id, cx);
-                                        }
-
-                                        self.paint_mouse_listeners(
-                                            hitbox,
-                                            element_state.as_mut(),
-                                            window,
-                                            cx,
-                                        );
-                                        self.paint_scroll_listener(hitbox, &style, cx);
-                                    }
-
-                                    self.paint_keyboard_listeners(window, cx);
-                                    f(&style, cx);
-
-                                    if hitbox.is_some() {
-                                        if let Some(group) = self.group.as_ref() {
-                                            GroupHitboxes::pop(group, cx);
-                                        }
-                                    }
-                                },
-                            );
-                        });
-                    });
+                                    },
+                                );
+                            });
+                        },
+                    );
                 });
 
                 ((), element_state)

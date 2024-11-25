@@ -1501,14 +1501,9 @@ impl Window {
     /// Push a text style onto the stack, and call a function with that style active.
     /// Use [`AppContext::text_style`] to get the current, combined text style. This method
     /// should only be called as part of element drawing.
-    pub fn with_text_style<F, R>(
-        &mut self,
-        style: Option<TextStyleRefinement>,
-        cx: &mut AppContext,
-        f: F,
-    ) -> R
+    pub fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
     where
-        F: FnOnce(&mut Self, &mut AppContext) -> R,
+        F: FnOnce(&mut Self) -> R,
     {
         debug_assert!(
             matches!(self.draw_phase, DrawPhase::Prepaint | DrawPhase::Paint),

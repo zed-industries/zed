@@ -10,7 +10,7 @@
 use crate::{
     point, px, size, AnyElement, AppContext, AvailableSpace, Bounds, ContentMask, DispatchPhase,
     Edges, Element, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point,
-    ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
+    ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -146,12 +146,12 @@ impl ListItem {
         }
     }
 
-    fn contains_focused(&self, cx: &AppContext) -> bool {
+    fn contains_focused(&self, window: &Window) -> bool {
         match self {
             ListItem::Unmeasured { focus_handle } | ListItem::Measured { focus_handle, .. } => {
                 focus_handle
                     .as_ref()
-                    .is_some_and(|handle| handle.contains_focused(cx))
+                    .is_some_and(|handle| handle.contains_focused(window))
             }
         }
     }
@@ -439,6 +439,7 @@ impl StateInner {
         available_width: Option<Pixels>,
         available_height: Pixels,
         padding: &Edges<Pixels>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> LayoutItemsResponse {
         let old_items = self.items.clone();
@@ -473,7 +474,7 @@ impl StateInner {
             if visible_height < available_height || size.is_none() {
                 let item_index = scroll_top.item_ix + ix;
                 let mut element = (self.render_item)(item_index, cx);
-                let element_size = element.layout_as_root(available_item_space, cx);
+                let element_size = element.layout_as_root(available_item_space, window, cx);
                 size = Some(element_size);
                 if visible_height < available_height {
                     item_layouts.push_back(ItemLayout {
@@ -481,7 +482,7 @@ impl StateInner {
                         element,
                         size: element_size,
                     });
-                    if item.contains_focused(cx) {
+                    if item.contains_focused(window) {
                         rendered_focused_item = true;
                     }
                 }
@@ -508,7 +509,7 @@ impl StateInner {
                 if let Some(item) = cursor.item() {
                     let item_index = cursor.start().0;
                     let mut element = (self.render_item)(item_index, cx);
-                    let element_size = element.layout_as_root(available_item_space, cx);
+                    let element_size = element.layout_as_root(available_item_space, window, cx);
                     let focus_handle = item.focus_handle();
                     rendered_height += element_size.height;
                     measured_items.push_front(ListItem::Measured {
@@ -520,7 +521,7 @@ impl StateInner {
                         element,
                         size: element_size,
                     });
-                    if item.contains_focused(cx) {
+                    if item.contains_focused(window) {
                         rendered_focused_item = true;
                     }
                 } else {
@@ -557,7 +558,7 @@ impl StateInner {
                     *size
                 } else {
                     let mut element = (self.render_item)(cursor.start().0, cx);
-                    element.layout_as_root(available_item_space, cx)
+                    element.layout_as_root(available_item_space, window, cx)
                 };
 
                 leading_overdraw += size.height;
@@ -587,10 +588,10 @@ impl StateInner {
                 .filter::<_, Count>(&(), |summary| summary.has_focus_handles);
             cursor.next(&());
             while let Some(item) = cursor.item() {
-                if item.contains_focused(cx) {
+                if item.contains_focused(window) {
                     let item_index = cursor.start().0;
                     let mut element = (self.render_item)(cursor.start().0, cx);
-                    let size = element.layout_as_root(available_item_space, cx);
+                    let size = element.layout_as_root(available_item_space, window, cx);
                     item_layouts.push_back(ItemLayout {
                         index: item_index,
                         element,
@@ -614,25 +615,31 @@ impl StateInner {
         bounds: Bounds<Pixels>,
         padding: Edges<Pixels>,
         autoscroll: bool,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Result<LayoutItemsResponse, ListOffset> {
-        cx.transact(|cx| {
-            let mut layout_response =
-                self.layout_items(Some(bounds.size.width), bounds.size.height, &padding, cx);
+        window.transact(|window| {
+            let mut layout_response = self.layout_items(
+                Some(bounds.size.width),
+                bounds.size.height,
+                &padding,
+                window,
+                cx,
+            );
 
             // Avoid honoring autoscroll requests from elements other than our children.
-            cx.take_autoscroll();
+            window.take_autoscroll();
 
             // Only paint the visible items, if there is actually any space for them (taking padding into account)
             if bounds.size.height > padding.top + padding.bottom {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
                 for item in &mut layout_response.item_layouts {
-                    cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                        item.element.prepaint_at(item_origin, cx);
+                    window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                        item.element.prepaint_at(item_origin, window, cx);
                     });
 
-                    if let Some(autoscroll_bounds) = cx.take_autoscroll() {
+                    if let Some(autoscroll_bounds) = window.take_autoscroll() {
                         if autoscroll {
                             if autoscroll_bounds.top() < bounds.top() {
                                 return Err(ListOffset {
@@ -658,7 +665,7 @@ impl StateInner {
                                             bounds.size.width.into(),
                                             AvailableSpace::MinContent,
                                         );
-                                        item.layout_as_root(item_available_size, cx)
+                                        item.layout_as_root(item_available_size, window, cx)
                                     });
                                     height -= size.height;
                                 }
@@ -716,6 +723,7 @@ impl Element for List {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
+        window: &mut Window,
         cx: &mut crate::AppContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let layout_id = match self.sizing_behavior {
@@ -723,7 +731,7 @@ impl Element for List {
                 let mut style = Style::default();
                 style.overflow.y = Overflow::Scroll;
                 style.refine(&self.style);
-                cx.with_text_style(style.text_style().cloned(), |cx| {
+                window.with_text_style(style.text_style().cloned(), |window| {
                     let state = &mut *self.state.0.borrow_mut();
 
                     let available_height = if let Some(last_bounds) = state.last_layout_bounds {
@@ -735,18 +743,19 @@ impl Element for List {
                     };
                     let padding = style.padding.to_pixels(
                         state.last_layout_bounds.unwrap_or_default().size.into(),
-                        cx.rem_size(),
+                        window.rem_size(),
                     );
 
-                    let layout_response = state.layout_items(None, available_height, &padding, cx);
+                    let layout_response =
+                        state.layout_items(None, available_height, &padding, window, cx);
                     let max_element_width = layout_response.max_item_width;
 
                     let summary = state.items.summary();
                     let total_height = summary.height;
 
-                    cx.request_measured_layout(
+                    window.request_measured_layout(
                         style,
-                        move |known_dimensions, available_space, _cx| {
+                        move |known_dimensions, available_space, _window, _cx| {
                             let width =
                                 known_dimensions
                                     .width
@@ -770,8 +779,8 @@ impl Element for List {
             ListSizingBehavior::Auto => {
                 let mut style = Style::default();
                 style.refine(&self.style);
-                cx.with_text_style(style.text_style().cloned(), |cx| {
-                    cx.request_layout(style, None)
+                window.with_text_style(style.text_style().cloned(), |window| {
+                    window.request_layout(style, None, cx)
                 })
             }
         };
@@ -783,6 +792,7 @@ impl Element for List {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> ListPrepaintState {
         let state = &mut *self.state.0.borrow_mut();
@@ -791,7 +801,7 @@ impl Element for List {
         let mut style = Style::default();
         style.refine(&self.style);
 
-        let hitbox = cx.insert_hitbox(bounds, false);
+        let hitbox = window.insert_hitbox(bounds, false);
 
         // If the width of the list has changed, invalidate all cached item heights
         if state.last_layout_bounds.map_or(true, |last_bounds| {
@@ -807,12 +817,16 @@ impl Element for List {
             state.items = new_items;
         }
 
-        let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
-        let layout = match state.prepaint_items(bounds, padding, true, cx) {
+        let padding = style
+            .padding
+            .to_pixels(bounds.size.into(), window.rem_size());
+        let layout = match state.prepaint_items(bounds, padding, true, window, cx) {
             Ok(layout) => layout,
             Err(autoscroll_request) => {
                 state.logical_scroll_top = Some(autoscroll_request);
-                state.prepaint_items(bounds, padding, false, cx).unwrap()
+                state
+                    .prepaint_items(bounds, padding, false, window, cx)
+                    .unwrap()
             }
         };
 
@@ -827,11 +841,12 @@ impl Element for List {
         bounds: Bounds<crate::Pixels>,
         _: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
         cx: &mut crate::AppContext,
     ) {
-        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for item in &mut prepaint.layout.item_layouts {
-                item.element.paint(cx);
+                item.element.paint(window, cx);
             }
         });
 
@@ -839,13 +854,13 @@ impl Element for List {
         let height = bounds.size.height;
         let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
-        cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
-            if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(cx) {
+        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(window) {
                 list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,
                     event.delta.pixel_delta(px(20.)),
-                    todo!(),
+                    cx,
                 )
             }
         });
@@ -963,7 +978,7 @@ mod test {
         });
 
         // Paint
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_| {
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, _| {
             list(state.clone()).w_full().h_full()
         });
 

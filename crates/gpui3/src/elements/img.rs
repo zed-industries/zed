@@ -2,7 +2,7 @@ use crate::{
     px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, AppContext, Asset, AssetLogger, Bounds,
     DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
+    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window,
 };
 use anyhow::{anyhow, Result};
 
@@ -246,6 +246,7 @@ impl Element for Img {
 
     fn request_layout(
         &mut self,
+        window: &mut Window,
         global_id: Option<&GlobalElementId>,
         cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -254,7 +255,7 @@ impl Element for Img {
             replacement: None,
         };
 
-        cx.with_optional_element_state(global_id, |state, cx| {
+        window.with_optional_element_state(global_id, |state, cx| {
             let mut state = state.map(|state| {
                 state.unwrap_or(ImgState {
                     frame_index: 0,
@@ -265,104 +266,107 @@ impl Element for Img {
 
             let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
 
-            let layout_id = self
-                .interactivity
-                .request_layout(global_id, cx, |mut style, cx| {
-                    let mut replacement_id = None;
+            let layout_id =
+                self.interactivity
+                    .request_layout(global_id, window, cx, |mut style, cx| {
+                        let mut replacement_id = None;
 
-                    match self.source.use_data(cx) {
-                        Some(Ok(data)) => {
-                            if let Some(state) = &mut state {
-                                let frame_count = data.frame_count();
-                                if frame_count > 1 {
-                                    let current_time = Instant::now();
-                                    if let Some(last_frame_time) = state.last_frame_time {
-                                        let elapsed = current_time - last_frame_time;
-                                        let frame_duration =
-                                            Duration::from(data.delay(state.frame_index));
+                        match self.source.use_data(cx) {
+                            Some(Ok(data)) => {
+                                if let Some(state) = &mut state {
+                                    let frame_count = data.frame_count();
+                                    if frame_count > 1 {
+                                        let current_time = Instant::now();
+                                        if let Some(last_frame_time) = state.last_frame_time {
+                                            let elapsed = current_time - last_frame_time;
+                                            let frame_duration =
+                                                Duration::from(data.delay(state.frame_index));
 
-                                        if elapsed >= frame_duration {
-                                            state.frame_index =
-                                                (state.frame_index + 1) % frame_count;
-                                            state.last_frame_time =
-                                                Some(current_time - (elapsed - frame_duration));
+                                            if elapsed >= frame_duration {
+                                                state.frame_index =
+                                                    (state.frame_index + 1) % frame_count;
+                                                state.last_frame_time =
+                                                    Some(current_time - (elapsed - frame_duration));
+                                            }
+                                        } else {
+                                            state.last_frame_time = Some(current_time);
+                                        }
+                                    }
+                                    state.started_loading = None;
+                                }
+
+                                let image_size = data.size(frame_index);
+
+                                if let Length::Auto = style.size.width {
+                                    style.size.width = match style.size.height {
+                                        Length::Definite(DefiniteLength::Absolute(
+                                            AbsoluteLength::Pixels(height),
+                                        )) => Length::Definite(
+                                            px(image_size.width.0 as f32 * height.0
+                                                / image_size.height.0 as f32)
+                                            .into(),
+                                        ),
+                                        _ => Length::Definite(px(image_size.width.0 as f32).into()),
+                                    };
+                                }
+
+                                if let Length::Auto = style.size.height {
+                                    style.size.height = match style.size.width {
+                                        Length::Definite(DefiniteLength::Absolute(
+                                            AbsoluteLength::Pixels(width),
+                                        )) => Length::Definite(
+                                            px(image_size.height.0 as f32 * width.0
+                                                / image_size.width.0 as f32)
+                                            .into(),
+                                        ),
+                                        _ => {
+                                            Length::Definite(px(image_size.height.0 as f32).into())
+                                        }
+                                    };
+                                }
+
+                                if global_id.is_some() && data.frame_count() > 1 {
+                                    cx.request_animation_frame();
+                                }
+                            }
+                            Some(_err) => {
+                                if let Some(fallback) = self.style.fallback.as_ref() {
+                                    let mut element = fallback();
+                                    replacement_id = Some(element.request_layout(window, cx));
+                                    layout_state.replacement = Some(element);
+                                }
+                                if let Some(state) = &mut state {
+                                    state.started_loading = None;
+                                }
+                            }
+                            None => {
+                                if let Some(state) = &mut state {
+                                    if let Some((started_loading, _)) = state.started_loading {
+                                        if started_loading.elapsed() > LOADING_DELAY {
+                                            if let Some(loading) = self.style.loading.as_ref() {
+                                                let mut element = loading();
+                                                replacement_id =
+                                                    Some(element.request_layout(window, cx));
+                                                layout_state.replacement = Some(element);
+                                            }
                                         }
                                     } else {
-                                        state.last_frame_time = Some(current_time);
+                                        let parent_view_id = cx.parent_view_id();
+                                        let task = cx.spawn(|mut cx| async move {
+                                            cx.background_executor().timer(LOADING_DELAY).await;
+                                            cx.update(|cx| {
+                                                cx.notify(parent_view_id);
+                                            })
+                                            .ok();
+                                        });
+                                        state.started_loading = Some((Instant::now(), task));
                                     }
                                 }
-                                state.started_loading = None;
-                            }
-
-                            let image_size = data.size(frame_index);
-
-                            if let Length::Auto = style.size.width {
-                                style.size.width = match style.size.height {
-                                    Length::Definite(DefiniteLength::Absolute(
-                                        AbsoluteLength::Pixels(height),
-                                    )) => Length::Definite(
-                                        px(image_size.width.0 as f32 * height.0
-                                            / image_size.height.0 as f32)
-                                        .into(),
-                                    ),
-                                    _ => Length::Definite(px(image_size.width.0 as f32).into()),
-                                };
-                            }
-
-                            if let Length::Auto = style.size.height {
-                                style.size.height = match style.size.width {
-                                    Length::Definite(DefiniteLength::Absolute(
-                                        AbsoluteLength::Pixels(width),
-                                    )) => Length::Definite(
-                                        px(image_size.height.0 as f32 * width.0
-                                            / image_size.width.0 as f32)
-                                        .into(),
-                                    ),
-                                    _ => Length::Definite(px(image_size.height.0 as f32).into()),
-                                };
-                            }
-
-                            if global_id.is_some() && data.frame_count() > 1 {
-                                cx.request_animation_frame();
                             }
                         }
-                        Some(_err) => {
-                            if let Some(fallback) = self.style.fallback.as_ref() {
-                                let mut element = fallback();
-                                replacement_id = Some(element.request_layout(cx));
-                                layout_state.replacement = Some(element);
-                            }
-                            if let Some(state) = &mut state {
-                                state.started_loading = None;
-                            }
-                        }
-                        None => {
-                            if let Some(state) = &mut state {
-                                if let Some((started_loading, _)) = state.started_loading {
-                                    if started_loading.elapsed() > LOADING_DELAY {
-                                        if let Some(loading) = self.style.loading.as_ref() {
-                                            let mut element = loading();
-                                            replacement_id = Some(element.request_layout(cx));
-                                            layout_state.replacement = Some(element);
-                                        }
-                                    }
-                                } else {
-                                    let parent_view_id = cx.parent_view_id();
-                                    let task = cx.spawn(|mut cx| async move {
-                                        cx.background_executor().timer(LOADING_DELAY).await;
-                                        cx.update(|cx| {
-                                            cx.notify(parent_view_id);
-                                        })
-                                        .ok();
-                                    });
-                                    state.started_loading = Some((Instant::now(), task));
-                                }
-                            }
-                        }
-                    }
 
-                    cx.request_layout(style, replacement_id)
-                });
+                        cx.request_layout(style, replacement_id)
+                    });
 
             layout_state.frame_index = frame_index;
 
@@ -375,16 +379,23 @@ impl Element for Img {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Self::PrepaintState {
-        self.interactivity
-            .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, cx| {
+        self.interactivity.prepaint(
+            global_id,
+            bounds,
+            bounds.size,
+            window,
+            cx,
+            |_, _, hitbox, window, cx| {
                 if let Some(replacement) = &mut request_layout.replacement {
-                    replacement.prepaint(cx);
+                    replacement.prepaint(window, cx);
                 }
 
                 hitbox
-            })
+            },
+        )
     }
 
     fn paint(
@@ -393,30 +404,38 @@ impl Element for Img {
         bounds: Bounds<Pixels>,
         layout_state: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         let source = self.source.clone();
-        self.interactivity
-            .paint(global_id, bounds, hitbox.as_ref(), cx, |style, cx| {
-                let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
+        self.interactivity.paint(
+            global_id,
+            bounds,
+            hitbox.as_ref(),
+            window,
+            cx,
+            |style, window, cx| {
+                let corner_radii = style.corner_radii.to_pixels(bounds.size, window.rem_size());
 
                 if let Some(Ok(data)) = source.use_data(cx) {
                     let new_bounds = self
                         .style
                         .object_fit
                         .get_bounds(bounds, data.size(layout_state.frame_index));
-                    cx.paint_image(
-                        new_bounds,
-                        corner_radii,
-                        data.clone(),
-                        layout_state.frame_index,
-                        self.style.grayscale,
-                    )
-                    .log_err();
+                    window
+                        .paint_image(
+                            new_bounds,
+                            corner_radii,
+                            data.clone(),
+                            layout_state.frame_index,
+                            self.style.grayscale,
+                        )
+                        .log_err();
                 } else if let Some(replacement) = &mut layout_state.replacement {
-                    replacement.paint(cx);
+                    replacement.paint(window, cx);
                 }
-            })
+            },
+        )
     }
 }
 
@@ -447,13 +466,13 @@ impl StatefulInteractiveElement for Img {}
 impl ImageSource {
     pub(crate) fn use_data(
         &self,
-        cx: &mut AppContext,
+        window: &mut Window,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
-            ImageSource::Resource(resource) => cx.use_asset::<ImgResourceLoader>(&resource),
+            ImageSource::Resource(resource) => window.use_asset::<ImgResourceLoader>(&resource),
             ImageSource::Custom(loading_fn) => loading_fn(cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
-            ImageSource::Image(data) => cx.use_asset::<AssetLogger<ImageDecoder>>(data),
+            ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data),
         }
     }
 }
