@@ -7,7 +7,7 @@ use language_model::LanguageModelRegistry;
 use language_model_selector::LanguageModelSelector;
 use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
-use workspace::{Pane, Workspace};
+use workspace::Workspace;
 
 use crate::message_editor::MessageEditor;
 use crate::thread::Thread;
@@ -25,7 +25,6 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct AssistantPanel {
-    pane: View<Pane>,
     thread: Model<Thread>,
     message_editor: View<MessageEditor>,
     _subscriptions: Vec<Subscription>,
@@ -43,27 +42,11 @@ impl AssistantPanel {
         })
     }
 
-    fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let pane = cx.new_view(|cx| {
-            let mut pane = Pane::new(
-                workspace.weak_handle(),
-                workspace.project().clone(),
-                Default::default(),
-                None,
-                NewThread.boxed_clone(),
-                cx,
-            );
-            pane.set_can_split(false, cx);
-            pane.set_can_navigate(true, cx);
-
-            pane
-        });
-
+    fn new(_workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         let thread = cx.new_model(Thread::new);
         let subscriptions = vec![cx.observe(&thread, |_, _, cx| cx.notify())];
 
         Self {
-            pane,
             thread: thread.clone(),
             message_editor: cx.new_view(|cx| MessageEditor::new(thread, cx)),
             _subscriptions: subscriptions,
@@ -73,7 +56,7 @@ impl AssistantPanel {
 
 impl FocusableView for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.pane.focus_handle(cx)
+        self.message_editor.focus_handle(cx)
     }
 }
 
@@ -100,19 +83,7 @@ impl Panel for AssistantPanel {
 
     fn set_size(&mut self, _size: Option<Pixels>, _cx: &mut ViewContext<Self>) {}
 
-    fn is_zoomed(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).is_zoomed()
-    }
-
-    fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
-        self.pane.update(cx, |pane, cx| pane.set_zoomed(zoomed, cx));
-    }
-
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
-
-    fn pane(&self) -> Option<View<Pane>> {
-        Some(self.pane.clone())
-    }
 
     fn remote_id() -> Option<proto::PanelId> {
         Some(proto::PanelId::AssistantPanel)

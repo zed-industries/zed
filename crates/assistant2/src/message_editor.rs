@@ -1,5 +1,5 @@
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{AppContext, Model, TextStyle, View};
+use gpui::{AppContext, FocusableView, Model, TextStyle, View};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
@@ -94,6 +94,12 @@ impl MessageEditor {
         };
 
         request
+    }
+}
+
+impl FocusableView for MessageEditor {
+    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+        self.editor.focus_handle(cx)
     }
 }
 
