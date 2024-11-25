@@ -32,8 +32,8 @@ use crate::{
     AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase,
     DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, IntoElement, KeyBinding, Keymap,
     Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Reservation, SharedString,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowId,
+    PlatformDisplay, Point, PromptBuilder, Reservation, SharedString, SubscriberSet, Subscription,
+    SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowId,
 };
 
 mod async_context;
@@ -1120,8 +1120,8 @@ impl AppContext {
 
         inner(
             &mut self.keystroke_observers,
-            Box::new(move |event, cx| {
-                f(event, cx);
+            Box::new(move |event, window, cx| {
+                f(event, window, cx);
                 true
             }),
         )
@@ -1562,7 +1562,7 @@ pub struct AnyDrag {
 #[derive(Clone)]
 pub struct AnyTooltip {
     /// How this tooltip is displayed on screen
-    pub render: Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
+    pub render: Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
 
     /// The absolute position of the mouse when the tooltip was deployed.
     pub mouse_position: Point<Pixels>,
