@@ -257,10 +257,12 @@ impl Render for AssistantPanel {
                     .id("message-list")
                     .gap_2()
                     .size_full()
+                    .p_2()
                     .overflow_y_scroll()
                     .bg(cx.theme().colors().panel_background)
                     .children(self.thread.read(cx).messages.iter().map(|message| {
                         v_flex()
+                            .p_2()
                             .border_1()
                             .border_color(cx.theme().colors().border_variant)
                             .rounded_md()

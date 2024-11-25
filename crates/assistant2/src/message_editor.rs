@@ -45,22 +45,19 @@ impl MessageEditor {
         request_kind: RequestKind,
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
-        dbg!("here");
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
             .as_ref()
             .map_or(false, |provider| provider.must_accept_terms(cx))
         {
-            dbg!("must accept terms");
             cx.notify();
             return None;
         }
 
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let provider = model_registry.active_provider()?;
         let model = model_registry.active_model()?;
 
-        let mut request = self.build_completion_request(request_kind, cx);
+        let request = self.build_completion_request(request_kind, cx);
 
         let user_message = self.editor.read(cx).text(cx);
         self.thread.update(cx, |thread, _cx| {
@@ -75,7 +72,6 @@ impl MessageEditor {
         });
 
         let task = cx.spawn(|this, mut cx| async move {
-            dbg!("streaming completion");
             let stream = model.stream_completion(request, &cx);
             let stream_completion = async {
                 let mut events = stream.await?;
@@ -85,8 +81,6 @@ impl MessageEditor {
 
                 while let Some(event) = events.next().await {
                     let event = event?;
-
-                    dbg!(&event);
                     match event {
                         LanguageModelCompletionEvent::StartMessage { .. } => {}
                         LanguageModelCompletionEvent::Stop(reason) => {
@@ -119,8 +113,9 @@ impl MessageEditor {
             .ok();
         });
 
-        dbg!("detach task");
-        task.detach();
+        self.thread.update(cx, |thread, _cx| {
+            thread.pending_completion_tasks.push(task);
+        });
 
         None
     }
