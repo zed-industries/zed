@@ -195,6 +195,10 @@ impl Zeta {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
         let snapshot = self.report_changes_for_buffer(buffer, cx);
+        let point = position.to_point(&snapshot);
+        let offset = point.to_offset(&snapshot);
+        let excerpt_range = excerpt_range_for_position(point, &snapshot);
+
         let path = snapshot
             .file()
             .map(|f| f.path().clone())
@@ -212,9 +216,6 @@ impl Zeta {
             events.push_str(&event.to_prompt());
         }
 
-        let point = position.to_point(&snapshot);
-        let offset = point.to_offset(&snapshot);
-        let excerpt_range = excerpt_range_for_position(point, &snapshot);
         let prompt_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
         let prompt = include_str!("./complete_prompt.md").replace("<events>", &events);
         log::debug!("requesting completion: {}", prompt);
@@ -269,13 +270,19 @@ impl Zeta {
             log::debug!("sanitized completion response: {}", content);
 
             let mut new_text = content.as_str();
-            if new_text.starts_with("```") {
-                let newline_ix = new_text.find('\n').context("could not find newline")?;
-                new_text = new_text[newline_ix + 1..]
-                    .trim_end()
-                    .strip_suffix("\n```")
-                    .context("could not find closing codefence")?;
-            }
+
+            let codefence_start = new_text
+                .find("```")
+                .context("could not find opening codefence")?;
+            new_text = &new_text[codefence_start..];
+
+            let newline_ix = new_text.find('\n').context("could not find newline")?;
+            new_text = &new_text[newline_ix + 1..];
+
+            let codefence_end = new_text
+                .rfind("\n```")
+                .context("could not find closing codefence")?;
+            new_text = &new_text[..codefence_end];
 
             let old_text = snapshot
                 .text_for_range(excerpt_range.clone())
@@ -788,8 +795,8 @@ mod tests {
                 }
             "},
             indoc! {"
-                fn main() {
-                    thread::sleep(Duration::from_secs(1));<|user_cursor_is_here|>
+                fn main() {<|user_cursor_is_here|>
+                    thread::sleep(Duration::from_secs(1));
                 }
             "},
             vec!["Ensure that there are the Rust `use` statements importing `std::thread` and `std::time::Duration`, like `use std::thread;` at the start of the file"],
@@ -929,13 +936,14 @@ mod tests {
             "},
             indoc! {"
                 struct Canvas {
-                    pub pixels: Vec<u8>,
-                    pub <|user_cursor_is_here|>stride: u8,
+                    pub <|user_cursor_is_here|>pixels: Vec<u8>,
+                    stride: u8,
                     size: Size<u8>,
                     format: Format
                 }
             "},
             vec![
+                "Ensure that `stride` is public",
                 "Ensure that `size` is public",
                 "Ensure that `format` is public",
             ],
@@ -1069,24 +1077,24 @@ mod tests {
             .replace("<assertions>", &assertion_text);
 
         log::debug!("grading prompt: {}", prompt);
-        let (api_url, api_key, http_client, request) = zeta.read_with(cx, |zeta, _cx| {
-            (
-                zeta.api_url.clone(),
-                zeta.api_key.clone(),
-                zeta.http_client.clone(),
-                open_ai::Request {
-                    model: zeta.model.to_string(),
-                    messages: vec![open_ai::RequestMessage::User { content: prompt }],
-                    stream: false,
-                    max_tokens: None,
-                    stop: Vec::new(),
-                    temperature: 0.0,
-                    tool_choice: None,
-                    tools: Vec::new(),
-                    prediction: None,
-                },
-            )
-        });
+
+        let api_url = "https://api.fireworks.ai/inference/v1";
+        let api_key = std::env::var("GRADING_API_KEY").expect("missing GRADING_API_KEY");
+        let model = std::env::var("GRADING_MODEL")
+            .unwrap_or_else(|_| "accounts/fireworks/models/qwen2p5-coder-32b-instruct".to_string());
+        let request = open_ai::Request {
+            model,
+            messages: vec![open_ai::RequestMessage::User { content: prompt }],
+            stream: false,
+            max_tokens: None,
+            stop: Vec::new(),
+            temperature: 0.0,
+            tool_choice: None,
+            tools: Vec::new(),
+            prediction: None,
+        };
+
+        let http_client = zeta.read_with(cx, |zeta, _cx| zeta.http_client.clone());
         let response = open_ai::complete(http_client.as_ref(), &api_url, &api_key, request)
             .await
             .unwrap();
@@ -1133,6 +1141,7 @@ mod tests {
                         Arc::from("qwen2.5-coder:32b"),
                     ),
                 };
+                log::debug!("using {api_url} with {model}");
                 Zeta::new(api_url, api_key, model, Arc::new(ReqwestClient::new()))
             })
         }
