@@ -1,5 +1,3 @@
-mod fuzzy;
-
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
@@ -207,9 +205,11 @@ impl Zeta {
 
         let mut events = String::new();
         for event in self.events.values() {
+            if !events.is_empty() {
+                events.push('\n');
+                events.push('\n');
+            }
             events.push_str(&event.to_prompt());
-            events.push('\n');
-            events.push('\n');
         }
 
         let point = position.to_point(&snapshot);
@@ -476,8 +476,6 @@ impl Event {
             } => {
                 let mut prompt = String::new();
 
-                // let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
-
                 let old_path = old_snapshot
                     .file()
                     .map(|f| f.path().as_ref())
@@ -495,52 +493,60 @@ impl Event {
                     .peekable();
 
                 if edits.peek().is_some() {
-                    writeln!(prompt, "User edited {:?}:\n", new_path).unwrap();
+                    writeln!(prompt, "User edited {:?}:", new_path).unwrap();
                 }
 
-                while let Some(edit) = edits.next() {
-                    let mut old_start = edit.old.start.row;
-                    let mut old_end = edit.old.end.row;
-                    let mut new_start = edit.new.start.row;
-                    let mut new_end = edit.new.end.row;
+                write!(
+                    prompt,
+                    "```diff\n{}\n```",
+                    similar::TextDiff::from_lines(&old_snapshot.text(), &new_snapshot.text())
+                        .unified_diff()
+                )
+                .unwrap();
 
-                    old_start = old_start.saturating_sub(2);
-                    old_end = cmp::min(old_end + 2, old_snapshot.max_point().row + 1);
+                // while let Some(edit) = edits.next() {
+                //     let mut old_start = edit.old.start.row;
+                //     let mut old_end = edit.old.end.row;
+                //     let mut new_start = edit.new.start.row;
+                //     let mut new_end = edit.new.end.row;
 
-                    // Peek at further edits and merge if they overlap
-                    while let Some(next_edit) = edits.peek() {
-                        if next_edit.old.start.row <= old_end {
-                            old_end = cmp::min(
-                                next_edit.old.end.row + 2,
-                                old_snapshot.max_point().row + 1,
-                            );
-                            new_end = next_edit.new.end.row;
-                            edits.next();
-                        } else {
-                            break;
-                        }
-                    }
+                //     old_start = old_start.saturating_sub(2);
+                //     old_end = cmp::min(old_end + 2, old_snapshot.max_point().row + 1);
 
-                    new_start = new_start.saturating_sub(2);
-                    new_end = cmp::min(new_end + 2, new_snapshot.max_point().row + 1);
+                //     // Peek at further edits and merge if they overlap
+                //     while let Some(next_edit) = edits.peek() {
+                //         if next_edit.old.start.row <= old_end {
+                //             old_end = cmp::min(
+                //                 next_edit.old.end.row + 2,
+                //                 old_snapshot.max_point().row + 1,
+                //             );
+                //             new_end = next_edit.new.end.row;
+                //             edits.next();
+                //         } else {
+                //             break;
+                //         }
+                //     }
 
-                    // Report the merged edit
-                    let edit = format_edit(
-                        &old_snapshot
-                            .text_for_range(
-                                Point::new(old_start, 0)
-                                    ..Point::new(old_end, old_snapshot.line_len(old_end)),
-                            )
-                            .collect::<String>(),
-                        &new_snapshot
-                            .text_for_range(
-                                Point::new(new_start, 0)
-                                    ..Point::new(new_end, new_snapshot.line_len(new_end)),
-                            )
-                            .collect::<String>(),
-                    );
-                    writeln!(prompt, "{}\n\n", edit).unwrap();
-                }
+                //     new_start = new_start.saturating_sub(2);
+                //     new_end = cmp::min(new_end + 2, new_snapshot.max_point().row + 1);
+
+                //     // Report the merged edit
+                //     let edit = format_edit(
+                //         &old_snapshot
+                //             .text_for_range(
+                //                 Point::new(old_start, 0)
+                //                     ..Point::new(old_end, old_snapshot.line_len(old_end)),
+                //             )
+                //             .collect::<String>(),
+                //         &new_snapshot
+                //             .text_for_range(
+                //                 Point::new(new_start, 0)
+                //                     ..Point::new(new_end, new_snapshot.line_len(new_end)),
+                //             )
+                //             .collect::<String>(),
+                //     );
+                //     write!(prompt, "\n{}", edit).unwrap();
+                // }
 
                 prompt
             }
@@ -903,6 +909,35 @@ mod tests {
             vec![
                 "Ensure that `words` assignment is valid",
                 "Ensure a nested loop is created",
+            ],
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_field_visibility(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "main.rs",
+            indoc! {"
+                struct Canvas {
+                    pixels: Vec<u8>,
+                    stride: u8,
+                    size: Size<u8>,
+                    format: Format
+                }
+            "},
+            indoc! {"
+                struct Canvas {
+                    pub pixels: Vec<u8>,
+                    pub <|user_cursor_is_here|>stride: u8,
+                    size: Size<u8>,
+                    format: Format
+                }
+            "},
+            vec![
+                "Ensure that `size` is public",
+                "Ensure that `format` is public",
             ],
             cx,
         )
