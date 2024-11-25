@@ -490,9 +490,6 @@
     "version": "2",
     // Whether the assistant is enabled.
     "enabled": true,
-    // Whether to show inline hints showing the keybindings to use the inline assistant and the
-    // assistant panel.
-    "show_hints": false,
     // Whether to show the assistant panel button in the status bar.
     "button": true,
     // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.
