@@ -150,7 +150,7 @@ impl WorktreeStore {
         abs_path: impl Into<SanitizedPath>,
         cx: &AppContext,
     ) -> Option<(Model<Worktree>, PathBuf)> {
-        let abs_path = abs_path.into();
+        let abs_path: SanitizedPath = abs_path.into();
         for tree in self.worktrees() {
             if let Ok(relative_path) = abs_path.as_path().strip_prefix(tree.read(cx).abs_path()) {
                 return Some((tree.clone(), relative_path.into()));
@@ -197,7 +197,7 @@ impl WorktreeStore {
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>>> {
-        let abs_path = abs_path.into();
+        let abs_path: SanitizedPath = abs_path.into();
         if !self.loading_worktrees.contains_key(&abs_path) {
             let task = match &self.state {
                 WorktreeStoreState::Remote {
@@ -241,7 +241,7 @@ impl WorktreeStore {
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
-        let mut abs_path = abs_path.into().to_string();
+        let mut abs_path = Into::<SanitizedPath>::into(abs_path).to_string();
         // If we start with `/~` that means the ssh path was something like `ssh://user@host/~/home-dir-folder/`
         // in which case want to strip the leading the `/`.
         // On the host-side, the `~` will get expanded.
@@ -304,7 +304,7 @@ impl WorktreeStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
         let next_entry_id = self.next_entry_id.clone();
-        let path = abs_path.into();
+        let path: SanitizedPath = abs_path.into();
 
         cx.spawn(move |this, mut cx| async move {
             let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx).await;

@@ -2095,13 +2095,16 @@ impl Snapshot {
 
     // TODO:
     // Consider the following:
+    //
     // ```rust
-    // let abs_path: &Arc<Path> = snapshot.abs_path();
-    // let some_non_trimmed_path = Path::new("\\\\?\\C:\\Users\\user\\Desktop\\project");
+    // let abs_path: Arc<Path> = snapshot.abs_path(); // e.g. "C:\Users\user\Desktop\project"
+    // let some_non_trimmed_path = Path::new("\\\\?\\C:\\Users\\user\\Desktop\\project\\main.rs");
     // // The caller perform some actions here:
-    // some_non_trimmed_path.strip_prefix(abs_path);
-    // This is definitely a bug, but it's not clear if we should handle it here or not.
+    // some_non_trimmed_path.strip_prefix(abs_path);  // This fails
+    // some_non_trimmed_path.starts_with(abs_path);   // This fails too
     // ```
+    //
+    // This is definitely a bug, but it's not clear if we should handle it here or not.
     pub fn abs_path(&self) -> &Arc<Path> {
         self.abs_path.as_path()
     }
