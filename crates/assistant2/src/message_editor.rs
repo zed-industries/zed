@@ -1,5 +1,5 @@
 use editor::{Editor, EditorElement, EditorStyle};
-use feature_flags::{ToolUseFeatureFlag, FeatureFlagAppExt};
+use feature_flags::{FeatureFlagAppExt, ToolUseFeatureFlag};
 use gpui::{AppContext, FocusableView, Model, TextStyle, View};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use settings::Settings;
