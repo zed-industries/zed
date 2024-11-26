@@ -465,6 +465,7 @@ dependencies = [
  "language_model",
  "language_model_selector",
  "proto",
+ "serde",
  "serde_json",
  "settings",
  "smol",

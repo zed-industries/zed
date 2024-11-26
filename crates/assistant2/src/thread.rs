@@ -10,6 +10,7 @@ use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role, StopReason,
 };
+use serde::{Deserialize, Serialize};
 use util::post_inc;
 
 #[derive(Debug, Clone, Copy)]
@@ -17,9 +18,19 @@ pub enum RequestKind {
     Chat,
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
+pub struct MessageId(usize);
+
+impl MessageId {
+    fn post_inc(&mut self) -> Self {
+        Self(post_inc(&mut self.0))
+    }
+}
+
 /// A message in a [`Thread`].
 #[derive(Debug, Clone)]
 pub struct Message {
+    pub id: MessageId,
     pub role: Role,
     pub text: String,
     pub tool_uses: Vec<LanguageModelToolUse>,
@@ -29,6 +40,7 @@ pub struct Message {
 /// A thread of conversation with the LLM.
 pub struct Thread {
     messages: Vec<Message>,
+    next_message_id: MessageId,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     tools: Arc<ToolWorkingSet>,
@@ -41,6 +53,7 @@ impl Thread {
         Self {
             tools,
             messages: Vec::new(),
+            next_message_id: MessageId(0),
             completion_count: 0,
             pending_completions: Vec::new(),
             pending_tool_uses_by_id: HashMap::default(),
@@ -62,6 +75,7 @@ impl Thread {
 
     pub fn insert_user_message(&mut self, text: impl Into<String>) {
         let mut message = Message {
+            id: self.next_message_id.post_inc(),
             role: Role::User,
             text: text.into(),
             tool_uses: Vec::new(),
@@ -90,6 +104,8 @@ impl Thread {
             stop: Vec::new(),
             temperature: None,
         };
+
+        dbg!(&self.messages);
 
         for message in &self.messages {
             let mut request_message = LanguageModelRequestMessage {
@@ -143,6 +159,7 @@ impl Thread {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
                                 thread.messages.push(Message {
+                                    id: thread.next_message_id.post_inc(),
                                     role: Role::Assistant,
                                     text: String::new(),
                                     tool_uses: Vec::new(),
