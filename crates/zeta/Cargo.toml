@@ -35,4 +35,6 @@ indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 reqwest_client = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
+tree-sitter-go.workspace = true
+tree-sitter-rust.workspace = true
 worktree = { workspace = true, features = ["test-support"] }

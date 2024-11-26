@@ -294,6 +294,21 @@ pub struct ResponseStreamEvent {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct CompletionResponse {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<CompletionChoice>,
+    pub usage: Usage,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CompletionChoice {
+    pub text: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Response {
     pub id: String,
     pub object: String,
@@ -333,6 +348,66 @@ pub async fn complete(
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
         let response: Response = serde_json::from_str(&body)?;
+        Ok(response)
+    } else {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+
+        #[derive(Deserialize)]
+        struct OpenAiResponse {
+            error: OpenAiError,
+        }
+
+        #[derive(Deserialize)]
+        struct OpenAiError {
+            message: String,
+        }
+
+        match serde_json::from_str::<OpenAiResponse>(&body) {
+            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
+                "Failed to connect to OpenAI API: {}",
+                response.error.message,
+            )),
+
+            _ => Err(anyhow!(
+                "Failed to connect to OpenAI API: {} {}",
+                response.status(),
+                body,
+            )),
+        }
+    }
+}
+
+pub async fn complete_text(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    prompt: &str,
+    model: &str,
+    max_tokens: Option<u32>,
+    temperature: f32,
+) -> Result<CompletionResponse> {
+    let uri = format!("{api_url}/completions");
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key));
+
+    let request_body = serde_json::json!({
+        "model": model,
+        "prompt": prompt,
+        "max_tokens": max_tokens,
+        "temperature": temperature
+    });
+
+    let request = request_builder.body(AsyncBody::from(request_body.to_string()))?;
+    let mut response = client.send(request).await?;
+
+    if response.status().is_success() {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        let response = serde_json::from_str(&body)?;
         Ok(response)
     } else {
         let mut body = String::new();

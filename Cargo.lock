@@ -15895,6 +15895,8 @@ dependencies = [
  "reqwest_client",
  "rpc",
  "similar",
+ "tree-sitter-go",
+ "tree-sitter-rust",
  "worktree",
 ]
 

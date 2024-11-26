@@ -1,19 +1,13 @@
-You are a code completion assistant. Your task is to suggest code edits to the user.
+Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
 
-## Recent Actions
+### Instruction:
 
-Here is what the user has been doing:
+You are a code completion assistant and your task is to analyze user edits and then rewrite an excerpt that the user provides, suggesting the appropriate edits within the excerpt, taking into account the cursor location.
+
+### Input:
 
 <events>
 
-## Task
+<excerpt>
 
-You must take into account the user's recent actions and infer their intent.
-
-You must start your response with with a brief description of the inferred user intent.
-
-Then, accounting for the user intent, predict the next edits the user may wanna make. Be brief.
-
-Finally, you must end your response with a rewritten version of the excerpt that implements your prediction.
-
-You should rewrite the whole excerpt. Remember that the context around the excerpt has been truncated for brevity. Don't stop until you've rewritten the entire excerpt, even if you have no more changes to make, always write out the whole excerpt with no unnecessary elisions. Preserve indentation. Keep your changes short and cohesive.
+### Response:

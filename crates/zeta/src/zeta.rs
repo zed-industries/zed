@@ -216,38 +216,33 @@ impl Zeta {
             events.push_str(&event.to_prompt());
         }
 
-        let prompt_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
-        let prompt = include_str!("./complete_prompt.md").replace("<events>", &events);
+        let prompt = include_str!("./complete_prompt.md")
+            .replace("<events>", &events)
+            .replace(
+                "<excerpt>",
+                &prompt_for_excerpt(&snapshot, &excerpt_range, offset),
+            );
+
         log::debug!("requesting completion: {}", prompt);
-        log::debug!("requesting completion: {}", prompt_excerpt);
 
         let api_url = self.api_url.clone();
         let api_key = self.api_key.clone();
-        let request = open_ai::Request {
-            model: self.model.to_string(),
-            messages: vec![
-                open_ai::RequestMessage::System { content: prompt },
-                open_ai::RequestMessage::User {
-                    content: prompt_excerpt.clone(),
-                },
-            ],
-            stream: false,
-            max_tokens: None,
-            stop: Vec::new(),
-            temperature: 0.0,
-            tool_choice: None,
-            tools: Vec::new(),
-            prediction: Some(open_ai::Prediction::Content {
-                content: prompt_excerpt,
-            }),
-        };
+        let model = self.model.clone();
 
         let http_client = self.http_client.clone();
 
         cx.spawn(|this, mut cx| async move {
             let start = std::time::Instant::now();
-            let mut response =
-                open_ai::complete(http_client.as_ref(), &api_url, &api_key, request).await?;
+            let mut response = open_ai::complete_text(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                &prompt,
+                &model,
+                Some(1024),
+                0.,
+            )
+            .await?;
 
             log::debug!(
                 "prompt_tokens: {:?}, completion_tokens: {:?}, elapsed: {:?}",
@@ -256,17 +251,10 @@ impl Zeta {
                 start.elapsed()
             );
             let choice = response.choices.pop().context("invalid response")?;
-            let mut content = match choice.message {
-                open_ai::RequestMessage::Assistant { content, .. } => {
-                    content.context("empty response from the assistant")?
-                }
-                open_ai::RequestMessage::User { content } => content,
-                open_ai::RequestMessage::System { content } => content,
-                open_ai::RequestMessage::Tool { .. } => return Err(anyhow!("unexpected tool use")),
-            };
-            log::debug!("completion response: {}", content);
 
-            content = content.replace(CURSOR_MARKER, "");
+            log::debug!("completion response: {}", choice.text);
+
+            let content = choice.text.replace(CURSOR_MARKER, "");
             log::debug!("sanitized completion response: {}", content);
 
             let mut new_text = content.as_str();
@@ -409,6 +397,9 @@ fn prompt_for_excerpt(
                 .to_string_lossy())
     )
     .unwrap();
+    if excerpt_range.start > 0 {
+        writeln!(prompt_excerpt, "<|truncation|>").unwrap();
+    }
     for chunk in snapshot.text_for_range(excerpt_range.start..offset) {
         prompt_excerpt.push_str(chunk);
     }
@@ -416,12 +407,15 @@ fn prompt_for_excerpt(
     for chunk in snapshot.text_for_range(offset..excerpt_range.end) {
         prompt_excerpt.push_str(chunk);
     }
+    if excerpt_range.end < snapshot.len() {
+        write!(prompt_excerpt, "\n<|truncation|>").unwrap();
+    }
     prompt_excerpt.push_str("\n```");
     prompt_excerpt
 }
 
 fn excerpt_range_for_position(point: Point, snapshot: &BufferSnapshot) -> Range<usize> {
-    const CONTEXT_LINES: u32 = 16;
+    const CONTEXT_LINES: u32 = 8;
 
     let mut context_lines_before = CONTEXT_LINES;
     let mut context_lines_after = CONTEXT_LINES;
@@ -431,14 +425,21 @@ fn excerpt_range_for_position(point: Point, snapshot: &BufferSnapshot) -> Range<
         context_lines_before += (point.row + CONTEXT_LINES) - snapshot.max_point().row;
     }
 
-    let excerpt_start = Point::new(point.row.saturating_sub(context_lines_before), 0);
-    let excerpt_end_row = cmp::min(point.row + context_lines_after, snapshot.max_point().row);
-    let mut excerpt_end = Point::new(excerpt_end_row, snapshot.line_len(excerpt_end_row));
-    while excerpt_end > excerpt_start && excerpt_end.column == 0 {
-        excerpt_end.row -= 1;
-        excerpt_end.column = snapshot.line_len(excerpt_end.row);
+    let mut excerpt_start_row = point.row.saturating_sub(context_lines_before);
+    let mut excerpt_end_row = cmp::min(point.row + context_lines_after, snapshot.max_point().row);
+
+    // Skip blank lines at the start.
+    while excerpt_start_row < excerpt_end_row && snapshot.is_line_blank(excerpt_start_row) {
+        excerpt_start_row += 1;
     }
 
+    // Skip blank lines at the end.
+    while excerpt_end_row > excerpt_start_row && snapshot.is_line_blank(excerpt_end_row) {
+        excerpt_end_row -= 1;
+    }
+
+    let excerpt_start = Point::new(excerpt_start_row, 0);
+    let excerpt_end = Point::new(excerpt_end_row, snapshot.line_len(excerpt_end_row));
     excerpt_start.to_offset(snapshot)..excerpt_end.to_offset(snapshot)
 }
 
@@ -714,9 +715,12 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+
     use super::*;
     use gpui::TestAppContext;
     use indoc::indoc;
+    use language::{Language, LanguageConfig};
     use reqwest_client::ReqwestClient;
 
     #[gpui::test]
@@ -1304,12 +1308,45 @@ mod tests {
         zeta: &Model<Zeta>,
         cx: &mut TestAppContext,
     ) -> Model<Buffer> {
+        let language = if path.as_ref().extension() == Some(OsStr::new("rs")) {
+            Some(Arc::new(rust_lang()))
+        } else if path.as_ref().extension() == Some(OsStr::new("go")) {
+            Some(Arc::new(go_lang()))
+        } else {
+            None
+        };
+
         let buffer = cx.new_model(|cx| Buffer::local(text, cx));
         buffer.update(cx, |buffer, cx| {
+            buffer.set_language(language, cx);
             buffer.file_updated(Arc::new(TestFile(path.as_ref().into())), cx)
         });
         zeta.update(cx, |zeta, cx| zeta.register_buffer(&buffer, cx));
         buffer
+    }
+
+    fn rust_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
+        .unwrap()
+    }
+
+    fn go_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Go".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_go::LANGUAGE.into()),
+        )
+        .with_outline_query(include_str!("../../languages/src/go/outline.scm"))
+        .unwrap()
     }
 
     struct TestFile(Arc<Path>);
