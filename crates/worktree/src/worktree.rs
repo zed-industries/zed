@@ -66,11 +66,8 @@ use std::{
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
-    
-    paths::{{home_dir, PathMatcher},
-    SanitizedPath},
+    paths::{home_dir, PathMatcher, SanitizedPath},
     ResultExt,
-,
 };
 pub use worktree_settings::WorktreeSettings;
 
@@ -359,7 +356,7 @@ enum ScanState {
         scanning: bool,
     },
     RootUpdated {
-        new_path: Option<Arc<Path>>,
+        new_path: Option<SanitizedPath>,
     },
 }
 
@@ -1139,6 +1136,7 @@ impl LocalWorktree {
                                 this.snapshot.git_repositories = Default::default();
                                 this.snapshot.ignores_by_parent_abs_path = Default::default();
                                 let root_name = new_path
+                                    .as_path()
                                     .file_name()
                                     .map_or(String::new(), |f| f.to_string_lossy().to_string());
                                 this.snapshot.update_abs_path(new_path, root_name);
@@ -2206,7 +2204,7 @@ impl Snapshot {
             .and_then(|entry| entry.git_status)
     }
 
-    fn update_abs_path(&mut self, abs_path: Arc<Path>, root_name: String) {
+    fn update_abs_path(&mut self, abs_path: SanitizedPath, root_name: String) {
         self.abs_path = abs_path;
         if root_name != self.root_name {
             self.root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
@@ -2225,7 +2223,7 @@ impl Snapshot {
             update.removed_entries.len()
         );
         self.update_abs_path(
-            Arc::from(PathBuf::from(update.abs_path).as_path()),
+            SanitizedPath::from(PathBuf::from(update.abs_path)),
             update.root_name,
         );
 
@@ -3921,21 +3919,20 @@ impl BackgroundScanner {
                     .root_file_handle
                     .clone()
                     .and_then(|handle| handle.current_path(&self.fs).log_err())
-                    .filter(|new_path| **new_path != *root_path);
+                    .map(SanitizedPath::from)
+                    .filter(|new_path| *new_path != root_path);
 
                 if let Some(new_path) = new_path.as_ref() {
                     log::info!(
                         "root renamed from {} to {}",
-                        root_path.display(),
-                        new_path.display()
+                        root_path.as_path().display(),
+                        new_path.as_path().display()
                     )
                 } else {
                     log::warn!("root path could not be canonicalized: {}", err);
                 }
                 self.status_updates_tx
-                    .unbounded_send(ScanState::RootUpdated {
-                        new_path: new_path.map(|p| p.into()),
-                    })
+                    .unbounded_send(ScanState::RootUpdated { new_path })
                     .ok();
                 return;
             }

@@ -23,10 +23,7 @@ use smol::{
     stream::StreamExt,
 };
 use text::ReplicaId;
-use util::{
-    paths::{compare_paths, SanitizedPath},
-    ResultExt,
-};
+use util::{paths::SanitizedPath, ResultExt};
 use worktree::{Entry, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
 
 use crate::{search::SearchQuery, ProjectPath};
