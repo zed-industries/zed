@@ -679,7 +679,6 @@ impl DelayedDebouncedEditAction {
 pub enum Event {
     PaneAdded(View<Pane>),
     PaneRemoved,
-    PaneResized(ResizeAmount),
     ItemAdded {
         item: Box<dyn ItemHandle>,
     },
@@ -2982,9 +2981,9 @@ impl Workspace {
         }
     }
 
-    pub fn resize_pane(&mut self, intent: &ResizeAmount, cx: &mut ViewContext<Self>) {
+    pub fn resize_pane(&mut self, axis: gpui::Axis, amount: Pixels, cx: &mut ViewContext<Self>) {
         self.center
-            .resize(&self.active_pane.clone(), intent, &self.bounds);
+            .resize(&self.active_pane.clone(), axis, amount, &self.bounds);
         cx.notify();
     }
 

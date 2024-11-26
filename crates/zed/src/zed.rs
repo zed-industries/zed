@@ -143,9 +143,6 @@ pub fn initialize_workspace(
                 workspace::Event::PaneAdded(pane) => {
                     initialize_pane(workspace, pane, cx);
                 }
-                workspace::Event::PaneResized(resize_intent) => {
-                    workspace.resize_pane(resize_intent, cx);
-                }
                 workspace::Event::OpenBundledFile {
                     text,
                     title,

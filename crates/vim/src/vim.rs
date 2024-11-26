@@ -25,8 +25,8 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, Subscription, View, ViewContext, WeakView,
+    actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, KeyContext,
+    KeystrokeEvent, Render, Subscription, View, ViewContext, WeakView,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -40,9 +40,10 @@ use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
+use theme::ThemeSettings;
 use ui::{IntoElement, VisualContext};
 use vim_mode_setting::VimModeSetting;
-use workspace::{self, Pane, ResizeAmount, ResizeIntent, Workspace};
+use workspace::{self, Pane, ResizeIntent, Workspace};
 
 use crate::state::ReplayableAction;
 
@@ -116,15 +117,28 @@ pub fn init(cx: &mut AppContext) {
             });
         });
 
-        workspace.register_action(|_, action: &ResizePane, cx| {
+        workspace.register_action(|workspace, action: &ResizePane, cx| {
             let count = Vim::take_count(cx.window_context()).unwrap_or(1) as f32;
-            let resize_intent = match action.0 {
-                ResizeIntent::Lengthen => ResizeAmount::Lengthen(count * 10.0),
-                ResizeIntent::Shorten => ResizeAmount::Shorten(count * 10.0),
-                ResizeIntent::Widen => ResizeAmount::Widen(count * 10.0),
-                ResizeIntent::Narrow => ResizeAmount::Narrow(count * 10.0),
+            let theme = ThemeSettings::get_global(cx);
+            let Ok(font_id) = cx.text_system().font_id(&theme.buffer_font) else {
+                return;
             };
-            cx.emit(workspace::Event::PaneResized(resize_intent));
+            let Ok(width) = cx
+                .text_system()
+                .advance(font_id, theme.buffer_font_size(cx), 'm')
+            else {
+                return;
+            };
+            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
+
+            let (axis, amount) = match action.0 {
+                ResizeIntent::Lengthen => (Axis::Vertical, height),
+                ResizeIntent::Shorten => (Axis::Vertical, height * -1.),
+                ResizeIntent::Widen => (Axis::Horizontal, width.width),
+                ResizeIntent::Narrow => (Axis::Horizontal, width.width * -1.),
+            };
+
+            workspace.resize_pane(axis, amount * count, cx);
         });
 
         workspace.register_action(|workspace, _: &SearchSubmit, cx| {

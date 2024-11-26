@@ -90,11 +90,17 @@ impl PaneGroup {
         }
     }
 
-    pub fn resize(&mut self, pane: &View<Pane>, intent: &ResizeAmount, bounds: &Bounds<Pixels>) {
+    pub fn resize(
+        &mut self,
+        pane: &View<Pane>,
+        direction: Axis,
+        amount: Pixels,
+        bounds: &Bounds<Pixels>,
+    ) {
         match &mut self.root {
             Member::Pane(_) => {}
             Member::Axis(axis) => {
-                let _ = axis.resize(pane, intent, bounds);
+                let _ = axis.resize(pane, direction, amount, bounds);
             }
         };
     }
@@ -457,8 +463,9 @@ impl PaneAxis {
     fn resize(
         &mut self,
         pane: &View<Pane>,
-        intent: &ResizeAmount,
-        bounds: &Bounds<Pixels>, // as a backup
+        axis: Axis,
+        amount: Pixels,
+        bounds: &Bounds<Pixels>,
     ) -> Option<bool> {
         let container_size = self
             .bounding_boxes
@@ -468,11 +475,6 @@ impl PaneAxis {
             .reduce(|acc, e| acc.union(&e))
             .unwrap_or(*bounds)
             .size;
-
-        let axis = match *intent {
-            ResizeAmount::Lengthen(_) | ResizeAmount::Shorten(_) => Axis::Vertical,
-            ResizeAmount::Widen(_) | ResizeAmount::Narrow(_) => Axis::Horizontal,
-        };
 
         let found_pane = self
             .members
@@ -486,7 +488,7 @@ impl PaneAxis {
         if !found_pane {
             for (i, pa) in self.members.iter_mut().enumerate() {
                 if let Member::Axis(pa) = pa {
-                    if let Some(done) = pa.resize(pane, intent, bounds) {
+                    if let Some(done) = pa.resize(pane, axis, amount, bounds) {
                         if done {
                             return Some(true); // pane found and operations already done
                         } else if self.axis != axis {
@@ -533,11 +535,6 @@ impl PaneAxis {
             return Some(true);
         }
 
-        let proposed_current_pixel_change = match *intent {
-            ResizeAmount::Lengthen(p) | ResizeAmount::Widen(p) => Pixels(p),
-            ResizeAmount::Shorten(p) | ResizeAmount::Narrow(p) => Pixels(-p),
-        };
-
         let flex_changes = |pixel_dx, target_ix, next: isize, flexes: &[f32]| {
             let flex_change = flexes.len() as f32 * pixel_dx / container_size.along(axis);
             let current_target_flex = flexes[target_ix] + flex_change;
@@ -566,13 +563,9 @@ impl PaneAxis {
             };
 
         if ix + 1 == flexes.len() {
-            apply_changes(
-                ix - 1,
-                -1.0 * proposed_current_pixel_change,
-                flexes.as_mut_slice(),
-            );
+            apply_changes(ix - 1, -1.0 * amount, flexes.as_mut_slice());
         } else {
-            apply_changes(ix, proposed_current_pixel_change, flexes.as_mut_slice());
+            apply_changes(ix, amount, flexes.as_mut_slice());
         }
         Some(true)
     }
@@ -763,36 +756,6 @@ pub enum ResizeIntent {
     Shorten,
     Widen,
     Narrow,
-}
-
-impl std::fmt::Display for ResizeIntent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ResizeIntent::Lengthen => write!(f, "lengthen"),
-            ResizeIntent::Shorten => write!(f, "shorten"),
-            ResizeIntent::Widen => write!(f, "widen"),
-            ResizeIntent::Narrow => write!(f, "narrow"),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
-pub enum ResizeAmount {
-    Lengthen(f32),
-    Shorten(f32),
-    Widen(f32),
-    Narrow(f32),
-}
-
-impl std::fmt::Display for ResizeAmount {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ResizeAmount::Lengthen(_) => write!(f, "lengthen"),
-            ResizeAmount::Shorten(_) => write!(f, "shorten"),
-            ResizeAmount::Widen(_) => write!(f, "widen"),
-            ResizeAmount::Narrow(_) => write!(f, "narrow"),
-        }
-    }
 }
 
 mod element {
