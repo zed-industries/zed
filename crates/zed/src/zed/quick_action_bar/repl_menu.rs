@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use editor::Editor;
 use gpui::ElementId;
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
 use picker::Picker;
@@ -13,8 +14,6 @@ use ui::{
     PopoverMenuHandle, Tooltip,
 };
 use util::ResultExt;
-
-use super::QuickActionBar;
 
 const ZED_REPL_DOCUMENTATION: &str = "https://zed.dev/docs/repl";
 
@@ -31,27 +30,25 @@ struct ReplMenuState {
     kernel_language: SharedString,
 }
 
-pub struct ReplMenu {}
+pub struct ReplMenu {
+    active_editor: View<Editor>,
+}
 
 impl ReplMenu {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        Self {}
+    pub fn new(editor: View<Editor>, _cx: &mut ViewContext<Self>) -> Self {
+        Self {
+            active_editor: editor.clone(),
+        }
     }
 }
 
 impl Render for ReplMenu {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().child("dummy data")
-    }
-}
-
-impl QuickActionBar {
-    pub fn render_repl_menu(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         if !JupyterSettings::enabled(cx) {
-            return None;
+            return div().into_any_element();
         }
 
-        let editor = self.active_editor()?;
+        let editor = self.active_editor.clone();
 
         let is_local_project = editor
             .read(cx)
@@ -60,7 +57,7 @@ impl QuickActionBar {
             .unwrap_or(false);
 
         if !is_local_project {
-            return None;
+            return div().into_any_element();
         }
 
         let has_nonempty_selection = {
@@ -80,12 +77,12 @@ impl QuickActionBar {
         let session = match session {
             SessionSupport::ActiveSession(session) => session,
             SessionSupport::Inactive(spec) => {
-                return self.render_repl_launch_menu(spec, cx);
+                return self.render_repl_launch_menu(spec, cx).into_any_element();
             }
             SessionSupport::RequiresSetup(language) => {
-                return self.render_repl_setup(&language.0, cx);
+                return self.render_repl_setup(&language.0, cx).into_any_element();
             }
-            SessionSupport::Unsupported => return None,
+            SessionSupport::Unsupported => return div().into_any_element(),
         };
 
         let menu_state = session_state(session.clone(), cx);
@@ -259,45 +256,35 @@ impl QuickActionBar {
             .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
             .into_any_element();
 
-        Some(
-            h_flex()
-                .child(self.repl_menu.clone())
-                .child(self.render_kernel_selector(cx))
-                .child(button)
-                .child(dropdown_menu)
-                .into_any_element(),
-        )
+        h_flex()
+            .child(self.render_kernel_selector(cx))
+            .child(button)
+            .child(dropdown_menu)
+            .into_any_element()
     }
+}
+
+impl ReplMenu {
     pub fn render_repl_launch_menu(
         &self,
         kernel_specification: KernelSpecification,
         cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement> {
+    ) -> impl IntoElement {
         let tooltip: SharedString =
             SharedString::from(format!("Start REPL for {}", kernel_specification.name()));
 
-        Some(
-            h_flex()
-                .child(self.repl_menu.clone())
-                .child(self.render_kernel_selector(cx))
-                .child(
-                    IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
-                        .size(ButtonSize::Compact)
-                        .icon_color(Color::Muted)
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
-                        .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {}))),
-                )
-                .into_any_element(),
+        h_flex().child(self.render_kernel_selector(cx)).child(
+            IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
+                .size(ButtonSize::Compact)
+                .icon_color(Color::Muted)
+                .style(ButtonStyle::Subtle)
+                .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+                .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {}))),
         )
     }
 
     pub fn render_kernel_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let editor = if let Some(editor) = self.active_editor() {
-            editor
-        } else {
-            return div().into_any_element();
-        };
+        let editor = self.active_editor.clone();
 
         let Some(worktree_id) = worktree_id_for_editor(editor.downgrade(), cx) else {
             return div().into_any_element();
@@ -361,27 +348,21 @@ impl QuickActionBar {
         .into_any_element()
     }
 
-    pub fn render_repl_setup(
-        &self,
-        language: &str,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement> {
+    pub fn render_repl_setup(&self, language: &str, cx: &mut ViewContext<Self>) -> AnyElement {
         let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
-        Some(
-            h_flex()
-                .child(self.render_kernel_selector(cx))
-                .child(
-                    IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
-                        .size(ButtonSize::Compact)
-                        .icon_color(Color::Muted)
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
-                        .on_click(|_, cx| {
-                            cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION))
-                        }),
-                )
-                .into_any_element(),
-        )
+        h_flex()
+            .child(self.render_kernel_selector(cx))
+            .child(
+                IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
+                    .size(ButtonSize::Compact)
+                    .icon_color(Color::Muted)
+                    .style(ButtonStyle::Subtle)
+                    .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+                    .on_click(|_, cx| {
+                        cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION))
+                    }),
+            )
+            .into_any_element()
     }
 }
 
