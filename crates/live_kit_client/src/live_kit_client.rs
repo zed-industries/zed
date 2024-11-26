@@ -279,44 +279,55 @@ pub fn play_remote_audio_track(
     track: &track::RemoteAudioTrack,
     background_executor: &BackgroundExecutor,
 ) -> AudioStream {
-    let buffer = Arc::new(Mutex::new(Vec::<i16>::new()));
+    // TODO(mgsloan): use a concurrent queue that references the Cow slices the source gives us.
+    //
+    // TODO(mgsloan): put this on the channel? rationale is to not mix up samples that came from a
+    // different configuration.
+    let buffer_mutex = Arc::new(Mutex::new(Vec::<i16>::new()));
     let (stream_config_tx, stream_config_rx) = std::sync::mpsc::channel();
     // TODO livekit: Pull these out of a proto later
     let mut stream = NativeAudioStream::new(track.rtc_track(), 48000, 1);
 
     let receive_task = background_executor.spawn({
-        let buffer = buffer.clone();
+        let buffer_mutex = buffer_mutex.clone();
         async move {
             let mut stream_config = None;
             while let Some(frame) = stream.next().await {
-                let mut buffer = buffer.lock();
                 let buffer_size = frame.samples_per_channel * frame.num_channels;
                 debug_assert!(frame.data.len() == buffer_size as usize);
 
                 let frame_config = StreamConfig {
                     channels: frame.num_channels as u16,
                     sample_rate: cpal::SampleRate(frame.sample_rate),
-                    buffer_size: cpal::BufferSize::Fixed(buffer_size),
+                    // TODO(mgsloan): this multiplier was arbitrarily chosen, but a larger buffer
+                    // size seems to help my audio quality.
+                    buffer_size: cpal::BufferSize::Fixed(buffer_size * 2),
                 };
 
                 if stream_config.as_ref().map_or(true, |c| *c != frame_config) {
-                    buffer.resize(buffer_size as usize, 0);
                     stream_config = Some(frame_config.clone());
                     stream_config_tx.send(frame_config).log_err();
                 }
 
-                if frame.data.len() == buffer.len() {
-                    buffer.copy_from_slice(&frame.data);
-                } else {
-                    buffer.iter_mut().for_each(|x| *x = 0);
+                let mut buffer = buffer_mutex.lock();
+                // TODO(mgsloan): max_size multiplier was arbitrarily chosen.
+                let max_size = (buffer_size * 3) as usize;
+                let new_size = buffer.len() + frame.data.len();
+                if new_size > max_size {
+                    let drain_ix = new_size - max_size;
+                    if drain_ix > buffer.len() {
+                        buffer.clear();
+                    } else {
+                        buffer.drain(..new_size - max_size);
+                    }
                 }
+                buffer.extend_from_slice(&frame.data);
             }
             Ok(Some(()))
         }
     });
 
     let play_task = background_executor.spawn({
-        let buffer = buffer.clone();
         async move {
             if cfg!(any(test, feature = "test-support")) {
                 anyhow::bail!("can't play audio in tests");
@@ -331,14 +342,16 @@ pub fn play_remote_audio_track(
                 _output_stream = Some(device.build_output_stream(
                     &config,
                     {
-                        let buffer = buffer.clone();
+                        let buffer_mutex = buffer_mutex.clone();
                         move |data, _info| {
-                            let buffer = buffer.lock();
-                            if data.len() == buffer.len() {
-                                data.copy_from_slice(&buffer);
-                            } else {
-                                data.iter_mut().for_each(|x| *x = 0);
+                            let mut buffer = buffer_mutex.lock();
+                            while data.len() > buffer.len() {
+                                drop(buffer);
+                                std::hint::spin_loop();
+                                buffer = buffer_mutex.lock();
                             }
+                            data.copy_from_slice(&buffer[..data.len()]);
+                            buffer.drain(..data.len());
                         }
                     },
                     |error| log::error!("error playing audio track: {:?}", error),
