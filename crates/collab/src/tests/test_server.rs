@@ -168,7 +168,7 @@ impl TestServer {
             client::init_settings(cx);
         });
 
-        let clock = Arc::new(FakeSystemClock::default());
+        let clock = Arc::new(FakeSystemClock::new());
         let http = FakeHttpClient::with_404_response();
         let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
         {
@@ -243,6 +243,7 @@ impl TestServer {
                                 client_name,
                                 Principal::User(user),
                                 ZedVersion(SemanticVersion::new(1, 0, 0)),
+                                None,
                                 None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),

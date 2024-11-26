@@ -38,8 +38,8 @@ use std::{
 };
 use util::{fs::remove_matching, maybe, ResultExt};
 
-pub use copilot_completion_provider::CopilotCompletionProvider;
-pub use sign_in::CopilotCodeVerification;
+pub use crate::copilot_completion_provider::CopilotCompletionProvider;
+pub use crate::sign_in::{initiate_sign_in, CopilotCodeVerification};
 
 actions!(
     copilot,
@@ -1231,7 +1231,7 @@ mod tests {
 
         fn disk_state(&self) -> language::DiskState {
             language::DiskState::Present {
-                mtime: std::time::UNIX_EPOCH,
+                mtime: ::fs::MTime::from_seconds_and_nanos(100, 42),
             }
         }
 

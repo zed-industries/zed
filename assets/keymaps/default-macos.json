@@ -49,8 +49,9 @@
       "ctrl-d": "editor::Delete",
       "tab": "editor::Tab",
       "shift-tab": "editor::TabPrev",
-      "ctrl-k": "editor::CutToEndOfLine",
       "ctrl-t": "editor::Transpose",
+      "ctrl-k": "editor::KillRingCut",
+      "ctrl-y": "editor::KillRingYank",
       "cmd-k q": "editor::Rewrap",
       "cmd-k cmd-q": "editor::Rewrap",
       "cmd-backspace": "editor::DeleteToBeginningOfLine",
@@ -92,6 +93,8 @@
       "ctrl-e": "editor::MoveToEndOfLine",
       "cmd-up": "editor::MoveToBeginning",
       "cmd-down": "editor::MoveToEnd",
+      "ctrl-home": "editor::MoveToBeginning",
+      "ctrl-end": "editor::MoveToEnd",
       "shift-up": "editor::SelectUp",
       "ctrl-shift-p": "editor::SelectUp",
       "shift-down": "editor::SelectDown",
@@ -204,6 +207,18 @@
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
       "alt-enter": "editor::Newline"
+    }
+  },
+  {
+    "context": "AssistantPanel2",
+    "bindings": {
+      "cmd-n": "assistant2::NewThread"
+    }
+  },
+  {
+    "context": "MessageEditor > Editor",
+    "bindings": {
+      "cmd-enter": "assistant2::Chat"
     }
   },
   {
@@ -648,10 +663,15 @@
     }
   },
   {
+    "context": "FileFinder",
+    "bindings": {
+      "cmd": "file_finder::ToggleMenu"
+    }
+  },
+  {
     "context": "FileFinder && !menu_open",
     "bindings": {
       "cmd-shift-p": "file_finder::SelectPrev",
-      "cmd": "file_finder::OpenMenu",
       "cmd-j": "pane::SplitDown",
       "cmd-k": "pane::SplitUp",
       "cmd-h": "pane::SplitLeft",

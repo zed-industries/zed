@@ -386,7 +386,7 @@ fn handle_char_msg(
         return Some(1);
     };
     drop(lock);
-    let ime_key = keystroke.ime_key.clone();
+    let key_char = keystroke.key_char.clone();
     let event = KeyDownEvent {
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
@@ -397,7 +397,7 @@ fn handle_char_msg(
     if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
         return Some(0);
     }
-    let Some(ime_char) = ime_key else {
+    let Some(ime_char) = key_char else {
         return Some(1);
     };
     with_input_handler(&state_ptr, |input_handler| {
@@ -1172,7 +1172,7 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     Some(Keystroke {
         modifiers,
         key,
-        ime_key: None,
+        key_char: None,
     })
 }
 
@@ -1220,7 +1220,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
                 return Some(KeystrokeOrModifier::Keystroke(Keystroke {
                     modifiers,
                     key: format!("f{}", offset + 1),
-                    ime_key: None,
+                    key_char: None,
                 }));
             };
             return None;
@@ -1231,7 +1231,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
     Some(KeystrokeOrModifier::Keystroke(Keystroke {
         modifiers,
         key,
-        ime_key: None,
+        key_char: None,
     }))
 }
 
@@ -1253,7 +1253,7 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         Some(Keystroke {
             modifiers,
             key,
-            ime_key: Some(first_char.to_string()),
+            key_char: Some(first_char.to_string()),
         })
     }
 }
@@ -1327,7 +1327,7 @@ fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> 
     Some(Keystroke {
         modifiers,
         key,
-        ime_key: None,
+        key_char: None,
     })
 }
 
