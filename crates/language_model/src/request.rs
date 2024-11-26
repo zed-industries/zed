@@ -388,6 +388,8 @@ impl LanguageModelRequest {
             }
         }
 
+        dbg!(&new_messages);
+
         anthropic::Request {
             model,
             messages: new_messages,
