@@ -522,7 +522,7 @@
   {
     "context": "ProposedChangesEditor",
     "bindings": {
-      "ctrl-shift-y": "editor::ApplyDiffHunk",
+      "ctrl-shift-y": "editor::ApplySelectedDiffHunks",
       "ctrl-alt-a": "editor::ApplyAllDiffHunks"
     }
   },

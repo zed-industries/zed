@@ -99,7 +99,8 @@ use language::{
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 pub use proposed_changes_editor::{
-    ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
+    ProposedChangeLocation, ProposedChangesEditor, ProposedChangesToolbar,
+    ProposedChangesToolbarControls,
 };
 use similar::{ChangeTag, TextDiff};
 use std::iter::Peekable;
@@ -160,7 +161,7 @@ use theme::{
 };
 use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
-    ListItem, Popover, PopoverMenuHandle, Tooltip,
+    ListItem, Popover, Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
@@ -590,7 +591,6 @@ pub struct Editor {
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
-    hunk_controls_menu_handle: PopoverMenuHandle<ui::ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
@@ -2112,7 +2112,6 @@ impl Editor {
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
-            hunk_controls_menu_handle: PopoverMenuHandle::default(),
             completion_tasks: Default::default(),
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
@@ -13558,20 +13557,24 @@ fn test_wrap_with_prefix() {
     );
 }
 
+fn is_hunk_selected(hunk: &MultiBufferDiffHunk, selections: &[Selection<Point>]) -> bool {
+    let mut buffer_rows_for_selections = selections.iter().map(|selection| {
+        let start = MultiBufferRow(selection.start.row);
+        let end = MultiBufferRow(selection.end.row);
+        start..end
+    });
+
+    buffer_rows_for_selections.any(|range| does_selection_touch_hunk(&range, hunk))
+}
+
 fn hunks_for_selections(
     multi_buffer_snapshot: &MultiBufferSnapshot,
     selections: &[Selection<Anchor>],
 ) -> Vec<MultiBufferDiffHunk> {
     let buffer_rows_for_selections = selections.iter().map(|selection| {
-        let head = selection.head();
-        let tail = selection.tail();
-        let start = MultiBufferRow(tail.to_point(multi_buffer_snapshot).row);
-        let end = MultiBufferRow(head.to_point(multi_buffer_snapshot).row);
-        if start > end {
-            end..start
-        } else {
-            start..end
-        }
+        let start = MultiBufferRow(selection.start.to_point(multi_buffer_snapshot).row);
+        let end = MultiBufferRow(selection.end.to_point(multi_buffer_snapshot).row);
+        start..end
     });
 
     hunks_for_rows(buffer_rows_for_selections, multi_buffer_snapshot)
@@ -13588,19 +13591,8 @@ pub fn hunks_for_rows(
         let query_rows =
             selected_multi_buffer_rows.start..selected_multi_buffer_rows.end.next_row();
         for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
-            // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
-            // when the caret is just above or just below the deleted hunk.
-            let allow_adjacent = hunk_status(&hunk) == DiffHunkStatus::Removed;
-            let related_to_selection = if allow_adjacent {
-                hunk.row_range.overlaps(&query_rows)
-                    || hunk.row_range.start == query_rows.end
-                    || hunk.row_range.end == query_rows.start
-            } else {
-                // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
-                // `hunk.row_range` is exclusive (e.g. [2..3] means 2nd row is selected)
-                hunk.row_range.overlaps(&selected_multi_buffer_rows)
-                    || selected_multi_buffer_rows.end == hunk.row_range.start
-            };
+            let related_to_selection =
+                does_selection_touch_hunk(&selected_multi_buffer_rows, &hunk);
             if related_to_selection {
                 if !processed_buffer_rows
                     .entry(hunk.buffer_id)
@@ -13615,6 +13607,26 @@ pub fn hunks_for_rows(
     }
 
     hunks
+}
+
+fn does_selection_touch_hunk(
+    selected_multi_buffer_rows: &Range<MultiBufferRow>,
+    hunk: &MultiBufferDiffHunk,
+) -> bool {
+    let query_rows = selected_multi_buffer_rows.start..selected_multi_buffer_rows.end.next_row();
+    // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
+    // when the caret is just above or just below the deleted hunk.
+    let allow_adjacent = hunk_status(hunk) == DiffHunkStatus::Removed;
+    if allow_adjacent {
+        hunk.row_range.overlaps(&query_rows)
+            || hunk.row_range.start == query_rows.end
+            || hunk.row_range.end == query_rows.start
+    } else {
+        // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
+        // `hunk.row_range` is exclusive (e.g. [2..3] means 2nd row is selected)
+        hunk.row_range.overlaps(selected_multi_buffer_rows)
+            || selected_multi_buffer_rows.end == hunk.row_range.start
+    }
 }
 
 pub trait CollaborationHub {

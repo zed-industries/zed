@@ -12552,7 +12552,7 @@ async fn test_edits_around_expanded_insertion_hunks(
     executor.run_until_parked();
     cx.assert_diff_hunks(
         r#"
-        use some::mod1;
+      - use some::mod1;
       - use some::mod2;
       -
       - const A: u32 = 42;

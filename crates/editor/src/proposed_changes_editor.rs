@@ -5,10 +5,11 @@ use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription,
 use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
 use project::Project;
+use settings::Settings;
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
-use ui::{prelude::*, ButtonLike, KeyBinding};
+use ui::{prelude::*, KeyBinding};
 use workspace::{
     searchable::SearchableItemHandle, Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
@@ -34,7 +35,11 @@ struct BufferEntry {
     _subscription: Subscription,
 }
 
-pub struct ProposedChangesEditorToolbar {
+pub struct ProposedChangesToolbarControls {
+    current_editor: Option<View<ProposedChangesEditor>>,
+}
+
+pub struct ProposedChangesToolbar {
     current_editor: Option<View<ProposedChangesEditor>>,
 }
 
@@ -228,6 +233,10 @@ impl ProposedChangesEditor {
             _ => (),
         }
     }
+
+    fn all_changes_accepted(&self) -> bool {
+        false // In the future, we plan to compute this based on the current state of patches.
+    }
 }
 
 impl Render for ProposedChangesEditor {
@@ -251,7 +260,11 @@ impl Item for ProposedChangesEditor {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
-        Some(Icon::new(IconName::Diff))
+        if self.all_changes_accepted() {
+            Some(Icon::new(IconName::Check).color(Color::Success))
+        } else {
+            Some(Icon::new(IconName::ZedAssistant))
+        }
     }
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
@@ -317,7 +330,7 @@ impl Item for ProposedChangesEditor {
     }
 }
 
-impl ProposedChangesEditorToolbar {
+impl ProposedChangesToolbarControls {
     pub fn new() -> Self {
         Self {
             current_editor: None,
@@ -333,28 +346,97 @@ impl ProposedChangesEditorToolbar {
     }
 }
 
-impl Render for ProposedChangesEditorToolbar {
+impl Render for ProposedChangesToolbarControls {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let button_like = ButtonLike::new("apply-changes").child(Label::new("Apply All"));
+        if let Some(editor) = &self.current_editor {
+            let focus_handle = editor.focus_handle(cx);
+            let action = &ApplyAllDiffHunks;
+            let keybinding = KeyBinding::for_action_in(action, &focus_handle, cx);
 
-        match &self.current_editor {
-            Some(editor) => {
-                let focus_handle = editor.focus_handle(cx);
-                let keybinding = KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, cx)
-                    .map(|binding| binding.into_any_element());
+            let editor = editor.read(cx);
 
-                button_like.children(keybinding).on_click({
-                    move |_event, cx| focus_handle.dispatch_action(&ApplyAllDiffHunks, cx)
-                })
-            }
-            None => button_like.disabled(true),
+            let apply_all_button = if editor.all_changes_accepted() {
+                None
+            } else {
+                Some(
+                    Button::new("apply-changes", "Apply All")
+                        .style(ButtonStyle::Filled)
+                        .key_binding(keybinding)
+                        .on_click(move |_event, cx| focus_handle.dispatch_action(action, cx)),
+                )
+            };
+
+            h_flex()
+                .gap_1()
+                .children([apply_all_button].into_iter().flatten())
+                .into_any_element()
+        } else {
+            gpui::Empty.into_any_element()
         }
     }
 }
 
-impl EventEmitter<ToolbarItemEvent> for ProposedChangesEditorToolbar {}
+impl EventEmitter<ToolbarItemEvent> for ProposedChangesToolbarControls {}
 
-impl ToolbarItemView for ProposedChangesEditorToolbar {
+impl ToolbarItemView for ProposedChangesToolbarControls {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn workspace::ItemHandle>,
+        _cx: &mut ViewContext<Self>,
+    ) -> workspace::ToolbarItemLocation {
+        self.current_editor =
+            active_pane_item.and_then(|item| item.downcast::<ProposedChangesEditor>());
+        self.get_toolbar_item_location()
+    }
+}
+
+impl ProposedChangesToolbar {
+    pub fn new() -> Self {
+        Self {
+            current_editor: None,
+        }
+    }
+
+    fn get_toolbar_item_location(&self) -> ToolbarItemLocation {
+        if self.current_editor.is_some() {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+}
+
+impl Render for ProposedChangesToolbar {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        if let Some(editor) = &self.current_editor {
+            let editor = editor.read(cx);
+            let all_changes_accepted = editor.all_changes_accepted();
+            let icon = if all_changes_accepted {
+                Icon::new(IconName::Check).color(Color::Success)
+            } else {
+                Icon::new(IconName::ZedAssistant)
+            };
+
+            h_flex()
+                .gap_2p5()
+                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                .child(icon.size(IconSize::Small))
+                .child(
+                    Label::new(editor.title.clone())
+                        .color(Color::Muted)
+                        .single_line()
+                        .strikethrough(all_changes_accepted),
+                )
+                .into_any_element()
+        } else {
+            gpui::Empty.into_any_element()
+        }
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for ProposedChangesToolbar {}
+
+impl ToolbarItemView for ProposedChangesToolbar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn workspace::ItemHandle>,

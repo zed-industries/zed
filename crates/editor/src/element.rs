@@ -2509,6 +2509,7 @@ impl EditorElement {
                 element,
                 available_space: size(AvailableSpace::MinContent, element_size.height.into()),
                 style: BlockStyle::Fixed,
+                is_zero_height: block.height() == 0,
             });
         }
         for (row, block) in non_fixed_blocks {
@@ -2555,6 +2556,7 @@ impl EditorElement {
                 element,
                 available_space: size(width.into(), element_size.height.into()),
                 style,
+                is_zero_height: block.height() == 0,
             });
         }
 
@@ -2602,6 +2604,7 @@ impl EditorElement {
                             element,
                             available_space: size(width, element_size.height.into()),
                             style,
+                            is_zero_height: block.height() == 0,
                         });
                     }
                 }
@@ -3947,8 +3950,23 @@ impl EditorElement {
     }
 
     fn paint_blocks(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
-        for mut block in layout.blocks.drain(..) {
-            block.element.paint(cx);
+        cx.paint_layer(layout.text_hitbox.bounds, |cx| {
+            layout.blocks.retain_mut(|block| {
+                if !block.is_zero_height {
+                    block.element.paint(cx);
+                }
+
+                block.is_zero_height
+            });
+        });
+
+        // Paint all the zero-height blocks in a higher layer (if there were any remaining to paint).
+        if !layout.blocks.is_empty() {
+            cx.paint_layer(layout.text_hitbox.bounds, |cx| {
+                for mut block in layout.blocks.drain(..) {
+                    block.element.paint(cx);
+                }
+            });
         }
     }
 
@@ -6011,6 +6029,7 @@ struct BlockLayout {
     element: AnyElement,
     available_space: Size<AvailableSpace>,
     style: BlockStyle,
+    is_zero_height: bool,
 }
 
 fn layout_line(
