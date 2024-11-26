@@ -1,10 +1,9 @@
 use editor::{Editor, EditorElement, EditorStyle};
-use feature_flags::{FeatureFlagAppExt, ToolUseFeatureFlag};
 use gpui::{AppContext, FocusableView, Model, TextStyle, View};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
+use ui::{prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, KeyBinding};
 
 use crate::thread::{RequestKind, Thread};
 use crate::Chat;
@@ -12,6 +11,7 @@ use crate::Chat;
 pub struct MessageEditor {
     thread: Model<Thread>,
     editor: View<Editor>,
+    use_tools: bool,
 }
 
 impl MessageEditor {
@@ -24,6 +24,7 @@ impl MessageEditor {
 
                 editor
             }),
+            use_tools: false,
         }
     }
 
@@ -58,7 +59,7 @@ impl MessageEditor {
             thread.insert_user_message(user_message);
             let mut request = thread.to_completion_request(request_kind, cx);
 
-            if cx.has_flag::<ToolUseFeatureFlag>() {
+            if self.use_tools {
                 request.tools = thread
                     .tools()
                     .tools(cx)
@@ -123,12 +124,24 @@ impl Render for MessageEditor {
                 h_flex()
                     .justify_between()
                     .child(
-                        h_flex().child(
-                            Button::new("add-context", "Add Context")
-                                .style(ButtonStyle::Filled)
-                                .icon(IconName::Plus)
-                                .icon_position(IconPosition::Start),
-                        ),
+                        h_flex()
+                            .child(
+                                Button::new("add-context", "Add Context")
+                                    .style(ButtonStyle::Filled)
+                                    .icon(IconName::Plus)
+                                    .icon_position(IconPosition::Start),
+                            )
+                            .child(CheckboxWithLabel::new(
+                                "use-tools",
+                                Label::new("Tools"),
+                                self.use_tools.into(),
+                                cx.listener(|this, selection, _cx| {
+                                    this.use_tools = match selection {
+                                        Selection::Selected => true,
+                                        Selection::Unselected | Selection::Indeterminate => false,
+                                    };
+                                }),
+                            )),
                     )
                     .child(
                         h_flex()
