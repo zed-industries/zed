@@ -1777,6 +1777,7 @@ impl LspCommand for GetCompletions {
             let default_commit_characters = item_defaults.commit_characters.as_ref();
             let default_insert_text_mode = item_defaults.insert_text_mode.as_ref();
 
+            // TODO kb wrong
             if default_data.is_some()
                 || default_commit_characters.is_some()
                 || default_insert_text_mode.is_some()
