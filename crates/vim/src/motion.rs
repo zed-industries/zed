@@ -748,12 +748,14 @@ impl Motion {
                 SelectionGoal::None,
             ),
             Matching => (matching(map, point), SelectionGoal::None),
-            UnmatchedForward { char } => {
-                (unmatched_forward(map, point, *char), SelectionGoal::None)
-            }
-            UnmatchedBackward { char } => {
-                (unmatched_backward(map, point, *char), SelectionGoal::None)
-            }
+            UnmatchedForward { char } => (
+                unmatched_forward(map, point, *char, times),
+                SelectionGoal::None,
+            ),
+            UnmatchedBackward { char } => (
+                unmatched_backward(map, point, *char, times),
+                SelectionGoal::None,
+            ),
             // t f
             FindForward {
                 before,
@@ -1841,20 +1843,22 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
 
 fn unmatched_forward(
     map: &DisplaySnapshot,
-    display_point: DisplayPoint,
+    mut display_point: DisplayPoint,
     char: char,
+    times: usize,
 ) -> DisplayPoint {
-    // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1245
-    let point = display_point.to_point(map);
-    let offset = point.to_offset(&map.buffer_snapshot);
+    for _ in 0..times {
+        // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1245
+        let point = display_point.to_point(map);
+        let offset = point.to_offset(&map.buffer_snapshot);
 
-    let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point);
-    if let Some(ranges) = ranges {
+        let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point);
+        let Some(ranges) = ranges else { break };
         let mut closest_closing_destination = None;
         let mut closest_distance = usize::MAX;
 
         for (_, close_range) in ranges {
-            if close_range.start >= offset {
+            if close_range.start > offset {
                 let mut chars = map.buffer_snapshot.chars_at(close_range.start);
                 if Some(char) == chars.next() {
                     let distance = close_range.start - offset;
@@ -1867,25 +1871,33 @@ fn unmatched_forward(
             }
         }
 
-        closest_closing_destination
+        let new_point = closest_closing_destination
             .map(|destination| destination.to_display_point(map))
-            .unwrap_or(display_point)
-    } else {
-        display_point
+            .unwrap_or(display_point);
+        if new_point == display_point {
+            break;
+        }
+        display_point = new_point;
     }
+    return display_point;
 }
 
 fn unmatched_backward(
     map: &DisplaySnapshot,
-    display_point: DisplayPoint,
+    mut display_point: DisplayPoint,
     char: char,
+    times: usize,
 ) -> DisplayPoint {
-    // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1239
-    let point = display_point.to_point(map);
-    let offset = point.to_offset(&map.buffer_snapshot);
+    for _ in 0..times {
+        // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1239
+        let point = display_point.to_point(map);
+        let offset = point.to_offset(&map.buffer_snapshot);
 
-    let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point);
-    if let Some(ranges) = ranges {
+        let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point);
+        let Some(ranges) = ranges else {
+            break;
+        };
+
         let mut closest_starting_destination = None;
         let mut closest_distance = usize::MAX;
 
@@ -1903,12 +1915,16 @@ fn unmatched_backward(
             }
         }
 
-        closest_starting_destination
+        let new_point = closest_starting_destination
             .map(|destination| destination.to_display_point(map))
-            .unwrap_or(display_point)
-    } else {
-        display_point
+            .unwrap_or(display_point);
+        if new_point == display_point {
+            break;
+        } else {
+            display_point = new_point;
+        }
     }
+    display_point
 }
 
 fn find_forward(
@@ -2264,6 +2280,13 @@ mod test {
             .assert_eq(indoc! {r"func (a string) {
                 do(something(with<Types>.and_arrays[0, 2])ˇ)
             }"});
+
+        cx.set_shared_state(indoc! {r"func (a string) { a((b, cˇ))}"})
+            .await;
+        cx.simulate_shared_keystrokes("] )").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"func (a string) { a((b, c)ˇ)}"});
 
         // test it works on immediate nesting
         cx.set_shared_state("{ˇ {}{}}").await;
