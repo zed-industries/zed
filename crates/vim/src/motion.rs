@@ -72,6 +72,12 @@ pub enum Motion {
     StartOfDocument,
     EndOfDocument,
     Matching,
+    UnmatchedForward {
+        char: char,
+    },
+    UnmatchedBackward {
+        char: char,
+    },
     FindForward {
         before: bool,
         char: char,
@@ -203,6 +209,20 @@ pub struct StartOfLine {
     pub(crate) display_lines: bool,
 }
 
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct UnmatchedForward {
+    #[serde(default)]
+    char: char,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct UnmatchedBackward {
+    #[serde(default)]
+    char: char,
+}
+
 impl_actions!(
     vim,
     [
@@ -219,6 +239,8 @@ impl_actions!(
         NextSubwordEnd,
         PreviousSubwordStart,
         PreviousSubwordEnd,
+        UnmatchedForward,
+        UnmatchedBackward
     ]
 );
 
@@ -326,7 +348,20 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &Matching, cx| {
         vim.motion(Motion::Matching, cx)
     });
-
+    Vim::action(
+        editor,
+        cx,
+        |vim, &UnmatchedForward { char }: &UnmatchedForward, cx| {
+            vim.motion(Motion::UnmatchedForward { char }, cx)
+        },
+    );
+    Vim::action(
+        editor,
+        cx,
+        |vim, &UnmatchedBackward { char }: &UnmatchedBackward, cx| {
+            vim.motion(Motion::UnmatchedBackward { char }, cx)
+        },
+    );
     Vim::action(
         editor,
         cx,
@@ -504,6 +539,8 @@ impl Motion {
             | Jump { line: true, .. } => true,
             EndOfLine { .. }
             | Matching
+            | UnmatchedForward { .. }
+            | UnmatchedBackward { .. }
             | FindForward { .. }
             | Left
             | Backspace
@@ -537,6 +574,8 @@ impl Motion {
             | Up { .. }
             | EndOfLine { .. }
             | Matching
+            | UnmatchedForward { .. }
+            | UnmatchedBackward { .. }
             | FindForward { .. }
             | RepeatFind { .. }
             | Left
@@ -583,6 +622,8 @@ impl Motion {
             | EndOfLine { .. }
             | EndOfLineDownward
             | Matching
+            | UnmatchedForward { .. }
+            | UnmatchedBackward { .. }
             | FindForward { .. }
             | WindowTop
             | WindowMiddle
@@ -707,6 +748,14 @@ impl Motion {
                 SelectionGoal::None,
             ),
             Matching => (matching(map, point), SelectionGoal::None),
+            UnmatchedForward { char } => (
+                unmatched_forward(map, point, *char, times),
+                SelectionGoal::None,
+            ),
+            UnmatchedBackward { char } => (
+                unmatched_backward(map, point, *char, times),
+                SelectionGoal::None,
+            ),
             // t f
             FindForward {
                 before,
@@ -1792,6 +1841,92 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     }
 }
 
+fn unmatched_forward(
+    map: &DisplaySnapshot,
+    mut display_point: DisplayPoint,
+    char: char,
+    times: usize,
+) -> DisplayPoint {
+    for _ in 0..times {
+        // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1245
+        let point = display_point.to_point(map);
+        let offset = point.to_offset(&map.buffer_snapshot);
+
+        let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point);
+        let Some(ranges) = ranges else { break };
+        let mut closest_closing_destination = None;
+        let mut closest_distance = usize::MAX;
+
+        for (_, close_range) in ranges {
+            if close_range.start > offset {
+                let mut chars = map.buffer_snapshot.chars_at(close_range.start);
+                if Some(char) == chars.next() {
+                    let distance = close_range.start - offset;
+                    if distance < closest_distance {
+                        closest_closing_destination = Some(close_range.start);
+                        closest_distance = distance;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        let new_point = closest_closing_destination
+            .map(|destination| destination.to_display_point(map))
+            .unwrap_or(display_point);
+        if new_point == display_point {
+            break;
+        }
+        display_point = new_point;
+    }
+    return display_point;
+}
+
+fn unmatched_backward(
+    map: &DisplaySnapshot,
+    mut display_point: DisplayPoint,
+    char: char,
+    times: usize,
+) -> DisplayPoint {
+    for _ in 0..times {
+        // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1239
+        let point = display_point.to_point(map);
+        let offset = point.to_offset(&map.buffer_snapshot);
+
+        let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point);
+        let Some(ranges) = ranges else {
+            break;
+        };
+
+        let mut closest_starting_destination = None;
+        let mut closest_distance = usize::MAX;
+
+        for (start_range, _) in ranges {
+            if start_range.start < offset {
+                let mut chars = map.buffer_snapshot.chars_at(start_range.start);
+                if Some(char) == chars.next() {
+                    let distance = offset - start_range.start;
+                    if distance < closest_distance {
+                        closest_starting_destination = Some(start_range.start);
+                        closest_distance = distance;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        let new_point = closest_starting_destination
+            .map(|destination| destination.to_display_point(map))
+            .unwrap_or(display_point);
+        if new_point == display_point {
+            break;
+        } else {
+            display_point = new_point;
+        }
+    }
+    display_point
+}
+
 fn find_forward(
     map: &DisplaySnapshot,
     from: DisplayPoint,
@@ -2116,6 +2251,103 @@ mod test {
         cx.set_shared_state("func ˇboop() {\n}").await;
         cx.simulate_shared_keystrokes("%").await;
         cx.shared_state().await.assert_eq("func boop(ˇ) {\n}");
+    }
+
+    #[gpui::test]
+    async fn test_unmatched_forward(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // test it works with curly braces
+        cx.set_shared_state(indoc! {r"func (a string) {
+                do(something(with<Types>.anˇd_arrays[0, 2]))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes("] }").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"func (a string) {
+                do(something(with<Types>.and_arrays[0, 2]))
+            ˇ}"});
+
+        // test it works with brackets
+        cx.set_shared_state(indoc! {r"func (a string) {
+                do(somethiˇng(with<Types>.and_arrays[0, 2]))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes("] )").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"func (a string) {
+                do(something(with<Types>.and_arrays[0, 2])ˇ)
+            }"});
+
+        cx.set_shared_state(indoc! {r"func (a string) { a((b, cˇ))}"})
+            .await;
+        cx.simulate_shared_keystrokes("] )").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"func (a string) { a((b, c)ˇ)}"});
+
+        // test it works on immediate nesting
+        cx.set_shared_state("{ˇ {}{}}").await;
+        cx.simulate_shared_keystrokes("] }").await;
+        cx.shared_state().await.assert_eq("{ {}{}ˇ}");
+        cx.set_shared_state("(ˇ ()())").await;
+        cx.simulate_shared_keystrokes("] )").await;
+        cx.shared_state().await.assert_eq("( ()()ˇ)");
+
+        // test it works on immediate nesting inside braces
+        cx.set_shared_state("{\n    ˇ {()}\n}").await;
+        cx.simulate_shared_keystrokes("] }").await;
+        cx.shared_state().await.assert_eq("{\n     {()}\nˇ}");
+        cx.set_shared_state("(\n    ˇ {()}\n)").await;
+        cx.simulate_shared_keystrokes("] )").await;
+        cx.shared_state().await.assert_eq("(\n     {()}\nˇ)");
+    }
+
+    #[gpui::test]
+    async fn test_unmatched_backward(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // test it works with curly braces
+        cx.set_shared_state(indoc! {r"func (a string) {
+                do(something(with<Types>.anˇd_arrays[0, 2]))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes("[ {").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"func (a string) ˇ{
+                do(something(with<Types>.and_arrays[0, 2]))
+            }"});
+
+        // test it works with brackets
+        cx.set_shared_state(indoc! {r"func (a string) {
+                do(somethiˇng(with<Types>.and_arrays[0, 2]))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes("[ (").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"func (a string) {
+                doˇ(something(with<Types>.and_arrays[0, 2]))
+            }"});
+
+        // test it works on immediate nesting
+        cx.set_shared_state("{{}{} ˇ }").await;
+        cx.simulate_shared_keystrokes("[ {").await;
+        cx.shared_state().await.assert_eq("ˇ{{}{}  }");
+        cx.set_shared_state("(()() ˇ )").await;
+        cx.simulate_shared_keystrokes("[ (").await;
+        cx.shared_state().await.assert_eq("ˇ(()()  )");
+
+        // test it works on immediate nesting inside braces
+        cx.set_shared_state("{\n    {()} ˇ\n}").await;
+        cx.simulate_shared_keystrokes("[ {").await;
+        cx.shared_state().await.assert_eq("ˇ{\n    {()} \n}");
+        cx.set_shared_state("(\n    {()} ˇ\n)").await;
+        cx.simulate_shared_keystrokes("[ (").await;
+        cx.shared_state().await.assert_eq("ˇ(\n    {()} \n)");
     }
 
     #[gpui::test]
