@@ -75,6 +75,7 @@ impl WorktreeStore {
         client.add_model_request_handler(Self::handle_expand_project_entry);
         client.add_model_request_handler(Self::handle_git_branches);
         client.add_model_request_handler(Self::handle_update_branch);
+        client.add_model_request_handler(Self::handle_get_staged_text);
     }
 
     pub fn local(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
@@ -1021,6 +1022,18 @@ impl WorktreeStore {
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
         Worktree::handle_copy_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_get_staged_text(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::GetStagedText>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::GetStagedTextResponse> {
+        let worktree = this.update(&mut cx, |this, cx| {
+            this.worktree_for_id(WorktreeId::from_proto(envelope.payload.worktree_id), cx)
+                .ok_or_else(|| anyhow!("worktree not found"))
+        })??;
+        Worktree::handle_get_staged_text(worktree, envelope.payload, cx).await
     }
 
     pub async fn handle_delete_project_entry(

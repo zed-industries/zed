@@ -104,7 +104,6 @@ pub enum CreatedEntry {
 pub struct LoadedFile {
     pub file: Arc<File>,
     pub text: String,
-    pub diff_base: Option<String>,
 }
 
 pub struct LoadedBinaryFile {
@@ -707,6 +706,32 @@ impl Worktree {
         }
     }
 
+    pub fn load_staged_file(
+        &self,
+        path: &Path,
+        cx: &ModelContext<Worktree>,
+    ) -> Task<Result<Option<String>>> {
+        match self {
+            Worktree::Local(this) => this.load_staged_file(path, cx),
+            Worktree::Remote(this) => {
+                let project_id = this.project_id;
+                let worktree_id = this.id.to_proto();
+                let path = path.to_string_lossy().to_string();
+                let client = this.client.clone();
+                cx.background_executor().spawn(async move {
+                    Ok(client
+                        .request(proto::GetStagedText {
+                            project_id,
+                            worktree_id,
+                            path,
+                        })
+                        .await?
+                        .staged_text)
+                })
+            }
+        }
+    }
+
     pub fn load_binary_file(
         &self,
         path: &Path,
@@ -1017,6 +1042,19 @@ impl Worktree {
             entry: task.await?.as_ref().map(|e| e.into()),
             worktree_scan_id: scan_id as u64,
         })
+    }
+
+    pub async fn handle_get_staged_text(
+        this: Model<Self>,
+        request: proto::GetStagedText,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::GetStagedTextResponse> {
+        let staged_text = this
+            .update(&mut cx, |this, cx| {
+                this.load_staged_file(Path::new(&request.path), cx)
+            })?
+            .await?;
+        Ok(proto::GetStagedTextResponse { staged_text })
     }
 }
 
@@ -1360,28 +1398,9 @@ impl LocalWorktree {
         let entry = self.refresh_entry(path.clone(), None, cx);
         let is_private = self.is_path_private(path.as_ref());
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|this, _cx| async move {
             let abs_path = abs_path?;
             let text = fs.load(&abs_path).await?;
-            let mut index_task = None;
-            let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
-            if let Some(repo) = snapshot.repository_for_path(&path) {
-                if let Some(repo_path) = repo.relativize(&snapshot, &path).log_err() {
-                    if let Some(git_repo) = snapshot.git_repositories.get(&*repo.work_directory) {
-                        let git_repo = git_repo.repo_ptr.clone();
-                        index_task = Some(
-                            cx.background_executor()
-                                .spawn(async move { git_repo.load_index_text(&repo_path) }),
-                        );
-                    }
-                }
-            }
-
-            let diff_base = if let Some(index_task) = index_task {
-                index_task.await
-            } else {
-                None
-            };
 
             let worktree = this
                 .upgrade()
@@ -1411,11 +1430,39 @@ impl LocalWorktree {
                 }
             };
 
-            Ok(LoadedFile {
-                file,
-                text,
-                diff_base,
-            })
+            Ok(LoadedFile { file, text })
+        })
+    }
+
+    fn load_staged_file(
+        &self,
+        path: &Path,
+        cx: &ModelContext<Worktree>,
+    ) -> Task<Result<Option<String>>> {
+        let path = Arc::from(path);
+
+        cx.spawn(|this, mut cx| async move {
+            let mut index_task = None;
+            let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
+            if let Some(repo) = snapshot.repository_for_path(&path) {
+                if let Some(repo_path) = repo.relativize(&snapshot, &path).log_err() {
+                    if let Some(git_repo) = snapshot.git_repositories.get(&*repo.work_directory) {
+                        let git_repo = git_repo.repo_ptr.clone();
+                        index_task = Some(
+                            cx.background_executor()
+                                .spawn(async move { git_repo.load_index_text(&repo_path) }),
+                        );
+                    }
+                }
+            }
+
+            let diff_base = if let Some(index_task) = index_task {
+                index_task.await
+            } else {
+                None
+            };
+
+            Ok(diff_base)
         })
     }
 

@@ -8,10 +8,8 @@ use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
-use futures::{
-    channel::oneshot, future::Shared, stream::FuturesUnordered, Future, FutureExt as _, StreamExt,
-};
-use git::blame::Blame;
+use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
+use git::{blame::Blame, diff::BufferDiff};
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Subscription,
     Task, WeakModel,
@@ -27,7 +25,7 @@ use language::{
 use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
 use smol::channel::Receiver;
 use std::{io, ops::Range, path::Path, str::FromStr as _, sync::Arc, time::Instant};
-use text::BufferId;
+use text::{BufferId, LineEnding, Rope};
 use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
 use worktree::{File, PathChange, ProjectEntryId, UpdatedGitRepositoriesSet, Worktree, WorktreeId};
 
@@ -36,10 +34,19 @@ pub struct BufferStore {
     state: BufferStoreState,
     #[allow(clippy::type_complexity)]
     loading_buffers: HashMap<ProjectPath, Shared<Task<Result<Model<Buffer>, Arc<anyhow::Error>>>>>,
+    #[allow(clippy::type_complexity)]
+    loading_change_sets:
+        HashMap<BufferId, Shared<Task<Result<Model<BufferChangeSet>, Arc<anyhow::Error>>>>>,
     worktree_store: Model<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashSet<Model<Buffer>>>,
+}
+
+pub struct BufferChangeSet {
+    pub base_text: Option<Model<Buffer>>,
+    pub diff_to_buffer: git::diff::BufferDiff,
+    pub recalculate_diff_task: Option<Task<Result<()>>>,
 }
 
 enum BufferStoreState {
@@ -65,7 +72,10 @@ struct LocalBufferStore {
 }
 
 enum OpenBuffer {
-    Buffer(WeakModel<Buffer>),
+    Complete {
+        buffer: WeakModel<Buffer>,
+        unstaged_changes: Option<WeakModel<BufferChangeSet>>,
+    },
     Operations(Vec<Operation>),
 }
 
@@ -462,92 +472,71 @@ impl LocalBufferStore {
     ) {
         debug_assert!(worktree_handle.read(cx).is_local());
 
-        // Identify the loading buffers whose containing repository that has changed.
-        let future_buffers = this
-            .loading_buffers()
-            .filter_map(|(project_path, future)| {
-                if project_path.worktree_id != worktree_handle.read(cx).id() {
-                    return None;
-                }
-                let path = &project_path.path;
-                changed_repos
-                    .iter()
-                    .find(|(work_dir, _)| path.starts_with(work_dir))?;
-                let path = path.clone();
-                Some(async move { future.await.ok().map(|buffer| (buffer, path)) })
-            })
-            .collect::<FuturesUnordered<_>>();
-
-        // Identify the current buffers whose containing repository has changed.
-        let current_buffers = this
-            .buffers()
+        let buffer_change_sets = this
+            .opened_buffers
+            .values()
             .filter_map(|buffer| {
-                let file = File::from_dyn(buffer.read(cx).file())?;
-                if file.worktree != worktree_handle {
-                    return None;
+                if let OpenBuffer::Complete {
+                    buffer,
+                    unstaged_changes,
+                } = buffer
+                {
+                    let buffer = buffer.upgrade()?.read(cx);
+                    let file = File::from_dyn(buffer.file())?;
+                    if file.worktree != worktree_handle {
+                        return None;
+                    }
+                    changed_repos
+                        .iter()
+                        .find(|(work_dir, _)| file.path.starts_with(work_dir))?;
+                    let unstaged_changes = unstaged_changes.as_ref()?.upgrade()?;
+                    let snapshot = buffer.text_snapshot();
+                    Some((unstaged_changes, snapshot, file.path.clone()))
+                } else {
+                    None
                 }
-                changed_repos
-                    .iter()
-                    .find(|(work_dir, _)| file.path.starts_with(work_dir))?;
-                Some((buffer, file.path.clone()))
             })
             .collect::<Vec<_>>();
 
-        if future_buffers.len() + current_buffers.len() == 0 {
+        if buffer_change_sets.is_empty() {
             return;
         }
 
         cx.spawn(move |this, mut cx| async move {
-            // Wait for all of the buffers to load.
-            let future_buffers = future_buffers.collect::<Vec<_>>().await;
-
-            // Reload the diff base for every buffer whose containing git repository has changed.
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
+            let worktree_id = snapshot.id().to_proto();
             let diff_bases_by_buffer = cx
                 .background_executor()
                 .spawn(async move {
-                    let mut diff_base_tasks = future_buffers
+                    buffer_change_sets
                         .into_iter()
-                        .flatten()
-                        .chain(current_buffers)
-                        .filter_map(|(buffer, path)| {
+                        .filter_map(|(change_set, buffer_snapshot, path)| {
                             let (repo_entry, local_repo_entry) = snapshot.repo_for_path(&path)?;
                             let relative_path = repo_entry.relativize(&snapshot, &path).ok()?;
-                            Some(async move {
-                                let base_text =
-                                    local_repo_entry.repo().load_index_text(&relative_path);
-                                Some((buffer, base_text))
-                            })
+                            let base_text = local_repo_entry.repo().load_index_text(&relative_path);
+                            Some((change_set, path, buffer_snapshot, base_text))
                         })
-                        .collect::<FuturesUnordered<_>>();
-
-                    let mut diff_bases = Vec::with_capacity(diff_base_tasks.len());
-                    while let Some(diff_base) = diff_base_tasks.next().await {
-                        if let Some(diff_base) = diff_base {
-                            diff_bases.push(diff_base);
-                        }
-                    }
-                    diff_bases
+                        .collect::<Vec<_>>()
                 })
                 .await;
 
             this.update(&mut cx, |this, cx| {
-                // Assign the new diff bases on all of the buffers.
-                for (buffer, diff_base) in diff_bases_by_buffer {
-                    let buffer_id = buffer.update(cx, |buffer, cx| {
-                        buffer.set_diff_base(diff_base.clone(), cx);
-                        buffer.remote_id().to_proto()
-                    });
+                for (change_set, path, buffer_snapshot, staged_text) in diff_bases_by_buffer {
                     if let Some((client, project_id)) = &this.downstream_client.clone() {
                         client
-                            .send(proto::UpdateDiffBase {
+                            .send(proto::UpdateStagedText {
                                 project_id: *project_id,
-                                buffer_id,
-                                diff_base,
+                                worktree_id,
+                                path: path.to_string_lossy().to_string(),
+                                staged_text: staged_text.clone(),
                             })
                             .log_err();
                     }
+
+                    change_set.update(cx, |change_set, cx| {
+                        change_set.update(staged_text, buffer_snapshot, cx);
+                    });
                 }
             })
         })
@@ -753,12 +742,7 @@ impl LocalBufferStore {
                     .spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
                     .await;
                 cx.insert_model(reservation, |_| {
-                    Buffer::build(
-                        text_buffer,
-                        loaded.diff_base,
-                        Some(loaded.file),
-                        Capability::ReadWrite,
-                    )
+                    Buffer::build(text_buffer, None, Some(loaded.file), Capability::ReadWrite)
                 })
             })
         });
@@ -880,6 +864,7 @@ impl BufferStore {
             opened_buffers: Default::default(),
             shared_buffers: Default::default(),
             loading_buffers: Default::default(),
+            loading_change_sets: Default::default(),
             worktree_store,
         }
     }
@@ -902,6 +887,7 @@ impl BufferStore {
             downstream_client: None,
             opened_buffers: Default::default(),
             loading_buffers: Default::default(),
+            loading_change_sets: Default::default(),
             shared_buffers: Default::default(),
             worktree_store,
         }
@@ -933,17 +919,12 @@ impl BufferStore {
         project_path: ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        let existing_buffer = self.get_by_path(&project_path, cx);
-        if let Some(existing_buffer) = existing_buffer {
-            return Task::ready(Ok(existing_buffer));
+        if let Some(buffer) = self.get_by_path(&project_path, cx) {
+            return Task::ready(Ok(buffer));
         }
 
         let task = match self.loading_buffers.entry(project_path.clone()) {
-            // If the given path is already being loaded, then wait for that existing
-            // task to complete and return the same buffer.
             hash_map::Entry::Occupied(e) => e.get().clone(),
-
-            // Otherwise, record the fact that this path is now being loaded.
             hash_map::Entry::Vacant(entry) => {
                 let path = project_path.path.clone();
                 let Some(worktree) = self
@@ -968,6 +949,66 @@ impl BufferStore {
                             })
                             .ok();
                             load_result.map_err(Arc::new)
+                        })
+                        .shared(),
+                    )
+                    .clone()
+            }
+        };
+
+        cx.background_executor()
+            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
+    pub fn open_unstaged_changes(
+        &mut self,
+        buffer: Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<BufferChangeSet>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+        if let Some(change_set) = self.get_unstaged_changes(buffer_id) {
+            return Task::ready(Ok(change_set));
+        }
+
+        let task = match self.loading_change_sets.entry(buffer_id) {
+            hash_map::Entry::Occupied(e) => e.get().clone(),
+            hash_map::Entry::Vacant(entry) => {
+                let Some(file) = buffer.read(cx).file() else {
+                    return Task::ready(Err(anyhow!("buffer has no file")));
+                };
+                let worktree_id = file.worktree_id(cx);
+                let path = file.path().clone();
+                let Some(worktree) = self
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                else {
+                    return Task::ready(Err(anyhow!("no such worktree")));
+                };
+
+                let load = worktree.update(cx, |worktree, cx| {
+                    worktree.load_staged_file(path.as_ref(), cx)
+                });
+
+                entry
+                    .insert(
+                        cx.spawn(move |this, mut cx| async move {
+                            let text = load.await;
+                            this.update(&mut cx, |this, cx| {
+                                this.loading_change_sets.remove(&buffer_id);
+                                let text = text?;
+                                let change_set = cx
+                                    .new_model(|cx| BufferChangeSet::new(text, buffer.clone(), cx));
+                                if let Some(OpenBuffer::Complete {
+                                    unstaged_changes, ..
+                                }) = this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
+                                {
+                                    *unstaged_changes = Some(change_set.downgrade());
+                                }
+                                anyhow::Ok(change_set)
+                            })
+                            .and_then(|a| a)
+                            .map_err(Arc::new)
                         })
                         .shared(),
                     )
@@ -1155,7 +1196,10 @@ impl BufferStore {
     fn add_buffer(&mut self, buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Result<()> {
         let remote_id = buffer.read(cx).remote_id();
         let is_remote = buffer.read(cx).replica_id() != 0;
-        let open_buffer = OpenBuffer::Buffer(buffer.downgrade());
+        let open_buffer = OpenBuffer::Complete {
+            buffer: buffer.downgrade(),
+            unstaged_changes: None,
+        };
 
         let handle = cx.handle().downgrade();
         buffer.update(cx, move |_, cx| {
@@ -1220,9 +1264,7 @@ impl BufferStore {
     }
 
     pub fn get(&self, buffer_id: BufferId) -> Option<Model<Buffer>> {
-        self.opened_buffers
-            .get(&buffer_id)
-            .and_then(|buffer| buffer.upgrade())
+        self.opened_buffers.get(&buffer_id)?.upgrade()
     }
 
     pub fn get_existing(&self, buffer_id: BufferId) -> Result<Model<Buffer>> {
@@ -1235,6 +1277,17 @@ impl BufferStore {
             self.as_remote()
                 .and_then(|remote| remote.loading_remote_buffers_by_id.get(&buffer_id).cloned())
         })
+    }
+
+    fn get_unstaged_changes(&self, buffer_id: BufferId) -> Option<Model<BufferChangeSet>> {
+        if let OpenBuffer::Complete {
+            unstaged_changes, ..
+        } = self.opened_buffers.get(&buffer_id)?
+        {
+            unstaged_changes.as_ref()?.upgrade()
+        } else {
+            None
+        }
     }
 
     pub fn buffer_version_info(
@@ -1398,7 +1451,7 @@ impl BufferStore {
             match this.opened_buffers.entry(buffer_id) {
                 hash_map::Entry::Occupied(mut e) => match e.get_mut() {
                     OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
-                    OpenBuffer::Buffer(buffer) => {
+                    OpenBuffer::Complete { buffer, .. } => {
                         if let Some(buffer) = buffer.upgrade() {
                             buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx));
                         }
@@ -1969,10 +2022,79 @@ impl BufferStore {
     }
 }
 
+impl BufferChangeSet {
+    pub fn new(
+        base_text: Option<String>,
+        buffer: Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        let buffer = buffer.read(cx);
+        let mut this = Self {
+            base_text: None,
+            diff_to_buffer: git::diff::BufferDiff::new(buffer),
+            recalculate_diff_task: None,
+        };
+        this.update(base_text, buffer.text_snapshot(), cx);
+        this
+    }
+
+    pub fn diff_hunks_intersecting_range<'a>(
+        &'a self,
+        range: Range<text::Anchor>,
+        buffer_snapshot: &'a text::BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk> {
+        self.diff_to_buffer
+            .hunks_intersecting_range(range, buffer_snapshot)
+    }
+
+    pub fn diff_hunks_intersecting_range_rev<'a>(
+        &'a self,
+        range: Range<text::Anchor>,
+        buffer_snapshot: &'a text::BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk> {
+        self.diff_to_buffer
+            .hunks_intersecting_range_rev(range, buffer_snapshot)
+    }
+
+    pub fn update(
+        &mut self,
+        base_text: Option<String>,
+        buffer_snapshot: text::BufferSnapshot,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(base_text) = base_text {
+            self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+                let (base_text, diff) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let diff = BufferDiff::build(&base_text, &buffer_snapshot).await;
+                        (base_text, diff)
+                    })
+                    .await;
+                let base_text_buffer = cx.new_model(|cx| {
+                    Buffer::local_normalized(Rope::from(base_text), LineEnding::default(), cx)
+                })?;
+                this.update(&mut cx, |this, cx| {
+                    this.base_text = Some(base_text_buffer);
+                    this.diff_to_buffer = diff;
+                    this.recalculate_diff_task.take();
+                    cx.notify();
+                })?;
+                Ok(())
+            }));
+        } else {
+            self.base_text = None;
+            self.diff_to_buffer = BufferDiff::new(&buffer_snapshot);
+            self.recalculate_diff_task.take();
+            cx.notify();
+        }
+    }
+}
+
 impl OpenBuffer {
     fn upgrade(&self) -> Option<Model<Buffer>> {
         match self {
-            OpenBuffer::Buffer(handle) => handle.upgrade(),
+            OpenBuffer::Complete { buffer, .. } => buffer.upgrade(),
             OpenBuffer::Operations(_) => None,
         }
     }

@@ -301,7 +301,11 @@ message Envelope {
 
         SyncExtensions sync_extensions = 285;
         SyncExtensionsResponse sync_extensions_response = 286;
-        InstallExtension install_extension = 287; // current max
+        InstallExtension install_extension = 287;
+
+        GetStagedText get_staged_text = 288;
+        GetStagedTextResponse get_staged_text_response = 289;
+        UpdateStagedText update_staged_text = 290; // current max
     }
 
     reserved 87 to 88;
@@ -1984,6 +1988,23 @@ message UpdateDiffBase {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     optional string diff_base = 3;
+}
+
+message GetStagedText {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
+}
+
+message UpdateStagedText {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
+    optional string staged_text = 4;
+}
+
+message GetStagedTextResponse {
+    optional string staged_text = 1;
 }
 
 message GetNotifications {
