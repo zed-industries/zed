@@ -1,8 +1,12 @@
 use std::{cmp, ops::ControlFlow, path::PathBuf, sync::Arc};
 
-use crate::{default_working_directory, persistence::SerializedTerminalPanel, TerminalView};
+use crate::{
+    default_working_directory,
+    persistence::{serialize_pane_group, SerializedItems, SerializedTerminalPanel},
+    TerminalView,
+};
 use breadcrumbs::Breadcrumbs;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
@@ -204,6 +208,7 @@ impl TerminalPanel {
             let items = if let Some((serialized_panel, database_id)) =
                 serialized_panel.as_ref().zip(workspace.database_id())
             {
+                // TODO kb items can be empty, but we have to add a pane anyway, as it could be a base for a new split.
                 panel.update(cx, |panel, cx| {
                     cx.notify();
                     panel.height = serialized_panel.height.map(|h| h.round());
@@ -646,30 +651,10 @@ impl TerminalPanel {
     }
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
-        let mut items_to_serialize = HashSet::default();
-        let items = self
-            .active_pane
-            .read(cx)
-            .items()
-            .filter_map(|item| {
-                let terminal_view = item.act_as::<TerminalView>(cx)?;
-                if terminal_view.read(cx).terminal().read(cx).task().is_some() {
-                    None
-                } else {
-                    let id = item.item_id().as_u64();
-                    items_to_serialize.insert(id);
-                    Some(id)
-                }
-            })
-            .collect::<Vec<_>>();
-        let active_item_id = self
-            .active_pane
-            .read(cx)
-            .active_item()
-            .map(|item| item.item_id().as_u64())
-            .filter(|active_id| items_to_serialize.contains(active_id));
         let height = self.height;
         let width = self.width;
+        let items =
+            SerializedItems::WithSplits(serialize_pane_group(&self.center, &self.active_pane, cx));
         self.pending_serialization = cx.background_executor().spawn(
             async move {
                 KEY_VALUE_STORE
@@ -677,7 +662,7 @@ impl TerminalPanel {
                         TERMINAL_PANEL_KEY.into(),
                         serde_json::to_string(&SerializedTerminalPanel {
                             items,
-                            active_item_id,
+                            active_item_id: None,
                             height,
                             width,
                         })?,

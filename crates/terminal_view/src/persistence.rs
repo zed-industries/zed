@@ -1,15 +1,82 @@
 use anyhow::Result;
-use gpui::Axis;
+use collections::HashSet;
+use gpui::{Axis, View};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use ui::Pixels;
+use ui::{Pixels, WindowContext};
 
 use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
-use workspace::{ItemId, WorkspaceDb, WorkspaceId};
+use workspace::{ItemId, Member, Pane, PaneAxis, PaneGroup, WorkspaceDb, WorkspaceId};
+
+use crate::TerminalView;
+
+pub(crate) fn serialize_pane_group(
+    pane_group: &PaneGroup,
+    active_pane: &View<Pane>,
+    cx: &WindowContext,
+) -> SerializedPaneGroup {
+    build_serialized_pane_group(&pane_group.root, active_pane, cx)
+}
+
+fn build_serialized_pane_group(
+    pane_group: &Member,
+    active_pane: &View<Pane>,
+    cx: &WindowContext,
+) -> SerializedPaneGroup {
+    match pane_group {
+        Member::Axis(PaneAxis {
+            axis,
+            members,
+            flexes,
+            bounding_boxes: _,
+        }) => SerializedPaneGroup::Group {
+            axis: SerializedAxis(*axis),
+            children: members
+                .iter()
+                .map(|member| build_serialized_pane_group(member, active_pane, cx))
+                .collect::<Vec<_>>(),
+            flexes: Some(flexes.lock().clone()),
+        },
+        Member::Pane(pane_handle) => SerializedPaneGroup::Pane(serialize_pane_handle(
+            pane_handle,
+            pane_handle == active_pane,
+            cx,
+        )),
+    }
+}
+
+fn serialize_pane_handle(pane: &View<Pane>, active: bool, cx: &WindowContext) -> SerializedPane {
+    let mut items_to_serialize = HashSet::default();
+    let pane = pane.read(cx);
+    let children = pane
+        .items()
+        .filter_map(|item| {
+            let terminal_view = item.act_as::<TerminalView>(cx)?;
+            if terminal_view.read(cx).terminal().read(cx).task().is_some() {
+                None
+            } else {
+                let id = item.item_id().as_u64();
+                items_to_serialize.insert(id);
+                Some(id)
+            }
+        })
+        .collect::<Vec<_>>();
+    let active_item = pane
+        .active_item()
+        .map(|item| item.item_id().as_u64())
+        .filter(|active_id| items_to_serialize.contains(active_id));
+
+    SerializedPane {
+        active,
+        children,
+        active_item,
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct SerializedTerminalPanel {
     pub items: SerializedItems,
+    // A deprecated field, kept for backwards compatibility for the code before terminal splits were introduced.
     pub active_item_id: Option<u64>,
     pub width: Option<Pixels>,
     pub height: Option<Pixels>,
@@ -64,7 +131,9 @@ impl<'de> Deserialize<'de> for SerializedAxis {
         match s.as_str() {
             "horizontal" => Ok(SerializedAxis(Axis::Horizontal)),
             "vertical" => Ok(SerializedAxis(Axis::Vertical)),
-            _ => Err(serde::de::Error::custom("Invalid axis value")),
+            invalid => Err(serde::de::Error::custom(format!(
+                "Invalid axis value: '{invalid}'"
+            ))),
         }
     }
 }
