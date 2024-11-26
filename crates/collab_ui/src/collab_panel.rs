@@ -2144,7 +2144,7 @@ impl CollabPanel {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
+            font_size: gpui::AbsoluteLength::Pixels(settings.ui_font_size),
             font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
