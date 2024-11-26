@@ -17,7 +17,7 @@ use util::ResultExt;
 
 const ZED_REPL_DOCUMENTATION: &str = "https://zed.dev/docs/repl";
 
-struct ReplMenuState {
+struct ReplSessionState {
     tooltip: SharedString,
     icon: IconName,
     icon_color: Color,
@@ -366,14 +366,14 @@ impl ReplMenu {
     }
 }
 
-fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
+fn session_state(session: View<Session>, cx: &WindowContext) -> ReplSessionState {
     let session = session.read(cx);
 
     let kernel_name = session.kernel_specification.name();
     let kernel_language: SharedString = session.kernel_specification.language();
 
     let fill_fields = || {
-        ReplMenuState {
+        ReplSessionState {
             tooltip: "Nothing running".into(),
             icon: IconName::ReplNeutral,
             icon_color: Color::Default,
@@ -389,7 +389,7 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
     };
 
     match &session.kernel {
-        Kernel::Restarting => ReplMenuState {
+        Kernel::Restarting => ReplSessionState {
             tooltip: format!("Restarting {}", kernel_name).into(),
             icon_is_animating: true,
             popover_disabled: true,
@@ -399,13 +399,13 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
             ..fill_fields()
         },
         Kernel::RunningKernel(kernel) => match &kernel.execution_state() {
-            ExecutionState::Idle => ReplMenuState {
+            ExecutionState::Idle => ReplSessionState {
                 tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
                 indicator: Some(Indicator::dot().color(Color::Success)),
                 status: session.kernel.status(),
                 ..fill_fields()
             },
-            ExecutionState::Busy => ReplMenuState {
+            ExecutionState::Busy => ReplSessionState {
                 tooltip: format!("Interrupt {} ({})", kernel_name, kernel_language).into(),
                 icon_is_animating: true,
                 popover_disabled: false,
@@ -414,7 +414,7 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
                 ..fill_fields()
             },
         },
-        Kernel::StartingKernel(_) => ReplMenuState {
+        Kernel::StartingKernel(_) => ReplSessionState {
             tooltip: format!("{} is starting", kernel_name).into(),
             icon_is_animating: true,
             popover_disabled: true,
@@ -423,14 +423,14 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
             status: session.kernel.status(),
             ..fill_fields()
         },
-        Kernel::ErroredLaunch(e) => ReplMenuState {
+        Kernel::ErroredLaunch(e) => ReplSessionState {
             tooltip: format!("Error with kernel {}: {}", kernel_name, e).into(),
             popover_disabled: false,
             indicator: Some(Indicator::dot().color(Color::Error)),
             status: session.kernel.status(),
             ..fill_fields()
         },
-        Kernel::ShuttingDown => ReplMenuState {
+        Kernel::ShuttingDown => ReplSessionState {
             tooltip: format!("{} is shutting down", kernel_name).into(),
             popover_disabled: true,
             icon_color: Color::Muted,
@@ -438,7 +438,7 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
             status: session.kernel.status(),
             ..fill_fields()
         },
-        Kernel::Shutdown => ReplMenuState {
+        Kernel::Shutdown => ReplSessionState {
             tooltip: "Nothing running".into(),
             icon: IconName::ReplNeutral,
             icon_color: Color::Default,
