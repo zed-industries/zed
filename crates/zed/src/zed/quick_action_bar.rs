@@ -429,7 +429,7 @@ impl ToolbarItemView for QuickActionBar {
             self._inlay_hints_enabled_subscription.take();
 
             if let Some(editor) = active_item.downcast::<Editor>() {
-                self.repl_menu = Some(cx.new_view(|cx| ReplMenu::new(editor.clone(), cx)));
+                self.repl_menu = Some(cx.new_view(|cx| ReplMenu::new(editor.downgrade(), cx)));
                 let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
                 let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
                 self._inlay_hints_enabled_subscription =

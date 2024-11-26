@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use editor::Editor;
-use gpui::ElementId;
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
+use gpui::{ElementId, WeakView};
 use picker::Picker;
 use repl::components::OnSelect;
 use repl::{
@@ -32,12 +32,14 @@ struct ReplSessionState {
 }
 
 pub struct ReplMenu {
-    active_editor: View<Editor>,
+    active_editor: WeakView<Editor>,
+    kernel_menu: View<KernelMenu>,
 }
 
 impl ReplMenu {
-    pub fn new(editor: View<Editor>, _cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Self {
         Self {
+            kernel_menu: cx.new_view(|cx| KernelMenu::new(editor.clone(), cx)),
             active_editor: editor.clone(),
         }
     }
@@ -52,9 +54,15 @@ impl Render for ReplMenu {
         let editor = self.active_editor.clone();
 
         let is_local_project = editor
-            .read(cx)
-            .workspace()
-            .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+            .upgrade()
+            .as_ref()
+            .map(|editor| {
+                editor
+                    .read(cx)
+                    .workspace()
+                    .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+                    .unwrap_or(false)
+            })
             .unwrap_or(false);
 
         if !is_local_project {
@@ -62,19 +70,21 @@ impl Render for ReplMenu {
         }
 
         let has_nonempty_selection = {
-            editor.update(cx, |this, cx| {
-                this.selections
-                    .count()
-                    .ne(&0)
-                    .then(|| {
-                        let latest = this.selections.newest_display(cx);
-                        !latest.is_empty()
-                    })
-                    .unwrap_or_default()
-            })
+            editor
+                .update(cx, |this, cx| {
+                    this.selections
+                        .count()
+                        .ne(&0)
+                        .then(|| {
+                            let latest = this.selections.newest_display(cx);
+                            !latest.is_empty()
+                        })
+                        .unwrap_or_default()
+                })
+                .unwrap_or(false)
         };
 
-        let session = repl::session(editor.downgrade(), cx);
+        let session = repl::session(editor.clone(), cx);
         let session = match session {
             SessionSupport::ActiveSession(session) => session,
             SessionSupport::Inactive(spec) => {
@@ -92,7 +102,7 @@ impl Render for ReplMenu {
 
         let element_id = |suffix| ElementId::Name(format!("{}-{}", id, suffix).into());
 
-        let editor = editor.downgrade();
+        let editor = editor.clone();
         let dropdown_menu = PopoverMenu::new(element_id("menu"))
             .menu(move |cx| {
                 let editor = editor.clone();
@@ -258,7 +268,7 @@ impl Render for ReplMenu {
             .into_any_element();
 
         h_flex()
-            .child(self.render_kernel_selector(cx))
+            .child(self.kernel_menu.clone())
             .child(button)
             .child(dropdown_menu)
             .into_any_element()
@@ -274,7 +284,7 @@ impl ReplMenu {
         let tooltip: SharedString =
             SharedString::from(format!("Start REPL for {}", kernel_specification.name()));
 
-        h_flex().child(self.render_kernel_selector(cx)).child(
+        h_flex().child(self.kernel_menu.clone()).child(
             IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Muted)
@@ -284,14 +294,46 @@ impl ReplMenu {
         )
     }
 
-    pub fn render_kernel_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let editor = self.active_editor.clone();
+    pub fn render_repl_setup(&self, language: &str, cx: &mut ViewContext<Self>) -> AnyElement {
+        let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
+        h_flex()
+            .child(self.kernel_menu.clone())
+            .child(
+                IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
+                    .size(ButtonSize::Compact)
+                    .icon_color(Color::Muted)
+                    .style(ButtonStyle::Subtle)
+                    .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+                    .on_click(|_, cx| {
+                        cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION))
+                    }),
+            )
+            .into_any_element()
+    }
+}
 
-        let Some(worktree_id) = worktree_id_for_editor(editor.downgrade(), cx) else {
+struct KernelMenu {
+    menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
+    editor: WeakView<Editor>,
+}
+
+impl KernelMenu {
+    pub fn new(editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Self {
+        let menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>> =
+            PopoverMenuHandle::default();
+        Self {
+            editor,
+            menu_handle,
+        }
+    }
+}
+impl Render for KernelMenu {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let Some(worktree_id) = worktree_id_for_editor(self.editor.clone(), cx) else {
             return div().into_any_element();
         };
 
-        let session = repl::session(editor.downgrade(), cx);
+        let session = repl::session(self.editor.clone(), cx);
 
         let current_kernelspec = match session {
             SessionSupport::ActiveSession(view) => Some(view.read(cx).kernel_specification.clone()),
@@ -302,12 +344,12 @@ impl ReplMenu {
 
         let current_kernel_name = current_kernelspec.as_ref().map(|spec| spec.name());
 
+        let editor = self.editor.clone();
+
         let on_select: OnSelect = Box::new(move |kernelspec, cx| {
-            repl::assign_kernelspec(kernelspec, editor.downgrade(), cx).ok();
+            repl::assign_kernelspec(kernelspec, editor.clone(), cx).ok();
         });
 
-        let menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>> =
-            PopoverMenuHandle::default();
         KernelSelector::new(
             on_select,
             worktree_id,
@@ -345,25 +387,8 @@ impl ReplMenu {
                 )
                 .tooltip(move |cx| Tooltip::text("Select Kernel", cx)),
         )
-        .with_handle(menu_handle.clone())
+        .with_handle(self.menu_handle.clone())
         .into_any_element()
-    }
-
-    pub fn render_repl_setup(&self, language: &str, cx: &mut ViewContext<Self>) -> AnyElement {
-        let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
-        h_flex()
-            .child(self.render_kernel_selector(cx))
-            .child(
-                IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
-                    .size(ButtonSize::Compact)
-                    .icon_color(Color::Muted)
-                    .style(ButtonStyle::Subtle)
-                    .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
-                    .on_click(|_, cx| {
-                        cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION))
-                    }),
-            )
-            .into_any_element()
     }
 }
 
