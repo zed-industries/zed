@@ -513,11 +513,12 @@ impl Interactivity {
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
     /// The imperative API equivalent to [`InteractiveElement::tooltip`]
-    pub fn tooltip<E>(
+    pub fn tooltip<F, E>(
         &mut self,
-        render_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> E,
+        build_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F,
     ) where
         Self: Sized,
+        F: 'static + Fn(&mut Window, &mut AppContext) -> E,
         E: IntoElement,
     {
         debug_assert!(
@@ -525,7 +526,10 @@ impl Interactivity {
             "calling tooltip more than once on the same element is not supported"
         );
         self.tooltip_builder = Some(TooltipBuilder {
-            render: Rc::new(move |window, cx| render_tooltip(window, cx).into_any_element()),
+            build: Rc::new(move |window, cx| {
+                let render_tooltip = build_tooltip(window, cx);
+                Rc::new(move |window, cx| render_tooltip(window, cx).into_any_element())
+            }),
             hoverable: false,
         });
     }
@@ -545,7 +549,7 @@ impl Interactivity {
             "calling tooltip more than once on the same element is not supported"
         );
         self.tooltip_builder = Some(TooltipBuilder {
-            render: Rc::new(move |window, cx| render_tooltip(window, cx).into_any_element()),
+            build: Rc::new(move |window, cx| render_tooltip(window, cx).into_any_element()),
             hoverable: true,
         });
     }
@@ -1027,15 +1031,15 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     fn on_drag<T, F, E>(
         mut self,
         value: T,
-        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> F + 'static,
+        listener: impl Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> F + 'static,
     ) -> Self
     where
         Self: Sized,
         T: 'static,
-        F: Fn(&mut Window, &mut AppContext) -> E + 'static,
+        F: Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> E + 'static,
         E: IntoElement,
     {
-        self.interactivity().on_drag(value, constructor);
+        self.interactivity().on_drag(value, listener);
         self
     }
 
@@ -1127,7 +1131,12 @@ type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut AppContext) + 'static
 type CanDropPredicate = Box<dyn Fn(&dyn Any, &mut Window, &mut AppContext) -> bool + 'static>;
 
 pub(crate) struct TooltipBuilder {
-    render: Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
+    build: Rc<
+        dyn Fn(
+            &mut Window,
+            &mut AppContext,
+        ) -> Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
+    >,
     hoverable: bool,
 }
 
@@ -2030,7 +2039,7 @@ impl Interactivity {
                         if active_tooltip.borrow().is_none() {
                             let task = cx.spawn({
                                 let active_tooltip = active_tooltip.clone();
-                                let build_tooltip = tooltip_builder.render.clone();
+                                let build_tooltip = tooltip_builder.build.clone();
                                 move |mut cx| async move {
                                     cx.background_executor().timer(TOOLTIP_DELAY).await;
                                     cx.update(|cx| {

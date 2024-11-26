@@ -1,6 +1,6 @@
 use crate::{
     AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId, EventEmitter,
-    Model, Reservation, Subscription, Task, WeakModel, Window, WindowHandle,
+    Model, Reservation, Subscription, Task, WeakModel, Window,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};

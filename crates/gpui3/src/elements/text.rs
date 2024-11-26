@@ -1,8 +1,8 @@
 use crate::{
-    ActiveTooltip, AnyElement, AnyTooltip, AppContext, Bounds, DispatchPhase, Element, ElementId,
-    GlobalElementId, HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate, WhiteSpace,
-    Window, WrappedLine, TOOLTIP_DELAY,
+    ActiveTooltip, AnyElement, AnyTooltip, AppContext, Bounds, Context, DispatchPhase, Element,
+    ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate,
+    WhiteSpace, Window, WrappedLine, TOOLTIP_DELAY,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -484,7 +484,17 @@ pub struct InteractiveText {
     >,
     hover_listener:
         Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut AppContext)>>,
-    render_tooltip: Option<Rc<dyn Fn(usize, &mut Window, &mut AppContext) -> Option<AnyElement>>>,
+    tooltip_builder: Option<
+        Rc<
+            dyn 'static
+                + Fn(
+                    usize,
+                    &mut Window,
+                    &mut AppContext,
+                )
+                    -> Option<Rc<dyn 'static + Fn(&mut Window, &mut AppContext) -> AnyElement>>,
+        >,
+    >,
     clickable_ranges: Vec<Range<usize>>,
 }
 
@@ -510,7 +520,7 @@ impl InteractiveText {
             text,
             click_listener: None,
             hover_listener: None,
-            render_tooltip: None,
+            tooltip_builder: None,
             clickable_ranges: Vec::new(),
         }
     }
@@ -545,15 +555,21 @@ impl InteractiveText {
     }
 
     /// tooltip lets you specify a tooltip for a given character index in the string.
-    pub fn tooltip<E>(
+    pub fn tooltip<F, E>(
         mut self,
-        render: impl 'static + Fn(usize, &mut Window, &mut AppContext) -> Option<E>,
+        builder: impl 'static + Fn(usize, &mut Window, &mut AppContext) -> Option<F>,
     ) -> Self
     where
+        F: 'static + Fn(&mut Window, &mut AppContext) -> E,
         E: IntoElement,
     {
-        self.render_tooltip = Some(Rc::new(move |position, window, cx| {
-            render(position, window, cx).map(|element| element.into_any_element())
+        self.tooltip_builder = Some(Rc::new(move |position, window, cx| {
+            let renderer = builder(position, window, cx);
+            renderer.map(|renderer| {
+                Rc::new(move |window: &mut Window, cx: &mut AppContext| {
+                    renderer(window, cx).into_any_element()
+                }) as Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>
+            })
         }));
         self
     }
@@ -692,7 +708,7 @@ impl Element for InteractiveText {
                     }
                 });
 
-                if let Some(tooltip_builder) = self.render_tooltip.clone() {
+                if let Some(tooltip_builder) = self.tooltip_builder.clone() {
                     let hitbox = hitbox.clone();
                     let active_tooltip = interactive_state.active_tooltip.clone();
                     let pending_mouse_down = interactive_state.mouse_down_index.clone();
@@ -717,19 +733,20 @@ impl Element for InteractiveText {
                             let task = cx.spawn({
                                 let active_tooltip = active_tooltip.clone();
                                 let tooltip_builder = tooltip_builder.clone();
+                                let window_handle = window.handle.clone();
 
                                 move |mut cx| async move {
                                     cx.background_executor().timer(TOOLTIP_DELAY).await;
-                                    cx.update(|cx| {
-                                        let new_tooltip = tooltip_builder(position, window, cx)
-                                            .map(|tooltip| ActiveTooltip {
+                                    cx.update_window(window_handle, |window, cx| {
+                                        let render = tooltip_builder(position, window, cx);
+                                        *active_tooltip.borrow_mut() =
+                                            render.map(|tooltip| ActiveTooltip {
                                                 tooltip: Some(AnyTooltip {
-                                                    render: tooltip.into_element(),
+                                                    render: tooltip,
                                                     mouse_position: window.mouse_position(),
                                                 }),
                                                 _task: None,
                                             });
-                                        *active_tooltip.borrow_mut() = new_tooltip;
                                         cx.refresh();
                                     })
                                     .ok();
