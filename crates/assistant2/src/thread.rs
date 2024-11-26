@@ -8,7 +8,8 @@ use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, EventEmitter, ModelContext, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role, StopReason,
+    LanguageModelToolResult, LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
+    StopReason,
 };
 use serde::{Deserialize, Serialize};
 use util::post_inc;
@@ -44,8 +45,8 @@ pub struct Thread {
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     tools: Arc<ToolWorkingSet>,
-    pending_tool_uses_by_id: HashMap<Arc<str>, PendingToolUse>,
-    completed_tool_uses_by_id: HashMap<Arc<str>, String>,
+    pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
+    completed_tool_uses_by_id: HashMap<LanguageModelToolUseId, String>,
 }
 
 impl Thread {
@@ -183,7 +184,7 @@ impl Thread {
                                     }
                                 }
 
-                                let tool_use_id: Arc<str> = tool_use.id.into();
+                                let tool_use_id: LanguageModelToolUseId = tool_use.id.into();
                                 thread.pending_tool_uses_by_id.insert(
                                     tool_use_id.clone(),
                                     PendingToolUse {
@@ -252,7 +253,7 @@ impl Thread {
 
     pub fn insert_tool_output(
         &mut self,
-        tool_use_id: Arc<str>,
+        tool_use_id: LanguageModelToolUseId,
         output: Task<Result<String>>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -295,7 +296,7 @@ pub enum ThreadEvent {
     UsePendingTools,
     ToolFinished {
         #[allow(unused)]
-        tool_use_id: Arc<str>,
+        tool_use_id: LanguageModelToolUseId,
     },
 }
 
@@ -308,7 +309,7 @@ struct PendingCompletion {
 
 #[derive(Debug, Clone)]
 pub struct PendingToolUse {
-    pub id: Arc<str>,
+    pub id: LanguageModelToolUseId,
     pub name: String,
     pub input: serde_json::Value,
     pub status: PendingToolUseStatus,

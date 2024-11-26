@@ -1925,7 +1925,7 @@ impl ContextEditor {
                                     Content::ToolUse {
                                         range: tool_use.source_range.clone(),
                                         tool_use: LanguageModelToolUse {
-                                            id: tool_use.id.to_string(),
+                                            id: tool_use.id.clone(),
                                             name: tool_use.name.clone(),
                                             input: tool_use.input.clone(),
                                         },
