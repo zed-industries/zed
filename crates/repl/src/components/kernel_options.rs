@@ -1,13 +1,18 @@
 use crate::kernels::KernelSpecification;
 use crate::repl_store::ReplStore;
+use crate::worktree_id_for_editor;
 use crate::KERNEL_DOCS_URL;
 
+use editor::Editor;
 use gpui::DismissEvent;
 
 use gpui::FontWeight;
+use gpui::WeakView;
 use picker::Picker;
 use picker::PickerDelegate;
 use project::WorktreeId;
+use ui::ButtonLike;
+use ui::Tooltip;
 
 use std::sync::Arc;
 use ui::ListItemSpacing;
@@ -18,11 +23,9 @@ use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
 pub type OnSelect = Box<dyn Fn(KernelSpecification, &mut WindowContext)>;
 
-#[derive(IntoElement)]
-pub struct KernelSelector<T: PopoverTrigger> {
+pub struct KernelSelector {
     handle: Option<PopoverMenuHandle<Picker<KernelPickerDelegate>>>,
-    on_select: OnSelect,
-    trigger: T,
+    editor: WeakView<Editor>,
     info_text: Option<SharedString>,
     worktree_id: WorktreeId,
 }
@@ -45,12 +48,14 @@ fn truncate_path(path: &SharedString, max_length: usize) -> SharedString {
     }
 }
 
-impl<T: PopoverTrigger> KernelSelector<T> {
-    pub fn new(on_select: OnSelect, worktree_id: WorktreeId, trigger: T) -> Self {
+impl KernelSelector {
+    pub fn new(editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Self {
+        // todo!()
+        let worktree_id = worktree_id_for_editor(editor.clone(), cx).unwrap();
+
         KernelSelector {
-            on_select,
+            editor,
             handle: None,
-            trigger,
             info_text: None,
             worktree_id,
         }
@@ -325,8 +330,8 @@ impl KernelPickerDelegate {
     }
 }
 
-impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+impl Render for KernelSelector {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let store = ReplStore::global(cx).read(cx);
 
         let all_kernels: Vec<KernelSpecification> = store
@@ -335,8 +340,18 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
             .collect();
 
         let selected_kernelspec = store.active_kernelspec(self.worktree_id, None, cx);
+        let current_kernel_name = selected_kernelspec.as_ref().map(|spec| spec.name()).clone();
 
-        let delegate = KernelPickerDelegate::new(self.on_select, all_kernels, selected_kernelspec);
+        let editor = self.editor.clone();
+        let on_select: OnSelect = Box::new(move |kernelspec, cx| {
+            crate::assign_kernelspec(kernelspec, editor.clone(), cx).ok();
+        });
+
+        let menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>> =
+            PopoverMenuHandle::default();
+
+        let delegate =
+            KernelPickerDelegate::new(on_select, all_kernels, selected_kernelspec.clone());
 
         let picker_view = cx.new_view(|cx| {
             let picker = Picker::uniform_list(delegate, cx)
@@ -347,8 +362,42 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
 
         PopoverMenu::new("kernel-switcher")
             .menu(move |_cx| Some(picker_view.clone()))
-            .trigger(self.trigger)
+            .trigger(
+                ButtonLike::new("kernel-selector")
+                    .style(ButtonStyle::Subtle)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .overflow_x_hidden()
+                                    .flex_grow()
+                                    .whitespace_nowrap()
+                                    .child(
+                                        Label::new(if let Some(name) = current_kernel_name {
+                                            name
+                                        } else {
+                                            SharedString::from("Select Kernel")
+                                        })
+                                        .size(LabelSize::Small)
+                                        .color(if selected_kernelspec.is_some() {
+                                            Color::Default
+                                        } else {
+                                            Color::Placeholder
+                                        })
+                                        .into_any_element(),
+                                    ),
+                            )
+                            .child(
+                                Icon::new(IconName::ChevronDown)
+                                    .color(Color::Muted)
+                                    .size(IconSize::XSmall),
+                            ),
+                    )
+                    .tooltip(move |cx| Tooltip::text("Select Kernel", cx)),
+            )
             .attach(gpui::AnchorCorner::BottomLeft)
-            .when_some(self.handle, |menu, handle| menu.with_handle(handle))
+            .with_handle(menu_handle)
     }
 }

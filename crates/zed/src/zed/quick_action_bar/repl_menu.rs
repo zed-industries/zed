@@ -33,13 +33,13 @@ struct ReplSessionState {
 
 pub struct ReplMenu {
     active_editor: WeakView<Editor>,
-    kernel_menu: View<KernelMenu>,
+    kernel_menu: View<KernelSelector>,
 }
 
 impl ReplMenu {
     pub fn new(editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Self {
         Self {
-            kernel_menu: cx.new_view(|cx| KernelMenu::new(editor.clone(), cx)),
+            kernel_menu: cx.new_view(|cx| KernelSelector::new(editor.clone(), cx)),
             active_editor: editor.clone(),
         }
     }
@@ -312,85 +312,31 @@ impl ReplMenu {
     }
 }
 
-struct KernelMenu {
-    menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
-    editor: WeakView<Editor>,
-}
+// struct KernelMenu {
+//     menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
+//     editor: WeakView<Editor>,
+// }
 
-impl KernelMenu {
-    pub fn new(editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Self {
-        let menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>> =
-            PopoverMenuHandle::default();
-        Self {
-            editor,
-            menu_handle,
-        }
-    }
-}
-impl Render for KernelMenu {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let Some(worktree_id) = worktree_id_for_editor(self.editor.clone(), cx) else {
-            return div().into_any_element();
-        };
+// impl KernelMenu {
+//     pub fn new(editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Self {
 
-        let session = repl::session(self.editor.clone(), cx);
+//         Self {
+//             editor,
+//             menu_handle,
+//         }
+//     }
+// }
+// impl Render for KernelMenu {
+//     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+//         let Some(worktree_id) = worktree_id_for_editor(self.editor.clone(), cx) else {
+//             return div().into_any_element();
+//         };
 
-        let current_kernelspec = match session {
-            SessionSupport::ActiveSession(view) => Some(view.read(cx).kernel_specification.clone()),
-            SessionSupport::Inactive(kernel_specification) => Some(kernel_specification),
-            SessionSupport::RequiresSetup(_language_name) => None,
-            SessionSupport::Unsupported => None,
-        };
-
-        let current_kernel_name = current_kernelspec.as_ref().map(|spec| spec.name());
-
-        let editor = self.editor.clone();
-
-        let on_select: OnSelect = Box::new(move |kernelspec, cx| {
-            repl::assign_kernelspec(kernelspec, editor.clone(), cx).ok();
-        });
-
-        KernelSelector::new(
-            on_select,
-            worktree_id,
-            ButtonLike::new("kernel-selector")
-                .style(ButtonStyle::Subtle)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_0p5()
-                        .child(
-                            div()
-                                .overflow_x_hidden()
-                                .flex_grow()
-                                .whitespace_nowrap()
-                                .child(
-                                    Label::new(if let Some(name) = current_kernel_name {
-                                        name
-                                    } else {
-                                        SharedString::from("Select Kernel")
-                                    })
-                                    .size(LabelSize::Small)
-                                    .color(if current_kernelspec.is_some() {
-                                        Color::Default
-                                    } else {
-                                        Color::Placeholder
-                                    })
-                                    .into_any_element(),
-                                ),
-                        )
-                        .child(
-                            Icon::new(IconName::ChevronDown)
-                                .color(Color::Muted)
-                                .size(IconSize::XSmall),
-                        ),
-                )
-                .tooltip(move |cx| Tooltip::text("Select Kernel", cx)),
-        )
-        .with_handle(self.menu_handle.clone())
-        .into_any_element()
-    }
-}
+//         KernelSelector::new(self.editor.clone(), worktree_id)
+//             .with_handle(self.menu_handle.clone())
+//             .into_any_element()
+//     }
+// }
 
 fn session_state(session: View<Session>, cx: &WindowContext) -> ReplSessionState {
     let session = session.read(cx);
