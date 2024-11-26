@@ -17,8 +17,8 @@ use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
+use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
-use editor::{ProposedChangesToolbar, ProposedChangesToolbarControls};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
@@ -644,10 +644,8 @@ fn initialize_pane(workspace: &Workspace, pane: &View<Pane>, cx: &mut ViewContex
             let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
             toolbar.add_item(buffer_search_bar.clone(), cx);
 
-            let proposed_changes_bar = cx.new_view(|_| ProposedChangesToolbar::new());
-            toolbar.add_item(proposed_changes_bar, cx);
-            let proposed_changes_controls = cx.new_view(|_| ProposedChangesToolbarControls::new());
-            toolbar.add_item(proposed_changes_controls, cx);
+            let proposed_change_bar = cx.new_view(|_| ProposedChangesEditorToolbar::new());
+            toolbar.add_item(proposed_change_bar, cx);
             let quick_action_bar =
                 cx.new_view(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, cx);

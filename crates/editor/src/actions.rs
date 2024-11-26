@@ -209,7 +209,7 @@ gpui::actions!(
         AddSelectionAbove,
         AddSelectionBelow,
         ApplyAllDiffHunks,
-        ApplySelectedDiffHunks,
+        ApplyDiffHunk,
         Backspace,
         Cancel,
         CancelLanguageServerWork,
