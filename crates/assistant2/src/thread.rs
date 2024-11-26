@@ -177,12 +177,11 @@ impl Thread {
                                         .or_default()
                                         .push(tool_use.clone());
 
-                                    let tool_use_id: LanguageModelToolUseId = tool_use.id.into();
                                     thread.pending_tool_uses_by_id.insert(
-                                        tool_use_id.clone(),
+                                        tool_use.id.clone(),
                                         PendingToolUse {
                                             assistant_message_id: last_assistant_message.id,
-                                            id: tool_use_id,
+                                            id: tool_use.id,
                                             name: tool_use.name,
                                             input: tool_use.input,
                                             status: PendingToolUseStatus::Idle,
