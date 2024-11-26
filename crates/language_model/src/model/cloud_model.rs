@@ -3,7 +3,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 use ui::IconName;
-use crate::fake_provider::language_model_id;
 use crate::LanguageModelAvailability;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
