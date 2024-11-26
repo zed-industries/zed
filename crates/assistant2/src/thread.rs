@@ -126,8 +126,6 @@ impl Thread {
             request.messages.push(request_message);
         }
 
-        dbg!(&request);
-
         request
     }
 
