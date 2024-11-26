@@ -16,7 +16,7 @@ use gpui::SharedString;
 use gpui::Task;
 use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
-type OnSelect = Box<dyn Fn(KernelSpecification, &mut WindowContext)>;
+pub type OnSelect = Box<dyn Fn(KernelSpecification, &mut WindowContext)>;
 
 #[derive(IntoElement)]
 pub struct KernelSelector<T: PopoverTrigger> {

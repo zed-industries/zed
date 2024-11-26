@@ -4,6 +4,7 @@ use editor::Editor;
 use gpui::ElementId;
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
 use picker::Picker;
+use repl::components::OnSelect;
 use repl::{
     components::{KernelPickerDelegate, KernelSelector},
     worktree_id_for_editor, ExecutionState, JupyterSettings, Kernel, KernelSpecification,
@@ -301,14 +302,14 @@ impl ReplMenu {
 
         let current_kernel_name = current_kernelspec.as_ref().map(|spec| spec.name());
 
+        let on_select: OnSelect = Box::new(move |kernelspec, cx| {
+            repl::assign_kernelspec(kernelspec, editor.downgrade(), cx).ok();
+        });
+
         let menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>> =
             PopoverMenuHandle::default();
         KernelSelector::new(
-            {
-                Box::new(move |kernelspec, cx| {
-                    repl::assign_kernelspec(kernelspec, editor.downgrade(), cx).ok();
-                })
-            },
+            on_select,
             worktree_id,
             ButtonLike::new("kernel-selector")
                 .style(ButtonStyle::Subtle)

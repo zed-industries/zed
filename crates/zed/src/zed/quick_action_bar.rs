@@ -445,6 +445,8 @@ impl ToolbarItemView for QuickActionBar {
                             cx.notify()
                         }
                     }));
+            } else {
+                self.repl_menu = None
             }
         }
         self.get_toolbar_item_location()
