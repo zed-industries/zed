@@ -1,11 +1,5 @@
 [
   {
-    "bindings": {
-      "cmd-shift-[": "pane::ActivatePrevItem",
-      "cmd-shift-]": "pane::ActivateNextItem"
-    }
-  },
-  {
     "context": "Editor",
     "bindings": {
       "ctrl->": "zed::IncreaseBufferFontSize",
