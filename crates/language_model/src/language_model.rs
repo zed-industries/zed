@@ -64,8 +64,26 @@ pub enum StopReason {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
+pub struct LanguageModelToolUseId(Arc<str>);
+
+impl fmt::Display for LanguageModelToolUseId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl<T> From<T> for LanguageModelToolUseId
+where
+    T: Into<Arc<str>>,
+{
+    fn from(value: T) -> Self {
+        Self(value.into())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct LanguageModelToolUse {
-    pub id: String,
+    pub id: LanguageModelToolUseId,
     pub name: String,
     pub input: serde_json::Value,
 }
