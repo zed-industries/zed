@@ -6,14 +6,14 @@ use gpui::{
     prelude::*, px, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
     FocusableView, Model, Pixels, Subscription, Task, View, ViewContext, WeakView, WindowContext,
 };
-use language_model::LanguageModelRegistry;
+use language_model::{LanguageModelRegistry, Role};
 use language_model_selector::LanguageModelSelector;
 use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
 use crate::message_editor::MessageEditor;
-use crate::thread::{Thread, ThreadEvent};
+use crate::thread::{Message, Thread, ThreadEvent};
 use crate::{NewThread, ToggleFocus, ToggleModelSelector};
 
 pub fn init(cx: &mut AppContext) {
@@ -272,10 +272,39 @@ impl AssistantPanel {
                 .tooltip(move |cx| Tooltip::for_action("Change Model", &ToggleModelSelector, cx)),
         )
     }
+
+    fn render_message(&self, message: Message, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let (role_icon, role_name) = match message.role {
+            Role::User => (IconName::Person, "You"),
+            Role::Assistant => (IconName::ZedAssistant, "Assistant"),
+            Role::System => (IconName::Settings, "System"),
+        };
+
+        v_flex()
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
+            .rounded_md()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .p_1p5()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Icon::new(role_icon).size(IconSize::Small))
+                            .child(Label::new(role_name).size(LabelSize::Small)),
+                    ),
+            )
+            .child(v_flex().p_1p5().child(Label::new(message.text.clone())))
+    }
 }
 
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let messages = self.thread.read(cx).messages().cloned().collect::<Vec<_>>();
+
         v_flex()
             .key_context("AssistantPanel2")
             .justify_between()
@@ -292,15 +321,11 @@ impl Render for AssistantPanel {
                     .p_2()
                     .overflow_y_scroll()
                     .bg(cx.theme().colors().panel_background)
-                    .children(self.thread.read(cx).messages().map(|message| {
-                        v_flex()
-                            .p_2()
-                            .border_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .rounded_md()
-                            .child(Label::new(message.role.to_string()))
-                            .child(Label::new(message.text.clone()))
-                    })),
+                    .children(
+                        messages
+                            .into_iter()
+                            .map(|message| self.render_message(message, cx)),
+                    ),
             )
             .child(
                 h_flex()

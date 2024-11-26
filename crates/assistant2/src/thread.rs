@@ -18,7 +18,7 @@ pub enum RequestKind {
 }
 
 /// A message in a [`Thread`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Message {
     pub role: Role,
     pub text: String,
