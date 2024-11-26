@@ -1,6 +1,8 @@
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::DiffHunkStatus;
-use gpui::{AppContext, ClickEvent, CursorStyle, Hsla, Model, MouseButton, Task, View};
+use gpui::{
+    AppContext, ClickEvent, CursorStyle, FocusableView, Hsla, Model, MouseButton, Task, View,
+};
 use language::{Buffer, BufferId, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
@@ -433,10 +435,23 @@ impl Editor {
                 move |cx| {
                     let is_hunk_selected = editor.update(&mut **cx, |editor, cx| {
                         let snapshot = editor.buffer.read(cx).snapshot(cx);
-                        if let Some(hunk) = to_diff_hunk(&hunk, &snapshot) {
-                            is_hunk_selected(&hunk, &editor.selections.all(cx))
+                        let selections = &editor.selections.all::<Point>(cx);
+
+                        if editor.focus_handle(cx).is_focused(cx) && !selections.is_empty() {
+                            if let Some(hunk) = to_diff_hunk(&hunk, &snapshot) {
+                                is_hunk_selected(&hunk, selections)
+                            } else {
+                                false
+                            }
                         } else {
-                            false
+                            // If we have no cursor, or aren't focused, then default to the first hunk
+                            // because that's what the keyboard shortcuts do.
+                            editor
+                                .expanded_hunks
+                                .hunks
+                                .first()
+                                .map(|first_hunk| first_hunk.hunk_range == hunk.multi_buffer_range)
+                                .unwrap_or(false)
                         }
                     });
 
