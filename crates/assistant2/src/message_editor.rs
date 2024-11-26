@@ -1,6 +1,7 @@
 use editor::{Editor, EditorElement, EditorStyle};
+use feature_flags::{FeatureFlagAppExt, ToolUseFeatureFlag};
 use gpui::{AppContext, FocusableView, Model, TextStyle, View};
-use language_model::LanguageModelRegistry;
+use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
@@ -55,7 +56,21 @@ impl MessageEditor {
 
         self.thread.update(cx, |thread, cx| {
             thread.insert_user_message(user_message);
-            let request = thread.to_completion_request(request_kind, cx);
+            let mut request = thread.to_completion_request(request_kind, cx);
+
+            if cx.has_flag::<ToolUseFeatureFlag>() {
+                request.tools = thread
+                    .tools()
+                    .tools(cx)
+                    .into_iter()
+                    .map(|tool| LanguageModelRequestTool {
+                        name: tool.name(),
+                        description: tool.description(),
+                        input_schema: tool.input_schema(),
+                    })
+                    .collect();
+            }
+
             thread.stream_completion(request, model, cx)
         });
 

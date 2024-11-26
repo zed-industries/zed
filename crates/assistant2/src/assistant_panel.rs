@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use anyhow::Result;
+use assistant_tool::ToolWorkingSet;
 use gpui::{
     prelude::*, px, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
     FocusableView, Model, Pixels, Subscription, Task, View, ViewContext, WeakView, WindowContext,
@@ -10,7 +13,7 @@ use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
 use crate::message_editor::MessageEditor;
-use crate::thread::Thread;
+use crate::thread::{Thread, ThreadEvent};
 use crate::{NewThread, ToggleFocus, ToggleModelSelector};
 
 pub fn init(cx: &mut AppContext) {
@@ -25,8 +28,10 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct AssistantPanel {
+    workspace: WeakView<Workspace>,
     thread: Model<Thread>,
     message_editor: View<MessageEditor>,
+    tools: Arc<ToolWorkingSet>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -36,32 +41,74 @@ impl AssistantPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
+            let tools = Arc::new(ToolWorkingSet::default());
             workspace.update(&mut cx, |workspace, cx| {
-                cx.new_view(|cx| Self::new(workspace, cx))
+                cx.new_view(|cx| Self::new(workspace, tools, cx))
             })
         })
     }
 
-    fn new(_workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let thread = cx.new_model(Thread::new);
-        let subscriptions = vec![cx.observe(&thread, |_, _, cx| cx.notify())];
+    fn new(workspace: &Workspace, tools: Arc<ToolWorkingSet>, cx: &mut ViewContext<Self>) -> Self {
+        let thread = cx.new_model(|cx| Thread::new(tools.clone(), cx));
+        let subscriptions = vec![
+            cx.observe(&thread, |_, _, cx| cx.notify()),
+            cx.subscribe(&thread, Self::handle_thread_event),
+        ];
 
         Self {
+            workspace: workspace.weak_handle(),
             thread: thread.clone(),
             message_editor: cx.new_view(|cx| MessageEditor::new(thread, cx)),
+            tools,
             _subscriptions: subscriptions,
         }
     }
 
     fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
-        let thread = cx.new_model(Thread::new);
-        let subscriptions = vec![cx.observe(&thread, |_, _, cx| cx.notify())];
+        let tools = self.thread.read(cx).tools().clone();
+        let thread = cx.new_model(|cx| Thread::new(tools, cx));
+        let subscriptions = vec![
+            cx.observe(&thread, |_, _, cx| cx.notify()),
+            cx.subscribe(&thread, Self::handle_thread_event),
+        ];
 
         self.message_editor = cx.new_view(|cx| MessageEditor::new(thread.clone(), cx));
         self.thread = thread;
         self._subscriptions = subscriptions;
 
         self.message_editor.focus_handle(cx).focus(cx);
+    }
+
+    fn handle_thread_event(
+        &mut self,
+        _: Model<Thread>,
+        event: &ThreadEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            ThreadEvent::StreamedCompletion => {}
+            ThreadEvent::UsePendingTools => {
+                let pending_tool_uses = self
+                    .thread
+                    .read(cx)
+                    .pending_tool_uses()
+                    .into_iter()
+                    .filter(|tool_use| tool_use.status.is_idle())
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                for tool_use in pending_tool_uses {
+                    if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+                        let task = tool.run(tool_use.input, self.workspace.clone(), cx);
+
+                        self.thread.update(cx, |thread, cx| {
+                            thread.insert_tool_output(tool_use.id.clone(), task, cx);
+                        });
+                    }
+                }
+            }
+            ThreadEvent::ToolFinished { .. } => {}
+        }
     }
 }
 
