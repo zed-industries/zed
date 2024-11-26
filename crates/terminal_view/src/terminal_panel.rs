@@ -2,7 +2,9 @@ use std::{cmp, ops::ControlFlow, path::PathBuf, sync::Arc};
 
 use crate::{
     default_working_directory,
-    persistence::{serialize_pane_group, SerializedItems, SerializedTerminalPanel},
+    persistence::{
+        deserialize_terminal_panel, serialize_pane_group, SerializedItems, SerializedTerminalPanel,
+    },
     TerminalView,
 };
 use breadcrumbs::Breadcrumbs;
@@ -65,12 +67,12 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct TerminalPanel {
-    active_pane: View<Pane>,
-    center: PaneGroup,
+    pub(crate) active_pane: View<Pane>,
+    pub(crate) center: PaneGroup,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
-    width: Option<Pixels>,
-    height: Option<Pixels>,
+    pub(crate) width: Option<Pixels>,
+    pub(crate) height: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     pending_terminals_to_add: usize,
     deferred_tasks: HashMap<TaskId, Task<()>>,
@@ -80,7 +82,7 @@ pub struct TerminalPanel {
 }
 
 impl TerminalPanel {
-    fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         let project = workspace.project();
         let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), cx);
         let center = PaneGroup::new(pane.clone());
@@ -203,41 +205,23 @@ impl TerminalPanel {
             .log_err()
             .flatten();
 
-        let (panel, pane, items) = workspace.update(&mut cx, |workspace, cx| {
-            let panel = cx.new_view(|cx| TerminalPanel::new(workspace, cx));
-            let items = if let Some((serialized_panel, database_id)) =
-                serialized_panel.as_ref().zip(workspace.database_id())
-            {
-                // TODO kb items can be empty, but we have to add a pane anyway, as it could be a base for a new split.
-                panel.update(cx, |panel, cx| {
-                    cx.notify();
-                    panel.height = serialized_panel.height.map(|h| h.round());
-                    panel.width = serialized_panel.width.map(|w| w.round());
-                    panel.active_pane.update(cx, |_, cx| {
-                        serialized_panel
-                            .items
-                            .iter()
-                            .map(|item_id| {
-                                TerminalView::deserialize(
-                                    workspace.project().clone(),
-                                    workspace.weak_handle(),
-                                    database_id,
-                                    *item_id,
-                                    cx,
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                })
-            } else {
-                Vec::new()
-            };
-            let pane = panel.read(cx).active_pane.clone();
-            (panel, pane, items)
-        })?;
+        let terminal_panel = workspace
+            .update(&mut cx, |workspace, cx| {
+                match serialized_panel.zip(workspace.database_id()) {
+                    Some((serialized_panel, database_id)) => deserialize_terminal_panel(
+                        workspace.weak_handle(),
+                        workspace.project().clone(),
+                        database_id,
+                        serialized_panel,
+                        cx,
+                    ),
+                    None => Task::ready(Ok(cx.new_view(|cx| TerminalPanel::new(workspace, cx)))),
+                }
+            })?
+            .await?;
 
         if let Some(workspace) = workspace.upgrade() {
-            panel
+            terminal_panel
                 .update(&mut cx, |_, cx| {
                     cx.subscribe(&workspace, |terminal_panel, _, e, cx| {
                         if let workspace::Event::SpawnTask(spawn_in_terminal) = e {
@@ -249,33 +233,17 @@ impl TerminalPanel {
                 .ok();
         }
 
-        let pane = pane.downgrade();
-        let items = futures::future::join_all(items).await;
-        let mut alive_item_ids = Vec::new();
-        pane.update(&mut cx, |pane, cx| {
-            let active_item_id = serialized_panel
-                .as_ref()
-                .and_then(|panel| panel.active_item_id);
-            let mut active_ix = None;
-            for item in items {
-                if let Some(item) = item.log_err() {
-                    let item_id = item.entity_id().as_u64();
-                    pane.add_item(Box::new(item), false, false, None, cx);
-                    alive_item_ids.push(item_id as ItemId);
-                    if Some(item_id) == active_item_id {
-                        active_ix = Some(pane.items_len() - 1);
-                    }
-                }
-            }
-
-            if let Some(active_ix) = active_ix {
-                pane.activate_item(active_ix, false, false, cx)
-            }
-        })?;
-
         // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
         if let Some(workspace) = workspace.upgrade() {
             let cleanup_task = workspace.update(&mut cx, |workspace, cx| {
+                let alive_item_ids = terminal_panel
+                    .read(cx)
+                    .center
+                    .panes()
+                    .into_iter()
+                    .flat_map(|pane| pane.read(cx).items())
+                    .map(|item| item.item_id().as_u64() as ItemId)
+                    .collect();
                 workspace
                     .database_id()
                     .map(|workspace_id| TerminalView::cleanup(workspace_id, alive_item_ids, cx))
@@ -285,7 +253,7 @@ impl TerminalPanel {
             }
         }
 
-        Ok(panel)
+        Ok(terminal_panel)
     }
 
     fn handle_pane_event(
@@ -734,7 +702,7 @@ impl TerminalPanel {
     }
 }
 
-fn new_terminal_pane(
+pub fn new_terminal_pane(
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     cx: &mut ViewContext<TerminalPanel>,

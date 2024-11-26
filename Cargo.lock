@@ -12418,6 +12418,7 @@ name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-recursion 1.1.1",
  "breadcrumbs",
  "client",
  "collections",

@@ -31,7 +31,7 @@ pub struct PaneGroup {
 }
 
 impl PaneGroup {
-    pub(crate) fn with_root(root: Member) -> Self {
+    pub fn with_root(root: Member) -> Self {
         Self { root }
     }
 
