@@ -73,7 +73,7 @@ fn main() {
 
         cx.spawn(|cx| async move {
             let mut windows = Vec::new();
-            for i in 0..3 {
+            for i in 0..2 {
                 let token = token::create(
                     &live_kit_key,
                     &live_kit_secret,
