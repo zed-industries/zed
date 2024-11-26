@@ -30,7 +30,7 @@ impl Tool for NowTool {
     }
 
     fn description(&self) -> String {
-        "Returns the current datetime in RFC 3339 format.".into()
+        "Returns the current datetime in RFC 3339 format. Only use this tool when the user specifically asks for it or the current task would benefit from knowing the current datetime.".into()
     }
 
     fn input_schema(&self) -> serde_json::Value {
