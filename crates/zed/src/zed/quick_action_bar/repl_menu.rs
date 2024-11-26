@@ -31,6 +31,20 @@ struct ReplMenuState {
     kernel_language: SharedString,
 }
 
+pub struct ReplMenu {}
+
+impl ReplMenu {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        Self {}
+    }
+}
+
+impl Render for ReplMenu {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div().child("dummy data")
+    }
+}
+
 impl QuickActionBar {
     pub fn render_repl_menu(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         if !JupyterSettings::enabled(cx) {
@@ -247,6 +261,7 @@ impl QuickActionBar {
 
         Some(
             h_flex()
+                .child(self.repl_menu.clone())
                 .child(self.render_kernel_selector(cx))
                 .child(button)
                 .child(dropdown_menu)
@@ -263,6 +278,7 @@ impl QuickActionBar {
 
         Some(
             h_flex()
+                .child(self.repl_menu.clone())
                 .child(self.render_kernel_selector(cx))
                 .child(
                     IconButton::new("toggle_repl_icon", IconName::ReplNeutral)

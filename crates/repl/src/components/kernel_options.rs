@@ -32,6 +32,7 @@ pub struct KernelPickerDelegate {
     filtered_kernels: Vec<KernelSpecification>,
     selected_kernelspec: Option<KernelSpecification>,
     on_select: OnSelect,
+    group: Group,
 }
 
 // Helper function to truncate long paths
@@ -64,6 +65,14 @@ impl<T: PopoverTrigger> KernelSelector<T> {
         self.info_text = Some(text.into());
         self
     }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum Group {
+    All,
+    Jupyter,
+    Python,
+    Remote,
 }
 
 impl PickerDelegate for KernelPickerDelegate {
@@ -204,6 +213,75 @@ impl PickerDelegate for KernelPickerDelegate {
         )
     }
 
+    fn render_header(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+        let mode = Group::All;
+
+        Some(
+            h_flex()
+                .child(
+                    div()
+                        .id("all")
+                        .px_2()
+                        .py_1()
+                        .cursor_pointer()
+                        .border_b_2()
+                        .when(mode == Group::All, |this| {
+                            this.border_color(cx.theme().colors().border)
+                        })
+                        .child(Label::new("All"))
+                        .on_click(cx.listener(|this, _, cx| {
+                            this.delegate.set_group(Group::All, cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("jupyter")
+                        .px_2()
+                        .py_1()
+                        .cursor_pointer()
+                        .border_b_2()
+                        .when(mode == Group::Jupyter, |this| {
+                            this.border_color(cx.theme().colors().border)
+                        })
+                        .child(Label::new("Jupyter"))
+                        .on_click(cx.listener(|this, _, cx| {
+                            this.delegate.set_group(Group::Jupyter, cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("python")
+                        .px_2()
+                        .py_1()
+                        .cursor_pointer()
+                        .border_b_2()
+                        .when(mode == Group::Python, |this| {
+                            this.border_color(cx.theme().colors().border)
+                        })
+                        .child(Label::new("Python"))
+                        .on_click(cx.listener(|this, _, cx| {
+                            this.delegate.set_group(Group::Python, cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("remote")
+                        .px_2()
+                        .py_1()
+                        .cursor_pointer()
+                        .border_b_2()
+                        .when(mode == Group::Remote, |this| {
+                            this.border_color(cx.theme().colors().border)
+                        })
+                        .child(Label::new("Remote"))
+                        .on_click(cx.listener(|this, _, cx| {
+                            this.delegate.set_group(Group::Remote, cx);
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
         Some(
             h_flex()
@@ -225,6 +303,28 @@ impl PickerDelegate for KernelPickerDelegate {
     }
 }
 
+impl KernelPickerDelegate {
+    fn new(
+        on_select: OnSelect,
+        kernels: Vec<KernelSpecification>,
+        selected_kernelspec: Option<KernelSpecification>,
+    ) -> Self {
+        Self {
+            on_select,
+            all_kernels: kernels.clone(),
+            filtered_kernels: kernels,
+            group: Group::All,
+            selected_kernelspec,
+        }
+    }
+
+    fn set_group(&mut self, group: Group, cx: &mut ViewContext<Picker<Self>>) {
+        dbg!(&group);
+        self.group = group;
+        cx.notify();
+    }
+}
+
 impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let store = ReplStore::global(cx).read(cx);
@@ -236,12 +336,7 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
 
         let selected_kernelspec = store.active_kernelspec(self.worktree_id, None, cx);
 
-        let delegate = KernelPickerDelegate {
-            on_select: self.on_select,
-            all_kernels: all_kernels.clone(),
-            filtered_kernels: all_kernels,
-            selected_kernelspec,
-        };
+        let delegate = KernelPickerDelegate::new(self.on_select, all_kernels, selected_kernelspec);
 
         let picker_view = cx.new_view(|cx| {
             let picker = Picker::uniform_list(delegate, cx)

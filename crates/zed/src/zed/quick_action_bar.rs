@@ -13,6 +13,7 @@ use gpui::{
     Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
+use repl_menu::ReplMenu;
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
 use ui::{
@@ -33,6 +34,7 @@ pub struct QuickActionBar {
     toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
     toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
     workspace: WeakView<Workspace>,
+    repl_menu: View<ReplMenu>,
 }
 
 impl QuickActionBar {
@@ -49,6 +51,7 @@ impl QuickActionBar {
             toggle_selections_handle: Default::default(),
             toggle_settings_handle: Default::default(),
             workspace: workspace.weak_handle(),
+            repl_menu: cx.new_view(|cx| ReplMenu::new(cx)),
         };
         this.apply_settings(cx);
         cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx))
