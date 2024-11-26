@@ -508,7 +508,6 @@ impl Editor {
 
                     h_flex()
                         .id(cx.block_id)
-                        .block_mouse_down()
                         .pr_5()
                         .w_full()
                         .justify_end()
