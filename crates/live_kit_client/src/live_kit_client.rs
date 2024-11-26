@@ -5,10 +5,7 @@ mod remote_video_track_view;
 pub mod test;
 
 use anyhow::{anyhow, Context as _, Result};
-use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait as _},
-    StreamConfig,
-};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
 use futures::{io, Stream, StreamExt as _};
 use gpui::{
     BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
@@ -33,8 +30,14 @@ pub use test::*;
 
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 
-pub struct AudioStream {
-    _tasks: [Task<anyhow::Result<Option<()>>>; 2],
+pub enum AudioStream {
+    Input {
+        _tasks: [Task<Result<Option<()>>>; 2],
+    },
+    Output {
+        _end_on_drop: std::sync::mpsc::Sender<()>,
+        _receive_task: Task<()>,
+    },
 }
 
 struct Dispatcher(Arc<dyn gpui::PlatformDispatcher>);
@@ -247,7 +250,6 @@ pub fn capture_local_audio_track(
             },
             sample_rate,
             channels,
-            // TODO livekit: Pull these out of a proto later
             100,
         );
         let transmit_task = task_background_executor.spawn({
@@ -267,7 +269,7 @@ pub fn capture_local_audio_track(
 
         anyhow::Ok((
             track,
-            AudioStream {
+            AudioStream::Input {
                 _tasks: [stream_task, transmit_task],
             },
         ))
@@ -278,40 +280,40 @@ pub fn capture_local_audio_track(
 pub fn play_remote_audio_track(
     track: &track::RemoteAudioTrack,
     background_executor: &BackgroundExecutor,
-) -> AudioStream {
+) -> Result<AudioStream> {
     // TODO(mgsloan): use a concurrent queue that references the Cow slices the source gives us.
     //
     // TODO(mgsloan): put this on the channel? rationale is to not mix up samples that came from a
     // different configuration.
-    let buffer_mutex = Arc::new(Mutex::new(Vec::<i16>::new()));
-    let (stream_config_tx, stream_config_rx) = std::sync::mpsc::channel();
-    // TODO livekit: Pull these out of a proto later
-    let mut stream = NativeAudioStream::new(track.rtc_track(), 48000, 1);
 
-    let receive_task = background_executor.spawn({
+    use std::thread;
+    let buffer_mutex = Arc::new(Mutex::new(Vec::<i16>::new()));
+
+    let device = cpal::default_host()
+        .default_output_device()
+        .context("no audio output device available")?;
+    let default_config = device
+        .default_output_config()
+        .context("no default configuration available for default output device")?;
+
+    let mut stream = NativeAudioStream::new(
+        track.rtc_track(),
+        default_config.sample_rate().0 as i32,
+        default_config.channels() as i32,
+    );
+
+    // let mut stream = NativeAudioStream::new(track.rtc_track(), 48000, 1);
+
+    let _receive_task = background_executor.spawn({
         let buffer_mutex = buffer_mutex.clone();
         async move {
-            let mut stream_config = None;
             while let Some(frame) = stream.next().await {
                 let buffer_size = frame.samples_per_channel * frame.num_channels;
                 debug_assert!(frame.data.len() == buffer_size as usize);
 
-                let frame_config = StreamConfig {
-                    channels: frame.num_channels as u16,
-                    sample_rate: cpal::SampleRate(frame.sample_rate),
-                    // TODO(mgsloan): this multiplier was arbitrarily chosen, but a larger buffer
-                    // size seems to help my audio quality.
-                    buffer_size: cpal::BufferSize::Fixed(buffer_size * 2),
-                };
-
-                if stream_config.as_ref().map_or(true, |c| *c != frame_config) {
-                    stream_config = Some(frame_config.clone());
-                    stream_config_tx.send(frame_config).log_err();
-                }
-
                 let mut buffer = buffer_mutex.lock();
                 // TODO(mgsloan): max_size multiplier was arbitrarily chosen.
-                let max_size = (buffer_size * 3) as usize;
+                let max_size = (buffer_size * 5) as usize;
                 let new_size = buffer.len() + frame.data.len();
                 if new_size > max_size {
                     let drain_ix = new_size - max_size;
@@ -323,49 +325,45 @@ pub fn play_remote_audio_track(
                 }
                 buffer.extend_from_slice(&frame.data);
             }
-            Ok(Some(()))
         }
     });
 
-    let play_task = background_executor.spawn({
-        async move {
-            if cfg!(any(test, feature = "test-support")) {
-                anyhow::bail!("can't play audio in tests");
-            }
+    let (_end_on_drop, end_on_drop_rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        if cfg!(any(test, feature = "test-support")) {
+            // Can't play audio in tests
+            return;
+        }
 
-            let device = cpal::default_host()
-                .default_output_device()
-                .context("no audio output device available")?;
-
-            let mut _output_stream = None;
-            while let Some(config) = stream_config_rx.recv().log_err() {
-                _output_stream = Some(device.build_output_stream(
-                    &config,
-                    {
-                        let buffer_mutex = buffer_mutex.clone();
-                        move |data, _info| {
-                            let mut buffer = buffer_mutex.lock();
-                            while data.len() > buffer.len() {
-                                drop(buffer);
-                                std::hint::spin_loop();
-                                buffer = buffer_mutex.lock();
-                            }
-                            data.copy_from_slice(&buffer[..data.len()]);
-                            buffer.drain(..data.len());
+        let mut _output_stream = device
+            .build_output_stream(
+                &default_config.config(),
+                {
+                    let buffer_mutex = buffer_mutex.clone();
+                    move |data, _info| {
+                        let mut buffer = buffer_mutex.lock();
+                        while data.len() > buffer.len() {
+                            drop(buffer);
+                            std::hint::spin_loop();
+                            buffer = buffer_mutex.lock();
                         }
-                    },
-                    |error| log::error!("error playing audio track: {:?}", error),
-                    None,
-                )?);
-            }
+                        data.copy_from_slice(&buffer[..data.len()]);
+                        buffer.drain(..data.len());
+                    }
+                },
+                |error| log::error!("error playing audio track: {:?}", error),
+                None,
+            )
+            .ok();
 
-            Ok(Some(()))
-        }
+        // Block forever to keep the output stream alive
+        end_on_drop_rx.recv().ok();
     });
 
-    AudioStream {
-        _tasks: [receive_task, play_task],
-    }
+    Ok(AudioStream::Output {
+        _end_on_drop,
+        _receive_task,
+    })
 }
 
 #[cfg(target_os = "windows")]

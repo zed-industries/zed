@@ -30,7 +30,6 @@ use live_kit_client::{
 
 use live_kit_server::token::{self, VideoGrant};
 use log::LevelFilter;
-use postage::stream::Stream as _;
 use simplelog::SimpleLogger;
 
 actions!(live_kit_client, [Quit]);
@@ -200,7 +199,7 @@ impl LivekitWindow {
                     RemoteTrack::Audio(track) => {
                         output.audio_output_stream = Some((
                             publication.clone(),
-                            play_remote_audio_track(&track, cx.background_executor()),
+                            play_remote_audio_track(&track, cx.background_executor()).unwrap(),
                         ));
                     }
                     RemoteTrack::Video(track) => {
