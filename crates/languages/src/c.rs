@@ -4,7 +4,7 @@ use futures::StreamExt;
 use gpui::AsyncAppContext;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use serde_json::Value;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
@@ -258,15 +258,15 @@ impl super::LspAdapter for CLspAdapter {
         })
     }
 
-    fn initialization_callback(&self) -> Option<Box<dyn FnOnce(&mut Value)>> {
-        // Enable clangd's dot-to-arrow feature.
-        Some(Box::new(|value| {
-            if let Some(completion) =
-                get_nested_value_mut(value, "capabilities.textDocument.completion")
-            {
-                completion["editsNearCursor"] = Value::Bool(true);
-            }
-        }))
+    fn prepare_initialize_params(&self, original: InitializeParams) -> Result<Value> {
+        // send non-LSP conformant init requests to enable clangd's dot-to-arrow feature.
+        let mut params = serde_json::to_value(original)?;
+        if let Some(completion) =
+            get_nested_value_mut(&mut params, "capabilities.textDocument.completion")
+        {
+            completion["editsNearCursor"] = Value::Bool(true);
+        }
+        Ok(params)
     }
 }
 

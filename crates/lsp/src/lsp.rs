@@ -320,9 +320,11 @@ impl lsp_types::notification::Notification for ServerStatus {
 }
 
 #[derive(Debug)]
-pub enum LspInitialize {}
+/// This is needed because we want to send non-LSP conformant init requests for particular LSP servers.
+/// This intends to be the same as `request::Initialize` except that its parameters are superset of `InitializeParams`.
+pub enum LspCustomInitialize {}
 
-impl request::Request for LspInitialize {
+impl request::Request for LspCustomInitialize {
     type Params = Value;
     type Result = InitializeResult;
     const METHOD: &'static str = "initialize";
@@ -608,23 +610,14 @@ impl LanguageServer {
         Ok(())
     }
 
-    /// Initializes a language server by sending the `Initialize` request.
-    /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
-    ///
-    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
-    pub fn initialize(
-        mut self,
-        options: Option<Value>,
-        callback: Option<Box<dyn FnOnce(&mut Value)>>,
-        cx: &AppContext,
-    ) -> Task<Result<Arc<Self>>> {
+    pub fn default_initialize_params(&self, cx: &AppContext) -> InitializeParams {
         let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
-        let params = InitializeParams {
+        InitializeParams {
             process_id: None,
             root_path: None,
             root_uri: Some(root_uri.clone()),
-            initialization_options: options,
+            initialization_options: None,
             capabilities: ClientCapabilities {
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
@@ -788,14 +781,26 @@ impl LanguageServer {
             }),
             locale: None,
             ..Default::default()
+        }
+    }
+
+    /// Initializes a language server by sending the `Initialize` request.
+    /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
+    pub fn initialize(
+        mut self,
+        initialize_params: Option<Value>,
+        cx: &AppContext,
+    ) -> Task<Result<Arc<Self>>> {
+        let params = if let Some(params) = initialize_params {
+            params
+        } else {
+            serde_json::to_value(self.default_initialize_params(cx)).unwrap()
         };
 
         cx.spawn(|_| async move {
-            let mut params = serde_json::to_value(params).unwrap();
-            if let Some(callback) = callback {
-                callback(&mut params);
-            }
-            let response = self.request::<LspInitialize>(params).await?;
+            let response = self.request::<LspCustomInitialize>(params).await?;
             if let Some(info) = response.server_info {
                 self.process_name = info.name.into();
             }
@@ -1301,7 +1306,7 @@ impl FakeLanguageServer {
             }),
             notifications_rx,
         };
-        fake.handle_request::<request::Initialize, _, _>({
+        fake.handle_request::<LspCustomInitialize, _, _>({
             let capabilities = capabilities;
             move |_, _| {
                 let capabilities = capabilities.clone();
@@ -1519,10 +1524,7 @@ mod tests {
             })
             .detach();
 
-        let server = cx
-            .update(|cx| server.initialize(None, None, cx))
-            .await
-            .unwrap();
+        let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(

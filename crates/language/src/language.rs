@@ -30,7 +30,10 @@ use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
+use lsp::{
+    CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions,
+    LanguageServerName,
+};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -482,8 +485,9 @@ pub trait LspAdapter: 'static + Send + Sync {
         Default::default()
     }
 
-    fn initialization_callback(&self) -> Option<Box<dyn FnOnce(&mut Value)>> {
-        None
+    /// Return type is Value because we want to send non-LSP conformant init requests for particular LSP servers.
+    fn prepare_initialize_params(&self, original: InitializeParams) -> Result<Value> {
+        Ok(serde_json::to_value(original)?)
     }
 }
 

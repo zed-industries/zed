@@ -460,7 +460,7 @@ impl Copilot {
             server
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
-            let server = cx.update(|cx| server.initialize(None, None, cx))?.await?;
+            let server = cx.update(|cx| server.initialize(None, cx))?.await?;
 
             let status = server
                 .request::<request::CheckStatus>(request::CheckStatusParams {
