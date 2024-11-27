@@ -36,8 +36,8 @@ use workspace::{
     move_item, pane,
     ui::IconName,
     ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane, DraggedTab,
-    ItemId, NewTerminal, Pane, PaneGroup, SplitDirection, SwapPaneInDirection, ToggleZoom,
-    Workspace,
+    ItemId, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight,
+    SplitUp, SwapPaneInDirection, ToggleZoom, Workspace,
 };
 
 use anyhow::Result;
@@ -164,6 +164,25 @@ impl TerminalPanel {
                                 });
 
                                 Some(menu)
+                            }),
+                    )
+                    .child(
+                        PopoverMenu::new("terminal-pane-tab-bar-split")
+                            .trigger(
+                                IconButton::new("terminal-pane-split", IconName::Split)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("Split Pane", cx)),
+                            )
+                            .anchor(AnchorCorner::TopRight)
+                            .with_handle(pane.split_item_context_menu_handle.clone())
+                            .menu(move |cx| {
+                                ContextMenu::build(cx, |menu, _| {
+                                    menu.action("Split Right", SplitRight.boxed_clone())
+                                        .action("Split Left", SplitLeft.boxed_clone())
+                                        .action("Split Up", SplitUp.boxed_clone())
+                                        .action("Split Down", SplitDown.boxed_clone())
+                                })
+                                .into()
                             }),
                     )
                     .child({
