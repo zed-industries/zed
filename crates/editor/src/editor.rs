@@ -5587,7 +5587,7 @@ impl Editor {
         _style: &EditorStyle,
         row: DisplayRow,
         is_active: bool,
-        breakpoint: Option<Breakpoint>,
+        breakpoint: Option<&Breakpoint>,
         cx: &mut ViewContext<Self>,
     ) -> Option<IconButton> {
         let color = if breakpoint.is_some() {
@@ -5598,7 +5598,7 @@ impl Editor {
 
         let bp_kind = Arc::new(
             breakpoint
-                .map(|bp| bp.kind)
+                .map(|bp| bp.kind.clone())
                 .unwrap_or(BreakpointKind::Standard),
         );
 

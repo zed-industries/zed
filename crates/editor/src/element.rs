@@ -1850,11 +1850,12 @@ impl EditorElement {
                 active = deployed_from_indicator.map_or(true, |indicator_row| indicator_row == row);
             };
 
-            let breakpoint = breakpoint_points.remove(&row);
+            let breakpoint = breakpoint_points.get(&row);
             button = editor.render_code_actions_indicator(&self.style, row, active, breakpoint, cx);
         });
 
         let button = button?;
+        breakpoint_points.remove(&row);
 
         let button = prepaint_gutter_button(
             button,
