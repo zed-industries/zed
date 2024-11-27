@@ -10,7 +10,7 @@ use std::{
     io::{BufRead, BufReader, Read},
     ops::Range,
     path::Path,
-    sync::{Arc, OnceLock},
+    sync::{Arc, LazyLock, OnceLock},
 };
 use text::Anchor;
 use util::paths::PathMatcher;
@@ -76,6 +76,12 @@ pub enum SearchQuery {
     },
 }
 
+static WORD_MATCH_TEST: LazyLock<Regex> = LazyLock::new(|| {
+    RegexBuilder::new(r"\B")
+        .build()
+        .expect("Failed to create TRAILING_WHITESPACE_REGEX")
+});
+
 impl SearchQuery {
     pub fn text(
         query: impl ToString,
@@ -119,9 +125,23 @@ impl SearchQuery {
         let initial_query = Arc::from(query.as_str());
         if whole_word {
             let mut word_query = String::new();
-            word_query.push_str("\\b");
+            if let Some(first) = query.get(0..1) {
+                if WORD_MATCH_TEST
+                    .is_match(&first.to_string())
+                    .is_ok_and(|x| x != true)
+                {
+                    word_query.push_str("\\b");
+                }
+            }
             word_query.push_str(&query);
-            word_query.push_str("\\b");
+            if let Some(last) = query.get(query.len() - 1..) {
+                if WORD_MATCH_TEST
+                    .is_match(&last.to_string())
+                    .is_ok_and(|x| x != true)
+                {
+                    word_query.push_str("\\b");
+                }
+            }
             query = word_query
         }
 
