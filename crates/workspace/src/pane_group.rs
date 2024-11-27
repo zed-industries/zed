@@ -105,6 +105,15 @@ impl PaneGroup {
         };
     }
 
+    pub fn reset_pane_sizes(&mut self) {
+        match &mut self.root {
+            Member::Pane(_) => {}
+            Member::Axis(axis) => {
+                let _ = axis.reset_pane_sizes();
+            }
+        };
+    }
+
     pub fn swap(&mut self, from: &View<Pane>, to: &View<Pane>) {
         match &mut self.root {
             Member::Pane(_) => {}
@@ -460,6 +469,15 @@ impl PaneAxis {
         }
     }
 
+    fn reset_pane_sizes(&self) {
+        *self.flexes.lock() = vec![1.; self.members.len()];
+        for member in self.members.iter() {
+            if let Member::Axis(axis) = member {
+                axis.reset_pane_sizes();
+            }
+        }
+    }
+
     fn resize(
         &mut self,
         pane: &View<Pane>,
@@ -759,7 +777,6 @@ pub enum ResizeIntent {
 }
 
 mod element {
-
     use std::mem;
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 

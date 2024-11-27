@@ -2946,6 +2946,10 @@ impl Workspace {
         }
     }
 
+    pub fn bounding_box_for_pane(&self, pane: &View<Pane>) -> Option<Bounds<Pixels>> {
+        self.center.bounding_box_for_pane(pane)
+    }
+
     pub fn find_pane_in_direction(
         &mut self,
         direction: SplitDirection,
@@ -2991,6 +2995,11 @@ impl Workspace {
     pub fn resize_pane(&mut self, axis: gpui::Axis, amount: Pixels, cx: &mut ViewContext<Self>) {
         self.center
             .resize(&self.active_pane.clone(), axis, amount, &self.bounds);
+        cx.notify();
+    }
+
+    pub fn reset_pane_sizes(&mut self, cx: &mut ViewContext<Self>) {
+        self.center.reset_pane_sizes();
         cx.notify();
     }
 

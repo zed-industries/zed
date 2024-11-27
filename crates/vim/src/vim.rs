@@ -41,7 +41,7 @@ use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-use ui::{IntoElement, VisualContext};
+use ui::{px, IntoElement, VisualContext};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, ResizeIntent, Workspace};
 
@@ -79,7 +79,9 @@ actions!(
         InnerObject,
         FindForward,
         FindBackward,
-        OpenDefaultKeymap
+        OpenDefaultKeymap,
+        MaximizePane,
+        ResetPaneSizes,
     ]
 );
 
@@ -117,8 +119,29 @@ pub fn init(cx: &mut AppContext) {
             });
         });
 
+        workspace.register_action(|workspace, _: &ResetPaneSizes, cx| {
+            workspace.reset_pane_sizes(cx);
+        });
+
+        workspace.register_action(|workspace, _: &MaximizePane, cx| {
+            let pane = workspace.active_pane();
+            let Some(size) = workspace.bounding_box_for_pane(&pane) else {
+                return;
+            };
+
+            let theme = ThemeSettings::get_global(cx);
+            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
+
+            let desired_size = if let Some(count) = Vim::take_count(cx) {
+                height * count
+            } else {
+                px(10000.)
+            };
+            workspace.resize_pane(Axis::Vertical, desired_size - size.size.height, cx)
+        });
+
         workspace.register_action(|workspace, action: &ResizePane, cx| {
-            let count = Vim::take_count(cx.window_context()).unwrap_or(1) as f32;
+            let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
             let Ok(font_id) = cx.text_system().font_id(&theme.buffer_font) else {
                 return;
