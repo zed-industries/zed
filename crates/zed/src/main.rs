@@ -180,6 +180,7 @@ fn main() {
         }
     }
 
+    let args = Args::parse();
     menu::init();
     zed_actions::init();
 
@@ -242,8 +243,9 @@ fn main() {
         };
     if failed_single_instance_check {
         println!("zed is already running");
+        #[cfg(target_os = "windows")]
         if let Some(ref argument) = args.new_instance {
-            send_instance_message(argument);
+            zed::windows_only_instance::send_instance_message(argument);
         }
         return;
     }

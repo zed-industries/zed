@@ -28,14 +28,10 @@ use windows::{
         Security::Credentials::*,
         System::{
             Com::*,
-            DataExchange::{
-                CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
-                RegisterClipboardFormatW, SetClipboardData,
-            },
             LibraryLoader::*,
             Memory::{
-                CreateFileMappingW, GlobalAlloc, GlobalLock, GlobalUnlock, MapViewOfFile,
-                UnmapViewOfFile, FILE_MAP_ALL_ACCESS, GMEM_MOVEABLE, PAGE_READWRITE,
+                CreateFileMappingW, MapViewOfFile, UnmapViewOfFile, FILE_MAP_ALL_ACCESS,
+                PAGE_READWRITE,
             },
             Ole::*,
             SystemInformation::*,
