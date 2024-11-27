@@ -951,9 +951,12 @@ struct Args {
     /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
     paths_or_urls: Vec<String>,
 
-    /// TODO:
+    /// The dock action to perform. This is used on Windows only.
+    ///
+    /// To developers: If you want rename this argument, you must also update the `APP_DOCK_ACTION_ARGUMENT` constant
+    /// in `crates\gpui\src\platform\app_identifier.rs`.
     #[arg(long)]
-    new_instance: Option<String>,
+    dock_action: Option<String>,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
