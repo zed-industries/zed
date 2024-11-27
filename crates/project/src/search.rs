@@ -79,7 +79,7 @@ pub enum SearchQuery {
 static WORD_MATCH_TEST: LazyLock<Regex> = LazyLock::new(|| {
     RegexBuilder::new(r"\B")
         .build()
-        .expect("Failed to create TRAILING_WHITESPACE_REGEX")
+        .expect("Failed to create WORD_MATCH_TEST")
 });
 
 impl SearchQuery {
