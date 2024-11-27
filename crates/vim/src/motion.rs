@@ -490,7 +490,7 @@ impl Vim {
             self.pop_operator(cx);
         }
 
-        let count = self.take_count(cx);
+        let count = Vim::take_count(cx);
         let active_operator = self.active_operator();
         let mut waiting_operator: Option<Operator> = None;
         match self.mode {
@@ -510,7 +510,7 @@ impl Vim {
         self.clear_operator(cx);
         if let Some(operator) = waiting_operator {
             self.push_operator(operator, cx);
-            self.pre_count = count
+            Vim::globals(cx).pre_count = count
         }
     }
 }

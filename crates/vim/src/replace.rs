@@ -22,7 +22,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         if vim.mode != Mode::Replace {
             return;
         }
-        let count = vim.take_count(cx);
+        let count = Vim::take_count(cx);
         vim.undo_replace(count, cx)
     });
 }

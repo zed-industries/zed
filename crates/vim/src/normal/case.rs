@@ -118,7 +118,7 @@ impl Vim {
     {
         self.record_current_action(cx);
         self.store_visual_marks(cx);
-        let count = self.take_count(cx).unwrap_or(1) as u32;
+        let count = Vim::take_count(cx).unwrap_or(1) as u32;
 
         self.update_editor(cx, |vim, editor, cx| {
             let mut ranges = Vec::new();
