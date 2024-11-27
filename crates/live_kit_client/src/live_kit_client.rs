@@ -363,7 +363,7 @@ fn start_output_stream(
     let receive_task = background_executor.spawn({
         let buffer = buffer.clone();
         async move {
-            const MS_OF_BUFFER: u32 = 50;
+            const MS_OF_BUFFER: u32 = 100;
             const MS_IN_SEC: u32 = 1000;
             while let Some(frame) = stream.next().await {
                 let frame_size = frame.samples_per_channel * frame.num_channels;
