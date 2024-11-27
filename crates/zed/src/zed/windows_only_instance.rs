@@ -34,7 +34,7 @@ pub fn check_single_instance(opener: OpenListener, run_foreground: bool) -> bool
             false,
             &HSTRING::from(format!("{}-Instance-Mutex", app_identifier())),
         )
-        .expect("Unable to create instance sync event")
+        .expect("Unable to create instance mutex.")
     };
     let first_instance = unsafe { GetLastError() } != ERROR_ALREADY_EXISTS;
 

@@ -9,7 +9,8 @@ use std::{
 use ::util::{paths::SanitizedPath, ResultExt};
 use anyhow::{anyhow, Context as _, Result};
 use app_identifier::{
-    get_app_instance_event_identifier, get_app_shared_memory_identifier, APP_SHARED_MEMORY_MAX_SIZE,
+    get_app_instance_event_identifier, get_app_shared_memory_identifier, APP_DOCK_ACTION_ARGUMENT,
+    APP_SHARED_MEMORY_MAX_SIZE,
 };
 use async_task::Runnable;
 use collections::FxHashMap;
@@ -321,7 +322,8 @@ impl WindowsPlatform {
                     continue;
                 }
                 MenuItem::Action { name, action, .. } => {
-                    let item_args = format!("--new-instance {}", action.arguments());
+                    let item_args =
+                        format!("--{} {}", APP_DOCK_ACTION_ARGUMENT, action.arguments());
                     self.state
                         .borrow_mut()
                         .dock_menu_actions
@@ -357,7 +359,7 @@ impl WindowsPlatform {
             UnmapViewOfFile(memory_addr).log_err();
             string
         };
-        println!("-> Single instance event, {},", msg);
+
         let mut lock = self.state.borrow_mut();
         if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
             let Some(action) = lock
@@ -370,7 +372,6 @@ impl WindowsPlatform {
                 return;
             };
             drop(lock);
-            println!("==> Performing action: {msg}");
             callback(&*action);
             self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
         }
