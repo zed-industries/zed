@@ -28,11 +28,16 @@ pub fn register_zed_identifier() {
 }
 
 pub fn check_single_instance() -> bool {
-    if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
-        return true;
-    }
-
-    check_single_instance_event()
+    unsafe {
+        CreateMutexW(
+            None,
+            true,
+            &HSTRING::from(get_app_instance_mutex_identifier()),
+        )
+        .expect("Unable to create instance sync event")
+    };
+    let last_err = unsafe { GetLastError() };
+    last_err != ERROR_ALREADY_EXISTS
 }
 
 pub(crate) fn send_instance_message(message: &str) {
@@ -46,19 +51,6 @@ pub(crate) fn send_instance_message(message: &str) {
         .expect("Unable to open single instance event, is there an instance already running?");
         SetEvent(event).log_err();
     }
-}
-
-fn check_single_instance_event() -> bool {
-    unsafe {
-        CreateMutexW(
-            None,
-            true,
-            &HSTRING::from(get_app_instance_mutex_identifier()),
-        )
-        .expect("Unable to create instance sync event")
-    };
-    let last_err = unsafe { GetLastError() };
-    last_err != ERROR_ALREADY_EXISTS
 }
 
 fn send_message_to_other_instance(message: &str) {
