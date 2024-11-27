@@ -319,17 +319,6 @@ impl lsp_types::notification::Notification for ServerStatus {
     const METHOD: &'static str = "experimental/serverStatus";
 }
 
-#[derive(Debug)]
-/// This is needed because we want to send non-LSP conformant init requests for particular LSP servers.
-/// This intends to be the same as `request::Initialize` except that its parameters are superset of `InitializeParams`.
-pub enum LspCustomInitialize {}
-
-impl request::Request for LspCustomInitialize {
-    type Params = Value;
-    type Result = InitializeResult;
-    const METHOD: &'static str = "initialize";
-}
-
 impl LanguageServer {
     /// Starts a language server process.
     pub fn new(
@@ -790,17 +779,17 @@ impl LanguageServer {
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
     pub fn initialize(
         mut self,
-        initialize_params: Option<Value>,
+        initialize_params: Option<InitializeParams>,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
         let params = if let Some(params) = initialize_params {
             params
         } else {
-            serde_json::to_value(self.default_initialize_params(cx)).unwrap()
+            self.default_initialize_params(cx)
         };
 
         cx.spawn(|_| async move {
-            let response = self.request::<LspCustomInitialize>(params).await?;
+            let response = self.request::<request::Initialize>(params).await?;
             if let Some(info) = response.server_info {
                 self.process_name = info.name.into();
             }
@@ -1306,7 +1295,7 @@ impl FakeLanguageServer {
             }),
             notifications_rx,
         };
-        fake.handle_request::<LspCustomInitialize, _, _>({
+        fake.handle_request::<request::Initialize, _, _>({
             let capabilities = capabilities;
             move |_, _| {
                 let capabilities = capabilities.clone();

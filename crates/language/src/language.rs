@@ -485,9 +485,9 @@ pub trait LspAdapter: 'static + Send + Sync {
         Default::default()
     }
 
-    /// Return type is Value because we want to send non-LSP conformant init requests for particular LSP servers.
-    fn prepare_initialize_params(&self, original: InitializeParams) -> Result<Value> {
-        Ok(serde_json::to_value(original)?)
+    /// Support custom initialize params.
+    fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
+        Ok(original)
     }
 }
 

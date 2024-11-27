@@ -5,10 +5,10 @@ use gpui::AsyncAppContext;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
-use serde_json::Value;
+use serde_json::json;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
 
 pub struct CLspAdapter;
 
@@ -258,32 +258,25 @@ impl super::LspAdapter for CLspAdapter {
         })
     }
 
-    fn prepare_initialize_params(&self, original: InitializeParams) -> Result<Value> {
-        // send non-LSP conformant init requests to enable clangd's dot-to-arrow feature.
-        let mut params = serde_json::to_value(original)?;
-        if let Some(completion) =
-            get_nested_value_mut(&mut params, "capabilities.textDocument.completion")
-        {
-            completion["editsNearCursor"] = Value::Bool(true);
-        }
-        Ok(params)
-    }
-}
-
-fn get_nested_value_mut<'a>(value: &'a mut Value, path: &str) -> Option<&'a mut Value> {
-    let keys: Vec<&str> = path.split('.').collect();
-    let mut current_value = value;
-
-    for key in keys {
-        match current_value {
-            Value::Object(map) => {
-                current_value = map.get_mut(key)?;
+    fn prepare_initialize_params(
+        &self,
+        mut original: InitializeParams,
+    ) -> Result<InitializeParams> {
+        // enable clangd's dot-to-arrow feature.
+        let experimental = json!({
+            "textDocument": {
+                "completion" : {
+                    "editsNearCursor": true
+                }
             }
-            _ => return None,
+        });
+        if let Some(ref mut original_experimental) = original.capabilities.experimental {
+            merge_json_value_into(experimental, original_experimental);
+        } else {
+            original.capabilities.experimental = Some(experimental);
         }
+        Ok(original)
     }
-
-    Some(current_value)
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
