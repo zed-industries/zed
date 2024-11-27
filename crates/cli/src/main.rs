@@ -131,17 +131,21 @@ fn main() -> Result<()> {
         not(feature = "no-bundled-uninstall")
     ))]
     if args.uninstall {
-        static UNINSTALL_SCRIPT: &[u8] = include_bytes!("../../../script/uninstall.sh");
+        use once_cell::sync::Lazy;
+
+        static UNINSTALL_SCRIPT: Lazy<&'static [u8]> =
+            Lazy::new(|| include_bytes!("../../../script/uninstall.sh"));
 
         let tmp_dir = tempfile::tempdir()?;
         let script_path = tmp_dir.path().join("uninstall.sh");
-        fs::write(&script_path, UNINSTALL_SCRIPT)?;
+        fs::write(&script_path, &*UNINSTALL_SCRIPT)?;
 
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::PermissionsExt as _;
         fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))?;
 
         let status = std::process::Command::new("sh")
             .arg(&script_path)
+            .env("ZED_CHANNEL", &*release_channel::RELEASE_CHANNEL_NAME)
             .status()
             .context("Failed to execute uninstall script")?;
 
