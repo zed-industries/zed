@@ -1,4 +1,4 @@
-use std::{cmp, ops::ControlFlow, path::PathBuf, sync::Arc};
+use std::{cmp, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     default_working_directory,
@@ -618,29 +618,44 @@ impl TerminalPanel {
         })
     }
 
-    // TODO kb debounce
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
         let height = self.height;
         let width = self.width;
-        let items =
-            SerializedItems::WithSplits(serialize_pane_group(&self.center, &self.active_pane, cx));
-        self.pending_serialization = cx.background_executor().spawn(
-            async move {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        TERMINAL_PANEL_KEY.into(),
-                        serde_json::to_string(&SerializedTerminalPanel {
-                            items,
-                            active_item_id: None,
-                            height,
-                            width,
-                        })?,
-                    )
-                    .await?;
-                anyhow::Ok(())
-            }
-            .log_err(),
-        );
+        self.pending_serialization = cx.spawn(|terminal_panel, mut cx| async move {
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+            let terminal_panel = terminal_panel.upgrade()?;
+            let items = terminal_panel
+                .update(&mut cx, |terminal_panel, cx| {
+                    SerializedItems::WithSplits(serialize_pane_group(
+                        &terminal_panel.center,
+                        &terminal_panel.active_pane,
+                        cx,
+                    ))
+                })
+                .ok()?;
+            cx.background_executor()
+                .spawn(
+                    async move {
+                        KEY_VALUE_STORE
+                            .write_kvp(
+                                TERMINAL_PANEL_KEY.into(),
+                                serde_json::to_string(&SerializedTerminalPanel {
+                                    items,
+                                    active_item_id: None,
+                                    height,
+                                    width,
+                                })?,
+                            )
+                            .await?;
+                        anyhow::Ok(())
+                    }
+                    .log_err(),
+                )
+                .await;
+            Some(())
+        });
     }
 
     fn replace_terminal(
