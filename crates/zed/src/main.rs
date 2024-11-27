@@ -954,7 +954,7 @@ struct Args {
     /// The dock action to perform. This is used on Windows only.
     ///
     /// To developers: If you want rename this argument, you must also update the `APP_DOCK_ACTION_ARGUMENT` constant
-    /// in `crates\gpui\src\platform\app_identifier.rs`.
+    /// in `crates\gpui\src\platform\dock_action.rs`.
     #[arg(long)]
     dock_action: Option<String>,
 

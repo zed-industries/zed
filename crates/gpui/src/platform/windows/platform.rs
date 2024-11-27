@@ -8,9 +8,6 @@ use std::{
 
 use ::util::{paths::SanitizedPath, ResultExt};
 use anyhow::{anyhow, Context as _, Result};
-use app_identifier::{
-    get_app_dock_action_event_identifier, get_app_dock_action_shared_memory_identifier,
-};
 use async_task::Runnable;
 use collections::FxHashMap;
 use dock_action::{
@@ -30,14 +27,7 @@ use windows::{
             Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
         },
         Security::Credentials::*,
-        System::{
-            Com::*,
-            LibraryLoader::*,
-            Memory::{CreateFileMappingW, PAGE_READWRITE},
-            Ole::*,
-            SystemInformation::*,
-            Threading::*,
-        },
+        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     UI::{
