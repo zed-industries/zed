@@ -37,6 +37,7 @@ unicase.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 tendril = "0.4.3"
+dunce = "1.0"
 
 [dev-dependencies]
 git2.workspace = true
