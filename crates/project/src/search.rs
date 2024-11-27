@@ -126,19 +126,13 @@ impl SearchQuery {
         if whole_word {
             let mut word_query = String::new();
             if let Some(first) = query.get(0..1) {
-                if WORD_MATCH_TEST
-                    .is_match(&first.to_string())
-                    .is_ok_and(|x| x != true)
-                {
+                if WORD_MATCH_TEST.is_match(first).is_ok_and(|x| !x) {
                     word_query.push_str("\\b");
                 }
             }
             word_query.push_str(&query);
             if let Some(last) = query.get(query.len() - 1..) {
-                if WORD_MATCH_TEST
-                    .is_match(&last.to_string())
-                    .is_ok_and(|x| x != true)
-                {
+                if WORD_MATCH_TEST.is_match(last).is_ok_and(|x| !x) {
                     word_query.push_str("\\b");
                 }
             }
