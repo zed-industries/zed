@@ -704,7 +704,7 @@ impl DapStore {
         &self,
         client_id: &DebugAdapterClientId,
         seq: u64,
-        args: StartDebuggingRequestArguments,
+        args: Option<StartDebuggingRequestArguments>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
@@ -712,44 +712,59 @@ impl DapStore {
         };
 
         cx.spawn(|this, mut cx| async move {
-            client
-                .send_message(Message::Response(Response {
-                    seq,
-                    request_seq: seq,
-                    success: true,
-                    command: StartDebugging::COMMAND.to_string(),
-                    body: None,
-                }))
-                .await?;
+            if let Some(args) = args {
+                client
+                    .send_message(Message::Response(Response {
+                        seq,
+                        request_seq: seq,
+                        success: true,
+                        command: StartDebugging::COMMAND.to_string(),
+                        body: None,
+                    }))
+                    .await?;
 
-            let config = client.config();
+                this.update(&mut cx, |store, cx| {
+                    let config = client.config();
 
-            this.update(&mut cx, |store, cx| {
-                store.start_client(
-                    DebugAdapterConfig {
-                        kind: config.kind.clone(),
-                        request: match args.request {
-                            StartDebuggingRequestArgumentsRequest::Launch => {
-                                DebugRequestType::Launch
-                            }
-                            StartDebuggingRequestArgumentsRequest::Attach => {
-                                DebugRequestType::Attach(
-                                    if let DebugRequestType::Attach(attach_config) = config.request
-                                    {
-                                        attach_config
-                                    } else {
-                                        AttachConfig::default()
-                                    },
-                                )
-                            }
+                    store.start_client(
+                        DebugAdapterConfig {
+                            kind: config.kind.clone(),
+                            request: match args.request {
+                                StartDebuggingRequestArgumentsRequest::Launch => {
+                                    DebugRequestType::Launch
+                                }
+                                StartDebuggingRequestArgumentsRequest::Attach => {
+                                    DebugRequestType::Attach(
+                                        if let DebugRequestType::Attach(attach_config) =
+                                            config.request
+                                        {
+                                            attach_config
+                                        } else {
+                                            AttachConfig::default()
+                                        },
+                                    )
+                                }
+                            },
+                            program: config.program.clone(),
+                            cwd: config.cwd.clone(),
+                            initialize_args: Some(args.configuration),
                         },
-                        program: config.program.clone(),
-                        cwd: config.cwd.clone(),
-                        initialize_args: Some(args.configuration),
-                    },
-                    cx,
-                );
-            })
+                        cx,
+                    );
+                })
+            } else {
+                client
+                    .send_message(Message::Response(Response {
+                        seq,
+                        request_seq: seq,
+                        success: false,
+                        command: StartDebugging::COMMAND.to_string(),
+                        body: Some(serde_json::to_value(ErrorResponse { error: None })?),
+                    }))
+                    .await?;
+
+                Ok(())
+            }
         })
     }
 

@@ -266,11 +266,7 @@ impl DebugPanel {
         let args = if let Some(args) = request_args {
             serde_json::from_value(args.clone()).ok()
         } else {
-            return;
-        };
-
-        let Some(args) = args else {
-            return;
+            None
         };
 
         self.dap_store.update(cx, |store, cx| {
