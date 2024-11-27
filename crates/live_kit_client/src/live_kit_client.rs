@@ -177,52 +177,49 @@ pub async fn capture_local_video_track(
 pub fn capture_local_audio_track(
     background_executor: &BackgroundExecutor,
 ) -> Result<Task<(track::LocalAudioTrack, AudioStream)>> {
-    // We can't track device changes here, because the LocalAudioTrack isn't controlled
-    // by this function, and doesn't have a resampler built in
+    use util::maybe;
 
     let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
-    let (_thread_handle, thread_handle_rx) = std::sync::mpsc::channel();
+    let (thread_handle, thread_kill_rx) = std::sync::mpsc::channel::<()>();
+    let sample_rate;
+    let channels;
 
-    let config = if cfg!(any(test, feature = "test-support")) {
-        (100, 1)
+    if cfg!(any(test, feature = "test-support")) {
+        sample_rate = 2;
+        channels = 1;
     } else {
-        let (device, config) = default_device(false)?;
+        let (device, config) = default_device(true)?;
+        sample_rate = config.sample_rate().0;
+        channels = config.channels() as u32;
+        thread::spawn(move || {
+            maybe!({
+                let stream = device
+                    .build_input_stream_raw(
+                        &config.config(),
+                        cpal::SampleFormat::I16,
+                        move |data, _: &_| {
+                            frame_tx
+                                .unbounded_send(AudioFrame {
+                                    data: Cow::Owned(data.as_slice::<i16>().unwrap().to_vec()),
+                                    sample_rate,
+                                    num_channels: channels,
+                                    samples_per_channel: data.len() as u32 / channels,
+                                })
+                                .ok();
+                        },
+                        |err| log::error!("error capturing audio track: {:?}", err),
+                        None,
+                    )
+                    .context("failed to build input stream")?;
 
-        thread::spawn({
-            let config = config.clone();
-            move || {
-                if cfg!(any(test, feature = "test-support")) {
-                    return;
-                }
-
-                let stream = device.build_input_stream_raw(
-                    &config.config(),
-                    cpal::SampleFormat::I16,
-                    move |data, _: &_| {
-                        frame_tx
-                            .unbounded_send(AudioFrame {
-                                data: Cow::Owned(data.as_slice::<i16>().unwrap().to_vec()),
-                                sample_rate: config.sample_rate().0,
-                                num_channels: config.channels() as u32,
-                                samples_per_channel: data.len() as u32 / config.channels() as u32,
-                            })
-                            .ok();
-                    },
-                    |err| log::error!("error capturing audio track: {:?}", err),
-                    None,
-                );
-                let Some(stream) = stream.log_err() else {
-                    return;
-                };
-
-                stream.play().log_err();
-                // Block forever to keep the input stream alive
-                thread_handle_rx.recv().ok();
-            }
+                stream.play()?;
+                // Keep the thread alive and holding onto the `stream`
+                thread_kill_rx.recv().ok();
+                anyhow::Ok(Some(()))
+            })
+            .log_err();
         });
-
-        (config.sample_rate().0, config.channels())
-    };
+    }
 
     Ok(background_executor.spawn({
         let background_executor = background_executor.clone();
@@ -231,13 +228,12 @@ pub fn capture_local_audio_track(
                 AudioSourceOptions {
                     echo_cancellation: true,
                     noise_suppression: true,
-                    auto_gain_control: true,
+                    auto_gain_control: false,
                 },
-                config.0,
-                config.1 as u32,
+                sample_rate,
+                channels,
                 100,
             );
-
             let transmit_task = background_executor.spawn({
                 let source = source.clone();
                 async move {
@@ -255,8 +251,8 @@ pub fn capture_local_audio_track(
             (
                 track,
                 AudioStream::Input {
+                    _thread_handle: thread_handle,
                     _transmit_task: transmit_task,
-                    _thread_handle,
                 },
             )
         }
