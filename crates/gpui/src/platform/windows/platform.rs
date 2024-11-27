@@ -9,8 +9,8 @@ use std::{
 use ::util::{paths::SanitizedPath, ResultExt};
 use anyhow::{anyhow, Context as _, Result};
 use app_identifier::{
-    get_app_instance_event_identifier, get_app_shared_memory_identifier, APP_DOCK_ACTION_ARGUMENT,
-    APP_SHARED_MEMORY_MAX_SIZE,
+    get_app_instance_event_identifier, get_app_shared_memory_identifier, read_dock_action_argument,
+    APP_DOCK_ACTION_ARGUMENT, APP_SHARED_MEMORY_MAX_SIZE,
 };
 use async_task::Runnable;
 use collections::FxHashMap;
@@ -30,10 +30,7 @@ use windows::{
         System::{
             Com::*,
             LibraryLoader::*,
-            Memory::{
-                CreateFileMappingW, MapViewOfFile, UnmapViewOfFile, FILE_MAP_ALL_ACCESS,
-                PAGE_READWRITE,
-            },
+            Memory::{CreateFileMappingW, PAGE_READWRITE},
             Ole::*,
             SystemInformation::*,
             Threading::*,
@@ -341,24 +338,7 @@ impl WindowsPlatform {
     }
 
     fn handle_instance_message(&self) {
-        let msg = unsafe {
-            let memory_addr =
-                MapViewOfFile(*self.shared_memory_handle, FILE_MAP_ALL_ACCESS, 0, 0, 0);
-            let string = String::from_utf8_lossy(std::slice::from_raw_parts(
-                memory_addr.Value as *const _ as _,
-                APP_SHARED_MEMORY_MAX_SIZE,
-            ))
-            .trim_matches('\0')
-            .to_string();
-            let empty_buffer = vec![0u8; string.len()];
-            std::ptr::copy_nonoverlapping(
-                empty_buffer.as_ptr(),
-                memory_addr.Value as _,
-                empty_buffer.len(),
-            );
-            UnmapViewOfFile(memory_addr).log_err();
-            string
-        };
+        let msg = read_dock_action_argument(*self.shared_memory_handle);
 
         let mut lock = self.state.borrow_mut();
         if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
