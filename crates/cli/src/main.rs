@@ -131,14 +131,11 @@ fn main() -> Result<()> {
         not(feature = "no-bundled-uninstall")
     ))]
     if args.uninstall {
-        use once_cell::sync::Lazy;
-
-        static UNINSTALL_SCRIPT: Lazy<&'static [u8]> =
-            Lazy::new(|| include_bytes!("../../../script/uninstall.sh"));
+        static UNINSTALL_SCRIPT: &[u8] = include_bytes!("../../../script/uninstall.sh");
 
         let tmp_dir = tempfile::tempdir()?;
         let script_path = tmp_dir.path().join("uninstall.sh");
-        fs::write(&script_path, &*UNINSTALL_SCRIPT)?;
+        fs::write(&script_path, UNINSTALL_SCRIPT)?;
 
         use std::os::unix::fs::PermissionsExt as _;
         fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))?;
