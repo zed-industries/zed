@@ -97,7 +97,7 @@ use ui::{
     IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
     VisualContext as _, WindowContext,
 };
-use util::{ResultExt, TryFutureExt};
+use util::{paths::SanitizedPath, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
@@ -777,7 +777,7 @@ pub struct ViewId {
     pub id: u64,
 }
 
-struct FollowerState {
+pub struct FollowerState {
     center_pane: View<Pane>,
     dock_pane: Option<View<Pane>>,
     active_view_id: Option<ViewId>,
@@ -887,14 +887,16 @@ impl Workspace {
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
         let center_pane = cx.new_view(|cx| {
-            Pane::new(
+            let mut center_pane = Pane::new(
                 weak_handle.clone(),
                 project.clone(),
                 pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
                 cx,
-            )
+            );
+            center_pane.set_can_split(Some(Arc::new(|_, _, _| true)));
+            center_pane
         });
         cx.subscribe(&center_pane, Self::handle_pane_event).detach();
 
@@ -2022,7 +2024,7 @@ impl Workspace {
                 };
 
                 let this = this.clone();
-                let abs_path = abs_path.clone();
+                let abs_path: Arc<Path> = SanitizedPath::from(abs_path.clone()).into();
                 let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(move |mut cx| async move {
@@ -2031,7 +2033,7 @@ impl Workspace {
                         this.update(&mut cx, |workspace, cx| {
                             let worktree = worktree.read(cx);
                             let worktree_abs_path = worktree.abs_path();
-                            let entry_id = if abs_path == worktree_abs_path.as_ref() {
+                            let entry_id = if abs_path.as_ref() == worktree_abs_path.as_ref() {
                                 worktree.root_entry()
                             } else {
                                 abs_path
@@ -2464,14 +2466,16 @@ impl Workspace {
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> View<Pane> {
         let pane = cx.new_view(|cx| {
-            Pane::new(
+            let mut pane = Pane::new(
                 self.weak_handle(),
                 self.project.clone(),
                 self.pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
                 cx,
-            )
+            );
+            pane.set_can_split(Some(Arc::new(|_, _, _| true)));
+            pane
         });
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         self.panes.push(pane.clone());
@@ -2946,35 +2950,18 @@ impl Workspace {
         }
     }
 
+    pub fn bounding_box_for_pane(&self, pane: &View<Pane>) -> Option<Bounds<Pixels>> {
+        self.center.bounding_box_for_pane(pane)
+    }
+
     pub fn find_pane_in_direction(
         &mut self,
         direction: SplitDirection,
         cx: &WindowContext,
     ) -> Option<View<Pane>> {
-        let bounding_box = self.center.bounding_box_for_pane(&self.active_pane)?;
-        let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
-        let center = match cursor {
-            Some(cursor) if bounding_box.contains(&cursor) => cursor,
-            _ => bounding_box.center(),
-        };
-
-        let distance_to_next = pane_group::HANDLE_HITBOX_SIZE;
-
-        let target = match direction {
-            SplitDirection::Left => {
-                Point::new(bounding_box.left() - distance_to_next.into(), center.y)
-            }
-            SplitDirection::Right => {
-                Point::new(bounding_box.right() + distance_to_next.into(), center.y)
-            }
-            SplitDirection::Up => {
-                Point::new(center.x, bounding_box.top() - distance_to_next.into())
-            }
-            SplitDirection::Down => {
-                Point::new(center.x, bounding_box.bottom() + distance_to_next.into())
-            }
-        };
-        self.center.pane_at_pixel_position(target).cloned()
+        self.center
+            .find_pane_in_direction(&self.active_pane, direction, cx)
+            .cloned()
     }
 
     pub fn swap_pane_in_direction(
@@ -2986,6 +2973,17 @@ impl Workspace {
             self.center.swap(&self.active_pane.clone(), &to);
             cx.notify();
         }
+    }
+
+    pub fn resize_pane(&mut self, axis: gpui::Axis, amount: Pixels, cx: &mut ViewContext<Self>) {
+        self.center
+            .resize(&self.active_pane.clone(), axis, amount, &self.bounds);
+        cx.notify();
+    }
+
+    pub fn reset_pane_sizes(&mut self, cx: &mut ViewContext<Self>) {
+        self.center.reset_pane_sizes();
+        cx.notify();
     }
 
     fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
@@ -4575,6 +4573,10 @@ impl Workspace {
     pub fn for_window(cx: &mut WindowContext) -> Option<View<Workspace>> {
         let window = cx.window_handle().downcast::<Workspace>()?;
         cx.read_window(&window, |workspace, _| workspace).ok()
+    }
+
+    pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
+        self.zoomed.as_ref()
     }
 }
 

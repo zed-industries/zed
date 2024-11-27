@@ -23,7 +23,7 @@ use smol::{
     stream::StreamExt,
 };
 use text::ReplicaId;
-use util::ResultExt;
+use util::{paths::SanitizedPath, ResultExt};
 use worktree::{Entry, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
 
 use crate::{search::SearchQuery, ProjectPath};
@@ -52,7 +52,7 @@ pub struct WorktreeStore {
     worktrees_reordered: bool,
     #[allow(clippy::type_complexity)]
     loading_worktrees:
-        HashMap<Arc<Path>, Shared<Task<Result<Model<Worktree>, Arc<anyhow::Error>>>>>,
+        HashMap<SanitizedPath, Shared<Task<Result<Model<Worktree>, Arc<anyhow::Error>>>>>,
     state: WorktreeStoreState,
 }
 
@@ -147,11 +147,12 @@ impl WorktreeStore {
 
     pub fn find_worktree(
         &self,
-        abs_path: &Path,
+        abs_path: impl Into<SanitizedPath>,
         cx: &AppContext,
     ) -> Option<(Model<Worktree>, PathBuf)> {
+        let abs_path: SanitizedPath = abs_path.into();
         for tree in self.worktrees() {
-            if let Ok(relative_path) = abs_path.strip_prefix(tree.read(cx).abs_path()) {
+            if let Ok(relative_path) = abs_path.as_path().strip_prefix(tree.read(cx).abs_path()) {
                 return Some((tree.clone(), relative_path.into()));
             }
         }
@@ -192,12 +193,12 @@ impl WorktreeStore {
 
     pub fn create_worktree(
         &mut self,
-        abs_path: impl AsRef<Path>,
+        abs_path: impl Into<SanitizedPath>,
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>>> {
-        let path: Arc<Path> = abs_path.as_ref().into();
-        if !self.loading_worktrees.contains_key(&path) {
+        let abs_path: SanitizedPath = abs_path.into();
+        if !self.loading_worktrees.contains_key(&abs_path) {
             let task = match &self.state {
                 WorktreeStoreState::Remote {
                     upstream_client, ..
@@ -205,20 +206,26 @@ impl WorktreeStore {
                     if upstream_client.is_via_collab() {
                         Task::ready(Err(Arc::new(anyhow!("cannot create worktrees via collab"))))
                     } else {
-                        self.create_ssh_worktree(upstream_client.clone(), abs_path, visible, cx)
+                        self.create_ssh_worktree(
+                            upstream_client.clone(),
+                            abs_path.clone(),
+                            visible,
+                            cx,
+                        )
                     }
                 }
                 WorktreeStoreState::Local { fs } => {
-                    self.create_local_worktree(fs.clone(), abs_path, visible, cx)
+                    self.create_local_worktree(fs.clone(), abs_path.clone(), visible, cx)
                 }
             };
 
-            self.loading_worktrees.insert(path.clone(), task.shared());
+            self.loading_worktrees
+                .insert(abs_path.clone(), task.shared());
         }
-        let task = self.loading_worktrees.get(&path).unwrap().clone();
+        let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
         cx.spawn(|this, mut cx| async move {
             let result = task.await;
-            this.update(&mut cx, |this, _| this.loading_worktrees.remove(&path))
+            this.update(&mut cx, |this, _| this.loading_worktrees.remove(&abs_path))
                 .ok();
             match result {
                 Ok(worktree) => Ok(worktree),
@@ -230,12 +237,11 @@ impl WorktreeStore {
     fn create_ssh_worktree(
         &mut self,
         client: AnyProtoClient,
-        abs_path: impl AsRef<Path>,
+        abs_path: impl Into<SanitizedPath>,
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
-        let path_key: Arc<Path> = abs_path.as_ref().into();
-        let mut abs_path = path_key.clone().to_string_lossy().to_string();
+        let mut abs_path = Into::<SanitizedPath>::into(abs_path).to_string();
         // If we start with `/~` that means the ssh path was something like `ssh://user@host/~/home-dir-folder/`
         // in which case want to strip the leading the `/`.
         // On the host-side, the `~` will get expanded.
@@ -293,12 +299,12 @@ impl WorktreeStore {
     fn create_local_worktree(
         &mut self,
         fs: Arc<dyn Fs>,
-        abs_path: impl AsRef<Path>,
+        abs_path: impl Into<SanitizedPath>,
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
         let next_entry_id = self.next_entry_id.clone();
-        let path: Arc<Path> = abs_path.as_ref().into();
+        let path: SanitizedPath = abs_path.into();
 
         cx.spawn(move |this, mut cx| async move {
             let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx).await;
@@ -308,7 +314,7 @@ impl WorktreeStore {
 
             if visible {
                 cx.update(|cx| {
-                    cx.add_recent_document(&path);
+                    cx.add_recent_document(path.as_path());
                 })
                 .log_err();
             }

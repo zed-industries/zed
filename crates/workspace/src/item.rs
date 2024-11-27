@@ -315,7 +315,7 @@ pub trait SerializableItem: Item {
         _workspace: WeakView<Workspace>,
         _workspace_id: WorkspaceId,
         _item_id: ItemId,
-        _cx: &mut ViewContext<Pane>,
+        _cx: &mut WindowContext,
     ) -> Task<Result<View<Self>>>;
 
     fn serialize(
@@ -1032,7 +1032,7 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakView<T> {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
-    use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
+    use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
         InteractiveElement, IntoElement, Model, Render, SharedString, Task, View, ViewContext,
@@ -1040,6 +1040,7 @@ pub mod test {
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, path::Path};
+    use ui::WindowContext;
 
     pub struct TestProjectItem {
         pub entry_id: Option<ProjectEntryId>,
@@ -1339,7 +1340,7 @@ pub mod test {
             _workspace: WeakView<Workspace>,
             workspace_id: WorkspaceId,
             _item_id: ItemId,
-            cx: &mut ViewContext<Pane>,
+            cx: &mut WindowContext,
         ) -> Task<anyhow::Result<View<Self>>> {
             let view = cx.new_view(|cx| Self::new_deserialized(workspace_id, cx));
             Task::ready(Ok(view))

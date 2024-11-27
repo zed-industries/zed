@@ -3753,6 +3753,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dunce"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
+
+[[package]]
 name = "dwrote"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12418,6 +12424,7 @@ name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-recursion 1.1.1",
  "breadcrumbs",
  "client",
  "collections",
@@ -13688,6 +13695,7 @@ dependencies = [
  "async-fs 1.6.0",
  "collections",
  "dirs 4.0.0",
+ "dunce",
  "futures 0.3.31",
  "futures-lite 1.13.0",
  "git2",
@@ -13832,6 +13840,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "theme",
  "tokio",
  "ui",
  "util",
@@ -15613,7 +15622,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.164.0"
+version = "0.165.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
