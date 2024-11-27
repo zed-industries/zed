@@ -10,29 +10,42 @@ use futures::{io, Stream, StreamExt as _};
 use gpui::{
     BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
 };
-use parking_lot::Mutex;
-use std::{borrow::Cow, collections::VecDeque, future::Future, pin::Pin, sync::Arc, thread};
+
+use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc, thread};
 use util::{debug_panic, ResultExt as _};
 #[cfg(not(target_os = "windows"))]
 use webrtc::{
     audio_frame::AudioFrame,
     audio_source::{native::NativeAudioSource, AudioSourceOptions, RtcAudioSource},
-    audio_stream::native::NativeAudioStream,
     video_frame::{VideoBuffer, VideoFrame, VideoRotation},
     video_source::{native::NativeVideoSource, RtcVideoSource, VideoResolution},
     video_stream::native::NativeVideoStream,
 };
 
-#[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
+// TODO
+// #[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
 use livekit::track::RemoteAudioTrack;
-#[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
+// #[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
 pub use livekit::*;
-#[cfg(any(test, feature = "test-support", target_os = "windows"))]
-use test::track::RemoteAudioTrack;
-#[cfg(any(test, feature = "test-support", target_os = "windows"))]
-pub use test::*;
+// #[cfg(any(test, feature = "test-support", target_os = "windows"))]
+// use test::track::RemoteAudioTrack;
+// #[cfg(any(test, feature = "test-support", target_os = "windows"))]
+// pub use test::*;
+
+#[cfg(not(target_os = "windows"))]
+mod audio_manager;
 
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
+
+struct TellTheAudioManagerToDropYourPointer {
+    remote_audio_track_id: usize,
+}
+
+impl Drop for TellTheAudioManagerToDropYourPointer {
+    fn drop(&mut self) {
+        audio_manager::get_audio_manager_channel().send(self.remote_audio_track_id)
+    }
+}
 
 pub enum AudioStream {
     Input {
@@ -41,6 +54,7 @@ pub enum AudioStream {
     },
     Output {
         _task: Task<()>,
+        stream_canceler: TellTheAudioManagerToDropYourPointer,
     },
 }
 
@@ -270,6 +284,8 @@ pub fn play_remote_audio_track(
     track: &RemoteAudioTrack,
     background_executor: &BackgroundExecutor,
 ) -> Result<AudioStream> {
+    use audio_manager::{get_default_output, start_output_stream};
+
     let track = track.clone();
     // We track device changes in our output because Livekit has a resampler built in,
     // and it's easy to create a new native audio stream when the device changes.
@@ -284,8 +300,12 @@ pub fn play_remote_audio_track(
         let _task = background_executor.spawn({
             let background_executor = background_executor.clone();
             async move {
-                let (mut _receive_task, mut _thread) =
-                    start_output_stream(output_config, output_device, &track, &background_executor);
+                let (mut _receive_task, mut _thread) = audio_manager::start_output_stream(
+                    output_config,
+                    output_device,
+                    &track,
+                    &background_executor,
+                );
 
                 while let Some(_) = default_change_listener.next().await {
                     let Some((output_device, output_config)) = get_default_output().log_err()
