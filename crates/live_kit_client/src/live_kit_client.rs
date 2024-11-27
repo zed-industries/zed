@@ -193,6 +193,12 @@ pub fn capture_local_audio_track(
         channels = config.channels() as u32;
         thread::spawn(move || {
             maybe!({
+                if let Some(name) = device.name().ok() {
+                    log::info!("Using microphone: {}", name)
+                } else {
+                    log::info!("Using microphone: <unkown>");
+                }
+
                 let stream = device
                     .build_input_stream_raw(
                         &config.config(),
@@ -228,7 +234,7 @@ pub fn capture_local_audio_track(
                 AudioSourceOptions {
                     echo_cancellation: true,
                     noise_suppression: true,
-                    auto_gain_control: false,
+                    auto_gain_control: true,
                 },
                 sample_rate,
                 channels,
