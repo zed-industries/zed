@@ -153,6 +153,42 @@ impl DiffMapSnapshot {
             })
             .flatten()
     }
+
+    pub fn diff_hunks_in_range_rev<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+        buffer_snapshot: &'a MultiBufferSnapshot,
+    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        let range = range.start.to_offset(buffer_snapshot)..range.end.to_offset(buffer_snapshot);
+        buffer_snapshot
+            .excerpts_for_range_rev(range.clone())
+            .filter_map(move |excerpt| {
+                let buffer = excerpt.buffer();
+                let buffer_id = buffer.remote_id();
+                let diff = self.0.get(&buffer_id)?;
+                let buffer_range = excerpt.map_range_to_buffer(range.clone());
+                let buffer_range =
+                    buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end);
+                Some(
+                    diff.hunks_intersecting_range_rev(buffer_range, excerpt.buffer())
+                        .map(move |hunk| {
+                            let start_row = excerpt
+                                .map_point_from_buffer(Point::new(hunk.row_range.start, 0))
+                                .row;
+                            let end_row = excerpt
+                                .map_point_from_buffer(Point::new(hunk.row_range.end, 0))
+                                .row;
+                            MultiBufferDiffHunk {
+                                row_range: MultiBufferRow(start_row)..MultiBufferRow(end_row),
+                                buffer_id,
+                                buffer_range: hunk.buffer_range.clone(),
+                                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                            }
+                        }),
+                )
+            })
+            .flatten()
+    }
 }
 
 impl Editor {
@@ -173,12 +209,9 @@ impl Editor {
     }
 
     pub fn toggle_hunk_diff(&mut self, _: &ToggleHunkDiff, cx: &mut ViewContext<Self>) {
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let selections = self.selections.disjoint_anchors();
-        self.toggle_hunks_expanded(
-            hunks_for_selections(&multi_buffer_snapshot, &selections),
-            cx,
-        );
+        let snapshot = self.snapshot(cx);
+        let selections = self.selections.all(cx);
+        self.toggle_hunks_expanded(hunks_for_selections(&snapshot, &selections), cx);
     }
 
     pub fn expand_all_hunk_diffs(&mut self, _: &ExpandAllHunkDiffs, cx: &mut ViewContext<Self>) {
@@ -459,8 +492,8 @@ impl Editor {
         _: &ApplyDiffHunk,
         cx: &mut ViewContext<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
+        let snapshot = self.snapshot(cx);
+        let hunks = hunks_for_selections(&snapshot, &self.selections.all(cx));
         let mut ranges_by_buffer = HashMap::default();
         self.transact(cx, |editor, cx| {
             for hunk in hunks {
@@ -1310,14 +1343,14 @@ mod tests {
         let buffer_1 = project.update(cx, |project, cx| {
             project.create_local_buffer(
                 "
-                        1.zero
-                        1.ONE
-                        1.TWO
-                        1.three
-                        1.FOUR
-                        1.FIVE
-                        1.six
-                    "
+                    1.zero
+                    1.ONE
+                    1.TWO
+                    1.three
+                    1.FOUR
+                    1.FIVE
+                    1.six
+                "
                 .unindent()
                 .as_str(),
                 None,
@@ -1328,13 +1361,13 @@ mod tests {
             buffer.set_diff_base(
                 Some(
                     "
-                        1.zero
-                        1.one
-                        1.two
-                        1.three
-                        1.four
-                        1.five
-                        1.six
+                    1.zero
+                    1.one
+                    1.two
+                    1.three
+                    1.four
+                    1.five
+                    1.six
                     "
                     .unindent(),
                 ),
@@ -1346,14 +1379,14 @@ mod tests {
         let buffer_2 = project.update(cx, |project, cx| {
             project.create_local_buffer(
                 "
-                        2.zero
-                        2.one
-                        2.two
-                        2.three
-                        2.four
-                        2.five
-                        2.six
-                    "
+                    2.zero
+                    2.one
+                    2.two
+                    2.three
+                    2.four
+                    2.five
+                    2.six
+                "
                 .unindent()
                 .as_str(),
                 None,
@@ -1364,13 +1397,13 @@ mod tests {
             buffer.set_diff_base(
                 Some(
                     "
-                        2.zero
-                        2.one
-                        2.one-and-a-half
-                        2.two
-                        2.three
-                        2.four
-                        2.six
+                    2.zero
+                    2.one
+                    2.one-and-a-half
+                    2.two
+                    2.three
+                    2.four
+                    2.six
                     "
                     .unindent(),
                 ),

@@ -96,9 +96,7 @@ pub enum Event {
     Reloaded,
     ReloadNeeded,
     DiffBaseChanged,
-    DiffUpdated {
-        buffer: Model<Buffer>,
-    },
+
     LanguageChanged(BufferId),
     CapabilityChanged,
     Reparsed(BufferId),
@@ -1745,7 +1743,6 @@ impl MultiBuffer {
             language::BufferEvent::Reloaded => Event::Reloaded,
             language::BufferEvent::ReloadNeeded => Event::ReloadNeeded,
             language::BufferEvent::DiffBaseChanged => Event::DiffBaseChanged,
-            language::BufferEvent::DiffUpdated => Event::DiffUpdated { buffer },
             language::BufferEvent::LanguageChanged => {
                 Event::LanguageChanged(buffer.read(cx).remote_id())
             }

@@ -6565,10 +6565,10 @@ impl Editor {
 
     pub fn revert_file(&mut self, _: &RevertFile, cx: &mut ViewContext<Self>) {
         let mut revert_changes = HashMap::default();
-        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        for hunk in hunks_for_rows(
-            Some(MultiBufferRow(0)..multi_buffer_snapshot.max_buffer_row()).into_iter(),
-            &multi_buffer_snapshot,
+        let snapshot = self.snapshot(cx);
+        for hunk in hunks_for_ranges(
+            Some(Point::zero()..snapshot.buffer_snapshot.max_point()).into_iter(),
+            &snapshot,
         ) {
             Self::prepare_revert_change(&mut revert_changes, self.buffer(), &hunk, cx);
         }
@@ -6587,7 +6587,7 @@ impl Editor {
     }
 
     pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
-        let revert_changes = self.gather_revert_changes(&self.selections.disjoint_anchors(), cx);
+        let revert_changes = self.gather_revert_changes(&self.selections.all(cx), cx);
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {
                 editor.revert(revert_changes, cx);
@@ -6614,12 +6614,12 @@ impl Editor {
 
     fn gather_revert_changes(
         &mut self,
-        selections: &[Selection<Anchor>],
+        selections: &[Selection<Point>],
         cx: &mut ViewContext<'_, Editor>,
     ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>> {
         let mut revert_changes = HashMap::default();
-        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        for hunk in hunks_for_selections(&multi_buffer_snapshot, selections) {
+        let snapshot = self.snapshot(cx);
+        for hunk in hunks_for_selections(&snapshot, selections) {
             Self::prepare_revert_change(&mut revert_changes, self.buffer(), &hunk, cx);
         }
         revert_changes
@@ -9814,80 +9814,60 @@ impl Editor {
     }
 
     fn go_to_next_hunk(&mut self, _: &GoToHunk, cx: &mut ViewContext<Self>) {
-        let snapshot = self
-            .display_map
-            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let snapshot = self.snapshot(cx);
         let selection = self.selections.newest::<Point>(cx);
         self.go_to_hunk_after_position(&snapshot, selection.head(), cx);
     }
 
     fn go_to_hunk_after_position(
         &mut self,
-        snapshot: &DisplaySnapshot,
+        snapshot: &EditorSnapshot,
         position: Point,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        if let Some(hunk) = self.go_to_next_hunk_in_direction(
-            snapshot,
-            position,
-            false,
-            snapshot
-                .buffer_snapshot
-                .git_diff_hunks_in_range(MultiBufferRow(position.row + 1)..MultiBufferRow::MAX),
-            cx,
-        ) {
-            return Some(hunk);
+        for position in [position, Point::zero()] {
+            if let Some(hunk) = self.go_to_next_hunk_in_direction(
+                snapshot,
+                position,
+                false,
+                snapshot.diff_map.diff_hunks_in_range(
+                    position + Point::new(1, 0)..snapshot.buffer_snapshot.max_point(),
+                    &snapshot.buffer_snapshot,
+                ),
+                cx,
+            ) {
+                return Some(hunk);
+            }
         }
-
-        let wrapped_point = Point::zero();
-        self.go_to_next_hunk_in_direction(
-            snapshot,
-            wrapped_point,
-            true,
-            snapshot.buffer_snapshot.git_diff_hunks_in_range(
-                MultiBufferRow(wrapped_point.row + 1)..MultiBufferRow::MAX,
-            ),
-            cx,
-        )
+        None
     }
 
     fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, cx: &mut ViewContext<Self>) {
-        let snapshot = self
-            .display_map
-            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let snapshot = self.snapshot(cx);
         let selection = self.selections.newest::<Point>(cx);
-
         self.go_to_hunk_before_position(&snapshot, selection.head(), cx);
     }
 
     fn go_to_hunk_before_position(
         &mut self,
-        snapshot: &DisplaySnapshot,
+        snapshot: &EditorSnapshot,
         position: Point,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        if let Some(hunk) = self.go_to_next_hunk_in_direction(
-            snapshot,
-            position,
-            false,
-            snapshot
-                .buffer_snapshot
-                .git_diff_hunks_in_range_rev(MultiBufferRow(0)..MultiBufferRow(position.row)),
-            cx,
-        ) {
-            return Some(hunk);
+        for position in [position, snapshot.buffer_snapshot.max_point()] {
+            if let Some(hunk) = self.go_to_next_hunk_in_direction(
+                snapshot,
+                position,
+                false,
+                snapshot
+                    .diff_map
+                    .diff_hunks_in_range_rev(Point::zero()..position, &snapshot.buffer_snapshot),
+                cx,
+            ) {
+                return Some(hunk);
+            }
         }
-
-        let wrapped_point = snapshot.buffer_snapshot.max_point();
-        self.go_to_next_hunk_in_direction(
-            snapshot,
-            wrapped_point,
-            true,
-            snapshot
-                .buffer_snapshot
-                .git_diff_hunks_in_range_rev(MultiBufferRow(0)..MultiBufferRow(wrapped_point.row)),
-            cx,
-        )
+        None
     }
 
     fn go_to_next_hunk_in_direction(
@@ -13578,14 +13558,14 @@ fn test_wrap_with_prefix() {
 }
 
 fn hunks_for_selections(
-    multi_buffer_snapshot: &MultiBufferSnapshot,
-    selections: &[Selection<Anchor>],
+    snapshot: &EditorSnapshot,
+    selections: &[Selection<Point>],
 ) -> Vec<MultiBufferDiffHunk> {
     let buffer_rows_for_selections = selections.iter().map(|selection| {
         let head = selection.head();
         let tail = selection.tail();
-        let start = MultiBufferRow(tail.to_point(multi_buffer_snapshot).row);
-        let end = MultiBufferRow(head.to_point(multi_buffer_snapshot).row);
+        let start = tail.to_point(&snapshot.buffer_snapshot);
+        let end = head.to_point(&snapshot.buffer_snapshot);
         if start > end {
             end..start
         } else {
@@ -13593,20 +13573,23 @@ fn hunks_for_selections(
         }
     });
 
-    hunks_for_rows(buffer_rows_for_selections, multi_buffer_snapshot)
+    hunks_for_ranges(buffer_rows_for_selections, snapshot)
 }
 
-pub fn hunks_for_rows(
-    rows: impl Iterator<Item = Range<MultiBufferRow>>,
-    multi_buffer_snapshot: &MultiBufferSnapshot,
+pub fn hunks_for_ranges(
+    ranges: impl Iterator<Item = Range<Point>>,
+    snapshot: &EditorSnapshot,
 ) -> Vec<MultiBufferDiffHunk> {
     let mut hunks = Vec::new();
     let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =
         HashMap::default();
-    for selected_multi_buffer_rows in rows {
+    for query_range in ranges {
         let query_rows =
-            selected_multi_buffer_rows.start..selected_multi_buffer_rows.end.next_row();
-        for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
+            MultiBufferRow(query_range.start.row)..MultiBufferRow(query_range.end.row + 1);
+        for hunk in snapshot
+            .diff_map
+            .diff_hunks_in_range(query_range, &snapshot.buffer_snapshot)
+        {
             // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
             // when the caret is just above or just below the deleted hunk.
             let allow_adjacent = hunk_status(&hunk) == DiffHunkStatus::Removed;
@@ -13615,10 +13598,7 @@ pub fn hunks_for_rows(
                     || hunk.row_range.start == query_rows.end
                     || hunk.row_range.end == query_rows.start
             } else {
-                // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
-                // `hunk.row_range` is exclusive (e.g. [2..3] means 2nd row is selected)
-                hunk.row_range.overlaps(&selected_multi_buffer_rows)
-                    || selected_multi_buffer_rows.end == hunk.row_range.start
+                hunk.row_range.overlaps(&query_rows)
             };
             if related_to_selection {
                 if !processed_buffer_rows
