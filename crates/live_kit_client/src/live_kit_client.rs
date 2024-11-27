@@ -196,7 +196,7 @@ pub fn capture_local_audio_track(
                 if let Some(name) = device.name().ok() {
                     log::info!("Using microphone: {}", name)
                 } else {
-                    log::info!("Using microphone: <unkown>");
+                    log::info!("Using microphone: <unknown>");
                 }
 
                 let stream = device
