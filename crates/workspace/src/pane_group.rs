@@ -150,7 +150,7 @@ impl PaneGroup {
         panes
     }
 
-    pub(crate) fn first_pane(&self) -> View<Pane> {
+    pub fn first_pane(&self) -> View<Pane> {
         self.root.first_pane()
     }
 
@@ -187,7 +187,7 @@ impl PaneGroup {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Member {
     Axis(PaneAxis),
     Pane(View<Pane>),
@@ -391,7 +391,7 @@ impl Member {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,

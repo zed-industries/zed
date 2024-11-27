@@ -618,6 +618,7 @@ impl TerminalPanel {
         })
     }
 
+    // TODO kb debounce
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
         let height = self.height;
         let width = self.width;

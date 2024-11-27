@@ -128,11 +128,8 @@ pub(crate) fn deserialize_terminal_panel(
                 if let Some((center_group, active_pane)) = center_pane {
                     terminal_panel.update(&mut cx, |terminal_panel, _| {
                         terminal_panel.center = PaneGroup::with_root(center_group);
-                        if let Some(active_pane) = active_pane
-                            .or_else(|| terminal_panel.center.panes().first().map(|&p| p.clone()))
-                        {
-                            terminal_panel.active_pane = active_pane;
-                        }
+                        terminal_panel.active_pane =
+                            active_pane.unwrap_or_else(|| terminal_panel.center.first_pane());
                     })?;
                 }
             }
@@ -206,11 +203,6 @@ async fn deserialize_pane_group(
             ))
         }
         SerializedPaneGroup::Pane(serialized_pane) => {
-            let pane = panel
-                .update(cx, |_, cx| {
-                    new_terminal_pane(workspace.clone(), project.clone(), cx).downgrade()
-                })
-                .log_err()?;
             let active = serialized_pane.active;
             let new_items = deserialize_terminal_views(
                 workspace_id,
@@ -221,7 +213,11 @@ async fn deserialize_pane_group(
             )
             .await;
 
-            let pane = pane.upgrade()?;
+            let pane = panel
+                .update(cx, |_, cx| {
+                    new_terminal_pane(workspace.clone(), project.clone(), cx)
+                })
+                .log_err()?;
             let active_item = serialized_pane.active_item;
             pane.update(cx, |pane, cx| {
                 populate_pane_items(pane, new_items, active_item, cx);
@@ -286,7 +282,7 @@ async fn deserialize_terminal_views(
     items
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct SerializedTerminalPanel {
     pub items: SerializedItems,
     // A deprecated field, kept for backwards compatibility for the code before terminal splits were introduced.
