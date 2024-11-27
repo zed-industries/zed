@@ -100,6 +100,8 @@ linux() {
         rm -rf "$HOME/.local/share/zed"
         prompt_remove_preferences
     fi
+
+    rm -rf $HOME/.zed_server
 }
 
 macos() {
@@ -149,6 +151,8 @@ macos() {
 
         prompt_remove_preferences
     fi
+
+    rm -rf $HOME/.zed_server
 }
 
 main "$@"
