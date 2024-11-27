@@ -35,8 +35,7 @@ pub fn get_app_single_instance_mutex_identifier() -> &'static str {
     })
 }
 
-/// TODO:
-pub fn get_app_dock_action_event_identifier() -> &'static str {
+pub(crate) fn get_app_dock_action_event_identifier() -> &'static str {
     APP_EVENT_IDENTIFIER.get_or_init(|| {
         let identifier = format!("Local\\{}-Instance-Event", get_app_identifier());
         if identifier.len() as u32 > MAX_PATH {
@@ -46,7 +45,6 @@ pub fn get_app_dock_action_event_identifier() -> &'static str {
     })
 }
 
-/// TODO:
 pub(crate) fn get_app_dock_action_shared_memory_identifier() -> &'static str {
     APP_SHARED_MEMORY_IDENTIFIER.get_or_init(|| {
         let identifier = format!("Local\\{}-Shared-Memory", get_app_identifier());
