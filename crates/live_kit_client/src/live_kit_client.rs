@@ -177,45 +177,52 @@ pub async fn capture_local_video_track(
 pub fn capture_local_audio_track(
     background_executor: &BackgroundExecutor,
 ) -> Result<Task<(track::LocalAudioTrack, AudioStream)>> {
+    // We can't track device changes here, because the LocalAudioTrack isn't controlled
+    // by this function, and doesn't have a resampler built in
+
     let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
     let (_thread_handle, thread_handle_rx) = std::sync::mpsc::channel();
 
-    // We can't track device changes here, because the LocalAudioTrack isn't controlled
-    // by this function, and doesn't have a resampler built in
-    let (device, config) = default_device(false)?;
+    let config = if cfg!(any(test, feature = "test-support")) {
+        (100, 1)
+    } else {
+        let (device, config) = default_device(false)?;
 
-    thread::spawn({
-        let config = config.clone();
-        move || {
-            if cfg!(any(test, feature = "test-support")) {
-                return;
+        thread::spawn({
+            let config = config.clone();
+            move || {
+                if cfg!(any(test, feature = "test-support")) {
+                    return;
+                }
+
+                let stream = device.build_input_stream_raw(
+                    &config.config(),
+                    cpal::SampleFormat::I16,
+                    move |data, _: &_| {
+                        frame_tx
+                            .unbounded_send(AudioFrame {
+                                data: Cow::Owned(data.as_slice::<i16>().unwrap().to_vec()),
+                                sample_rate: config.sample_rate().0,
+                                num_channels: config.channels() as u32,
+                                samples_per_channel: data.len() as u32 / config.channels() as u32,
+                            })
+                            .ok();
+                    },
+                    |err| log::error!("error capturing audio track: {:?}", err),
+                    None,
+                );
+                let Some(stream) = stream.log_err() else {
+                    return;
+                };
+
+                stream.play().log_err();
+                // Block forever to keep the input stream alive
+                thread_handle_rx.recv().ok();
             }
+        });
 
-            let stream = device.build_input_stream_raw(
-                &config.config(),
-                cpal::SampleFormat::I16,
-                move |data, _: &_| {
-                    frame_tx
-                        .unbounded_send(AudioFrame {
-                            data: Cow::Owned(data.as_slice::<i16>().unwrap().to_vec()),
-                            sample_rate: config.sample_rate().0,
-                            num_channels: config.channels() as u32,
-                            samples_per_channel: data.len() as u32 / config.channels() as u32,
-                        })
-                        .ok();
-                },
-                |err| log::error!("error capturing audio track: {:?}", err),
-                None,
-            );
-            let Some(stream) = stream.log_err() else {
-                return;
-            };
-
-            stream.play().log_err();
-            // Block forever to keep the input stream alive
-            thread_handle_rx.recv().ok();
-        }
-    });
+        (config.sample_rate().0, config.channels())
+    };
 
     Ok(background_executor.spawn({
         let background_executor = background_executor.clone();
@@ -226,8 +233,8 @@ pub fn capture_local_audio_track(
                     noise_suppression: true,
                     auto_gain_control: true,
                 },
-                config.sample_rate().0,
-                config.channels() as u32,
+                config.0,
+                config.1 as u32,
                 100,
             );
 
@@ -264,35 +271,46 @@ pub fn play_remote_audio_track(
     let track = track.clone();
     // We track device changes in our output because Livekit has a resampler built in,
     // and it's easy to create a new native audio stream when the device changes.
-    let mut default_change_listener = DeviceChangeListener::new(false)?;
-    let (output_device, output_config) = default_device(false)?;
+    if cfg!(any(test, feature = "test-support")) {
+        Ok(AudioStream::Output {
+            _task: background_executor.spawn(async {}),
+        })
+    } else {
+        let mut default_change_listener = DeviceChangeListener::new(false)?;
+        let (output_device, output_config) = default_device(false)?;
 
-    let _task = background_executor.spawn({
-        let background_executor = background_executor.clone();
-        async move {
-            let (mut _receive_task, mut _thread) =
-                start_output_stream(output_config, output_device, &track, &background_executor);
+        let _task = background_executor.spawn({
+            let background_executor = background_executor.clone();
+            async move {
+                let (mut _receive_task, mut _thread) =
+                    start_output_stream(output_config, output_device, &track, &background_executor);
 
-            while let Some(_) = default_change_listener.next().await {
-                let Some((output_device, output_config)) = get_default_output().log_err() else {
-                    continue;
-                };
+                while let Some(_) = default_change_listener.next().await {
+                    let Some((output_device, output_config)) = get_default_output().log_err()
+                    else {
+                        continue;
+                    };
 
-                if let Ok(name) = output_device.name() {
-                    log::info!("Using speaker: {}", name)
-                } else {
-                    log::info!("Using speaker: <unknown>")
+                    if let Ok(name) = output_device.name() {
+                        log::info!("Using speaker: {}", name)
+                    } else {
+                        log::info!("Using speaker: <unknown>")
+                    }
+
+                    (_receive_task, _thread) = start_output_stream(
+                        output_config,
+                        output_device,
+                        &track,
+                        &background_executor,
+                    );
                 }
 
-                (_receive_task, _thread) =
-                    start_output_stream(output_config, output_device, &track, &background_executor);
+                futures::future::pending::<()>().await;
             }
+        });
 
-            futures::future::pending::<()>().await;
-        }
-    });
-
-    Ok(AudioStream::Output { _task })
+        Ok(AudioStream::Output { _task })
+    }
 }
 
 fn default_device(input: bool) -> anyhow::Result<(cpal::Device, cpal::SupportedStreamConfig)> {
