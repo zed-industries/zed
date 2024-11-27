@@ -9,11 +9,14 @@ use std::{
 use ::util::{paths::SanitizedPath, ResultExt};
 use anyhow::{anyhow, Context as _, Result};
 use app_identifier::{
-    get_app_instance_event_identifier, get_app_shared_memory_identifier, read_dock_action_argument,
-    APP_DOCK_ACTION_ARGUMENT, APP_SHARED_MEMORY_MAX_SIZE,
+    get_app_dock_action_event_identifier, get_app_dock_action_shared_memory_identifier,
 };
 use async_task::Runnable;
 use collections::FxHashMap;
+use dock_action::{
+    create_dock_action_event, create_dock_action_shared_memory, read_dock_action_argument,
+    APP_DOCK_ACTION_ARGUMENT,
+};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -59,8 +62,8 @@ pub(crate) struct WindowsPlatform {
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     validation_number: usize,
     main_thread_id_win32: u32,
-    single_instance_event: Owned<HANDLE>,
-    shared_memory_handle: Owned<HANDLE>,
+    dock_action_event: Owned<HANDLE>,
+    dock_action_shared_memory: Owned<HANDLE>,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -124,30 +127,8 @@ impl WindowsPlatform {
         let raw_window_handles = RwLock::new(SmallVec::new());
         let gpu_context = BladeContext::new().expect("Unable to init GPU context");
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
-        let single_instance_event = unsafe {
-            Owned::new(
-                CreateEventW(
-                    None,
-                    false,
-                    false,
-                    &HSTRING::from(get_app_instance_event_identifier()),
-                )
-                .expect("Unable to create single instance event."),
-            )
-        };
-        let shared_memory_handle = unsafe {
-            Owned::new(
-                CreateFileMappingW(
-                    INVALID_HANDLE_VALUE,
-                    None,
-                    PAGE_READWRITE,
-                    0,
-                    APP_SHARED_MEMORY_MAX_SIZE as u32,
-                    &HSTRING::from(get_app_shared_memory_identifier()),
-                )
-                .expect("Unable to create shared memory"),
-            )
-        };
+        let dock_action_event = create_dock_action_event();
+        let dock_action_shared_memory = create_dock_action_shared_memory();
 
         Self {
             state,
@@ -162,8 +143,8 @@ impl WindowsPlatform {
             bitmap_factory,
             validation_number,
             main_thread_id_win32,
-            single_instance_event,
-            shared_memory_handle,
+            dock_action_event,
+            dock_action_shared_memory,
         }
     }
 
@@ -338,7 +319,7 @@ impl WindowsPlatform {
     }
 
     fn handle_instance_message(&self) {
-        let msg = read_dock_action_argument(*self.shared_memory_handle);
+        let msg = read_dock_action_argument(*self.dock_action_shared_memory);
 
         let mut lock = self.state.borrow_mut();
         if let Some(mut callback) = lock.callbacks.app_menu_action.take() {

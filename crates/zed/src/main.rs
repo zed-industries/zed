@@ -245,7 +245,7 @@ fn main() {
         println!("zed is already running");
         #[cfg(target_os = "windows")]
         if let Some(ref argument) = args.dock_action {
-            zed::windows_only_instance::send_instance_message(argument);
+            gpui::dock_action::send_dock_action_message(argument);
         }
         return;
     }
