@@ -23,11 +23,14 @@ use webrtc::{
     video_stream::native::NativeVideoStream,
 };
 
-// TODO
-// #[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
+#[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
+use livekit::track::RemoteAudioTrack;
+#[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
 pub use livekit::*;
-// #[cfg(any(test, feature = "test-support", target_os = "windows"))]
-// pub use test::*;
+#[cfg(any(test, feature = "test-support", target_os = "windows"))]
+use test::track::RemoteAudioTrack;
+#[cfg(any(test, feature = "test-support", target_os = "windows"))]
+pub use test::*;
 
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 
@@ -177,7 +180,7 @@ pub fn capture_local_audio_track(
     let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
     let (_thread_handle, thread_handle_rx) = std::sync::mpsc::channel();
 
-    // We can't track device changes here, becuase the LocalAudioTrack isn't controlled
+    // We can't track device changes here, because the LocalAudioTrack isn't controlled
     // by this function, and doesn't have a resampler built in
     let (device, config) = default_device(false)?;
 
@@ -255,7 +258,7 @@ pub fn capture_local_audio_track(
 
 #[cfg(not(target_os = "windows"))]
 pub fn play_remote_audio_track(
-    track: &track::RemoteAudioTrack,
+    track: &RemoteAudioTrack,
     background_executor: &BackgroundExecutor,
 ) -> Result<AudioStream> {
     let track = track.clone();
@@ -313,6 +316,7 @@ fn default_device(input: bool) -> anyhow::Result<(cpal::Device, cpal::SupportedS
     Ok((device, config))
 }
 
+#[cfg(not(target_os = "windows"))]
 fn get_default_output() -> anyhow::Result<(cpal::Device, cpal::SupportedStreamConfig)> {
     let host = cpal::default_host();
     let output_device = host
@@ -322,10 +326,11 @@ fn get_default_output() -> anyhow::Result<(cpal::Device, cpal::SupportedStreamCo
     Ok((output_device, output_config))
 }
 
+#[cfg(not(target_os = "windows"))]
 fn start_output_stream(
     output_config: cpal::SupportedStreamConfig,
     output_device: cpal::Device,
-    track: &prelude::RemoteAudioTrack,
+    track: &track::RemoteAudioTrack,
     background_executor: &BackgroundExecutor,
 ) -> (Task<()>, std::sync::mpsc::Sender<()>) {
     let buffer = Arc::new(Mutex::new(VecDeque::<i16>::new()));
@@ -337,7 +342,7 @@ fn start_output_stream(
         output_config.channels() as i32,
     );
 
-    let recieve_task = background_executor.spawn({
+    let receive_task = background_executor.spawn({
         let buffer = buffer.clone();
         async move {
             const MS_OF_BUFFER: u32 = 50;
@@ -399,7 +404,7 @@ fn start_output_stream(
         end_on_drop_rx.recv().ok();
     });
 
-    (recieve_task, thread)
+    (receive_task, thread)
 }
 
 #[cfg(target_os = "windows")]
@@ -456,7 +461,7 @@ fn video_frame_buffer_to_webrtc(_frame: ScreenCaptureFrame) -> Option<impl AsRef
     None as Option<Box<dyn VideoBuffer>>
 }
 
-trait DefaultOutputDeviceChangeListenerApi: Stream<Item = ()> + Sized {
+trait DeviceChangeListenerApi: Stream<Item = ()> + Sized {
     fn new(input: bool) -> Result<Self>;
 }
 
@@ -473,7 +478,7 @@ mod macos {
     use futures::{channel::mpsc::UnboundedReceiver, StreamExt};
     use util::defer;
 
-    use crate::DefaultOutputDeviceChangeListenerApi;
+    use crate::DeviceChangeListenerApi;
 
     /// Implementation from: https://github.com/zed-industries/cpal/blob/fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50/src/host/coreaudio/macos/property_listener.rs#L15
     pub struct CoreAudioDefaultDeviceChangeListener {
@@ -498,7 +503,7 @@ mod macos {
         0
     }
 
-    impl DefaultOutputDeviceChangeListenerApi for CoreAudioDefaultDeviceChangeListener {
+    impl DeviceChangeListenerApi for CoreAudioDefaultDeviceChangeListener {
         fn new(input: bool) -> gpui::Result<Self> {
             let (tx, rx) = futures::channel::mpsc::unbounded();
 
@@ -573,11 +578,11 @@ type DeviceChangeListener = macos::CoreAudioDefaultDeviceChangeListener;
 mod noop_change_listener {
     use std::task::Poll;
 
-    use crate::DefaultOutputDeviceChangeListenerApi;
+    use crate::DeviceChangeListenerApi;
 
     pub struct NoopOutputDeviceChangelistener {}
 
-    impl DefaultOutputDeviceChangeListenerApi for NoopOutputDeviceChangelistener {
+    impl DeviceChangeListenerApi for NoopOutputDeviceChangelistener {
         fn new(_input: bool) -> anyhow::Result<Self> {
             Ok(NoopOutputDeviceChangelistener {})
         }
@@ -596,4 +601,4 @@ mod noop_change_listener {
 }
 
 #[cfg(not(target_os = "macos"))]
-type OutputDeviceChangeListener = noop_change_listener::NoopOutputDeviceChangelistener;
+type DeviceChangeListener = noop_change_listener::NoopOutputDeviceChangelistener;
