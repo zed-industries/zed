@@ -10,10 +10,6 @@ use ::util::{paths::SanitizedPath, ResultExt};
 use anyhow::{anyhow, Context as _, Result};
 use async_task::Runnable;
 use collections::FxHashMap;
-use dock_action::{
-    create_dock_action_event, create_dock_action_shared_memory, read_dock_action_argument,
-    APP_DOCK_ACTION_ARGUMENT,
-};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
