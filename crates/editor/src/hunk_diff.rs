@@ -1,13 +1,17 @@
 use collections::{HashMap, HashSet};
 use git::diff::DiffHunkStatus;
-use gpui::{Action, AnchorCorner, AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
+use gpui::{
+    Action, AnchorCorner, AppContext, CursorStyle, Hsla, Model, MouseButton, Subscription, Task,
+    View,
+};
 use language::{Buffer, BufferId, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
     MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use project::buffer_store::BufferChangeSet;
-use std::{mem, ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc};
+use sum_tree::TreeMap;
 use text::OffsetRangeExt;
 use ui::{
     prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
@@ -30,10 +34,11 @@ pub(super) struct HoveredHunk {
     pub diff_base_byte_range: Range<usize>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(super) struct ExpandedHunks {
     pub(crate) hunks: Vec<ExpandedHunk>,
     pub(crate) diff_bases: HashMap<BufferId, DiffBaseState>,
+    pub(crate) snapshot: DiffMapSnapshot,
     hunk_update_tasks: HashMap<Option<BufferId>, Task<()>>,
     expand_all: bool,
 }
@@ -47,10 +52,13 @@ pub(super) struct ExpandedHunk {
     pub folded: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DiffMapSnapshot(TreeMap<BufferId, git::diff::BufferDiff>);
+
 pub(crate) struct DiffBaseState {
     pub(crate) change_set: Model<BufferChangeSet>,
     pub(crate) last_version: Option<usize>,
+    _subscription: Subscription,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,19 +76,52 @@ pub enum DisplayDiffHunk {
 }
 
 impl ExpandedHunks {
+    pub fn snapshot(&self) -> DiffMapSnapshot {
+        self.snapshot.clone()
+    }
+
+    pub fn add_change_set(
+        &mut self,
+        change_set: Model<BufferChangeSet>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let buffer_id = change_set.read(cx).buffer_id;
+        self.diff_bases.insert(
+            buffer_id,
+            DiffBaseState {
+                last_version: None,
+                _subscription: cx.observe(&change_set, move |editor, change_set, cx| {
+                    editor
+                        .expanded_hunks
+                        .snapshot
+                        .0
+                        .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
+                    editor.sync_expanded_diff_hunks(buffer_id, cx);
+                }),
+                change_set,
+            },
+        );
+    }
+
+    pub fn hunks(&self, include_folded: bool) -> impl Iterator<Item = &ExpandedHunk> {
+        self.hunks
+            .iter()
+            .filter(move |hunk| include_folded || !hunk.folded)
+    }
+}
+
+impl DiffMapSnapshot {
     pub fn diff_hunks<'a>(
         &'a self,
         buffer_snapshot: &'a MultiBufferSnapshot,
-        cx: &'a AppContext,
     ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
-        self.diff_hunks_in_range(0..buffer_snapshot.len(), buffer_snapshot, cx)
+        self.diff_hunks_in_range(0..buffer_snapshot.len(), buffer_snapshot)
     }
 
     pub fn diff_hunks_in_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
         buffer_snapshot: &'a MultiBufferSnapshot,
-        cx: &'a AppContext,
     ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
         let range = range.start.to_offset(buffer_snapshot)..range.end.to_offset(buffer_snapshot);
         buffer_snapshot
@@ -88,8 +129,7 @@ impl ExpandedHunks {
             .filter_map(move |excerpt| {
                 let buffer = excerpt.buffer();
                 let buffer_id = buffer.remote_id();
-                let diff_base = self.diff_bases.get(&buffer_id)?;
-                let diff = &diff_base.change_set.read(cx).diff_to_buffer;
+                let diff = self.0.get(&buffer_id)?;
                 let buffer_range = excerpt.map_range_to_buffer(range.clone());
                 let buffer_range =
                     buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end);
@@ -112,12 +152,6 @@ impl ExpandedHunks {
                 )
             })
             .flatten()
-    }
-
-    pub fn hunks(&self, include_folded: bool) -> impl Iterator<Item = &ExpandedHunk> {
-        self.hunks
-            .iter()
-            .filter(move |hunk| include_folded || !hunk.folded)
     }
 }
 
@@ -168,7 +202,8 @@ impl Editor {
             .collect::<HashMap<_, _>>();
         let hunks = self
             .expanded_hunks
-            .diff_hunks(&snapshot.display_snapshot.buffer_snapshot, cx)
+            .snapshot
+            .diff_hunks(&snapshot.display_snapshot.buffer_snapshot)
             .filter(|hunk| {
                 let hunk_display_row_range = Point::new(hunk.row_range.start.0, 0)
                     .to_display_point(&snapshot.display_snapshot)
@@ -825,11 +860,9 @@ impl Editor {
 
     pub(super) fn sync_expanded_diff_hunks(
         &mut self,
-        buffer: Model<Buffer>,
+        buffer_id: BufferId,
         cx: &mut ViewContext<'_, Self>,
     ) {
-        let buffer_id = buffer.read(cx).remote_id();
-
         let diff_base_state = self.expanded_hunks.diff_bases.get_mut(&buffer_id);
         let mut diff_base_buffer = None;
         let mut diff_base_buffer_unchanged = true;
@@ -851,10 +884,9 @@ impl Editor {
             editor
                 .update(&mut cx, |editor, cx| {
                     let snapshot = editor.snapshot(cx);
-                    let mut hunks = mem::take(&mut editor.expanded_hunks.hunks);
-                    let mut recalculated_hunks = editor
-                        .expanded_hunks
-                        .diff_hunks(&snapshot.buffer_snapshot, cx)
+                    let mut recalculated_hunks = snapshot
+                        .diff_map
+                        .diff_hunks(&snapshot.buffer_snapshot)
                         .filter(|hunk| hunk.buffer_id == buffer_id)
                         .fuse()
                         .peekable();
@@ -863,7 +895,7 @@ impl Editor {
                     let mut blocks_to_remove = HashSet::default();
                     let mut hunks_to_reexpand =
                         Vec::with_capacity(editor.expanded_hunks.hunks.len());
-                    hunks.retain_mut(|expanded_hunk| {
+                    editor.expanded_hunks.hunks.retain_mut(|expanded_hunk| {
                         if expanded_hunk.hunk_range.start.buffer_id != Some(buffer_id) {
                             return true;
                         };
@@ -977,7 +1009,6 @@ impl Editor {
                     } else {
                         drop(recalculated_hunks);
                     }
-                    editor.expanded_hunks.hunks = hunks;
 
                     editor.remove_highlighted_rows::<DiffRowHighlight>(highlights_to_remove, cx);
                     editor.remove_blocks(blocks_to_remove, None, cx);

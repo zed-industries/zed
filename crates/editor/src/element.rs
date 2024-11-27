@@ -1339,7 +1339,8 @@ impl EditorElement {
 
             let mut display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)> = editor
                 .expanded_hunks
-                .diff_hunks_in_range(buffer_start..buffer_end, &buffer_snapshot, cx)
+                .snapshot
+                .diff_hunks_in_range(buffer_start..buffer_end, &buffer_snapshot)
                 .filter_map(|hunk| {
                     let display_hunk = diff_hunk_to_display(&hunk, snapshot);
 
@@ -3746,10 +3747,8 @@ impl EditorElement {
                             let mut marker_quads = Vec::new();
                             if scrollbar_settings.git_diff {
                                 let marker_row_ranges = snapshot
-                                    .buffer_snapshot
-                                    .git_diff_hunks_in_range(
-                                        MultiBufferRow::MIN..MultiBufferRow::MAX,
-                                    )
+                                    .diff_map
+                                    .diff_hunks(&snapshot.buffer_snapshot)
                                     .map(|hunk| {
                                         let start_display_row =
                                             MultiBufferPoint::new(hunk.row_range.start.0, 0)

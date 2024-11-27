@@ -83,7 +83,7 @@ use gpui::{
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 pub(crate) use hunk_diff::HoveredHunk;
-use hunk_diff::{diff_hunk_to_display, ExpandedHunks};
+use hunk_diff::{diff_hunk_to_display, DiffMapSnapshot, ExpandedHunks};
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion::Direction;
@@ -692,6 +692,7 @@ pub struct EditorSnapshot {
     git_blame_gutter_max_author_length: Option<usize>,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
+    diff_map: DiffMapSnapshot,
     is_focused: bool,
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
@@ -2077,13 +2078,7 @@ impl Editor {
                 this.update(&mut cx, |this, cx| {
                     for change_set in change_sets {
                         if let Some(change_set) = change_set.log_err() {
-                            this.expanded_hunks.diff_bases.insert(
-                                change_set.read(cx).buffer_id,
-                                hunk_diff::DiffBaseState {
-                                    last_version: None,
-                                    change_set,
-                                },
-                            );
+                            this.expanded_hunks.add_change_set(change_set, cx);
                         }
                     }
                 })
@@ -2434,6 +2429,7 @@ impl Editor {
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
+            diff_map: self.expanded_hunks.snapshot(),
             is_focused: self.focus_handle.is_focused(cx),
             current_line_highlight: self
                 .current_line_highlight
@@ -11311,13 +11307,13 @@ impl Editor {
             return;
         }
 
-        let mut buffers_affected = HashMap::default();
+        let mut buffers_affected = HashSet::default();
         let multi_buffer = self.buffer().read(cx);
         for crease in &creases {
             if let Some((_, buffer, _)) =
                 multi_buffer.excerpt_containing(crease.range().start.clone(), cx)
             {
-                buffers_affected.insert(buffer.read(cx).remote_id(), buffer);
+                buffers_affected.insert(buffer.read(cx).remote_id());
             };
         }
 
@@ -11327,8 +11323,8 @@ impl Editor {
             self.request_autoscroll(Autoscroll::fit(), cx);
         }
 
-        for buffer in buffers_affected.into_values() {
-            self.sync_expanded_diff_hunks(buffer, cx);
+        for buffer_id in buffers_affected {
+            self.sync_expanded_diff_hunks(buffer_id, cx);
         }
 
         cx.notify();
@@ -11385,11 +11381,11 @@ impl Editor {
             return;
         }
 
-        let mut buffers_affected = HashMap::default();
+        let mut buffers_affected = HashSet::default();
         let multi_buffer = self.buffer().read(cx);
         for range in ranges {
             if let Some((_, buffer, _)) = multi_buffer.excerpt_containing(range.start.clone(), cx) {
-                buffers_affected.insert(buffer.read(cx).remote_id(), buffer);
+                buffers_affected.insert(buffer.read(cx).remote_id());
             };
         }
 
@@ -11399,8 +11395,8 @@ impl Editor {
             self.request_autoscroll(Autoscroll::fit(), cx);
         }
 
-        for buffer in buffers_affected.into_values() {
-            self.sync_expanded_diff_hunks(buffer, cx);
+        for buffer_id in buffers_affected {
+            self.sync_expanded_diff_hunks(buffer_id, cx);
         }
 
         cx.notify();
@@ -12693,10 +12689,6 @@ impl Editor {
             multi_buffer::Event::DiffBaseChanged => {
                 self.scrollbar_marker_state.dirty = true;
                 cx.emit(EditorEvent::DiffBaseChanged);
-                cx.notify();
-            }
-            multi_buffer::Event::DiffUpdated { buffer } => {
-                self.sync_expanded_diff_hunks(buffer.clone(), cx);
                 cx.notify();
             }
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
