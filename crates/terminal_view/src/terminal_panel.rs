@@ -26,8 +26,8 @@ use terminal::{
     Terminal,
 };
 use ui::{
-    div, h_flex, ButtonCommon, Clickable, ContextMenu, IconButton, IconSize, InteractiveElement,
-    PopoverMenu, Selectable, Tooltip,
+    div, h_flex, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton, IconSize,
+    InteractiveElement, PopoverMenu, Selectable, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -130,6 +130,10 @@ impl TerminalPanel {
         let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
+                let split_context = pane
+                    .items()
+                    .find_map(|item| item.downcast::<TerminalView>())
+                    .map(|terminal_view| terminal_view.read(cx).focus_handle.clone());
                 if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
                     return (None, None);
                 }
@@ -175,14 +179,21 @@ impl TerminalPanel {
                             )
                             .anchor(AnchorCorner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
-                            .menu(move |cx| {
-                                ContextMenu::build(cx, |menu, _| {
-                                    menu.action("Split Right", SplitRight.boxed_clone())
+                            .menu({
+                                let split_context = split_context.clone();
+                                move |cx| {
+                                    ContextMenu::build(cx, |menu, _| {
+                                        menu.when_some(
+                                            split_context.clone(),
+                                            |menu, split_context| menu.context(split_context),
+                                        )
+                                        .action("Split Right", SplitRight.boxed_clone())
                                         .action("Split Left", SplitLeft.boxed_clone())
                                         .action("Split Up", SplitUp.boxed_clone())
                                         .action("Split Down", SplitDown.boxed_clone())
-                                })
-                                .into()
+                                    })
+                                    .into()
+                                }
                             }),
                     )
                     .child({
