@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
 use http_client::HttpClient;
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, Point, Rope,
-    ToOffset, ToPoint,
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, OffsetRangeExt,
+    Point, Rope, ToOffset, ToPoint,
 };
 use std::{borrow::Cow, cmp, fmt::Write, mem, ops::Range, path::Path, sync::Arc, time::Duration};
 
@@ -142,28 +142,10 @@ impl Zeta {
                         this.handle_buffer_event(buffer, event, cx);
                     }),
                     cx.observe_release(buffer, move |this, _buffer, _cx| {
-                        if let Some(path) = this
-                            .registered_buffers
-                            .get(&weak_buffer.entity_id())
-                            .and_then(|rb| rb.snapshot.file())
-                            .map(|f| f.path().to_owned())
-                        {
-                            this.push_event(Event::Close {
-                                path: Arc::from(path),
-                            });
-                        }
                         this.registered_buffers.remove(&weak_buffer.entity_id());
                     }),
                 ],
             });
-
-            let path = buffer
-                .read(cx)
-                .snapshot()
-                .file()
-                .map(|f| f.path().clone())
-                .unwrap_or_else(|| Arc::from(Path::new("untitled")));
-            self.push_event(Event::Open { path });
         };
     }
 
@@ -176,13 +158,6 @@ impl Zeta {
         match event {
             language::BufferEvent::Edited => {
                 self.report_changes_for_buffer(&buffer, cx);
-            }
-            language::BufferEvent::Saved => {
-                if let Some(file) = buffer.read(cx).file() {
-                    self.push_event(Event::Save {
-                        path: file.path().clone(),
-                    });
-                }
             }
             _ => {}
         }
@@ -231,7 +206,7 @@ impl Zeta {
 
         let http_client = self.http_client.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|_this, _cx| async move {
             let start = std::time::Instant::now();
             let mut response = open_ai::complete_text(
                 http_client.as_ref(),
@@ -255,22 +230,22 @@ impl Zeta {
             log::debug!("completion response: {}", choice.text);
 
             let content = choice.text.replace(CURSOR_MARKER, "");
-            log::debug!("sanitized completion response: {}", content);
 
             let mut new_text = content.as_str();
 
             let codefence_start = new_text
-                .find("```")
-                .context("could not find opening codefence")?;
+                .find(EDITABLE_REGION_START_MARKER)
+                .context("could not find start marker")?;
             new_text = &new_text[codefence_start..];
 
             let newline_ix = new_text.find('\n').context("could not find newline")?;
             new_text = &new_text[newline_ix + 1..];
 
             let codefence_end = new_text
-                .rfind("\n```")
-                .context("could not find closing codefence")?;
+                .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
+                .context("could not find end marker")?;
             new_text = &new_text[..codefence_end];
+            log::debug!("sanitized completion response: {}", new_text);
 
             let old_text = snapshot
                 .text_for_range(excerpt_range.clone())
@@ -314,9 +289,6 @@ impl Zeta {
             }
 
             if edits.is_empty() {
-                this.update(&mut cx, |this, _cx| {
-                    this.push_event(Event::NoInlineCompletion { id });
-                })?;
                 Ok(None)
             } else {
                 let edits = edits
@@ -352,7 +324,7 @@ impl Zeta {
         completion: InlineCompletion,
         cx: &mut ModelContext<Self>,
     ) {
-        self.push_event(Event::InlineCompletionRejected(completion));
+        // self.push_event(Event::InlineCompletionRejected(completion));
         cx.notify();
     }
 
@@ -397,9 +369,19 @@ fn prompt_for_excerpt(
                 .to_string_lossy())
     )
     .unwrap();
-    if excerpt_range.start > 0 {
-        writeln!(prompt_excerpt, "<|truncation|>").unwrap();
+
+    if excerpt_range.start == 0 {
+        writeln!(prompt_excerpt, "{START_OF_FILE_MARKER}").unwrap();
     }
+
+    let point_range = excerpt_range.to_point(snapshot);
+    if point_range.start.row > 0 {
+        let extra_context_line_range = Point::new(point_range.start.row - 1, 0)..point_range.start;
+        for chunk in snapshot.text_for_range(extra_context_line_range) {
+            prompt_excerpt.push_str(chunk);
+        }
+    }
+    writeln!(prompt_excerpt, "{EDITABLE_REGION_START_MARKER}").unwrap();
     for chunk in snapshot.text_for_range(excerpt_range.start..offset) {
         prompt_excerpt.push_str(chunk);
     }
@@ -407,10 +389,20 @@ fn prompt_for_excerpt(
     for chunk in snapshot.text_for_range(offset..excerpt_range.end) {
         prompt_excerpt.push_str(chunk);
     }
-    if excerpt_range.end < snapshot.len() {
-        write!(prompt_excerpt, "\n<|truncation|>").unwrap();
+    write!(prompt_excerpt, "\n{EDITABLE_REGION_END_MARKER}").unwrap();
+
+    if point_range.end.row < snapshot.max_point().row {
+        let extra_context_line_range = point_range.end
+            ..Point::new(
+                point_range.end.row + 1,
+                snapshot.line_len(point_range.end.row + 1),
+            );
+        for chunk in snapshot.text_for_range(extra_context_line_range) {
+            prompt_excerpt.push_str(chunk);
+        }
     }
-    prompt_excerpt.push_str("\n```");
+
+    write!(prompt_excerpt, "\n```").unwrap();
     prompt_excerpt
 }
 
@@ -444,6 +436,9 @@ fn excerpt_range_for_position(point: Point, snapshot: &BufferSnapshot) -> Range<
 }
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
+const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
+const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
+const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const ORIGINAL_MARKER: &str = "<<<<<<< ORIGINAL\n";
 const SEPARATOR_MARKER: &str = "\n=======\n";
 const UPDATED_MARKER: &str = "\n>>>>>>> UPDATED";
@@ -454,30 +449,16 @@ struct RegisteredBuffer {
 }
 
 enum Event {
-    Open {
-        path: Arc<Path>,
-    },
-    Save {
-        path: Arc<Path>,
-    },
     BufferChange {
         old_snapshot: BufferSnapshot,
         new_snapshot: BufferSnapshot,
     },
-    Close {
-        path: Arc<Path>,
-    },
     InlineCompletionRejected(InlineCompletion),
-    NoInlineCompletion {
-        id: InlineCompletionId,
-    },
 }
 
 impl Event {
     fn to_prompt(&self) -> String {
         match self {
-            Event::Open { path } => format!("User opened file: {:?}", path),
-            Event::Save { path } => format!("User saved file: {:?}", path),
             Event::BufferChange {
                 old_snapshot,
                 new_snapshot,
@@ -558,7 +539,6 @@ impl Event {
 
                 prompt
             }
-            Event::Close { path } => format!("User closed file: {:?}", path),
             Event::InlineCompletionRejected(completion) => {
                 let mut edits = String::new();
                 for (old_range, new_text) in &completion.edits {
@@ -580,7 +560,6 @@ impl Event {
                     completion.path, edits
                 )
             }
-            Event::NoInlineCompletion { .. } => "<|DONE|>".into(),
         }
     }
 }
