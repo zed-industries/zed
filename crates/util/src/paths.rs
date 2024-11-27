@@ -95,6 +95,9 @@ impl<T: AsRef<Path>> PathExt for T {
     }
 }
 
+/// Due to the issue of UNC paths on Windows, which can cause bugs in various parts of Zed, introducing this `SanitizedPath`
+/// leverages Rust's type system to ensure that all paths entering Zed are always "sanitized" by removing the `\\\\?\\` prefix.
+/// On non-Windows operating systems, this struct is effectively a no-op.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SanitizedPath(Arc<Path>);
 
@@ -840,6 +843,24 @@ mod tests {
         assert!(
             path_matcher.is_match(path),
             "Path matcher should match {path:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_sanitized_path() {
+        let path = Path::new("C:\\Users\\someone\\test_file.rs");
+        let sanitized_path = SanitizedPath::from(path);
+        assert_eq!(
+            sanitized_path.to_string(),
+            "C:\\Users\\someone\\test_file.rs"
+        );
+
+        let path = Path::new("\\\\?\\C:\\Users\\someone\\test_file.rs");
+        let sanitized_path = SanitizedPath::from(path);
+        assert_eq!(
+            sanitized_path.to_string(),
+            "C:\\Users\\someone\\test_file.rs"
         );
     }
 }
