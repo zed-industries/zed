@@ -69,12 +69,6 @@ pub enum DebugAdapterClientState {
     Running(Arc<DebugAdapterClient>),
 }
 
-#[derive(Clone, Debug)]
-pub struct DebugPosition {
-    pub row: u32,
-    pub column: u32,
-}
-
 #[allow(clippy::large_enum_variant)]
 pub enum DapStoreMode {
     Local(LocalDapStore),   // ssh host and collab host
@@ -99,7 +93,7 @@ pub struct DapStore {
     breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
     capabilities: HashMap<DebugAdapterClientId, Capabilities>,
     clients: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
-    active_debug_line: Option<(DebugAdapterClientId, ProjectPath, DebugPosition)>,
+    active_debug_line: Option<(DebugAdapterClientId, ProjectPath, u32)>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
@@ -237,7 +231,7 @@ impl DapStore {
         }
     }
 
-    pub fn active_debug_line(&self) -> Option<(DebugAdapterClientId, ProjectPath, DebugPosition)> {
+    pub fn active_debug_line(&self) -> Option<(DebugAdapterClientId, ProjectPath, u32)> {
         self.active_debug_line.clone()
     }
 
@@ -246,15 +240,9 @@ impl DapStore {
         client_id: &DebugAdapterClientId,
         project_path: &ProjectPath,
         row: u32,
-        column: u32,
         cx: &mut ModelContext<Self>,
     ) {
-        self.active_debug_line = Some((
-            *client_id,
-            project_path.clone(),
-            DebugPosition { row, column },
-        ));
-
+        self.active_debug_line = Some((*client_id, project_path.clone(), row));
         cx.notify();
     }
 
@@ -269,10 +257,6 @@ impl DapStore {
                 cx.notify();
             }
         }
-    }
-
-    pub fn remove_active_debug_line(&mut self) {
-        self.active_debug_line.take();
     }
 
     pub fn on_file_rename(&mut self, old_project_path: ProjectPath, new_project_path: ProjectPath) {

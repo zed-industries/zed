@@ -10331,14 +10331,13 @@ impl Editor {
     pub fn go_to_line<T: 'static>(
         &mut self,
         row: u32,
-        column: u32,
         highlight_color: Option<Hsla>,
         cx: &mut ViewContext<Self>,
     ) {
         let snapshot = self.snapshot(cx).display_snapshot;
         let start = snapshot
             .buffer_snapshot
-            .clip_point(Point::new(row, column), Bias::Left);
+            .clip_point(Point::new(row, 0), Bias::Left);
         let end = start + Point::new(1, 0);
         let start = snapshot.buffer_snapshot.anchor_before(start);
         let end = snapshot.buffer_snapshot.anchor_before(end);
@@ -12245,8 +12244,7 @@ impl Editor {
         if let Some((_, path, position)) = dap_store.read(cx).active_debug_line() {
             if path == project_path {
                 self.go_to_line::<DebugCurrentRowHighlight>(
-                    position.row,
-                    position.column,
+                    position,
                     Some(cx.theme().colors().editor_debugger_active_line_background),
                     cx,
                 );

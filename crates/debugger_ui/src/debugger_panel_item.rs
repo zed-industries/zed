@@ -386,9 +386,16 @@ impl DebugPanelItem {
 
     pub fn go_to_current_stack_frame(&self, cx: &mut ViewContext<Self>) {
         self.stack_frame_list.update(cx, |stack_frame_list, cx| {
-            stack_frame_list
-                .go_to_stack_frame(cx)
-                .detach_and_log_err(cx);
+            if let Some(stack_frame) = stack_frame_list
+                .stack_frames()
+                .iter()
+                .find(|frame| frame.id == stack_frame_list.current_stack_frame_id())
+                .cloned()
+            {
+                stack_frame_list
+                    .select_stack_frame(&stack_frame, true, cx)
+                    .detach_and_log_err(cx);
+            }
         });
     }
 

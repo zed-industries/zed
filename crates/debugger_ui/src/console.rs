@@ -80,9 +80,7 @@ impl Console {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged => cx.notify(),
-            StackFrameListEvent::StackFramesUpdated => {
-                // TODO debugger: check if we need to do something here
-            }
+            StackFrameListEvent::StackFramesUpdated => {}
         }
     }
 
