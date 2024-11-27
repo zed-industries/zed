@@ -966,7 +966,7 @@ impl Room {
                         cx.emit(Event::RemoteAudioTracksChanged {
                             participant_id: participant.peer_id,
                         });
-                        let stream = play_remote_audio_track(&track, cx.background_executor());
+                        let stream = play_remote_audio_track(&track, cx.background_executor())?;
                         participant.audio_tracks.insert(track_id, (track, stream));
                         participant.muted = publication.is_muted();
                     }
@@ -1345,7 +1345,7 @@ impl Room {
         };
 
         cx.spawn(move |this, mut cx| async move {
-            let (track, stream) = capture_local_audio_track(cx.background_executor()).await?;
+            let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
 
             let publication = participant
                 .publish_track(

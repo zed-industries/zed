@@ -270,7 +270,7 @@ impl LivekitWindow {
         } else {
             let participant = self.room.local_participant();
             cx.spawn(|this, mut cx| async move {
-                let (track, stream) = capture_local_audio_track(cx.background_executor()).await?;
+                let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
                 let publication = participant
                     .publish_track(
                         LocalTrack::Audio(track),
