@@ -1,4 +1,4 @@
-use gpui::app_identifier::{get_app_single_instance_mutex_identifier, register_app_identifier};
+use gpui::{get_app_single_instance_mutex_identifier, register_app_identifier};
 use release_channel::ReleaseChannel;
 use windows::{
     core::HSTRING,

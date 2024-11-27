@@ -52,8 +52,7 @@ pub(crate) fn create_dock_action_shared_memory() -> Owned<HANDLE> {
     }
 }
 
-/// TODO:
-pub fn read_dock_action_argument(shared_memory_handle: HANDLE) -> String {
+pub(crate) fn read_dock_action_argument(shared_memory_handle: HANDLE) -> String {
     unsafe {
         let memory_addr = MapViewOfFile(shared_memory_handle, FILE_MAP_READ, 0, 0, 0);
         let string = String::from_utf8_lossy(std::slice::from_raw_parts(

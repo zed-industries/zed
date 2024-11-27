@@ -26,14 +26,6 @@ mod test;
 #[cfg(target_os = "windows")]
 mod windows;
 
-#[cfg(target_os = "windows")]
-/// TODO:
-pub mod app_identifier;
-
-#[cfg(target_os = "windows")]
-/// TODO:
-pub mod dock_action;
-
 use crate::{
     point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
     DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
@@ -78,6 +70,10 @@ pub use semantic_version::SemanticVersion;
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
+#[cfg(target_os = "windows")]
+pub use windows::{
+    get_app_single_instance_mutex_identifier, register_app_identifier, send_dock_action_message,
+};
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
