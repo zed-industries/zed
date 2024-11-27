@@ -8,8 +8,8 @@ use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
-    point, size, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, MouseButton, Pixels,
-    Point, StyleRefinement, View, ViewContext,
+    point, size, Along, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, MouseButton,
+    Pixels, Point, StyleRefinement, View, ViewContext,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -88,6 +88,21 @@ impl PaneGroup {
                 Ok(true)
             }
         }
+    }
+
+    pub fn resize(
+        &mut self,
+        pane: &View<Pane>,
+        direction: Axis,
+        amount: Pixels,
+        bounds: &Bounds<Pixels>,
+    ) {
+        match &mut self.root {
+            Member::Pane(_) => {}
+            Member::Axis(axis) => {
+                let _ = axis.resize(pane, direction, amount, bounds);
+            }
+        };
     }
 
     pub fn swap(&mut self, from: &View<Pane>, to: &View<Pane>) {
@@ -445,6 +460,116 @@ impl PaneAxis {
         }
     }
 
+    fn resize(
+        &mut self,
+        pane: &View<Pane>,
+        axis: Axis,
+        amount: Pixels,
+        bounds: &Bounds<Pixels>,
+    ) -> Option<bool> {
+        let container_size = self
+            .bounding_boxes
+            .lock()
+            .iter()
+            .filter_map(|e| *e)
+            .reduce(|acc, e| acc.union(&e))
+            .unwrap_or(*bounds)
+            .size;
+
+        let found_pane = self
+            .members
+            .iter()
+            .any(|member| matches!(member, Member::Pane(p) if p == pane));
+
+        if found_pane && self.axis != axis {
+            return Some(false); // pane found but this is not the correct axis direction
+        }
+        let mut found_axis_index: Option<usize> = None;
+        if !found_pane {
+            for (i, pa) in self.members.iter_mut().enumerate() {
+                if let Member::Axis(pa) = pa {
+                    if let Some(done) = pa.resize(pane, axis, amount, bounds) {
+                        if done {
+                            return Some(true); // pane found and operations already done
+                        } else if self.axis != axis {
+                            return Some(false); // pane found but this is not the correct axis direction
+                        } else {
+                            found_axis_index = Some(i); // pane found and this is correct direction
+                        }
+                    }
+                }
+            }
+            found_axis_index?; // no pane found
+        }
+
+        let min_size = match axis {
+            Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
+            Axis::Vertical => px(VERTICAL_MIN_SIZE),
+        };
+        let mut flexes = self.flexes.lock();
+
+        let ix = if found_pane {
+            self.members.iter().position(|m| {
+                if let Member::Pane(p) = m {
+                    p == pane
+                } else {
+                    false
+                }
+            })
+        } else {
+            found_axis_index
+        };
+
+        if ix.is_none() {
+            return Some(true);
+        }
+
+        let ix = ix.unwrap_or(0);
+
+        let size = move |ix, flexes: &[f32]| {
+            container_size.along(axis) * (flexes[ix] / flexes.len() as f32)
+        };
+
+        // Don't allow resizing to less than the minimum size, if elements are already too small
+        if min_size - px(1.) > size(ix, flexes.as_slice()) {
+            return Some(true);
+        }
+
+        let flex_changes = |pixel_dx, target_ix, next: isize, flexes: &[f32]| {
+            let flex_change = flexes.len() as f32 * pixel_dx / container_size.along(axis);
+            let current_target_flex = flexes[target_ix] + flex_change;
+            let next_target_flex = flexes[(target_ix as isize + next) as usize] - flex_change;
+            (current_target_flex, next_target_flex)
+        };
+
+        let apply_changes =
+            |current_ix: usize, proposed_current_pixel_change: Pixels, flexes: &mut [f32]| {
+                let next_target_size = Pixels::max(
+                    size(current_ix + 1, flexes) - proposed_current_pixel_change,
+                    min_size,
+                );
+                let current_target_size = Pixels::max(
+                    size(current_ix, flexes) + size(current_ix + 1, flexes) - next_target_size,
+                    min_size,
+                );
+
+                let current_pixel_change = current_target_size - size(current_ix, flexes);
+
+                let (current_target_flex, next_target_flex) =
+                    flex_changes(current_pixel_change, current_ix, 1, flexes);
+
+                flexes[current_ix] = current_target_flex;
+                flexes[current_ix + 1] = next_target_flex;
+            };
+
+        if ix + 1 == flexes.len() {
+            apply_changes(ix - 1, -1.0 * amount, flexes.as_mut_slice());
+        } else {
+            apply_changes(ix, amount, flexes.as_mut_slice());
+        }
+        Some(true)
+    }
+
     fn swap(&mut self, from: &View<Pane>, to: &View<Pane>) {
         for member in self.members.iter_mut() {
             match member {
@@ -623,6 +748,14 @@ impl SplitDirection {
             Self::Down | Self::Right => true,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub enum ResizeIntent {
+    Lengthen,
+    Shorten,
+    Widen,
+    Narrow,
 }
 
 mod element {

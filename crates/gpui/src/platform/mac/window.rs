@@ -38,6 +38,7 @@ use std::{
     cell::Cell,
     ffi::{c_void, CStr},
     mem,
+    ops::Range,
     path::PathBuf,
     ptr::{self, NonNull},
     rc::Rc,
@@ -1283,18 +1284,17 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     }
 
     if event.is_held {
-        let handled = with_input_handler(&this, |input_handler| {
-            if !input_handler.apple_press_and_hold_enabled() {
-                input_handler.replace_text_in_range(
-                    None,
-                    &event.keystroke.ime_key.unwrap_or(event.keystroke.key),
-                );
+        if let Some(key_char) = event.keystroke.key_char.as_ref() {
+            let handled = with_input_handler(&this, |input_handler| {
+                if !input_handler.apple_press_and_hold_enabled() {
+                    input_handler.replace_text_in_range(None, &key_char);
+                    return YES;
+                }
+                NO
+            });
+            if handled == Some(YES) {
                 return YES;
             }
-            NO
-        });
-        if handled == Some(YES) {
-            return YES;
         }
     }
 
@@ -1437,7 +1437,7 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
     let keystroke = Keystroke {
         modifiers: Default::default(),
         key: ".".into(),
-        ime_key: None,
+        key_char: None,
     };
     let event = PlatformInput::KeyDown(KeyDownEvent {
         keystroke: keystroke.clone(),
@@ -1755,15 +1755,21 @@ extern "C" fn attributed_substring_for_proposed_range(
     this: &Object,
     _: Sel,
     range: NSRange,
-    _actual_range: *mut c_void,
+    actual_range: *mut c_void,
 ) -> id {
     with_input_handler(this, |input_handler| {
         let range = range.to_range()?;
         if range.is_empty() {
             return None;
         }
+        let mut adjusted: Option<Range<usize>> = None;
 
-        let selected_text = input_handler.text_for_range(range.clone())?;
+        let selected_text = input_handler.text_for_range(range.clone(), &mut adjusted)?;
+        if let Some(adjusted) = adjusted {
+            if adjusted != range {
+                unsafe { (actual_range as *mut NSRange).write(NSRange::from(adjusted)) };
+            }
+        }
         unsafe {
             let string: id = msg_send![class!(NSAttributedString), alloc];
             let string: id = msg_send![string, initWithString: ns_string(&selected_text)];

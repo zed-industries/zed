@@ -16,7 +16,6 @@ use picker::{
     Picker, PickerDelegate,
 };
 pub use remote_servers::RemoteServerProjects;
-use serde::Deserialize;
 use settings::Settings;
 pub use ssh_connections::SshSettings;
 use std::{
@@ -29,19 +28,7 @@ use workspace::{
     CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceId,
     WORKSPACE_DB,
 };
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct OpenRecent {
-    #[serde(default = "default_create_new_window")]
-    pub create_new_window: bool,
-}
-
-fn default_create_new_window() -> bool {
-    false
-}
-
-gpui::impl_actions!(projects, [OpenRecent]);
-gpui::actions!(projects, [OpenRemote]);
+use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut AppContext) {
     SshSettings::register(cx);
@@ -185,13 +172,13 @@ impl PickerDelegate for RecentProjectsDelegate {
     fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
         let (create_window, reuse_window) = if self.create_new_window {
             (
-                cx.keystroke_text_for_action(&menu::Confirm),
-                cx.keystroke_text_for_action(&menu::SecondaryConfirm),
+                cx.keystroke_text_for(&menu::Confirm),
+                cx.keystroke_text_for(&menu::SecondaryConfirm),
             )
         } else {
             (
-                cx.keystroke_text_for_action(&menu::SecondaryConfirm),
-                cx.keystroke_text_for_action(&menu::Confirm),
+                cx.keystroke_text_for(&menu::SecondaryConfirm),
+                cx.keystroke_text_for(&menu::Confirm),
             )
         };
         Arc::from(format!(

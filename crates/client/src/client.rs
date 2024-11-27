@@ -1067,6 +1067,8 @@ impl Client {
         let proxy = http.proxy().cloned();
         let credentials = credentials.clone();
         let rpc_url = self.rpc_url(http, release_channel);
+        let system_id = self.telemetry.system_id();
+        let metrics_id = self.telemetry.metrics_id();
         cx.background_executor().spawn(async move {
             use HttpOrHttps::*;
 
@@ -1118,6 +1120,12 @@ impl Client {
                 "x-zed-release-channel",
                 HeaderValue::from_str(release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
             );
+            if let Some(system_id) = system_id {
+                request_headers.insert("x-zed-system-id", HeaderValue::from_str(&system_id)?);
+            }
+            if let Some(metrics_id) = metrics_id {
+                request_headers.insert("x-zed-metrics-id", HeaderValue::from_str(&metrics_id)?);
+            }
 
             match url_scheme {
                 Https => {
@@ -1780,7 +1788,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -1821,7 +1829,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -1900,7 +1908,7 @@ mod tests {
         let dropped_auth_count = Arc::new(Mutex::new(0));
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -1943,7 +1951,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -2003,7 +2011,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -2038,7 +2046,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
