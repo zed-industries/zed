@@ -2075,8 +2075,10 @@ impl Pane {
 
         let is_pinned = self.is_tab_pinned(ix);
         let pane = cx.view().downgrade();
+        let menu_context = item.focus_handle(cx);
         right_click_menu(ix).trigger(tab).menu(move |cx| {
             let pane = pane.clone();
+            let menu_context = menu_context.clone();
             ContextMenu::build(cx, move |mut menu, cx| {
                 if let Some(pane) = pane.upgrade() {
                     menu = menu
@@ -2255,7 +2257,7 @@ impl Pane {
                     }
                 }
 
-                menu
+                menu.context(menu_context)
             })
         })
     }
