@@ -1,20 +1,16 @@
 use anyhow::Context;
 use gpui::app_identifier::{
-    get_app_instance_event_identifier, get_app_instance_mutex_identifier,
-    get_app_shared_memory_identifier, register_app_identifier, APP_SHARED_MEMORY_MAX_SIZE,
+    get_app_instance_event_identifier, get_app_instance_mutex_identifier, register_app_identifier,
+    write_dock_action_argument,
 };
 use release_channel::ReleaseChannel;
 use util::ResultExt;
 use windows::{
     core::HSTRING,
     Win32::{
-        Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS},
-        System::{
-            Memory::{MapViewOfFile, OpenFileMappingW, UnmapViewOfFile, FILE_MAP_WRITE},
-            Threading::{
-                CreateMutexW, OpenEventW, SetEvent, EVENT_MODIFY_STATE,
-                SYNCHRONIZATION_ACCESS_RIGHTS,
-            },
+        Foundation::{GetLastError, ERROR_ALREADY_EXISTS},
+        System::Threading::{
+            CreateMutexW, OpenEventW, SetEvent, EVENT_MODIFY_STATE, SYNCHRONIZATION_ACCESS_RIGHTS,
         },
     },
 };
@@ -42,7 +38,7 @@ pub fn check_single_instance() -> bool {
 }
 
 pub(crate) fn send_instance_message(message: &str) {
-    send_message_to_other_instance(message);
+    write_dock_action_argument(message);
     unsafe {
         if let Some(event) = OpenEventW(
             SYNCHRONIZATION_ACCESS_RIGHTS(EVENT_MODIFY_STATE.0),
@@ -54,27 +50,5 @@ pub(crate) fn send_instance_message(message: &str) {
         {
             SetEvent(event).log_err();
         };
-    }
-}
-
-fn send_message_to_other_instance(message: &str) {
-    if message.len() > APP_SHARED_MEMORY_MAX_SIZE {
-        log::error!(
-            "The length of the message to send should be less than {APP_SHARED_MEMORY_MAX_SIZE}"
-        );
-        return;
-    }
-    unsafe {
-        let msg = message.as_bytes();
-        let pipe = OpenFileMappingW(
-            FILE_MAP_WRITE.0,
-            false,
-            &HSTRING::from(get_app_shared_memory_identifier()),
-        )
-        .unwrap();
-        let memory_addr = MapViewOfFile(pipe, FILE_MAP_WRITE, 0, 0, 0);
-        std::ptr::copy_nonoverlapping(msg.as_ptr(), memory_addr.Value as _, msg.len());
-        UnmapViewOfFile(memory_addr).log_err();
-        CloseHandle(pipe).log_err();
     }
 }
