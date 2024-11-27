@@ -2379,34 +2379,32 @@ impl Project {
     }
 
     fn recalculate_buffer_diffs(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
-        let buffers = self.buffers_needing_diff.drain().collect::<Vec<_>>();
         cx.spawn(move |this, mut cx| async move {
-            let tasks: Vec<_> = buffers
-                .iter()
-                .filter_map(|buffer| {
-                    let buffer = buffer.upgrade()?;
-                    buffer
-                        .update(&mut cx, |buffer, cx| buffer.recalculate_diff(cx))
-                        .ok()
-                        .flatten()
-                })
-                .collect();
-
-            futures::future::join_all(tasks).await;
-
-            this.update(&mut cx, |this, cx| {
-                if this.buffers_needing_diff.is_empty() {
-                    // TODO: Would a `ModelContext<Project>.notify()` suffice here?
-                    for buffer in buffers {
-                        if let Some(buffer) = buffer.upgrade() {
-                            buffer.update(cx, |_, cx| cx.notify());
+            loop {
+                let task = this
+                    .update(&mut cx, |this, cx| {
+                        let buffers = this
+                            .buffers_needing_diff
+                            .drain()
+                            .filter_map(|buffer| buffer.upgrade())
+                            .collect::<Vec<_>>();
+                        if buffers.is_empty() {
+                            None
+                        } else {
+                            Some(this.buffer_store.update(cx, |buffer_store, cx| {
+                                buffer_store.recalculate_buffer_diffs(buffers, cx)
+                            }))
                         }
-                    }
+                    })
+                    .ok()
+                    .flatten();
+
+                if let Some(task) = task {
+                    task.await;
                 } else {
-                    this.recalculate_buffer_diffs(cx).detach();
+                    break;
                 }
-            })
-            .ok();
+            }
         })
     }
 

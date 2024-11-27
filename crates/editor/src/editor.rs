@@ -2043,11 +2043,10 @@ impl Editor {
             }
         }
 
-        let inlay_hint_settings = inlay_hint_settings(
-            selections.newest_anchor().head(),
-            &buffer.read(cx).snapshot(cx),
-            cx,
-        );
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+
+        let inlay_hint_settings =
+            inlay_hint_settings(selections.newest_anchor().head(), &buffer_snapshot, cx);
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
         cx.on_focus_in(&focus_handle, Self::handle_focus_in)
@@ -2064,6 +2063,34 @@ impl Editor {
 
         let mut code_action_providers = Vec::new();
         if let Some(project) = project.clone() {
+            let mut tasks = Vec::new();
+            buffer.update(cx, |multibuffer, cx| {
+                project.update(cx, |project, cx| {
+                    multibuffer.for_each_buffer(|buffer| {
+                        tasks.push(project.open_unstaged_changes(buffer.clone(), cx))
+                    });
+                });
+            });
+
+            cx.spawn(|this, mut cx| async move {
+                let change_sets = futures::future::join_all(tasks).await;
+                this.update(&mut cx, |this, cx| {
+                    for change_set in change_sets {
+                        if let Some(change_set) = change_set.log_err() {
+                            this.expanded_hunks.diff_bases.insert(
+                                change_set.read(cx).buffer_id,
+                                hunk_diff::DiffBaseState {
+                                    last_version: None,
+                                    change_set,
+                                },
+                            );
+                        }
+                    }
+                })
+                .ok();
+            })
+            .detach();
+
             code_action_providers.push(Arc::new(project) as Arc<_>);
         }
 

@@ -44,9 +44,12 @@ pub struct BufferStore {
 }
 
 pub struct BufferChangeSet {
+    pub buffer_id: BufferId,
     pub base_text: Option<Model<Buffer>>,
     pub diff_to_buffer: git::diff::BufferDiff,
     pub recalculate_diff_task: Option<Task<Result<()>>>,
+    pub diff_updated_futures: Vec<oneshot::Sender<()>>,
+    pub version: usize,
 }
 
 enum BufferStoreState {
@@ -535,7 +538,7 @@ impl LocalBufferStore {
                     }
 
                     change_set.update(cx, |change_set, cx| {
-                        change_set.update(staged_text, buffer_snapshot, cx);
+                        change_set.set_base_text(staged_text, buffer_snapshot, cx);
                     });
                 }
             })
@@ -1404,6 +1407,35 @@ impl BufferStore {
         rx
     }
 
+    pub fn recalculate_buffer_diffs(
+        &mut self,
+        buffers: Vec<Model<Buffer>>,
+        cx: &mut ModelContext<Self>,
+    ) -> impl Future<Output = ()> {
+        let mut futures = Vec::new();
+        for buffer in buffers {
+            let buffer = buffer.read(cx).text_snapshot();
+            if let Some(OpenBuffer::Complete {
+                unstaged_changes, ..
+            }) = self.opened_buffers.get_mut(&buffer.remote_id())
+            {
+                if let Some(unstaged_changes) = unstaged_changes
+                    .as_ref()
+                    .and_then(|changes| changes.upgrade())
+                {
+                    unstaged_changes.update(cx, |unstaged_changes, cx| {
+                        futures.push(unstaged_changes.recalculate_diff(buffer.clone(), cx));
+                    });
+                } else {
+                    unstaged_changes.take();
+                }
+            }
+        }
+        async move {
+            futures::future::join_all(futures).await;
+        }
+    }
+
     fn on_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
@@ -2030,11 +2062,14 @@ impl BufferChangeSet {
     ) -> Self {
         let buffer = buffer.read(cx);
         let mut this = Self {
+            buffer_id: buffer.remote_id(),
             base_text: None,
             diff_to_buffer: git::diff::BufferDiff::new(buffer),
             recalculate_diff_task: None,
+            diff_updated_futures: Vec::new(),
+            version: 0,
         };
-        this.update(base_text, buffer.text_snapshot(), cx);
+        this.set_base_text(base_text, buffer.text_snapshot(), cx);
         this
     }
 
@@ -2056,38 +2091,67 @@ impl BufferChangeSet {
             .hunks_intersecting_range_rev(range, buffer_snapshot)
     }
 
-    pub fn update(
+    pub fn set_base_text(
         &mut self,
         base_text: Option<String>,
         buffer_snapshot: text::BufferSnapshot,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(base_text) = base_text {
-            self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
-                let (base_text, diff) = cx
-                    .background_executor()
-                    .spawn(async move {
-                        let diff = BufferDiff::build(&base_text, &buffer_snapshot).await;
-                        (base_text, diff)
-                    })
-                    .await;
-                let base_text_buffer = cx.new_model(|cx| {
-                    Buffer::local_normalized(Rope::from(base_text), LineEnding::default(), cx)
-                })?;
-                this.update(&mut cx, |this, cx| {
-                    this.base_text = Some(base_text_buffer);
-                    this.diff_to_buffer = diff;
-                    this.recalculate_diff_task.take();
-                    cx.notify();
-                })?;
-                Ok(())
-            }));
-        } else {
+            self.recalculate_diff_internal(base_text, buffer_snapshot, true, cx);
+        } else if self.base_text.is_some() {
             self.base_text = None;
             self.diff_to_buffer = BufferDiff::new(&buffer_snapshot);
             self.recalculate_diff_task.take();
+            self.version += 1;
             cx.notify();
         }
+    }
+
+    pub fn recalculate_diff(
+        &mut self,
+        buffer_snapshot: text::BufferSnapshot,
+        cx: &mut ModelContext<Self>,
+    ) -> impl Future<Output = ()> {
+        let (tx, rx) = oneshot::channel();
+        self.diff_updated_futures.push(tx);
+        if let Some(base_text) = self.base_text.clone() {
+            self.recalculate_diff_internal(base_text.read(cx).text(), buffer_snapshot, false, cx);
+        }
+        async move {
+            rx.await.ok();
+        }
+    }
+
+    fn recalculate_diff_internal(
+        &mut self,
+        base_text: String,
+        buffer_snapshot: text::BufferSnapshot,
+        base_text_changed: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+            let (base_text, diff) = cx
+                .background_executor()
+                .spawn(async move {
+                    let diff = BufferDiff::build(&base_text, &buffer_snapshot).await;
+                    (base_text, diff)
+                })
+                .await;
+            this.update(&mut cx, |this, cx| {
+                if base_text_changed {
+                    this.base_text = Some(cx.new_model(|cx| {
+                        Buffer::local_normalized(Rope::from(base_text), LineEnding::default(), cx)
+                    }));
+                }
+                this.diff_to_buffer = diff;
+                this.recalculate_diff_task.take();
+                this.diff_updated_futures.clear();
+                this.version += 1;
+                cx.notify();
+            })?;
+            Ok(())
+        }));
     }
 }
 

@@ -1317,17 +1317,8 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) -> Vec<(DisplayDiffHunk, Option<Hitbox>)> {
         let buffer_snapshot = &snapshot.buffer_snapshot;
-
-        let buffer_start_row = MultiBufferRow(
-            DisplayPoint::new(display_rows.start, 0)
-                .to_point(snapshot)
-                .row,
-        );
-        let buffer_end_row = MultiBufferRow(
-            DisplayPoint::new(display_rows.end, 0)
-                .to_point(snapshot)
-                .row,
-        );
+        let buffer_start = DisplayPoint::new(display_rows.start, 0).to_point(snapshot);
+        let buffer_end = DisplayPoint::new(display_rows.end, 0).to_point(snapshot);
 
         let git_gutter_setting = ProjectSettings::get_global(cx)
             .git
@@ -1346,8 +1337,9 @@ impl EditorElement {
                 .unwrap_err();
             let mut expanded_hunks = expanded_hunks[expanded_hunks_start_ix..].iter().peekable();
 
-            let display_hunks = buffer_snapshot
-                .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
+            let mut display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)> = editor
+                .expanded_hunks
+                .diff_hunks_in_range(buffer_start..buffer_end, &buffer_snapshot, cx)
                 .filter_map(|hunk| {
                     let display_hunk = diff_hunk_to_display(&hunk, snapshot);
 
@@ -1390,25 +1382,23 @@ impl EditorElement {
                     Some(display_hunk)
                 })
                 .dedup()
-                .map(|hunk| match git_gutter_setting {
-                    GitGutterSetting::TrackedFiles => {
-                        let hitbox = match hunk {
-                            DisplayDiffHunk::Unfolded { .. } => {
-                                let hunk_bounds = Self::diff_hunk_bounds(
-                                    snapshot,
-                                    line_height,
-                                    gutter_hitbox.bounds,
-                                    &hunk,
-                                );
-                                Some(cx.insert_hitbox(hunk_bounds, true))
-                            }
-                            DisplayDiffHunk::Folded { .. } => None,
-                        };
-                        (hunk, hitbox)
-                    }
-                    GitGutterSetting::Hide => (hunk, None),
-                })
+                .map(|hunk| (hunk, None))
                 .collect();
+
+            if let GitGutterSetting::TrackedFiles = git_gutter_setting {
+                for (hunk, hitbox) in &mut display_hunks {
+                    if let DisplayDiffHunk::Unfolded { .. } = hunk {
+                        let hunk_bounds = Self::diff_hunk_bounds(
+                            snapshot,
+                            line_height,
+                            gutter_hitbox.bounds,
+                            &hunk,
+                        );
+                        *hitbox = Some(cx.insert_hitbox(hunk_bounds, true));
+                    };
+                }
+            }
+
             display_hunks
         })
     }
