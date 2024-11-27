@@ -28,14 +28,10 @@ use windows::{
         Security::Credentials::*,
         System::{
             Com::*,
-            DataExchange::{
-                CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
-                RegisterClipboardFormatW, SetClipboardData,
-            },
             LibraryLoader::*,
             Memory::{
-                CreateFileMappingW, GlobalAlloc, GlobalLock, GlobalUnlock, MapViewOfFile,
-                UnmapViewOfFile, FILE_MAP_ALL_ACCESS, GMEM_MOVEABLE, PAGE_READWRITE,
+                CreateFileMappingW, MapViewOfFile, UnmapViewOfFile, FILE_MAP_ALL_ACCESS,
+                PAGE_READWRITE,
             },
             Ole::*,
             SystemInformation::*,
@@ -331,15 +327,14 @@ impl Platform for WindowsPlatform {
         'a: loop {
             let wait_result = unsafe {
                 MsgWaitForMultipleObjects(
-                    
-                    Some(&[*vsync_event, self.dispatch_event, *self.single_instance_event]),
-                   
+                    Some(&[
+                        *vsync_event,
+                        self.dispatch_event,
+                        *self.single_instance_event,
+                    ]),
                     false,
-                   
                     INFINITE,
-                   
                     QS_ALLINPUT,
-                ,
                 )
             };
 
@@ -349,9 +344,9 @@ impl Platform for WindowsPlatform {
                 // foreground tasks are dispatched
                 WAIT_EVENT(1) => self.run_foreground_tasks(),
                 // TODO:
-                WAIT_EVENT(1) => self.handle_instance_message(),
+                WAIT_EVENT(2) => self.handle_instance_message(),
                 // Windows thread messages are posted
-                WAIT_EVENT(2) => {
+                WAIT_EVENT(3) => {
                     let mut msg = MSG::default();
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
