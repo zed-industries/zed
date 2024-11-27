@@ -30,6 +30,10 @@ mod windows;
 /// TODO:
 pub mod app_identifier;
 
+#[cfg(target_os = "windows")]
+/// TODO:
+pub mod dock_action;
+
 use crate::{
     point, Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
