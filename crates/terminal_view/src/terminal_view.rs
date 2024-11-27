@@ -33,8 +33,8 @@ use workspace::{
     notifications::NotifyResultExt,
     register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, Pane, ToolbarItemLocation,
-    Workspace, WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
+    WorkspaceId,
 };
 
 use anyhow::Context;
@@ -1222,10 +1222,10 @@ impl SerializableItem for TerminalView {
         workspace: WeakView<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
-        cx: &mut ViewContext<Pane>,
+        cx: &mut WindowContext,
     ) -> Task<anyhow::Result<View<Self>>> {
         let window = cx.window_handle();
-        cx.spawn(|pane, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let cwd = cx
                 .update(|cx| {
                     let from_db = TERMINAL_DB
@@ -1249,7 +1249,7 @@ impl SerializableItem for TerminalView {
             let terminal = project.update(&mut cx, |project, cx| {
                 project.create_terminal(TerminalKind::Shell(cwd), window, cx)
             })??;
-            pane.update(&mut cx, |_, cx| {
+            cx.update(|cx| {
                 cx.new_view(|cx| TerminalView::new(terminal, workspace, Some(workspace_id), cx))
             })
         })

@@ -732,7 +732,11 @@
       "cmd-end": "terminal::ScrollToBottom",
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
-      "ctrl-shift-space": "terminal::ToggleViMode"
+      "ctrl-shift-space": "terminal::ToggleViMode",
+      "ctrl-k up": "pane::SplitUp",
+      "ctrl-k down": "pane::SplitDown",
+      "ctrl-k left": "pane::SplitLeft",
+      "ctrl-k right": "pane::SplitRight"
     }
   }
 ]
