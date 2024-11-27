@@ -130,24 +130,22 @@ fn main() -> Result<()> {
         any(target_os = "linux", target_os = "macos"),
         not(feature = "no-bundled-uninstall")
     ))]
-    {
-        if args.uninstall {
-            static UNINSTALL_SCRIPT: &[u8] = include_bytes!("../../../script/uninstall.sh");
+    if args.uninstall {
+        static UNINSTALL_SCRIPT: &[u8] = include_bytes!("../../../script/uninstall.sh");
 
-            let tmp_dir = tempfile::tempdir()?;
-            let script_path = tmp_dir.path().join("uninstall.sh");
-            fs::write(&script_path, UNINSTALL_SCRIPT)?;
+        let tmp_dir = tempfile::tempdir()?;
+        let script_path = tmp_dir.path().join("uninstall.sh");
+        fs::write(&script_path, UNINSTALL_SCRIPT)?;
 
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))?;
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))?;
 
-            let status = std::process::Command::new("sh")
-                .arg(&script_path)
-                .status()
-                .context("Failed to execute uninstall script")?;
+        let status = std::process::Command::new("sh")
+            .arg(&script_path)
+            .status()
+            .context("Failed to execute uninstall script")?;
 
-            std::process::exit(status.code().unwrap_or(1));
-        }
+        std::process::exit(status.code().unwrap_or(1));
     }
 
     let (server, server_name) =
