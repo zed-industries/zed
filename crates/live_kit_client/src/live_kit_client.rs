@@ -485,7 +485,6 @@ trait DeviceChangeListenerApi: Stream<Item = ()> + Sized {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use std::sync::Arc;
 
     use coreaudio::sys::{
         kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDefaultOutputDevice,
@@ -494,7 +493,6 @@ mod macos {
         AudioObjectPropertyAddress, AudioObjectRemovePropertyListener, OSStatus,
     };
     use futures::{channel::mpsc::UnboundedReceiver, StreamExt};
-    use util::defer;
 
     use crate::DeviceChangeListenerApi;
 
@@ -525,9 +523,7 @@ mod macos {
         fn new(input: bool) -> gpui::Result<Self> {
             let (tx, rx) = futures::channel::mpsc::unbounded();
 
-            let defer = Arc::new(defer(|| println!("oh no")));
             let callback = Box::new(PropertyListenerCallbackWrapper(Box::new(move || {
-                let _ = defer.clone();
                 tx.unbounded_send(()).ok();
             })));
 
