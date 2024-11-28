@@ -135,6 +135,7 @@ fn srgba_to_linear(color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(srgb_to_linear(color.rgb), color.a);
 }
 
+/// Hsla to linear RGBA conversion.
 fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
     let h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
     let s = hsla.s;
@@ -314,9 +315,7 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
 
             switch (background.color_space) {
                 default: {
-                    let color = mix(color0, color1, t);
-                    // Convert back to linear space for blending.
-                    background_color = srgba_to_linear(color);
+                    background_color = srgba_to_linear(mix(color0, color1, t));
                 }
                 case 1u: {
                     let oklab_color0 = linear_srgb_to_oklab(color0);
@@ -366,8 +365,8 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     if (quad.background.tag == 0u) {
         out.background_solid = hsla_to_rgba(quad.background.solid);
     } else if (quad.background.tag == 1u) {
-        out.background_color0 = linear_to_srgba(hsla_to_rgba(quad.background.colors[0].color));
-        out.background_color1 = linear_to_srgba(hsla_to_rgba(quad.background.colors[1].color));
+        out.background_color0 = hsla_to_rgba(quad.background.colors[0].color);
+        out.background_color1 = hsla_to_rgba(quad.background.colors[1].color);
     }
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
@@ -578,8 +577,8 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     if (sprite.color.tag == 0u) {
         out.color_solid = hsla_to_rgba(sprite.color.solid);
     } else if (sprite.color.tag == 1u) {
-        out.color0 = linear_to_srgba(hsla_to_rgba(sprite.color.colors[0].color));
-        out.color1 = linear_to_srgba(hsla_to_rgba(sprite.color.colors[1].color));
+        out.color0 = hsla_to_rgba(sprite.color.colors[0].color);
+        out.color1 = hsla_to_rgba(sprite.color.colors[1].color);
     }
     return out;
 }
