@@ -1,7 +1,11 @@
 use collections::HashMap;
+use cpal::SupportedStreamConfig;
 use futures::StreamExt as _;
+use gpui::AppContext;
 use gpui::BackgroundExecutor;
 use gpui::Task;
+use livekit::id::TrackSid;
+use livekit::track::RemoteAudioTrack;
 use parking_lot::Mutex;
 use std::sync::OnceLock;
 use std::sync::Weak;
@@ -11,7 +15,9 @@ use std::{
     thread,
 };
 
-struct AudioBufferMixer {
+use crate::webrtc::audio_stream::native::NativeAudioStream;
+
+struct AudioMixer {
     max_size: usize,
     // Mixed data, ready to render
     storage: VecDeque<i16>,
@@ -22,9 +28,9 @@ struct AudioBufferMixer {
 #[derive(Hash, Debug)]
 struct InternalTrackId(usize);
 
-impl AudioBufferMixer {
+impl AudioMixer {
     fn new(max_size: usize) -> Self {
-        AudioBufferMixer {
+        AudioMixer {
             max_size,
             storage: VecDeque::with_capacity(max_size),
             track_indices: Default::default(),
@@ -102,48 +108,141 @@ impl AudioBufferMixer {
     }
 }
 
-struct AudioManager {
-    active_output: Weak<Mutex<AudioBufferMixer>>,
-    // All of these streams, are owned and RAII'd, by Zed
+trait AssertSend: Send {}
+
+// TODO: use cpal types
+type TmpConfigType = (i32, i32);
+
+struct DeviceConfiguration {
+    config: TmpConfigType,
+    mixer: Weak<Mutex<AudioMixer>>,
 }
 
-// Call/Room (Strong, retaining)
-//  - Arc<>
-//  - Task<>
-//
-// AudioManager (This is not retaining)
-//  - Weak<Mutex<AudioBuffer>>
-// BUT: we need to retain them, so we can re-create the NativeAudioStream
-//  (which holds the resampler)
-//  Which means we are retaining RemoteAudioTrack
-// We need to retain the RemoteAudioTrack pointer, but we also need to return something
-// that can let us know when it's dropped, so we know to drop the RemoteAudioTrack
-
-enum AudioManagerMessage {
-    AddRemoteAudioTrack(crate::RemoteAudioTrack),
+struct DeviceManager {
+    device_listener: Option<()>,
+    token: Weak<dyn FnOnce() + 'static + Send + Sync>,
+    thread: std::sync::mpsc::Sender<()>,
 }
 
-static AUDIO_MANAGER_CHANNEL: OnceLock<futures::channel::mpsc::Sender<()>> = OnceLock::new();
+impl AssertSend for DeviceConfiguration {}
 
-fn init(cx: &BackgroundExecutor) {
-    AUDIO_MANAGER_CHANNEL.get_or_init(|| {
-        let (tx, rx) = futures::channel::mpsc::unbounded();
-        let mixer = Arc::new(Mutex::new(None));
-        // let audio_manager = ???
-        cx.spawn(async move {
-            while let Some(event) = rx.next().await {
-                match event {
-                    AudioManagerMessage::AddRemoteAudioTrack(track) => {}
-                }
+struct OutputManager {
+    executor: BackgroundExecutor,
+    // This tracks what exactly is producing audio
+    tracks: HashMap<TrackSid, RemoteAudioTrack>,
+    // This is dropped and recreated everytime we stop and start producing audio
+    device_manager: Option<DeviceManager>,
+    // This is dropped and recreated everytime the device changes
+    device_output: Option<DeviceConfiguration>,
+}
+
+impl OutputManager {
+    pub fn add_audio_track(&mut self, track: RemoteAudioTrack) -> anyhow::Result<AudioToken> {
+        let sid = track.sid();
+        let output = self.start_output()?;
+
+        Ok(AudioToken::new({
+            move || {
+                with_output_manager(|audio_manager| {
+                    audio_manager.tracks.remove(&sid);
+                    drop(output)
+                });
             }
+        }))
+    }
+
+    fn start_output_stream(&mut self) -> anyhow::Result<()> {
+        // TODO: query the device for teh configuration
+
+        let config = (1 as i32, 2 as i32);
+        let mixer = Arc::new(Mutex::new(AudioMixer::new(100)));
+
+        for track in self.tracks.values() {
+            // TODO: who should handle these tasks?
+            Self::initialize_audio_stream(config, mixer, track, &self.executor);
+        }
+
+        // This token get's captured by each input stream, once we're out of input
+        // we're done producing output
+        self.device_output = Some(DeviceConfiguration {
+            device_listener,
+            mixer: Arc::downgrade(&mixer),
+            token: Arc::downgrade(&token.on_drop.clone().unwrap()),
+            thread: _thread,
         });
 
-        return tx;
+        Ok(())
+    }
+
+    fn start_output(&mut self) -> anyhow::Result<AudioToken> {
+        if let Some(token) = self
+            .device_manager
+            .as_ref()
+            .and_then(|output| output.token.upgrade())
+        {
+            if self.device_output.is_none() {
+                self.start_output_stream();
+            }
+
+            return Ok(AudioToken {
+                on_drop: Some(token),
+            });
+        }
+
+        // TODO: Initialize stream holding thread
+        let (_thread, thread_rx) = std::sync::mpsc::channel();
+
+        // TODO: initialize device listener
+
+        Ok(token)
+    }
+
+    fn initialize_audio_stream(
+        config: TmpConfigType,
+        mixer: &Arc<Mutex<AudioMixer>>,
+        track: &RemoteAudioTrack,
+        executor: &BackgroundExecutor,
+    ) -> Task<()> {
+        let mut stream = NativeAudioStream::new(track.rtc_track(), config.0, config.0);
+    }
+}
+
+static AUDIO_MANAGER: OnceLock<Mutex<OutputManager>> = OnceLock::new();
+
+pub fn init_output_manager(cx: &mut AppContext) {
+    AUDIO_MANAGER.get_or_init(|| {
+        Mutex::new(OutputManager {
+            device_listener: None,
+            executor: cx.background_executor().clone(),
+            device_output: None,
+            tracks: HashMap::default(),
+        })
     });
 }
 
-pub fn get_audio_manager_channel() -> &AudioManager {
-    AUDIO_MANAGER_CHANNEL.get().unwrap()
+pub fn with_output_manager<R>(f: impl FnOnce(&mut OutputManager) -> R) -> R {
+    let mut audio_manager = AUDIO_MANAGER.get().unwrap().lock();
+    f(&mut audio_manager)
+}
+
+struct AudioToken {
+    on_drop: Option<Arc<dyn FnOnce() + 'static + Send + Sync>>,
+}
+
+impl AudioToken {
+    fn new(f: impl FnOnce() + 'static + Send + Sync) -> Self {
+        Self {
+            on_drop: Some(Arc::new(f)),
+        }
+    }
+}
+
+impl Drop for AudioToken {
+    fn drop(&mut self) {
+        if let Some(on_drop) = self.on_drop.take() {
+            on_drop()
+        }
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -179,7 +278,7 @@ pub fn start_output_stream(
         (output_config.sample_rate().0 as usize * output_config.channels() as usize) / MS_IN_SEC
             * MS_OF_BUFFER;
 
-    let buffer = Arc::new(Mutex::new(AudioBufferMixer::new(initial_buffer_size)));
+    let buffer = Arc::new(Mutex::new(AudioMixer::new(initial_buffer_size)));
 
     let sample_rate = output_config.sample_rate();
 
