@@ -1005,7 +1005,7 @@ struct CompletionsMenu {
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
-    selected_completion_documentation_resolve_debounce: Option<Arc<Mutex<DebouncedDelay>>>,
+    selected_completion_resolve_debounce: Option<Arc<Mutex<DebouncedDelay>>>,
 }
 
 impl CompletionsMenu {
@@ -1037,9 +1037,7 @@ impl CompletionsMenu {
             matches: Vec::new().into(),
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
-            selected_completion_documentation_resolve_debounce: Some(Arc::new(Mutex::new(
-                DebouncedDelay::new(),
-            ))),
+            selected_completion_resolve_debounce: Some(Arc::new(Mutex::new(DebouncedDelay::new()))),
         }
     }
 
@@ -1092,15 +1090,12 @@ impl CompletionsMenu {
             matches,
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
-            selected_completion_documentation_resolve_debounce: Some(Arc::new(Mutex::new(
-                DebouncedDelay::new(),
-            ))),
+            selected_completion_resolve_debounce: Some(Arc::new(Mutex::new(DebouncedDelay::new()))),
         }
     }
 
     fn suppress_documentation_resolution(mut self) -> Self {
-        self.selected_completion_documentation_resolve_debounce
-            .take();
+        self.selected_completion_resolve_debounce.take();
         self
     }
 
@@ -1112,7 +1107,7 @@ impl CompletionsMenu {
         self.selected_item = 0;
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.attempt_resolve_selected_completion_documentation(provider, cx);
+        self.resolve_selected_completion(provider, cx);
         cx.notify();
     }
 
@@ -1128,7 +1123,7 @@ impl CompletionsMenu {
         }
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.attempt_resolve_selected_completion_documentation(provider, cx);
+        self.resolve_selected_completion(provider, cx);
         cx.notify();
     }
 
@@ -1144,7 +1139,7 @@ impl CompletionsMenu {
         }
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.attempt_resolve_selected_completion_documentation(provider, cx);
+        self.resolve_selected_completion(provider, cx);
         cx.notify();
     }
 
@@ -1156,28 +1151,20 @@ impl CompletionsMenu {
         self.selected_item = self.matches.len() - 1;
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.attempt_resolve_selected_completion_documentation(provider, cx);
+        self.resolve_selected_completion(provider, cx);
         cx.notify();
     }
 
-    fn attempt_resolve_selected_completion_documentation(
+    fn resolve_selected_completion(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        let settings = EditorSettings::get_global(cx);
-        if !settings.show_completion_documentation {
-            return;
-        }
-
         let completion_index = self.matches[self.selected_item].candidate_id;
         let Some(provider) = provider else {
             return;
         };
-        let Some(documentation_resolve) = self
-            .selected_completion_documentation_resolve_debounce
-            .as_ref()
-        else {
+        let Some(completion_resolve) = self.selected_completion_resolve_debounce.as_ref() else {
             return;
         };
 
@@ -1192,7 +1179,7 @@ impl CompletionsMenu {
             EditorSettings::get_global(cx).completion_documentation_secondary_query_debounce;
         let delay = Duration::from_millis(delay_ms);
 
-        documentation_resolve.lock().fire_new(delay, cx, |_, cx| {
+        completion_resolve.lock().fire_new(delay, cx, |_, cx| {
             cx.spawn(move |this, mut cx| async move {
                 if let Some(true) = resolve_task.await.log_err() {
                     this.update(&mut cx, |_, cx| cx.notify()).ok();
@@ -4533,10 +4520,7 @@ impl Editor {
 
                     if editor.focus_handle.is_focused(cx) && menu.is_some() {
                         let mut menu = menu.unwrap();
-                        menu.attempt_resolve_selected_completion_documentation(
-                            editor.completion_provider.as_deref(),
-                            cx,
-                        );
+                        menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
                         *context_menu = Some(ContextMenu::Completions(menu));
                         drop(context_menu);
                         editor.discard_inline_completion(false, cx);
