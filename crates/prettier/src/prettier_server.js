@@ -4,6 +4,7 @@ const path = require("path");
 const { once } = require("events");
 
 const prettierContainerPath = process.argv[2];
+const ignorePath = process.argv[3] || null;
 if (prettierContainerPath == null || prettierContainerPath.length == 0) {
   process.stderr.write(
     `Prettier path argument was not specified or empty.\nUsage: ${process.argv[0]} ${process.argv[1]} prettier/path\n`,
@@ -23,13 +24,42 @@ fs.stat(prettierContainerPath, (err, stats) => {
     process.exit(1);
   }
 });
+if (ignorePath) {
+  fs.stat(ignorePath, async (err, stats) => {
+    if (err) {
+      process.stderr.write(`Path '${ignorePath}' does not exist\n`);
+      ignorePath = null;
+      return;
+    }
+
+    if (!stats.isDirectory()) {
+      process.stderr.write(
+        `Path '${ignorePath}' exists but is not a directory\n`,
+      );
+      ignorePath = null;
+      return;
+    }
+    const ignoreFilePath = path.join(ignorePath, ".prettierignore");
+
+    try {
+      await fs.promises.access(ignoreFilePath, fs.constants.F_OK);
+      ignorePath = ignoreFilePath;
+    } catch {
+      process.stderr.write(
+        `No .prettierignore file found in '${ignorePath}'\n`,
+      );
+      ignorePath = null;
+    }
+  });
+}
 const prettierPath = path.join(prettierContainerPath, "node_modules/prettier");
 
 class Prettier {
-  constructor(path, prettier, config) {
+  constructor(path, prettier, config, ignorePath) {
     this.path = path;
     this.prettier = prettier;
     this.config = config;
+    this.ignorePath = ignorePath;
   }
 }
 
@@ -44,10 +74,12 @@ class Prettier {
     process.exit(1);
   }
   process.stderr.write(
-    `Prettier at path '${prettierPath}' loaded successfully, config: ${JSON.stringify(config)}\n`,
+    `Prettier at path '${prettierPath}' loaded successfully, config: ${JSON.stringify(
+      config,
+    )}\n`,
   );
   process.stdin.resume();
-  handleBuffer(new Prettier(prettierPath, prettier, config));
+  handleBuffer(new Prettier(prettierPath, prettier, config, ignorePath));
 })();
 
 async function handleBuffer(prettier) {
@@ -68,7 +100,9 @@ async function handleBuffer(prettier) {
       sendResponse({
         id: message.id,
         ...makeError(
-          `error during message '${JSON.stringify(errorMessage)}' handling: ${e}`,
+          `error during message '${JSON.stringify(
+            errorMessage,
+          )}' handling: ${e}`,
         ),
       });
     });
@@ -183,6 +217,23 @@ async function handleMessage(message, prettier) {
       throw new Error(
         `Message params.options is undefined: ${JSON.stringify(message)}`,
       );
+    }
+
+    if (params.options.filepath && prettier.ignorePath) {
+      const fileInfo = await prettier.prettier.getFileInfo(
+        params.options.filepath,
+        {
+          ignorePath: prettier.ignorePath,
+          resolveConfig: true,
+          withNodeModules: false,
+          plugins: params.options.plugins,
+        },
+      );
+      if (fileInfo.ignored) {
+        process.stderr.write(`File '${params.options.filepath}' is ignored\n`);
+        sendResponse({ id, result: { text: params.text } });
+        return;
+      }
     }
 
     let resolvedConfig = {};

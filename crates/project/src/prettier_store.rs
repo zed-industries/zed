@@ -36,6 +36,7 @@ pub struct PrettierStore {
     worktree_store: Model<WorktreeStore>,
     default_prettier: DefaultPrettier,
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
+    prettier_ignores_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
 }
 
@@ -65,11 +66,14 @@ impl PrettierStore {
             worktree_store,
             default_prettier: DefaultPrettier::default(),
             prettiers_per_worktree: HashMap::default(),
+            prettier_ignores_per_worktree: HashMap::default(),
             prettier_instances: HashMap::default(),
         }
     }
 
     pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+        self.prettier_ignores_per_worktree.remove(&id_to_remove);
+
         let mut prettier_instances_to_clean = FuturesUnordered::new();
         if let Some(prettier_paths) = self.prettiers_per_worktree.remove(&id_to_remove) {
             for path in prettier_paths.iter().flatten() {
@@ -116,96 +120,135 @@ impl PrettierStore {
             Some((worktree_id, buffer_path)) => {
                 let fs = Arc::clone(&self.fs);
                 let installed_prettiers = self.prettier_instances.keys().cloned().collect();
+                let prettier_ignores = self
+                    .prettier_ignores_per_worktree
+                    .get(&worktree_id)
+                    .cloned()
+                    .unwrap_or_default();
                 cx.spawn(|lsp_store, mut cx| async move {
                     match cx
                         .background_executor()
                         .spawn(async move {
-                            Prettier::locate_prettier_installation(
+                            let prettier_result = Prettier::locate_prettier_installation(
                                 fs.as_ref(),
                                 &installed_prettiers,
                                 &buffer_path,
                             )
+                            .await?;
+
+                            let prettier_ignore_dir = Prettier::locate_prettier_ignore(
+                                fs.as_ref(),
+                                &prettier_ignores,
+                                &buffer_path,
+                            )
                             .await
+                            .log_err()
+                            .unwrap_or(None);
+
+                            anyhow::Ok((prettier_result, prettier_ignore_dir))
                         })
                         .await
                     {
-                        Ok(ControlFlow::Break(())) => None,
-                        Ok(ControlFlow::Continue(None)) => {
-                            let default_instance = lsp_store
-                                .update(&mut cx, |lsp_store, cx| {
-                                    lsp_store
-                                        .prettiers_per_worktree
-                                        .entry(worktree_id)
-                                        .or_default()
-                                        .insert(None);
-                                    lsp_store.default_prettier.prettier_task(
-                                        &node,
-                                        Some(worktree_id),
-                                        cx,
-                                    )
-                                })
-                                .ok()?;
-                            Some((None, default_instance?.log_err().await?))
-                        }
-                        Ok(ControlFlow::Continue(Some(prettier_dir))) => {
-                            lsp_store
-                                .update(&mut cx, |lsp_store, _| {
-                                    lsp_store
-                                        .prettiers_per_worktree
-                                        .entry(worktree_id)
-                                        .or_default()
-                                        .insert(Some(prettier_dir.clone()))
-                                })
-                                .ok()?;
-                            if let Some(prettier_task) = lsp_store
-                                .update(&mut cx, |lsp_store, cx| {
-                                    lsp_store.prettier_instances.get_mut(&prettier_dir).map(
-                                        |existing_instance| {
-                                            existing_instance.prettier_task(
+                        Ok((prettier_result, ignore_dir)) => {
+                            if let Some(ignore_dir) = ignore_dir.as_ref() {
+                                lsp_store
+                                    .update(&mut cx, |store, _| {
+                                        store
+                                            .prettier_ignores_per_worktree
+                                            .entry(worktree_id)
+                                            .or_default()
+                                            .insert(Some(ignore_dir.clone()));
+                                    })
+                                    .ok();
+                            }
+                            match prettier_result {
+                                ControlFlow::Break(_) => None,
+                                ControlFlow::Continue(None) => {
+                                    let default_instance = lsp_store
+                                        .update(&mut cx, |store, cx| {
+                                            store
+                                                .prettiers_per_worktree
+                                                .entry(worktree_id)
+                                                .or_default()
+                                                .insert(None);
+                                            store.default_prettier.prettier_task(
                                                 &node,
-                                                Some(&prettier_dir),
+                                                ignore_dir,
                                                 Some(worktree_id),
                                                 cx,
                                             )
-                                        },
-                                    )
-                                })
-                                .ok()?
-                            {
-                                log::debug!("Found already started prettier in {prettier_dir:?}");
-                                return Some((Some(prettier_dir), prettier_task?.await.log_err()?));
-                            }
+                                        })
+                                        .ok()?;
+                                    Some((None, default_instance?.log_err().await?))
+                                }
+                                ControlFlow::Continue(Some(prettier_dir)) => {
+                                    lsp_store
+                                        .update(&mut cx, |store, _| {
+                                            store
+                                                .prettiers_per_worktree
+                                                .entry(worktree_id)
+                                                .or_default()
+                                                .insert(Some(prettier_dir.clone()))
+                                        })
+                                        .ok()?;
+                                    if let Some(prettier_task) = lsp_store
+                                        .update(&mut cx, |store, cx| {
+                                            store.prettier_instances.get_mut(&prettier_dir).map(
+                                                |existing_instance| {
+                                                    existing_instance.prettier_task(
+                                                        &node,
+                                                        Some(&prettier_dir),
+                                                        ignore_dir.clone(),
+                                                        Some(worktree_id),
+                                                        cx,
+                                                    )
+                                                },
+                                            )
+                                        })
+                                        .ok()?
+                                    {
+                                        log::debug!(
+                                            "Found already started prettier in {prettier_dir:?}"
+                                        );
+                                        return Some((
+                                            Some(prettier_dir),
+                                            prettier_task?.await.log_err()?,
+                                        ));
+                                    }
 
-                            log::info!("Found prettier in {prettier_dir:?}, starting.");
-                            let new_prettier_task = lsp_store
-                                .update(&mut cx, |lsp_store, cx| {
-                                    let new_prettier_task = Self::start_prettier(
-                                        node,
-                                        prettier_dir.clone(),
-                                        Some(worktree_id),
-                                        cx,
-                                    );
-                                    lsp_store.prettier_instances.insert(
-                                        prettier_dir.clone(),
-                                        PrettierInstance {
-                                            attempt: 0,
-                                            prettier: Some(new_prettier_task.clone()),
-                                        },
-                                    );
-                                    new_prettier_task
-                                })
-                                .ok()?;
-                            Some((Some(prettier_dir), new_prettier_task))
+                                    log::info!("Found prettier in {prettier_dir:?}, starting.");
+                                    let new_prettier_task = lsp_store
+                                        .update(&mut cx, |store, cx| {
+                                            let new_prettier_task = Self::start_prettier(
+                                                node,
+                                                prettier_dir.clone(),
+                                                ignore_dir,
+                                                Some(worktree_id),
+                                                cx,
+                                            );
+                                            store.prettier_instances.insert(
+                                                prettier_dir.clone(),
+                                                PrettierInstance {
+                                                    attempt: 0,
+                                                    prettier: Some(new_prettier_task.clone()),
+                                                },
+                                            );
+                                            new_prettier_task
+                                        })
+                                        .ok()?;
+                                    Some((Some(prettier_dir), new_prettier_task))
+                                }
+                            }
                         }
                         Err(e) => {
-                            log::error!("Failed to determine prettier path for buffer: {e:#}");
+                            log::error!("Failed to determine prettier installation: {e:#}");
                             None
                         }
                     }
                 })
             }
             None => {
-                let new_task = self.default_prettier.prettier_task(&node, None, cx);
+                let new_task = self.default_prettier.prettier_task(&node, None, None, cx);
                 cx.spawn(|_, _| async move { Some((None, new_task?.log_err().await?)) })
             }
         }
@@ -214,6 +257,7 @@ impl PrettierStore {
     fn start_prettier(
         node: NodeRuntime,
         prettier_dir: PathBuf,
+        ignore_dir: Option<PathBuf>,
         worktree_id: Option<WorktreeId>,
         cx: &mut ModelContext<Self>,
     ) -> PrettierTask {
@@ -222,12 +266,12 @@ impl PrettierStore {
             let new_server_id = prettier_store.update(&mut cx, |prettier_store, _| {
                 prettier_store.languages.next_language_server_id()
             })?;
-
-            let new_prettier = Prettier::start(new_server_id, prettier_dir, node, cx.clone())
-                .await
-                .context("default prettier spawn")
-                .map(Arc::new)
-                .map_err(Arc::new)?;
+            let new_prettier =
+                Prettier::start(new_server_id, prettier_dir, ignore_dir, node, cx.clone())
+                    .await
+                    .context("default prettier spawn")
+                    .map(Arc::new)
+                    .map_err(Arc::new)?;
             Self::register_new_prettier(
                 &prettier_store,
                 &new_prettier,
@@ -242,6 +286,7 @@ impl PrettierStore {
 
     fn start_default_prettier(
         node: NodeRuntime,
+        ignore_dir: Option<PathBuf>,
         worktree_id: Option<WorktreeId>,
         cx: &mut ModelContext<PrettierStore>,
     ) -> Task<anyhow::Result<PrettierTask>> {
@@ -283,6 +328,7 @@ impl PrettierStore {
                             let new_default_prettier = Self::start_prettier(
                                 node,
                                 default_prettier_dir().clone(),
+                                ignore_dir,
                                 worktree_id,
                                 cx,
                             );
@@ -303,6 +349,7 @@ impl PrettierStore {
                                 let new_default_prettier = Self::start_prettier(
                                     node,
                                     default_prettier_dir().clone(),
+                                    ignore_dir,
                                     worktree_id,
                                     cx,
                                 );
@@ -752,15 +799,16 @@ impl DefaultPrettier {
     pub fn prettier_task(
         &mut self,
         node: &NodeRuntime,
+        ignore_dir: Option<PathBuf>,
         worktree_id: Option<WorktreeId>,
         cx: &mut ModelContext<PrettierStore>,
     ) -> Option<Task<anyhow::Result<PrettierTask>>> {
         match &mut self.prettier {
             PrettierInstallation::NotInstalled { .. } => Some(
-                PrettierStore::start_default_prettier(node.clone(), worktree_id, cx),
+                PrettierStore::start_default_prettier(node.clone(), ignore_dir, worktree_id, cx),
             ),
             PrettierInstallation::Installed(existing_instance) => {
-                existing_instance.prettier_task(node, None, worktree_id, cx)
+                existing_instance.prettier_task(node, None, ignore_dir, worktree_id, cx)
             }
         }
     }
@@ -771,6 +819,7 @@ impl PrettierInstance {
         &mut self,
         node: &NodeRuntime,
         prettier_dir: Option<&Path>,
+        ignore_dir: Option<PathBuf>,
         worktree_id: Option<WorktreeId>,
         cx: &mut ModelContext<PrettierStore>,
     ) -> Option<Task<anyhow::Result<PrettierTask>>> {
@@ -790,6 +839,7 @@ impl PrettierInstance {
                     let new_task = PrettierStore::start_prettier(
                         node.clone(),
                         prettier_dir.to_path_buf(),
+                        ignore_dir,
                         worktree_id,
                         cx,
                     );
@@ -803,7 +853,12 @@ impl PrettierInstance {
                     cx.spawn(|prettier_store, mut cx| async move {
                         prettier_store
                             .update(&mut cx, |_, cx| {
-                                PrettierStore::start_default_prettier(node, worktree_id, cx)
+                                PrettierStore::start_default_prettier(
+                                    node,
+                                    ignore_dir,
+                                    worktree_id,
+                                    cx,
+                                )
                             })?
                             .await
                     })

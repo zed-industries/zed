@@ -134,10 +134,106 @@ impl Prettier {
         }
     }
 
+    pub async fn locate_prettier_ignore(
+        fs: &dyn Fs,
+        prettier_ignores: &HashSet<Option<PathBuf>>,
+        locate_from: &Path,
+    ) -> anyhow::Result<Option<PathBuf>> {
+        let mut path_to_check = locate_from
+            .components()
+            .take_while(|component| component.as_os_str().to_string_lossy() != "node_modules")
+            .collect::<PathBuf>();
+        if path_to_check != locate_from {
+            log::debug!(
+                "Skipping prettier ignore location for path {path_to_check:?} that is inside node_modules"
+            );
+            return Ok(None);
+        }
+
+        let path_to_check_metadata = fs
+            .metadata(&path_to_check)
+            .await
+            .with_context(|| format!("failed to get metadata for initial path {path_to_check:?}"))?
+            .with_context(|| format!("empty metadata for initial path {path_to_check:?}"))?;
+        if !path_to_check_metadata.is_dir {
+            path_to_check.pop();
+        }
+
+        let mut closest_package_json_path = None;
+        loop {
+            if prettier_ignores.contains(&Some(path_to_check.clone())) {
+                log::debug!("Found prettier ignore at {path_to_check:?}");
+                return Ok(Some(path_to_check));
+            } else if let Some(package_json_contents) =
+                read_package_json(fs, &path_to_check).await?
+            {
+                let ignore_path = path_to_check.join(".prettierignore");
+                if let Some(metadata) = fs
+                    .metadata(&ignore_path)
+                    .await
+                    .with_context(|| format!("fetching metadata for {ignore_path:?}"))?
+                {
+                    if !metadata.is_dir && !metadata.is_symlink {
+                        log::info!("Found prettier ignore at {ignore_path:?}");
+                        return Ok(Some(path_to_check));
+                    }
+                }
+                match &closest_package_json_path {
+                    None => closest_package_json_path = Some(path_to_check.clone()),
+                    Some(closest_package_json_path) => {
+                        if let Some(serde_json::Value::Array(workspaces)) =
+                            package_json_contents.get("workspaces")
+                        {
+                            let subproject_path = closest_package_json_path
+                                .strip_prefix(&path_to_check)
+                                .expect("traversing path parents, should be able to strip prefix");
+
+                            if workspaces
+                                .iter()
+                                .filter_map(|value| {
+                                    if let serde_json::Value::String(s) = value {
+                                        Some(s.clone())
+                                    } else {
+                                        log::warn!(
+                                            "Skipping non-string 'workspaces' value: {value:?}"
+                                        );
+                                        None
+                                    }
+                                })
+                                .any(|workspace_definition| {
+                                    workspace_definition == subproject_path.to_string_lossy()
+                                        || PathMatcher::new(&[workspace_definition])
+                                            .ok()
+                                            .map_or(false, |path_matcher| {
+                                                path_matcher.is_match(subproject_path)
+                                            })
+                                })
+                            {
+                                let workspace_ignore = path_to_check.join(".prettierignore");
+                                if let Some(metadata) = fs.metadata(&workspace_ignore).await? {
+                                    if !metadata.is_dir {
+                                        log::info!("Found prettier ignore at workspace root {workspace_ignore:?}");
+                                        return Ok(Some(path_to_check));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !path_to_check.pop() {
+                log::debug!("Found no prettier ignore in ancestors of {locate_from:?}");
+                return Ok(None);
+            }
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub async fn start(
         _: LanguageServerId,
         prettier_dir: PathBuf,
+        _: Option<PathBuf>,
         _: NodeRuntime,
         _: AsyncAppContext,
     ) -> anyhow::Result<Self> {
@@ -151,6 +247,7 @@ impl Prettier {
     pub async fn start(
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
+        ignore_dir: Option<PathBuf>,
         node: NodeRuntime,
         cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
@@ -173,7 +270,13 @@ impl Prettier {
         let server_name = LanguageServerName("prettier".into());
         let server_binary = LanguageServerBinary {
             path: node_path,
-            arguments: vec![prettier_server.into(), prettier_dir.as_path().into()],
+            arguments: vec![
+                prettier_server.into(),
+                prettier_dir.as_path().into(),
+                ignore_dir
+                    .map(|path| path.as_path().into())
+                    .unwrap_or_default(),
+            ],
             env: None,
         };
         let server = LanguageServer::new(
