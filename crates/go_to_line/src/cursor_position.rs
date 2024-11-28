@@ -17,6 +17,7 @@ pub(crate) struct SelectionStats {
     pub lines: usize,
     pub characters: usize,
     pub selections: usize,
+    pub words: Option<usize>,
 }
 
 pub struct CursorPosition {
@@ -52,6 +53,7 @@ impl CursorPosition {
 
             editor
                 .update(&mut cx, |editor, cx| {
+                    let is_markdown = is_markdown_file(editor, cx);
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     cursor_position.update(cx, |cursor_position, cx| {
                         cursor_position.selected_count = SelectionStats::default();
@@ -62,6 +64,21 @@ impl CursorPosition {
                                 .text_for_range(selection.start..selection.end)
                                 .map(|t| t.chars().count())
                                 .sum::<usize>();
+
+                            if is_markdown {
+                                let mut words = 0;
+                                words += buffer
+                                    .text_for_range(selection.start..selection.end)
+                                    .map(|t| t.split_whitespace().count())
+                                    .sum::<usize>();
+
+                                if let Some(current_words) = cursor_position.selected_count.words {
+                                    cursor_position.selected_count.words =
+                                        Some(current_words + words);
+                                } else {
+                                    cursor_position.selected_count.words = Some(words);
+                                }
+                            }
                             if last_selection
                                 .as_ref()
                                 .map_or(true, |last_selection| selection.id > last_selection.id)
@@ -88,6 +105,17 @@ impl CursorPosition {
                 .ok()
                 .flatten();
         });
+
+        // copied from crates/markdown_preview/src/markdown_preview_view.rs
+        pub fn is_markdown_file<V>(editor: &Editor, cx: &mut ViewContext<V>) -> bool {
+            let buffer = editor.buffer().read(cx);
+            if let Some(buffer) = buffer.as_singleton() {
+                if let Some(language) = buffer.read(cx).language() {
+                    return language.name() == "Markdown".into();
+                }
+            }
+            false
+        }
     }
 
     fn write_position(&self, text: &mut String, cx: &AppContext) {
@@ -104,19 +132,30 @@ impl CursorPosition {
             lines,
             characters,
             selections,
+            words,
         } = self.selected_count;
         let format = LineIndicatorFormat::get(None, cx);
         let is_short_format = format == &LineIndicatorFormat::Short;
         let lines = (lines > 1).then_some((lines, "line"));
         let selections = (selections > 1).then_some((selections, "selection"));
         let characters = (characters > 0).then_some((characters, "character"));
+        let words = if words.is_some() {
+            let words = words.unwrap();
+            if words > 0 {
+                Some((words, "word"))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         if (None, None, None) == (characters, selections, lines) {
             // Nothing to display.
             return;
         }
         write!(text, " (").unwrap();
         let mut wrote_once = false;
-        for (count, name) in [selections, lines, characters].into_iter().flatten() {
+        for (count, name) in [selections, lines, characters, words].into_iter().flatten() {
             if wrote_once {
                 write!(text, ", ").unwrap();
             }
