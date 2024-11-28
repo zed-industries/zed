@@ -6473,6 +6473,7 @@ impl LspStore {
             .uri
             .to_file_path()
             .map_err(|_| anyhow!("URI is not a file"))?;
+        let abs_path = abs_path.canonicalize()?;
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
