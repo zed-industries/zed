@@ -1867,6 +1867,86 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_search_query_with_match_whole_word(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let buffer_text = r#"
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                edits,
+                Some(AutoindentMode::Block {
+                    original_indent_columns,
+                }),
+                cx,
+            )
+        });
+
+        this.buffer.update(cx, |buffer, cx| {
+            buffer.edit([(end_of_line..start_of_next_line, replace)], None, cx)
+        });
+        "#
+        .unindent();
+        let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
+        let cx = cx.add_empty_window();
+
+        let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
+
+        let search_bar = cx.new_view(|cx| {
+            let mut search_bar = BufferSearchBar::new(cx);
+            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(cx);
+            search_bar
+        });
+
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search(
+                    "edit\\(",
+                    Some(SearchOptions::WHOLE_WORD | SearchOptions::REGEX),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.select_all_matches(&SelectAllMatches, cx);
+        });
+        search_bar.update(cx, |_, cx| {
+            let all_selections =
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+            assert_eq!(
+                all_selections.len(),
+                2,
+                "Should select all `edit(` in the buffer, but got: {all_selections:?}"
+            );
+        });
+
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search(
+                    "edit(",
+                    Some(SearchOptions::WHOLE_WORD | SearchOptions::CASE_SENSITIVE),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.select_all_matches(&SelectAllMatches, cx);
+        });
+        search_bar.update(cx, |_, cx| {
+            let all_selections =
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+            assert_eq!(
+                all_selections.len(),
+                2,
+                "Should select all `edit(` in the buffer, but got: {all_selections:?}"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_search_query_history(cx: &mut TestAppContext) {
         init_globals(cx);
         let buffer_text = r#"
