@@ -388,7 +388,7 @@ pub const fn green() -> Hsla {
     Hsla {
         h: 0.3333333333,
         s: 1.,
-        l: 0.5,
+        l: 0.25,
         a: 1.,
     }
 }
