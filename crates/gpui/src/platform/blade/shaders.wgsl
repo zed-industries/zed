@@ -365,8 +365,8 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     if (quad.background.tag == 0u) {
         out.background_solid = hsla_to_rgba(quad.background.solid);
     } else if (quad.background.tag == 1u) {
-        out.background_color0 = hsla_to_rgba(quad.background.colors[0].color);
-        out.background_color1 = hsla_to_rgba(quad.background.colors[1].color);
+        out.background_color0 = linear_to_srgba(hsla_to_rgba(quad.background.colors[0].color));
+        out.background_color1 = linear_to_srgba(hsla_to_rgba(quad.background.colors[1].color));
     }
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
@@ -577,8 +577,8 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     if (sprite.color.tag == 0u) {
         out.color_solid = hsla_to_rgba(sprite.color.solid);
     } else if (sprite.color.tag == 1u) {
-        out.color0 = hsla_to_rgba(sprite.color.colors[0].color);
-        out.color1 = hsla_to_rgba(sprite.color.colors[1].color);
+        out.color0 = linear_to_srgba(hsla_to_rgba(sprite.color.colors[0].color));
+        out.color1 = linear_to_srgba(hsla_to_rgba(sprite.color.colors[1].color));
     }
     return out;
 }

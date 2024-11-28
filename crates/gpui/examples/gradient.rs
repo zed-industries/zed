@@ -3,22 +3,16 @@ use gpui::{
     Bounds, ColorSpace, Half, Hsla, Render, ViewContext, WindowOptions,
 };
 
-const COLORS: [(Hsla, Hsla); 16] = [
+const COLORS: [(Hsla, Hsla); 10] = [
     (gpui::red(), gpui::blue()),
     (gpui::red(), gpui::green()),
     (gpui::red(), gpui::yellow()),
-    (gpui::red(), gpui::white()),
-    (gpui::blue(), gpui::red()),
     (gpui::blue(), gpui::green()),
     (gpui::blue(), gpui::yellow()),
-    (gpui::blue(), gpui::white()),
-    (gpui::green(), gpui::red()),
-    (gpui::green(), gpui::blue()),
     (gpui::green(), gpui::yellow()),
+    (gpui::red(), gpui::white()),
+    (gpui::blue(), gpui::white()),
     (gpui::green(), gpui::white()),
-    (gpui::yellow(), gpui::red()),
-    (gpui::yellow(), gpui::blue()),
-    (gpui::yellow(), gpui::green()),
     (gpui::yellow(), gpui::white()),
 ];
 
