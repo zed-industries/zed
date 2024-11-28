@@ -925,6 +925,56 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_auto_indent(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "voice/conn.go",
+            indoc! {"
+				func (c *connImpl) HandleVoiceServerUpdate(update botgateway.EventVoiceServerUpdate) {
+					c.stateMu.Lock()
+					defer c.stateMu.Unlock()
+					if update.GuildID != c.state.GuildID || update.Endpoint == nil {
+						return
+					}
+
+					c.state.Token = update.Token
+					c.state.Endpoint = *update.Endpoint
+
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					if err := c.gateway.Open(ctx, c.state); err != nil {
+						c.config.Logger.Error(\"error opening voice gateway\", slog.Any(\"err\", err))
+					}
+				}
+            "},
+            indoc! {"
+				func (c *connImpl) HandleVoiceServerUpdate(update botgateway.EventVoiceServerUpdate) {
+					c.stateMu.Lock()
+					defer c.stateMu.Unlock()
+					if update.GuildID != c.state.GuildID || update.Endpoint == nil {
+						return
+					}
+
+					c.state.Token = update.Token
+					c.state.Endpoint = *update.Endpoint
+
+					go fun<|user_cursor_is_here|>
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					if err := c.gateway.Open(ctx, c.state); err != nil {
+						c.config.Logger.Error(\"error opening voice gateway\", slog.Any(\"err\", err))
+					}
+				}
+            "},
+            vec![
+                "Ensure the `gateway.Open()` call is done inside an anonymous goroutine",
+                "Ensure that the context timeout with 5 seconds is also happening inside the anonymous goroutine",
+            ],
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
     async fn test_pub_fields(cx: &mut TestAppContext) {
         assert_open_edit_complete(
             "main.rs",
@@ -1000,11 +1050,11 @@ mod tests {
                 }
 
                 impl Element {
-                    fn width(&self) -> usize {
-                        self.width
+                    fn height(&self) -> usize {
+                        self.height
                     }
 
-                    fn height(&self) -> usize {
+                    fn width(&self) -> usize {
                         self.width
                     }
                 }
@@ -1019,18 +1069,18 @@ mod tests {
                 }
 
                 impl Element {
-                    fn width(&self) -> usize {
-                        self.width
+                    fn height(&self) -> usize {
+                        self.height
                     }
 
-                    fn height(&self) -> usize {
+                    fn width(&self) -> usize {
                         self.width
                     }
                 }
             "},
             vec![
                 "Ensure that `Element` has a `wedge` field",
-                "Ensure that `Element` has a `wedge` method",
+                "Ensure that `Element` has a `width` method that returns `self.wedge`",
             ],
             cx,
         )
