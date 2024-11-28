@@ -6,6 +6,8 @@ use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::LanguageSelector;
 
+gpui::actions!(language_selector, [Toggle]);
+
 pub struct ActiveBufferLanguage {
     active_language: Option<Option<LanguageName>>,
     workspace: WeakView<Workspace>,
@@ -54,7 +56,7 @@ impl Render for ActiveBufferLanguage {
                             });
                         }
                     }))
-                    .tooltip(|cx| Tooltip::text("Select Language", cx)),
+                    .tooltip(|cx| Tooltip::for_action("Select Language", &Toggle, cx)),
             )
         })
     }
