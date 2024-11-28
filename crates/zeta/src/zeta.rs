@@ -925,7 +925,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_field_visibility(cx: &mut TestAppContext) {
+    async fn test_pub_fields(cx: &mut TestAppContext) {
         assert_open_edit_complete(
             "main.rs",
             indoc! {"
@@ -945,9 +945,92 @@ mod tests {
                 }
             "},
             vec![
+                "Ensure that `pixels` is public",
                 "Ensure that `stride` is public",
                 "Ensure that `size` is public",
                 "Ensure that `format` is public",
+            ],
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_private_fields(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "main.rs",
+            indoc! {"
+                struct Canvas {
+                    pub pixels: Vec<u8>,
+                    pub stride: u8,
+                    pub size: Size<u8>,
+                    pub format: Format
+                }
+            "},
+            indoc! {"
+                struct Canvas {
+                    <|user_cursor_is_here|>pixels: Vec<u8>,
+                    pub stride: u8,
+                    pub size: Size<u8>,
+                    pub format: Format
+                }
+            "},
+            vec![
+                "Ensure that `pixels` is private",
+                "Ensure that `stride` is private",
+                "Ensure that `size` is private",
+                "Ensure that `format` is private",
+            ],
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_keeping_user_edit(cx: &mut TestAppContext) {
+        assert_open_edit_complete(
+            "main.rs",
+            indoc! {"
+                struct Element {
+                    height: usize,
+                    width: usize,
+                    layout: Layout,
+                    bg_color: Color,
+                    fg_color: Color
+                }
+
+                impl Element {
+                    fn width(&self) -> usize {
+                        self.width
+                    }
+
+                    fn height(&self) -> usize {
+                        self.width
+                    }
+                }
+            "},
+            indoc! {"
+                struct Element {
+                    height: usize,
+                    wedge<|user_cursor_is_here|>: usize,
+                    layout: Layout,
+                    bg_color: Color,
+                    fg_color: Color
+                }
+
+                impl Element {
+                    fn width(&self) -> usize {
+                        self.width
+                    }
+
+                    fn height(&self) -> usize {
+                        self.width
+                    }
+                }
+            "},
+            vec![
+                "Ensure that `Element` has a `wedge` field",
+                "Ensure that `Element` has a `wedge` method",
             ],
             cx,
         )
