@@ -10,42 +10,29 @@ use futures::{io, Stream, StreamExt as _};
 use gpui::{
     BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
 };
-
-use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc, thread};
+use parking_lot::Mutex;
+use std::{borrow::Cow, collections::VecDeque, future::Future, pin::Pin, sync::Arc, thread};
 use util::{debug_panic, ResultExt as _};
 #[cfg(not(target_os = "windows"))]
 use webrtc::{
     audio_frame::AudioFrame,
     audio_source::{native::NativeAudioSource, AudioSourceOptions, RtcAudioSource},
+    audio_stream::native::NativeAudioStream,
     video_frame::{VideoBuffer, VideoFrame, VideoRotation},
     video_source::{native::NativeVideoSource, RtcVideoSource, VideoResolution},
     video_stream::native::NativeVideoStream,
 };
 
-// TODO
-// #[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
+#[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
 use livekit::track::RemoteAudioTrack;
-// #[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
+#[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
 pub use livekit::*;
-// #[cfg(any(test, feature = "test-support", target_os = "windows"))]
-// use test::track::RemoteAudioTrack;
-// #[cfg(any(test, feature = "test-support", target_os = "windows"))]
-// pub use test::*;
-
-#[cfg(not(target_os = "windows"))]
-mod audio_manager;
+#[cfg(any(test, feature = "test-support", target_os = "windows"))]
+use test::track::RemoteAudioTrack;
+#[cfg(any(test, feature = "test-support", target_os = "windows"))]
+pub use test::*;
 
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
-
-struct TellTheAudioManagerToDropYourPointer {
-    remote_audio_track_id: usize,
-}
-
-impl Drop for TellTheAudioManagerToDropYourPointer {
-    fn drop(&mut self) {
-        audio_manager::get_audio_manager_channel().send(self.remote_audio_track_id)
-    }
-}
 
 pub enum AudioStream {
     Input {
@@ -54,7 +41,6 @@ pub enum AudioStream {
     },
     Output {
         _task: Task<()>,
-        stream_canceler: TellTheAudioManagerToDropYourPointer,
     },
 }
 
@@ -284,8 +270,6 @@ pub fn play_remote_audio_track(
     track: &RemoteAudioTrack,
     background_executor: &BackgroundExecutor,
 ) -> Result<AudioStream> {
-    use audio_manager::{get_default_output, start_output_stream};
-
     let track = track.clone();
     // We track device changes in our output because Livekit has a resampler built in,
     // and it's easy to create a new native audio stream when the device changes.
@@ -300,12 +284,8 @@ pub fn play_remote_audio_track(
         let _task = background_executor.spawn({
             let background_executor = background_executor.clone();
             async move {
-                let (mut _receive_task, mut _thread) = audio_manager::start_output_stream(
-                    output_config,
-                    output_device,
-                    &track,
-                    &background_executor,
-                );
+                let (mut _receive_task, mut _thread) =
+                    start_output_stream(output_config, output_device, &track, &background_executor);
 
                 while let Some(_) = default_change_listener.next().await {
                     let Some((output_device, output_config)) = get_default_output().log_err()
@@ -354,6 +334,97 @@ fn default_device(input: bool) -> anyhow::Result<(cpal::Device, cpal::SupportedS
             .context("failed to get default output config")?;
     }
     Ok((device, config))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_default_output() -> anyhow::Result<(cpal::Device, cpal::SupportedStreamConfig)> {
+    let host = cpal::default_host();
+    let output_device = host
+        .default_output_device()
+        .context("failed to read default output device")?;
+    let output_config = output_device.default_output_config()?;
+    Ok((output_device, output_config))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn start_output_stream(
+    output_config: cpal::SupportedStreamConfig,
+    output_device: cpal::Device,
+    track: &track::RemoteAudioTrack,
+    background_executor: &BackgroundExecutor,
+) -> (Task<()>, std::sync::mpsc::Sender<()>) {
+    let buffer = Arc::new(Mutex::new(VecDeque::<i16>::new()));
+    let sample_rate = output_config.sample_rate();
+
+    let mut stream = NativeAudioStream::new(
+        track.rtc_track(),
+        sample_rate.0 as i32,
+        output_config.channels() as i32,
+    );
+
+    let receive_task = background_executor.spawn({
+        let buffer = buffer.clone();
+        async move {
+            const MS_OF_BUFFER: u32 = 100;
+            const MS_IN_SEC: u32 = 1000;
+            while let Some(frame) = stream.next().await {
+                let frame_size = frame.samples_per_channel * frame.num_channels;
+                debug_assert!(frame.data.len() == frame_size as usize);
+
+                let buffer_size =
+                    ((frame.sample_rate * frame.num_channels) / MS_IN_SEC * MS_OF_BUFFER) as usize;
+
+                let mut buffer = buffer.lock();
+                let new_size = buffer.len() + frame.data.len();
+                if new_size > buffer_size {
+                    let overflow = new_size - buffer_size;
+                    buffer.drain(0..overflow);
+                }
+
+                buffer.extend(frame.data.iter());
+            }
+        }
+    });
+
+    // The _output_stream needs to be on it's own thread because it's !Send
+    // and we experienced a deadlock when it's created on the main thread.
+    let (thread, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
+    thread::spawn(move || {
+        if cfg!(any(test, feature = "test-support")) {
+            // Can't play audio in tests
+            return;
+        }
+
+        let output_stream = output_device.build_output_stream(
+            &output_config.config(),
+            {
+                let buffer = buffer.clone();
+                move |data, _info| {
+                    let mut buffer = buffer.lock();
+                    if buffer.len() < data.len() {
+                        data.fill(0);
+                    } else {
+                        // SAFETY: We know that buffer has at least data.len() values in it.
+                        // because we just checked
+                        let mut drain = buffer.drain(..data.len());
+                        data.fill_with(|| unsafe { drain.next().unwrap_unchecked() });
+                    }
+                }
+            },
+            |error| log::error!("error playing audio track: {:?}", error),
+            None,
+        );
+
+        let Some(output_stream) = output_stream.log_err() else {
+            return;
+        };
+
+        output_stream.play().log_err();
+        // Block forever to keep the output stream alive
+        end_on_drop_rx.recv().ok();
+    });
+
+    (receive_task, thread)
 }
 
 #[cfg(target_os = "windows")]
