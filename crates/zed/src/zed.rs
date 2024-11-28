@@ -5,10 +5,13 @@ pub(crate) mod linux_prompts;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod open_listener;
+mod quick_action_bar;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
+use anyhow::Context as _;
 pub use app_menus::*;
+use assets::Assets;
 use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
@@ -17,17 +20,15 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
+use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem,
     PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, View, ViewContext,
     VisualContext, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
-
-use anyhow::Context as _;
-use assets::Assets;
-use futures::{channel::mpsc, select_biased, StreamExt};
 use outline_panel::OutlinePanel;
+use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use project::{DirectoryLister, Item};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -42,16 +43,14 @@ use settings::{
 use std::any::TypeId;
 use std::path::PathBuf;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use theme::ActiveTheme;
-use workspace::notifications::NotificationId;
-use workspace::CloseIntent;
-
-use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use terminal_view::terminal_panel::{self, TerminalPanel};
+use theme::ActiveTheme;
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
-use vim::VimModeSetting;
+use vim_mode_setting::VimModeSetting;
 use welcome::{BaseKeymap, MultibufferHint};
+use workspace::notifications::NotificationId;
+use workspace::CloseIntent;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -222,7 +221,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(cursor_position, cx);
         });
 
-        auto_update::notify_of_any_new_update(cx);
+        auto_update_ui::notify_of_any_new_update(cx);
 
         let handle = cx.view().downgrade();
         cx.on_window_should_close(move |cx| {
@@ -236,11 +235,11 @@ pub fn initialize_workspace(
                 .unwrap_or(true)
         });
 
+        let release_channel = ReleaseChannel::global(cx);
+        let assistant2_feature_flag = cx.wait_for_flag::<feature_flags::Assistant2FeatureFlag>();
+
         let prompt_builder = prompt_builder.clone();
         cx.spawn(|workspace_handle, mut cx| async move {
-            let assistant_panel =
-                assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
-
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
@@ -257,7 +256,6 @@ pub fn initialize_workspace(
                 project_panel,
                 outline_panel,
                 terminal_panel,
-                assistant_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
@@ -265,20 +263,46 @@ pub fn initialize_workspace(
                 project_panel,
                 outline_panel,
                 terminal_panel,
-                assistant_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-                workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(outline_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
+            })?;
+            let is_assistant2_enabled =
+                if cfg!(test) || release_channel != ReleaseChannel::Dev {
+                    false
+                } else {
+                    assistant2_feature_flag.await
+                }
+            ;
+
+            let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
+                let assistant2_panel =
+                    assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?;
+
+                (None, Some(assistant2_panel))
+            } else {
+                let assistant_panel =
+                    assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone()).await?;
+
+                (Some(assistant_panel), None)
+            };
+            workspace_handle.update(&mut cx, |workspace, cx| {
+                if let Some(assistant_panel) = assistant_panel {
+                    workspace.add_panel(assistant_panel, cx);
+                }
+
+                if let Some(assistant2_panel) = assistant2_panel {
+                    workspace.add_panel(assistant2_panel, cx);
+                }
             })
         })
         .detach();
@@ -823,8 +847,13 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
-    cx.on_keyboard_layout_change(move |_| {
-        keyboard_layout_tx.unbounded_send(()).ok();
+    let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+    cx.on_keyboard_layout_change(move |cx| {
+        let next_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+        if next_mapping != current_mapping {
+            current_mapping = next_mapping;
+            keyboard_layout_tx.unbounded_send(()).ok();
+        }
     })
     .detach();
 
@@ -3161,12 +3190,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"
-                {
-                    "base_keymap": "Atom"
-                }
-                "#
-                .into(),
+                &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
             .await
@@ -3176,16 +3200,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"
-                [
-                    {
-                        "bindings": {
-                            "backspace": "test1::A"
-                        }
-                    }
-                ]
-                "#
-                .into(),
+                &r#"[{"bindings": {"backspace": "test1::A"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -3228,16 +3243,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"
-                [
-                    {
-                        "bindings": {
-                            "backspace": "test1::B"
-                        }
-                    }
-                ]
-                "#
-                .into(),
+                &r#"[{"bindings": {"backspace": "test1::B"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -3257,12 +3263,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"
-                {
-                    "base_keymap": "JetBrains"
-                }
-                "#
-                .into(),
+                &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )
             .await
@@ -3289,24 +3290,20 @@ mod tests {
         // From the Atom keymap
         use workspace::ActivatePreviousPane;
         // From the JetBrains keymap
-        use pane::ActivatePrevItem;
+        use diagnostics::Deploy;
+
         workspace
             .update(cx, |workspace, _| {
-                workspace
-                    .register_action(|_, _: &A, _| {})
-                    .register_action(|_, _: &B, _| {});
+                workspace.register_action(|_, _: &A, _cx| {});
+                workspace.register_action(|_, _: &B, _cx| {});
+                workspace.register_action(|_, _: &Deploy, _cx| {});
             })
             .unwrap();
         app_state
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"
-                {
-                    "base_keymap": "Atom"
-                }
-                "#
-                .into(),
+                &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
             .await
@@ -3315,16 +3312,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"
-                [
-                    {
-                        "bindings": {
-                            "backspace": "test2::A"
-                        }
-                    }
-                ]
-                "#
-                .into(),
+                &r#"[{"bindings": {"backspace": "test2::A"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -3362,16 +3350,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"
-                [
-                    {
-                        "bindings": {
-                            "backspace": null
-                        }
-                    }
-                ]
-                "#
-                .into(),
+                &r#"[{"bindings": {"backspace": null}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -3391,12 +3370,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"
-                {
-                    "base_keymap": "JetBrains"
-                }
-                "#
-                .into(),
+                &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )
             .await
@@ -3404,12 +3378,7 @@ mod tests {
 
         cx.background_executor.run_until_parked();
 
-        assert_key_bindings_for(
-            workspace.into(),
-            cx,
-            vec![("[", &ActivatePrevItem)],
-            line!(),
-        );
+        assert_key_bindings_for(workspace.into(), cx, vec![("6", &Deploy)], line!());
     }
 
     #[gpui::test]
@@ -3498,7 +3467,8 @@ mod tests {
                 app_state.client.http_client().clone(),
                 cx,
             );
-            language_model::init(
+            language_model::init(cx);
+            language_models::init(
                 app_state.user_store.clone(),
                 app_state.client.clone(),
                 app_state.fs.clone(),

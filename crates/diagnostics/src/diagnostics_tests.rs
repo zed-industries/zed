@@ -155,7 +155,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
     let editor = view.update(cx, |view, _| view.editor.clone());
 
-    view.next_notification(cx).await;
+    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .await;
     assert_eq!(
         editor_blocks(&editor, cx),
         [
@@ -240,7 +241,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store.disk_based_diagnostics_finished(language_server_id, cx);
     });
 
-    view.next_notification(cx).await;
+    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .await;
     assert_eq!(
         editor_blocks(&editor, cx),
         [
@@ -352,7 +354,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store.disk_based_diagnostics_finished(language_server_id, cx);
     });
 
-    view.next_notification(cx).await;
+    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .await;
     assert_eq!(
         editor_blocks(&editor, cx),
         [
@@ -491,6 +494,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     });
 
     // Only the first language server's diagnostics are shown.
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -537,6 +542,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     });
 
     // Both language server's diagnostics are shown.
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -603,6 +610,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     });
 
     // Only the first language server's diagnostics are updated.
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -659,6 +668,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     });
 
     // Both language servers' diagnostics are updated.
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),

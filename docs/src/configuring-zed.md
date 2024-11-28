@@ -1628,7 +1628,7 @@ List of `integer` column numbers
     "button": false,
     "shell": {},
     "toolbar": {
-      "title": true
+      "breadcrumbs": true
     },
     "working_directory": "current_project_directory"
   }
@@ -1946,7 +1946,7 @@ Disable with:
 
 ## Terminal: Toolbar
 
-- Description: Whether or not to show various elements in the terminal toolbar. It only affects terminals placed in the editor pane.
+- Description: Whether or not to show various elements in the terminal toolbar.
 - Setting: `toolbar`
 - Default:
 
@@ -1954,7 +1954,7 @@ Disable with:
 {
   "terminal": {
     "toolbar": {
-      "title": true
+      "breadcrumbs": true
     }
   }
 }
@@ -1962,7 +1962,13 @@ Disable with:
 
 **Options**
 
-At the moment, only the `title` option is available, it controls displaying of the terminal title that can be changed via `PROMPT_COMMAND`. If the title is hidden, the terminal toolbar is not displayed.
+At the moment, only the `breadcrumbs` option is available, it controls displaying of the terminal title that can be changed via `PROMPT_COMMAND`.
+
+If the terminal title is empty, the breadcrumbs won't be shown.
+
+The shell running in the terminal needs to be configured to emit the title.
+
+Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 ### Terminal: Button
 

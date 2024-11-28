@@ -48,7 +48,7 @@ use ui::{v_flex, ContextMenu};
 use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
 
 /// A selected entry in e.g. project panel.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SelectedEntry {
     pub worktree_id: WorktreeId,
     pub entry_id: ProjectEntryId,
@@ -291,7 +291,7 @@ pub struct Pane {
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
     custom_drop_handle:
         Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
-    can_split: bool,
+    can_split_predicate: Option<Arc<dyn Fn(&mut Self, &dyn Any, &mut ViewContext<Self>) -> bool>>,
     should_display_tab_bar: Rc<dyn Fn(&ViewContext<Pane>) -> bool>,
     render_tab_bar_buttons:
         Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> (Option<AnyElement>, Option<AnyElement>)>,
@@ -303,7 +303,7 @@ pub struct Pane {
     double_click_dispatch_action: Box<dyn Action>,
     save_modals_spawned: HashSet<EntityId>,
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
-    split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
 }
 
@@ -411,7 +411,7 @@ impl Pane {
             project,
             can_drop_predicate,
             custom_drop_handle: None,
-            can_split: true,
+            can_split_predicate: None,
             should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
                 if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
@@ -623,9 +623,13 @@ impl Pane {
         self.should_display_tab_bar = Rc::new(should_display_tab_bar);
     }
 
-    pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
-        self.can_split = can_split;
-        cx.notify();
+    pub fn set_can_split(
+        &mut self,
+        can_split_predicate: Option<
+            Arc<dyn Fn(&mut Self, &dyn Any, &mut ViewContext<Self>) -> bool + 'static>,
+        >,
+    ) {
+        self.can_split_predicate = can_split_predicate;
     }
 
     pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ViewContext<Self>) {
@@ -2071,8 +2075,10 @@ impl Pane {
 
         let is_pinned = self.is_tab_pinned(ix);
         let pane = cx.view().downgrade();
+        let menu_context = item.focus_handle(cx);
         right_click_menu(ix).trigger(tab).menu(move |cx| {
             let pane = pane.clone();
+            let menu_context = menu_context.clone();
             ContextMenu::build(cx, move |mut menu, cx| {
                 if let Some(pane) = pane.upgrade() {
                     menu = menu
@@ -2251,7 +2257,7 @@ impl Pane {
                     }
                 }
 
-                menu
+                menu.context(menu_context)
             })
         })
     }
@@ -2384,8 +2390,18 @@ impl Pane {
         self.zoomed
     }
 
-    fn handle_drag_move<T>(&mut self, event: &DragMoveEvent<T>, cx: &mut ViewContext<Self>) {
-        if !self.can_split {
+    fn handle_drag_move<T: 'static>(
+        &mut self,
+        event: &DragMoveEvent<T>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let can_split_predicate = self.can_split_predicate.take();
+        let can_split = match &can_split_predicate {
+            Some(can_split_predicate) => can_split_predicate(self, event.dragged_item(), cx),
+            None => false,
+        };
+        self.can_split_predicate = can_split_predicate;
+        if !can_split {
             return;
         }
 
@@ -2455,6 +2471,8 @@ impl Pane {
                         to_pane = workspace.split_pane(to_pane, split_direction, cx);
                     }
                     let old_ix = from_pane.read(cx).index_for_item_id(item_id);
+                    let old_len = to_pane.read(cx).items.len();
+                    move_item(&from_pane, &to_pane, item_id, ix, cx);
                     if to_pane == from_pane {
                         if let Some(old_index) = old_ix {
                             to_pane.update(cx, |this, _| {
@@ -2472,7 +2490,10 @@ impl Pane {
                         }
                     } else {
                         to_pane.update(cx, |this, _| {
-                            if this.has_pinned_tabs() && ix < this.pinned_tab_count {
+                            if this.items.len() > old_len // Did we not deduplicate on drag?
+                                && this.has_pinned_tabs()
+                                && ix < this.pinned_tab_count
+                            {
                                 this.pinned_tab_count += 1;
                             }
                         });
@@ -2484,7 +2505,6 @@ impl Pane {
                             }
                         })
                     }
-                    move_item(&from_pane, &to_pane, item_id, ix, cx);
                 });
             })
             .log_err();
@@ -2674,6 +2694,10 @@ impl Pane {
                 }
             })
             .collect()
+    }
+
+    pub fn drag_split_direction(&self) -> Option<SplitDirection> {
+        self.drag_split_direction
     }
 }
 

@@ -217,6 +217,8 @@ impl EditorElement {
         register_action(view, cx, Editor::transpose);
         register_action(view, cx, Editor::rewrap);
         register_action(view, cx, Editor::cut);
+        register_action(view, cx, Editor::kill_ring_cut);
+        register_action(view, cx, Editor::kill_ring_yank);
         register_action(view, cx, Editor::copy);
         register_action(view, cx, Editor::paste);
         register_action(view, cx, Editor::undo);
