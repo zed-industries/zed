@@ -322,7 +322,7 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
                     let oklab_color0 = linear_srgb_to_oklab(color0);
                     let oklab_color1 = linear_srgb_to_oklab(color1);
                     let oklab_color = mix(oklab_color0, oklab_color1, t);
-                    background_color = srgba_to_linear(oklab_to_linear_srgb(oklab_color));
+                    background_color = oklab_to_linear_srgb(oklab_color);
                 }
             }
         }
