@@ -316,7 +316,7 @@ impl ProjectPanel {
             let tash_action = [TypeId::of::<Trash>()];
             let is_remote = project.read(cx).is_via_collab();
 
-            if !is_remote {
+            if is_remote {
                 CommandPaletteFilter::update_global(cx, |filter, _cx| {
                     filter.hide_action_types(&tash_action);
                 });
