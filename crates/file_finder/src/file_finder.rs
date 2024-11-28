@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod file_finder_tests;
 
-mod file_finder_settings;
+pub mod file_finder_settings;
 mod new_path_prompt;
 mod open_path_prompt;
 

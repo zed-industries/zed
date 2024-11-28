@@ -3,6 +3,8 @@ mod active_buffer_language;
 pub use active_buffer_language::ActiveBufferLanguage;
 use anyhow::anyhow;
 use editor::Editor;
+use file_finder::file_finder_settings::FileFinderSettings;
+use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
@@ -11,7 +13,8 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use project::Project;
-use std::sync::Arc;
+use settings::Settings;
+use std::{path::Path, sync::Arc};
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -115,13 +118,37 @@ impl LanguageSelectorDelegate {
             selected_index: 0,
         }
     }
+
+    fn get_language_icon(&self, language_name: &str, cx: &AppContext) -> Option<SharedString> {
+        // Try custom language suffixes
+        let custom_suffixes = match language_name.to_lowercase().as_str() {
+            "rust" => vec!["rs"],
+            "javascript" => vec!["js", "mjs"],
+            "typescript" => vec!["ts", "tsx"],
+            "python" => vec!["py"],
+            "c++" => vec!["cpp", "cxx", "cc"],
+            "c#" => vec!["cs"],
+            _ => vec![],
+        };
+
+        for extension in custom_suffixes {
+            if let Some(icon) = FileIcons::get_icon(Path::new(&format!("file.{}", extension)), cx) {
+                return Some(icon);
+            }
+        }
+
+        // Use the language name itself if there's no custom suffix
+        let normalized_name = language_name.to_lowercase().replace(' ', "_");
+        FileIcons::get_icon(Path::new(&format!("file.{}", normalized_name)), cx)
+            .or_else(|| FileIcons::get_icon(Path::new(language_name), cx))
+    }
 }
 
 impl PickerDelegate for LanguageSelectorDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
-        "Select a language...".into()
+        "Select a language…".into()
     }
 
     fn match_count(&self) -> usize {
@@ -221,11 +248,22 @@ impl PickerDelegate for LanguageSelectorDelegate {
             label.push_str(" (current)");
         }
 
+        let settings = FileFinderSettings::get_global(cx);
+
+        let language_icon = if settings.file_icons {
+            self.get_language_icon(&mat.string, cx)
+                .map(Icon::from_path)
+                .map(|icon| icon.color(Color::Muted))
+        } else {
+            None
+        };
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
+                .start_slot::<Icon>(language_icon)
                 .child(HighlightedLabel::new(label, mat.positions.clone())),
         )
     }
