@@ -1,6 +1,6 @@
 use gpui::{
     canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, App, AppContext,
-    Bounds, ColorInterpolationMethod, Half, Hsla, Render, ViewContext, WindowOptions,
+    Bounds, ColorSpace, Half, Hsla, Render, ViewContext, WindowOptions,
 };
 
 const COLORS: [(Hsla, Hsla); 16] = [
@@ -24,14 +24,14 @@ const COLORS: [(Hsla, Hsla); 16] = [
 
 struct GradientViewer {
     color_ix: usize,
-    interpolation_method: ColorInterpolationMethod,
+    color_space: ColorSpace,
 }
 
 impl GradientViewer {
     fn new() -> Self {
         Self {
             color_ix: 0,
-            interpolation_method: ColorInterpolationMethod::Oklab,
+            color_space: ColorSpace::default(),
         }
     }
 }
@@ -39,7 +39,7 @@ impl GradientViewer {
 impl Render for GradientViewer {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let (color0, color1) = COLORS[self.color_ix];
-        let method = self.interpolation_method;
+        let color_space = self.color_space;
 
         div()
             .font_family(".SystemUIFont")
@@ -70,17 +70,12 @@ impl Render for GradientViewer {
                                     .text_sm()
                                     .bg(gpui::black())
                                     .text_color(gpui::white())
-                                    .child(format!("{:?}", method))
+                                    .child(format!("{}", color_space))
                                     .active(|this| this.opacity(0.8))
                                     .on_click(cx.listener(move |this, _, cx| {
-                                        this.interpolation_method = match this.interpolation_method
-                                        {
-                                            ColorInterpolationMethod::Oklab => {
-                                                ColorInterpolationMethod::SrgbLinear
-                                            }
-                                            ColorInterpolationMethod::SrgbLinear => {
-                                                ColorInterpolationMethod::Oklab
-                                            }
+                                        this.color_space = match this.color_space {
+                                            ColorSpace::Oklab => ColorSpace::Srgb,
+                                            ColorSpace::Srgb => ColorSpace::Oklab,
                                         };
                                         cx.notify();
                                     })),
@@ -138,18 +133,21 @@ impl Render for GradientViewer {
                     .gap_3()
                     .h_24()
                     .text_color(gpui::white())
-                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
-                        45.,
-                        linear_color_stop(color0, 0.),
-                        linear_color_stop(color1, 1.),
-                    )))
+                    .child(
+                        div().flex_1().rounded_xl().bg(linear_gradient(
+                            45.,
+                            linear_color_stop(color0, 0.),
+                            linear_color_stop(color1, 1.),
+                        )
+                        .color_space(color_space)),
+                    )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
                             135.,
                             linear_color_stop(color0, 0.),
                             linear_color_stop(color1, 1.),
                         )
-                        .interpolation_method(method)),
+                        .color_space(color_space)),
                     )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
@@ -157,7 +155,7 @@ impl Render for GradientViewer {
                             linear_color_stop(color0, 0.),
                             linear_color_stop(color1, 1.),
                         )
-                        .interpolation_method(method)),
+                        .color_space(color_space)),
                     )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
@@ -165,7 +163,7 @@ impl Render for GradientViewer {
                             linear_color_stop(color0, 0.),
                             linear_color_stop(color1, 1.),
                         )
-                        .interpolation_method(method)),
+                        .color_space(color_space)),
                     ),
             )
             .child(
@@ -181,7 +179,7 @@ impl Render for GradientViewer {
                             linear_color_stop(color0, 0.),
                             linear_color_stop(color1, 1.),
                         )
-                        .interpolation_method(method)),
+                        .color_space(color_space)),
                     )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
@@ -189,7 +187,7 @@ impl Render for GradientViewer {
                             linear_color_stop(color0, 0.),
                             linear_color_stop(color1, 1.),
                         )
-                        .interpolation_method(method)),
+                        .color_space(color_space)),
                     )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
@@ -197,7 +195,7 @@ impl Render for GradientViewer {
                             linear_color_stop(color0, 0.),
                             linear_color_stop(color1, 1.),
                         )
-                        .interpolation_method(method)),
+                        .color_space(color_space)),
                     )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
@@ -205,7 +203,7 @@ impl Render for GradientViewer {
                             linear_color_stop(color0, 0.),
                             linear_color_stop(color1, 1.),
                         )
-                        .interpolation_method(method)),
+                        .color_space(color_space)),
                     ),
             )
             .child(
@@ -214,7 +212,7 @@ impl Render for GradientViewer {
                     linear_color_stop(color0, 0.05),
                     linear_color_stop(color1, 0.95),
                 )
-                .interpolation_method(method)),
+                .color_space(color_space)),
             )
             .child(
                 div().flex_1().rounded_xl().bg(linear_gradient(
@@ -222,7 +220,7 @@ impl Render for GradientViewer {
                     linear_color_stop(color0, 0.05),
                     linear_color_stop(color1, 0.95),
                 )
-                .interpolation_method(method)),
+                .color_space(color_space)),
             )
             .child(
                 div()
@@ -236,7 +234,7 @@ impl Render for GradientViewer {
                                 linear_color_stop(color0, 0.5),
                                 linear_color_stop(color1, 0.5),
                             )
-                            .interpolation_method(method)),
+                            .color_space(color_space)),
                         ),
                     )
                     .child(
@@ -245,7 +243,7 @@ impl Render for GradientViewer {
                             linear_color_stop(color0, 0.),
                             linear_color_stop(color1, 0.5),
                         )
-                        .interpolation_method(method)),
+                        .color_space(color_space)),
                     ),
             )
             .child(div().h_24().child(canvas(
@@ -276,7 +274,7 @@ impl Render for GradientViewer {
                             linear_color_stop(color0, 0.),
                             linear_color_stop(color1, 1.),
                         )
-                        .interpolation_method(method),
+                        .color_space(color_space),
                     );
                 },
             )))

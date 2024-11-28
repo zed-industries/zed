@@ -557,15 +557,26 @@ pub(crate) enum BackgroundTag {
 
 /// A color space for color interpolation.
 ///
-/// https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
+/// References:
+/// - https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
+/// - https://www.w3.org/TR/css-color-4/#typedef-color-space
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
-pub enum ColorInterpolationMethod {
+pub enum ColorSpace {
     #[default]
-    /// The sRGB linear color space.
-    SrgbLinear = 0,
+    /// The sRGB color space.
+    Srgb = 0,
     /// The Oklab color space.
     Oklab = 1,
+}
+
+impl Display for ColorSpace {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ColorSpace::Srgb => write!(f, "sRGB"),
+            ColorSpace::Oklab => write!(f, "Oklab"),
+        }
+    }
 }
 
 /// A background color, which can be either a solid color or a linear gradient.
@@ -573,7 +584,7 @@ pub enum ColorInterpolationMethod {
 #[repr(C)]
 pub struct Background {
     pub(crate) tag: BackgroundTag,
-    pub(crate) interpolation_method: ColorInterpolationMethod,
+    pub(crate) color_space: ColorSpace,
     pub(crate) solid: Hsla,
     pub(crate) angle: f32,
     pub(crate) colors: [LinearColorStop; 2],
@@ -587,7 +598,7 @@ impl Default for Background {
         Self {
             tag: BackgroundTag::Solid,
             solid: Hsla::default(),
-            interpolation_method: ColorInterpolationMethod::default(),
+            color_space: ColorSpace::default(),
             angle: 0.0,
             colors: [LinearColorStop::default(), LinearColorStop::default()],
             pad: 0,
@@ -651,8 +662,8 @@ impl Background {
     /// Use specified color space for color interpolation.
     ///
     /// https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
-    pub fn interpolation_method(mut self, method: ColorInterpolationMethod) -> Self {
-        self.interpolation_method = method;
+    pub fn color_space(mut self, color_space: ColorSpace) -> Self {
+        self.color_space = color_space;
         self
     }
 

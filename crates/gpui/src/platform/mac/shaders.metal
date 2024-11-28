@@ -808,7 +808,7 @@ float4 gradient_color(Background background,
       t = (t - background.colors[0].percentage) / (background.colors[1].percentage - background.colors[0].percentage);
       t = clamp(t, 0.0, 1.0);
 
-      switch (background.interpolation_method) {
+      switch (background.color_space) {
         case 0:
           color = mix(color0, color1, t);
           break;

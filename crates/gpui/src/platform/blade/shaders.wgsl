@@ -48,7 +48,7 @@ struct Background {
     tag: u32,
     // 0u is sRGB linear color
     // 1u is Oklab color
-    interpolation_method: u32,
+    color_space: u32,
     solid: Hsla,
     angle: f32,
     colors: array<LinearColorStop, 2>,
@@ -312,7 +312,7 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
             t = clamp(t, 0.0, 1.0);
 
-            switch (background.interpolation_method) {
+            switch (background.color_space) {
                 default: {
                     let color = mix(color0, color1, t);
                     // Convert back to linear space for blending.
