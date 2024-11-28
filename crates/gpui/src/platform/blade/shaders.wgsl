@@ -364,7 +364,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     var out = QuadVarying();
     out.position = to_device_position(unit_vertex, quad.bounds);
     if (quad.background.tag == 0u) {
-        out.background_solid = linear_to_srgba(hsla_to_rgba(quad.background.solid));
+        out.background_solid = hsla_to_rgba(quad.background.solid);
     } else if (quad.background.tag == 1u) {
         out.background_color0 = linear_to_srgba(hsla_to_rgba(quad.background.colors[0].color));
         out.background_color1 = linear_to_srgba(hsla_to_rgba(quad.background.colors[1].color));
@@ -576,7 +576,7 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.instance_id = instance_id;
     if (sprite.color.tag == 0u) {
-        out.color_solid = linear_to_srgba(hsla_to_rgba(sprite.color.solid));
+        out.color_solid = hsla_to_rgba(sprite.color.solid);
     } else if (sprite.color.tag == 1u) {
         out.color0 = linear_to_srgba(hsla_to_rgba(sprite.color.colors[0].color));
         out.color1 = linear_to_srgba(hsla_to_rgba(sprite.color.colors[1].color));
