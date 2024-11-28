@@ -16,7 +16,7 @@ use settings::Settings;
 use util::paths::PathExt;
 use workspace::{
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
-    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    ItemId, ItemSettings, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 const IMAGE_VIEWER_KIND: &str = "ImageView";
@@ -172,9 +172,9 @@ impl SerializableItem for ImageView {
         _workspace: WeakView<Workspace>,
         workspace_id: WorkspaceId,
         item_id: ItemId,
-        cx: &mut ViewContext<Pane>,
+        cx: &mut WindowContext,
     ) -> Task<gpui::Result<View<Self>>> {
-        cx.spawn(|_pane, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let image_path = IMAGE_VIEWER
                 .get_image_path(item_id, workspace_id)?
                 .ok_or_else(|| anyhow::anyhow!("No image path found"))?;

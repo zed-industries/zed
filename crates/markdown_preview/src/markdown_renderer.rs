@@ -417,6 +417,7 @@ fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext)
     cx.with_common_p(div())
         .children(render_markdown_text(parsed, cx))
         .flex()
+        .flex_col()
         .into_any_element()
 }
 

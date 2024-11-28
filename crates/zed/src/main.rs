@@ -61,7 +61,7 @@ use zed::{
     OpenRequest,
 };
 
-use crate::zed::{assistant_hints, inline_completion_registry};
+use crate::zed::inline_completion_registry;
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -407,7 +407,7 @@ fn main() {
             cx,
         );
         assistant2::init(cx);
-        assistant_hints::init(cx);
+        assistant_tools::init(cx);
         repl::init(
             app_state.fs.clone(),
             app_state.client.telemetry().clone(),
@@ -1124,10 +1124,7 @@ impl ToString for IdType {
 
 fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
-        Ok(path) => Ok(format!(
-            "file://{}",
-            path.to_string_lossy().trim_start_matches(r#"\\?\"#)
-        )),
+        Ok(path) => Ok(format!("file://{}", path.display())),
         Err(error) => {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")

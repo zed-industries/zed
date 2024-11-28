@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use assistant_tool::Tool;
-use context_servers::manager::ContextServerManager;
-use context_servers::types;
 use gpui::{Model, Task};
+
+use crate::manager::ContextServerManager;
+use crate::types;
 
 pub struct ContextServerTool {
     server_manager: Model<ContextServerManager>,

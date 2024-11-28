@@ -1,16 +1,20 @@
+use std::sync::Arc;
+
 use anyhow::Result;
+use assistant_tool::ToolWorkingSet;
 use gpui::{
     prelude::*, px, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
-    FocusableView, Pixels, Task, View, ViewContext, WeakView, WindowContext,
+    FocusableView, Model, Pixels, Subscription, Task, View, ViewContext, WeakView, WindowContext,
 };
-use language_model::LanguageModelRegistry;
+use language_model::{LanguageModelRegistry, Role};
 use language_model_selector::LanguageModelSelector;
 use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
-use workspace::{Pane, Workspace};
+use workspace::Workspace;
 
-use crate::chat_editor::ChatEditor;
-use crate::{NewChat, ToggleFocus, ToggleModelSelector};
+use crate::message_editor::MessageEditor;
+use crate::thread::{Message, Thread, ThreadEvent};
+use crate::{NewThread, ToggleFocus, ToggleModelSelector};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -24,8 +28,11 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct AssistantPanel {
-    pane: View<Pane>,
-    chat_editor: View<ChatEditor>,
+    workspace: WeakView<Workspace>,
+    thread: Model<Thread>,
+    message_editor: View<MessageEditor>,
+    tools: Arc<ToolWorkingSet>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl AssistantPanel {
@@ -34,38 +41,85 @@ impl AssistantPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
+            let tools = Arc::new(ToolWorkingSet::default());
             workspace.update(&mut cx, |workspace, cx| {
-                cx.new_view(|cx| Self::new(workspace, cx))
+                cx.new_view(|cx| Self::new(workspace, tools, cx))
             })
         })
     }
 
-    fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let pane = cx.new_view(|cx| {
-            let mut pane = Pane::new(
-                workspace.weak_handle(),
-                workspace.project().clone(),
-                Default::default(),
-                None,
-                NewChat.boxed_clone(),
-                cx,
-            );
-            pane.set_can_split(false, cx);
-            pane.set_can_navigate(true, cx);
-
-            pane
-        });
+    fn new(workspace: &Workspace, tools: Arc<ToolWorkingSet>, cx: &mut ViewContext<Self>) -> Self {
+        let thread = cx.new_model(|cx| Thread::new(tools.clone(), cx));
+        let subscriptions = vec![
+            cx.observe(&thread, |_, _, cx| cx.notify()),
+            cx.subscribe(&thread, Self::handle_thread_event),
+        ];
 
         Self {
-            pane,
-            chat_editor: cx.new_view(ChatEditor::new),
+            workspace: workspace.weak_handle(),
+            thread: thread.clone(),
+            message_editor: cx.new_view(|cx| MessageEditor::new(thread, cx)),
+            tools,
+            _subscriptions: subscriptions,
+        }
+    }
+
+    fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
+        let tools = self.thread.read(cx).tools().clone();
+        let thread = cx.new_model(|cx| Thread::new(tools, cx));
+        let subscriptions = vec![
+            cx.observe(&thread, |_, _, cx| cx.notify()),
+            cx.subscribe(&thread, Self::handle_thread_event),
+        ];
+
+        self.message_editor = cx.new_view(|cx| MessageEditor::new(thread.clone(), cx));
+        self.thread = thread;
+        self._subscriptions = subscriptions;
+
+        self.message_editor.focus_handle(cx).focus(cx);
+    }
+
+    fn handle_thread_event(
+        &mut self,
+        _: Model<Thread>,
+        event: &ThreadEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            ThreadEvent::StreamedCompletion => {}
+            ThreadEvent::UsePendingTools => {
+                let pending_tool_uses = self
+                    .thread
+                    .read(cx)
+                    .pending_tool_uses()
+                    .into_iter()
+                    .filter(|tool_use| tool_use.status.is_idle())
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                for tool_use in pending_tool_uses {
+                    if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+                        let task = tool.run(tool_use.input, self.workspace.clone(), cx);
+
+                        self.thread.update(cx, |thread, cx| {
+                            thread.insert_tool_output(
+                                tool_use.assistant_message_id,
+                                tool_use.id.clone(),
+                                task,
+                                cx,
+                            );
+                        });
+                    }
+                }
+            }
+            ThreadEvent::ToolFinished { .. } => {}
         }
     }
 }
 
 impl FocusableView for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.pane.focus_handle(cx)
+        self.message_editor.focus_handle(cx)
     }
 }
 
@@ -92,19 +146,7 @@ impl Panel for AssistantPanel {
 
     fn set_size(&mut self, _size: Option<Pixels>, _cx: &mut ViewContext<Self>) {}
 
-    fn is_zoomed(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).is_zoomed()
-    }
-
-    fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
-        self.pane.update(cx, |pane, cx| pane.set_zoomed(zoomed, cx));
-    }
-
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
-
-    fn pane(&self) -> Option<View<Pane>> {
-        Some(self.pane.clone())
-    }
 
     fn remote_id() -> Option<proto::PanelId> {
         Some(proto::PanelId::AssistantPanel)
@@ -136,25 +178,30 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
-            .child(h_flex().child(Label::new("Chat Title Goes Here")))
+            .child(h_flex().child(Label::new("Thread Title Goes Here")))
             .child(
                 h_flex()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .child(self.render_language_model_selector(cx))
                     .child(Divider::vertical())
                     .child(
-                        IconButton::new("new-chat", IconName::Plus)
+                        IconButton::new("new-thread", IconName::Plus)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
                                 move |cx| {
-                                    Tooltip::for_action_in("New Chat", &NewChat, &focus_handle, cx)
+                                    Tooltip::for_action_in(
+                                        "New Thread",
+                                        &NewThread,
+                                        &focus_handle,
+                                        cx,
+                                    )
                                 }
                             })
                             .on_click(move |_event, _cx| {
-                                println!("New Chat");
+                                println!("New Thread");
                             }),
                     )
                     .child(
@@ -230,24 +277,66 @@ impl AssistantPanel {
                 .tooltip(move |cx| Tooltip::for_action("Change Model", &ToggleModelSelector, cx)),
         )
     }
+
+    fn render_message(&self, message: Message, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let (role_icon, role_name) = match message.role {
+            Role::User => (IconName::Person, "You"),
+            Role::Assistant => (IconName::ZedAssistant, "Assistant"),
+            Role::System => (IconName::Settings, "System"),
+        };
+
+        v_flex()
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
+            .rounded_md()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .p_1p5()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Icon::new(role_icon).size(IconSize::Small))
+                            .child(Label::new(role_name).size(LabelSize::Small)),
+                    ),
+            )
+            .child(v_flex().p_1p5().child(Label::new(message.text.clone())))
+    }
 }
 
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let messages = self.thread.read(cx).messages().cloned().collect::<Vec<_>>();
+
         v_flex()
             .key_context("AssistantPanel2")
             .justify_between()
             .size_full()
-            .on_action(cx.listener(|_this, _: &NewChat, _cx| {
-                println!("Action: New Chat");
+            .on_action(cx.listener(|this, _: &NewThread, cx| {
+                this.new_thread(cx);
             }))
             .child(self.render_toolbar(cx))
-            .child(v_flex().bg(cx.theme().colors().panel_background))
+            .child(
+                v_flex()
+                    .id("message-list")
+                    .gap_2()
+                    .size_full()
+                    .p_2()
+                    .overflow_y_scroll()
+                    .bg(cx.theme().colors().panel_background)
+                    .children(
+                        messages
+                            .into_iter()
+                            .map(|message| self.render_message(message, cx)),
+                    ),
+            )
             .child(
                 h_flex()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .child(self.chat_editor.clone()),
+                    .child(self.message_editor.clone()),
             )
     }
 }

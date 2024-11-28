@@ -697,6 +697,7 @@ impl LanguageServer {
                                 "commitCharacters".to_owned(),
                                 "editRange".to_owned(),
                                 "insertTextMode".to_owned(),
+                                "insertTextFormat".to_owned(),
                                 "data".to_owned(),
                             ]),
                         }),

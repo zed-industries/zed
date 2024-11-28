@@ -2919,6 +2919,21 @@ impl LspStore {
             })
     }
 
+    pub fn diagnostics_for_buffer(
+        &self,
+        path: &ProjectPath,
+    ) -> Option<
+        &[(
+            LanguageServerId,
+            Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+        )],
+    > {
+        self.diagnostics
+            .get(&path.worktree_id)?
+            .get(&path.path)
+            .map(|diagnostics| diagnostics.as_slice())
+    }
+
     pub fn started_language_servers(&self) -> Vec<(WorktreeId, LanguageServerName)> {
         self.language_server_ids.keys().cloned().collect()
     }
@@ -5562,7 +5577,7 @@ impl LspStore {
 
         let worktree = worktree_handle.read(cx);
         let worktree_id = worktree.id();
-        let worktree_path = worktree.abs_path();
+        let root_path = worktree.abs_path();
         let key = (worktree_id, adapter.name.clone());
 
         if self.language_server_ids.contains_key(&key) {
@@ -5584,7 +5599,6 @@ impl LspStore {
             as Arc<dyn LspAdapterDelegate>;
 
         let server_id = self.languages.next_language_server_id();
-        let root_path = worktree_path.clone();
         log::info!(
             "attempting to start language server {:?}, path: {root_path:?}, id: {server_id}",
             adapter.name.0
