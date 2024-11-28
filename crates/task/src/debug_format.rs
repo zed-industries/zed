@@ -74,6 +74,7 @@ pub enum DebugAdapterKind {
     /// Use lldb
     Lldb,
     /// Use GDB's built-in DAP support
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     Gdb,
 }
 
@@ -86,6 +87,7 @@ impl DebugAdapterKind {
             Self::Php(_) => "PHP",
             Self::Javascript(_) => "JavaScript",
             Self::Lldb => "LLDB",
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             Self::Gdb => "GDB",
             Self::Go(_) => "Go",
         }

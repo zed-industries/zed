@@ -1,4 +1,5 @@
 mod custom;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod gdb;
 mod go;
 mod javascript;
@@ -13,6 +14,7 @@ use dap::adapters::{
     self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
     GithubRepo,
 };
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use gdb::GdbDebugAdapter;
 use go::GoDebugAdapter;
 use javascript::JsDebugAdapter;
@@ -35,6 +37,7 @@ pub async fn build_adapter(kind: &DebugAdapterKind) -> Result<Box<dyn DebugAdapt
         }
         DebugAdapterKind::Lldb => Ok(Box::new(LldbDebugAdapter::new())),
         DebugAdapterKind::Go(host) => Ok(Box::new(GoDebugAdapter::new(host).await?)),
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         DebugAdapterKind::Gdb => Ok(Box::new(GdbDebugAdapter::new())),
     }
 }
