@@ -205,10 +205,7 @@ impl Render for BufferSearchBar {
         };
 
         let container_width = cx.viewport_size().width;
-        let is_fullscreen = cx.is_fullscreen();
-
-        let size = SearchInputWidth::from_container_width(container_width);
-        let input_width = size.calc_width(container_width, is_fullscreen);
+        let input_width = SearchInputWidth::calc_width(container_width);
 
         let input_base_styles = || {
             h_flex()
