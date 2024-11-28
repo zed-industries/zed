@@ -301,7 +301,8 @@ impl Render for ImageView {
                         img(image)
                             .object_fit(ObjectFit::ScaleDown)
                             .max_w_full()
-                            .max_h_full(),
+                            .max_h_full()
+                            .id("img"),
                     ),
             )
     }
