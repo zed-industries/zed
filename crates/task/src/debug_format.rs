@@ -73,6 +73,8 @@ pub enum DebugAdapterKind {
     Go(TCPHost),
     /// Use lldb
     Lldb,
+    /// Use GDB's built-in DAP support
+    Gdb,
 }
 
 impl DebugAdapterKind {
@@ -84,6 +86,7 @@ impl DebugAdapterKind {
             Self::Php(_) => "PHP",
             Self::Javascript(_) => "JavaScript",
             Self::Lldb => "LLDB",
+            Self::Gdb => "GDB",
             Self::Go(_) => "Go",
         }
     }
