@@ -5673,8 +5673,6 @@ impl LspStore {
                             .initialization_options(&(delegate))
                             .await?;
 
-                        Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
-
                         match (&mut initialization_options, override_options) {
                             (Some(initialization_options), Some(override_options)) => {
                                 merge_json_value_into(override_options, initialization_options);
@@ -5683,8 +5681,18 @@ impl LspStore {
                             _ => {}
                         }
 
+                        let initialization_params = cx.update(|cx| {
+                            let mut params = language_server.default_initialize_params(cx);
+                            params.initialization_options = initialization_options;
+                            adapter.adapter.prepare_initialize_params(params)
+                        })??;
+
+                        Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
+
                         let language_server = cx
-                            .update(|cx| language_server.initialize(initialization_options, cx))?
+                            .update(|cx| {
+                                language_server.initialize(Some(initialization_params), cx)
+                            })?
                             .await
                             .inspect_err(|_| {
                                 if let Some(this) = this.upgrade() {

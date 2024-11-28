@@ -599,22 +599,14 @@ impl LanguageServer {
         Ok(())
     }
 
-    /// Initializes a language server by sending the `Initialize` request.
-    /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
-    ///
-    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
-    pub fn initialize(
-        mut self,
-        options: Option<Value>,
-        cx: &AppContext,
-    ) -> Task<Result<Arc<Self>>> {
+    pub fn default_initialize_params(&self, cx: &AppContext) -> InitializeParams {
         let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
-        let params = InitializeParams {
+        InitializeParams {
             process_id: None,
             root_path: None,
             root_uri: Some(root_uri.clone()),
-            initialization_options: options,
+            initialization_options: None,
             capabilities: ClientCapabilities {
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
@@ -779,6 +771,22 @@ impl LanguageServer {
             }),
             locale: None,
             ..Default::default()
+        }
+    }
+
+    /// Initializes a language server by sending the `Initialize` request.
+    /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
+    pub fn initialize(
+        mut self,
+        initialize_params: Option<InitializeParams>,
+        cx: &AppContext,
+    ) -> Task<Result<Arc<Self>>> {
+        let params = if let Some(params) = initialize_params {
+            params
+        } else {
+            self.default_initialize_params(cx)
         };
 
         cx.spawn(|_| async move {
