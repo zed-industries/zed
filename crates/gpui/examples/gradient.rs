@@ -1,36 +1,45 @@
 use gpui::{
     canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, App, AppContext,
-    Bounds, Half, Hsla, Render, ViewContext, WindowOptions,
+    Bounds, ColorInterpolationMethod, Half, Hsla, Render, ViewContext, WindowOptions,
 };
 
-const COLORS: [(Hsla, Hsla); 12] = [
+const COLORS: [(Hsla, Hsla); 16] = [
     (gpui::red(), gpui::blue()),
     (gpui::red(), gpui::green()),
     (gpui::red(), gpui::yellow()),
+    (gpui::red(), gpui::white()),
     (gpui::blue(), gpui::red()),
     (gpui::blue(), gpui::green()),
     (gpui::blue(), gpui::yellow()),
+    (gpui::blue(), gpui::white()),
     (gpui::green(), gpui::red()),
     (gpui::green(), gpui::blue()),
     (gpui::green(), gpui::yellow()),
+    (gpui::green(), gpui::white()),
     (gpui::yellow(), gpui::red()),
     (gpui::yellow(), gpui::blue()),
     (gpui::yellow(), gpui::green()),
+    (gpui::yellow(), gpui::white()),
 ];
 
 struct GradientViewer {
     color_ix: usize,
+    interpolation_method: ColorInterpolationMethod,
 }
 
 impl GradientViewer {
     fn new() -> Self {
-        Self { color_ix: 0 }
+        Self {
+            color_ix: 0,
+            interpolation_method: ColorInterpolationMethod::Oklab,
+        }
     }
 }
 
 impl Render for GradientViewer {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let (color0, color1) = COLORS[self.color_ix];
+        let method = self.interpolation_method;
 
         div()
             .font_family(".SystemUIFont")
@@ -49,19 +58,49 @@ impl Render for GradientViewer {
                     .child("Gradient Examples")
                     .child(
                         div()
-                            .id("next")
                             .flex()
-                            .px_3()
-                            .py_1()
-                            .text_sm()
-                            .bg(gpui::black())
-                            .text_color(gpui::white())
-                            .child("Switch Color")
-                            .active(|this| this.opacity(0.8))
-                            .on_click(cx.listener(move |this, _, cx| {
-                                this.color_ix = (this.color_ix + 1) % COLORS.len();
-                                cx.notify();
-                            })),
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .id("method")
+                                    .flex()
+                                    .px_3()
+                                    .py_1()
+                                    .text_sm()
+                                    .bg(gpui::black())
+                                    .text_color(gpui::white())
+                                    .child(format!("{:?}", method))
+                                    .active(|this| this.opacity(0.8))
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.interpolation_method = match this.interpolation_method
+                                        {
+                                            ColorInterpolationMethod::Oklab => {
+                                                ColorInterpolationMethod::SrgbLinear
+                                            }
+                                            ColorInterpolationMethod::SrgbLinear => {
+                                                ColorInterpolationMethod::Oklab
+                                            }
+                                        };
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("next")
+                                    .flex()
+                                    .px_3()
+                                    .py_1()
+                                    .text_sm()
+                                    .bg(gpui::black())
+                                    .text_color(gpui::white())
+                                    .child("Switch Color")
+                                    .active(|this| this.opacity(0.8))
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.color_ix = (this.color_ix + 1) % COLORS.len();
+                                        cx.notify();
+                                    })),
+                            ),
                     ),
             )
             .child(
@@ -104,21 +143,30 @@ impl Render for GradientViewer {
                         linear_color_stop(color0, 0.),
                         linear_color_stop(color1, 1.),
                     )))
-                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
-                        135.,
-                        linear_color_stop(color0, 0.),
-                        linear_color_stop(color1, 1.),
-                    )))
-                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
-                        225.,
-                        linear_color_stop(color0, 0.),
-                        linear_color_stop(color1, 1.),
-                    )))
-                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
-                        315.,
-                        linear_color_stop(color0, 0.),
-                        linear_color_stop(color1, 1.),
-                    ))),
+                    .child(
+                        div().flex_1().rounded_xl().bg(linear_gradient(
+                            135.,
+                            linear_color_stop(color0, 0.),
+                            linear_color_stop(color1, 1.),
+                        )
+                        .interpolation_method(method)),
+                    )
+                    .child(
+                        div().flex_1().rounded_xl().bg(linear_gradient(
+                            225.,
+                            linear_color_stop(color0, 0.),
+                            linear_color_stop(color1, 1.),
+                        )
+                        .interpolation_method(method)),
+                    )
+                    .child(
+                        div().flex_1().rounded_xl().bg(linear_gradient(
+                            315.,
+                            linear_color_stop(color0, 0.),
+                            linear_color_stop(color1, 1.),
+                        )
+                        .interpolation_method(method)),
+                    ),
             )
             .child(
                 div()
@@ -127,58 +175,78 @@ impl Render for GradientViewer {
                     .gap_3()
                     .h_24()
                     .text_color(gpui::white())
-                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
-                        0.,
-                        linear_color_stop(color0, 0.),
-                        linear_color_stop(color1, 1.),
-                    )))
-                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
-                        90.,
-                        linear_color_stop(color0, 0.),
-                        linear_color_stop(color1, 1.),
-                    )))
-                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
-                        180.,
-                        linear_color_stop(color0, 0.),
-                        linear_color_stop(color1, 1.),
-                    )))
-                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
-                        360.,
-                        linear_color_stop(color0, 0.),
-                        linear_color_stop(color1, 1.),
-                    ))),
+                    .child(
+                        div().flex_1().rounded_xl().bg(linear_gradient(
+                            0.,
+                            linear_color_stop(color0, 0.),
+                            linear_color_stop(color1, 1.),
+                        )
+                        .interpolation_method(method)),
+                    )
+                    .child(
+                        div().flex_1().rounded_xl().bg(linear_gradient(
+                            90.,
+                            linear_color_stop(color0, 0.),
+                            linear_color_stop(color1, 1.),
+                        )
+                        .interpolation_method(method)),
+                    )
+                    .child(
+                        div().flex_1().rounded_xl().bg(linear_gradient(
+                            180.,
+                            linear_color_stop(color0, 0.),
+                            linear_color_stop(color1, 1.),
+                        )
+                        .interpolation_method(method)),
+                    )
+                    .child(
+                        div().flex_1().rounded_xl().bg(linear_gradient(
+                            360.,
+                            linear_color_stop(color0, 0.),
+                            linear_color_stop(color1, 1.),
+                        )
+                        .interpolation_method(method)),
+                    ),
             )
-            .child(div().flex_1().rounded_xl().bg(linear_gradient(
-                0.,
-                linear_color_stop(color0, 0.05),
-                linear_color_stop(color1, 0.95),
-            )))
-            .child(div().flex_1().rounded_xl().bg(linear_gradient(
-                90.,
-                linear_color_stop(color0, 0.05),
-                linear_color_stop(color1, 0.95),
-            )))
+            .child(
+                div().flex_1().rounded_xl().bg(linear_gradient(
+                    0.,
+                    linear_color_stop(color0, 0.05),
+                    linear_color_stop(color1, 0.95),
+                )
+                .interpolation_method(method)),
+            )
+            .child(
+                div().flex_1().rounded_xl().bg(linear_gradient(
+                    90.,
+                    linear_color_stop(color0, 0.05),
+                    linear_color_stop(color1, 0.95),
+                )
+                .interpolation_method(method)),
+            )
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .gap_3()
                     .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .gap_3()
-                            .child(div().flex_1().rounded_xl().bg(linear_gradient(
+                        div().flex().flex_1().gap_3().child(
+                            div().flex_1().rounded_xl().bg(linear_gradient(
                                 90.,
                                 linear_color_stop(color0, 0.5),
                                 linear_color_stop(color1, 0.5),
-                            ))),
+                            )
+                            .interpolation_method(method)),
+                        ),
                     )
-                    .child(div().flex_1().rounded_xl().bg(linear_gradient(
-                        180.,
-                        linear_color_stop(color0, 0.),
-                        linear_color_stop(color1, 0.5),
-                    ))),
+                    .child(
+                        div().flex_1().rounded_xl().bg(linear_gradient(
+                            180.,
+                            linear_color_stop(color0, 0.),
+                            linear_color_stop(color1, 0.5),
+                        )
+                        .interpolation_method(method)),
+                    ),
             )
             .child(div().h_24().child(canvas(
                 move |_, _| {},
@@ -207,7 +275,8 @@ impl Render for GradientViewer {
                             180.,
                             linear_color_stop(color0, 0.),
                             linear_color_stop(color1, 1.),
-                        ),
+                        )
+                        .interpolation_method(method),
                     );
                 },
             )))

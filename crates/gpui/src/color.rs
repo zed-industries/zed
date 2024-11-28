@@ -555,14 +555,30 @@ pub(crate) enum BackgroundTag {
     LinearGradient = 1,
 }
 
+/// A color space for color interpolation.
+///
+/// https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
+pub enum ColorInterpolationMethod {
+    #[default]
+    /// The sRGB linear color space.
+    SrgbLinear = 0,
+    /// The Oklab color space.
+    Oklab = 1,
+}
+
 /// A background color, which can be either a solid color or a linear gradient.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Background {
     pub(crate) tag: BackgroundTag,
+    pub(crate) interpolation_method: ColorInterpolationMethod,
     pub(crate) solid: Hsla,
     pub(crate) angle: f32,
     pub(crate) colors: [LinearColorStop; 2],
+    /// Padding for alignment for repr(C) layout.
+    pad: u32,
 }
 
 impl Eq for Background {}
@@ -571,8 +587,10 @@ impl Default for Background {
         Self {
             tag: BackgroundTag::Solid,
             solid: Hsla::default(),
+            interpolation_method: ColorInterpolationMethod::default(),
             angle: 0.0,
             colors: [LinearColorStop::default(), LinearColorStop::default()],
+            pad: 0,
         }
     }
 }
@@ -630,6 +648,14 @@ impl LinearColorStop {
 }
 
 impl Background {
+    /// Use specified color space for color interpolation.
+    ///
+    /// https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
+    pub fn interpolation_method(mut self, method: ColorInterpolationMethod) -> Self {
+        self.interpolation_method = method;
+        self
+    }
+
     /// Returns a new background color with the same hue, saturation, and lightness, but with a modified alpha value.
     pub fn opacity(&self, factor: f32) -> Self {
         let mut background = *self;

@@ -4,6 +4,8 @@
 using namespace metal;
 
 float4 hsla_to_rgba(Hsla hsla);
+float4 linear_srgb_to_oklab(float4 c);
+float4 oklab_to_linear_srgb(float4 c);
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *viewport_size);
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
@@ -613,6 +615,43 @@ float4 hsla_to_rgba(Hsla hsla) {
   return rgba;
 }
 
+// Converts a linear sRGB color to the Oklab color space.
+// Reference: https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab
+float4 linear_srgb_to_oklab(float4 color) {
+	float l = 0.4122214708 * color.r + 0.5363325363 * color.g + 0.0514459929 * color.b;
+	float m = 0.2119034982 * color.r + 0.6806995451 * color.g + 0.1073969566 * color.b;
+	float s = 0.0883024619 * color.r + 0.2817188376 * color.g + 0.6299787005 * color.b;
+
+	float l_ = pow(l, 1.0/3.0);
+	float m_ = pow(m, 1.0/3.0);
+	float s_ = pow(s, 1.0/3.0);
+
+	return float4(
+		0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+		1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+		0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+		color.a
+	);
+}
+
+// Converts an Oklab color to the linear sRGB color space.
+float4 oklab_to_linear_srgb(float4 color) {
+	float l_ = color.r + 0.3963377774 * color.g + 0.2158037573 * color.b;
+	float m_ = color.r - 0.1055613458 * color.g - 0.0638541728 * color.b;
+	float s_ = color.r - 0.0894841775 * color.g - 1.2914855480 * color.b;
+
+	float l = l_ * l_ * l_;
+	float m = m_ * m_ * m_;
+	float s = s_ * s_ * s_;
+
+	return float4(
+		4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+		-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+		-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+		color.a
+	);
+}
+
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *input_viewport_size) {
   float2 position =
@@ -738,40 +777,51 @@ float4 gradient_color(Background background,
   float4 color;
 
   switch (background.tag) {
-      case 0:
-        color = solid_color;
-        break;
-      case 1: {
-        // -90 degrees to match the CSS gradient angle.
-        float radians = (fmod(background.angle, 360.0) - 90.0) * (M_PI_F / 180.0);
-        float2 direction = float2(cos(radians), sin(radians));
+    case 0:
+      color = solid_color;
+      break;
+    case 1: {
+      // -90 degrees to match the CSS gradient angle.
+      float radians = (fmod(background.angle, 360.0) - 90.0) * (M_PI_F / 180.0);
+      float2 direction = float2(cos(radians), sin(radians));
 
-        // Expand the short side to be the same as the long side
-        if (bounds.size.width > bounds.size.height) {
+      // Expand the short side to be the same as the long side
+      if (bounds.size.width > bounds.size.height) {
           direction.y *= bounds.size.height / bounds.size.width;
-        } else {
+      } else {
           direction.x *=  bounds.size.width / bounds.size.height;
-        }
-
-        // Get the t value for the linear gradient with the color stop percentages.
-        float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
-        float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
-        float2 center_to_point = position - center;
-        float t = dot(center_to_point, direction) / length(direction);
-        // Check the direct to determine the use x or y
-        if (abs(direction.x) > abs(direction.y)) {
-           t = (t + half_size.x) / bounds.size.width;
-        } else {
-           t = (t + half_size.y) / bounds.size.height;
-        }
-
-        // Adjust t based on the stop percentages
-        t = (t - background.colors[0].percentage) / (background.colors[1].percentage - background.colors[0].percentage);
-        t = clamp(t, 0.0, 1.0);
-
-        color = mix(color0, color1, t);
-        break;
       }
+
+      // Get the t value for the linear gradient with the color stop percentages.
+      float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
+      float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
+      float2 center_to_point = position - center;
+      float t = dot(center_to_point, direction) / length(direction);
+      // Check the direct to determine the use x or y
+      if (abs(direction.x) > abs(direction.y)) {
+          t = (t + half_size.x) / bounds.size.width;
+      } else {
+          t = (t + half_size.y) / bounds.size.height;
+      }
+
+      // Adjust t based on the stop percentages
+      t = (t - background.colors[0].percentage) / (background.colors[1].percentage - background.colors[0].percentage);
+      t = clamp(t, 0.0, 1.0);
+
+      switch (background.interpolation_method) {
+        case 0:
+          color = mix(color0, color1, t);
+          break;
+        case 1: {
+          float4 oklab_color0 = linear_srgb_to_oklab(color0);
+          float4 oklab_color1 = linear_srgb_to_oklab(color1);
+          float4 oklab_color = mix(oklab_color0, oklab_color1, t);
+          color = oklab_to_linear_srgb(oklab_color);
+          break;
+        }
+      }
+      break;
+    }
   }
 
   return color;

@@ -46,6 +46,8 @@ struct Background {
     // 0u is Solid
     // 1u is LinearGradient
     tag: u32,
+    // 0u is sRGB linear color, 1u is Oklab color
+    interpolation_method: u32,
     solid: Hsla,
     angle: f32,
     colors: array<LinearColorStop, 2>,
@@ -170,6 +172,43 @@ fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
     return vec4<f32>(linear, a);
 }
 
+/// Convert a linear sRGB to Oklab space.
+/// Reference: https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab
+fn linear_srgb_to_oklab(color: vec4<f32>) -> vec4<f32> {
+	let l = 0.4122214708 * color.r + 0.5363325363 * color.g + 0.0514459929 * color.b;
+	let m = 0.2119034982 * color.r + 0.6806995451 * color.g + 0.1073969566 * color.b;
+	let s = 0.0883024619 * color.r + 0.2817188376 * color.g + 0.6299787005 * color.b;
+
+	let l_ = pow(l, 1.0 / 3.0);
+	let m_ = pow(m, 1.0 / 3.0);
+	let s_ = pow(s, 1.0 / 3.0);
+
+	return vec4<f32>(
+		0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+		1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+		0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+		color.a
+	);
+}
+
+/// Convert an Oklab color to linear sRGB space.
+fn oklab_to_linear_srgb(color: vec4<f32>) -> vec4<f32> {
+	let l_ = color.r + 0.3963377774 * color.g + 0.2158037573 * color.b;
+	let m_ = color.r - 0.1055613458 * color.g - 0.0638541728 * color.b;
+	let s_ = color.r - 0.0894841775 * color.g - 1.2914855480 * color.b;
+
+	let l = l_ * l_ * l_;
+	let m = m_ * m_ * m_;
+	let s = s_ * s_ * s_;
+
+	return vec4<f32>(
+		4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+		-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+		-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+		color.a
+	);
+}
+
 fn over(below: vec4<f32>, above: vec4<f32>) -> vec4<f32> {
     let alpha = above.a + below.a * (1.0 - above.a);
     let color = (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
@@ -236,42 +275,55 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
     sold_color: vec4<f32>, color0: vec4<f32>, color1: vec4<f32>) -> vec4<f32> {
     var background_color = vec4<f32>(0.0);
 
-    if (background.tag == 0u) {
-        return sold_color;
-    } else if (background.tag == 1u) {
-        // Linear gradient background.
-        // -90 degrees to match the CSS gradient angle.
-        let radians = (background.angle % 360.0 - 90.0) * M_PI_F / 180.0;
-        var direction = vec2<f32>(cos(radians), sin(radians));
-        let stop0_percentage = background.colors[0].percentage;
-        let stop1_percentage = background.colors[1].percentage;
-
-        // Expand the short side to be the same as the long side
-        if (bounds.size.x > bounds.size.y) {
-            direction.y *= bounds.size.y / bounds.size.x;
-        } else {
-            direction.x *= bounds.size.x / bounds.size.y;
+    switch (background.tag) {
+        default: {
+            return sold_color;
         }
+        case 1u: {
+            // Linear gradient background.
+            // -90 degrees to match the CSS gradient angle.
+            let radians = (background.angle % 360.0 - 90.0) * M_PI_F / 180.0;
+            var direction = vec2<f32>(cos(radians), sin(radians));
+            let stop0_percentage = background.colors[0].percentage;
+            let stop1_percentage = background.colors[1].percentage;
 
-        // Get the t value for the linear gradient with the color stop percentages.
-        let half_size = bounds.size / 2.0;
-        let center = bounds.origin + half_size;
-        let center_to_point = position - center;
-        var t = dot(center_to_point, direction) / length(direction);
-        // Check the direct to determine the use x or y
-        if (abs(direction.x) > abs(direction.y)) {
-            t = (t + half_size.x) / bounds.size.x;
-        } else {
-            t = (t + half_size.y) / bounds.size.y;
+            // Expand the short side to be the same as the long side
+            if (bounds.size.x > bounds.size.y) {
+                direction.y *= bounds.size.y / bounds.size.x;
+            } else {
+                direction.x *= bounds.size.x / bounds.size.y;
+            }
+
+            // Get the t value for the linear gradient with the color stop percentages.
+            let half_size = bounds.size / 2.0;
+            let center = bounds.origin + half_size;
+            let center_to_point = position - center;
+            var t = dot(center_to_point, direction) / length(direction);
+            // Check the direct to determine the use x or y
+            if (abs(direction.x) > abs(direction.y)) {
+                t = (t + half_size.x) / bounds.size.x;
+            } else {
+                t = (t + half_size.y) / bounds.size.y;
+            }
+
+            // Adjust t based on the stop percentages
+            t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
+            t = clamp(t, 0.0, 1.0);
+
+            switch (background.interpolation_method) {
+                default: {
+                    let color = mix(color0, color1, t);
+                    // Convert back to linear space for blending.
+                    background_color = srgba_to_linear(color);
+                }
+                case 1u: {
+                    let oklab_color0 = linear_srgb_to_oklab(color0);
+                    let oklab_color1 = linear_srgb_to_oklab(color1);
+                    let oklab_color = mix(oklab_color0, oklab_color1, t);
+                    background_color = srgba_to_linear(oklab_to_linear_srgb(oklab_color));
+                }
+            }
         }
-
-        // Adjust t based on the stop percentages
-        t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
-        t = clamp(t, 0.0, 1.0);
-
-        let color = mix(color0, color1, t);
-        // Convert back to linear space for blending.
-        background_color = srgba_to_linear(color);
     }
 
     return background_color;
