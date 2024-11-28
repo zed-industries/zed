@@ -46,11 +46,13 @@ struct Background {
     // 0u is Solid
     // 1u is LinearGradient
     tag: u32,
-    // 0u is sRGB linear color, 1u is Oklab color
+    // 0u is sRGB linear color
+    // 1u is Oklab color
     interpolation_method: u32,
     solid: Hsla,
     angle: f32,
     colors: array<LinearColorStop, 2>,
+    pad: u32,
 }
 
 struct AtlasTextureId {
