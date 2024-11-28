@@ -6,7 +6,25 @@ use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, OffsetRangeExt,
     Point, Rope, ToOffset, ToPoint,
 };
-use std::{borrow::Cow, cmp, fmt::Write, mem, ops::Range, path::Path, sync::Arc, time::Duration};
+use std::{
+    borrow::Cow,
+    cmp,
+    fmt::Write,
+    mem,
+    ops::Range,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
+const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
+const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
+const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
+const ORIGINAL_MARKER: &str = "<<<<<<< ORIGINAL\n";
+const SEPARATOR_MARKER: &str = "\n=======\n";
+const UPDATED_MARKER: &str = "\n>>>>>>> UPDATED";
+const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 struct InlineCompletionId(usize);
@@ -99,15 +117,18 @@ impl Zeta {
         if let Event::BufferChange {
             old_snapshot,
             new_snapshot,
+            timestamp,
         } = &event
         {
             if let Some(mut last_entry) = self.events.last_entry() {
                 if let Event::BufferChange {
                     new_snapshot: last_new_snapshot,
+                    timestamp: last_timestamp,
                     ..
                 } = last_entry.get_mut()
                 {
-                    if old_snapshot.remote_id() == last_new_snapshot.remote_id()
+                    if timestamp.duration_since(*last_timestamp) <= BUFFER_CHANGE_GROUPING_INTERVAL
+                        && old_snapshot.remote_id() == last_new_snapshot.remote_id()
                         && old_snapshot.version == last_new_snapshot.version
                     {
                         *last_new_snapshot = new_snapshot.clone();
@@ -346,6 +367,7 @@ impl Zeta {
             self.push_event(Event::BufferChange {
                 old_snapshot,
                 new_snapshot: new_snapshot.clone(),
+                timestamp: Instant::now(),
             });
         }
 
@@ -375,7 +397,7 @@ fn prompt_for_excerpt(
     }
 
     let point_range = excerpt_range.to_point(snapshot);
-    if point_range.start.row > 0 {
+    if point_range.start.row > 0 && !snapshot.is_line_blank(point_range.start.row - 1) {
         let extra_context_line_range = Point::new(point_range.start.row - 1, 0)..point_range.start;
         for chunk in snapshot.text_for_range(extra_context_line_range) {
             prompt_excerpt.push_str(chunk);
@@ -391,7 +413,9 @@ fn prompt_for_excerpt(
     }
     write!(prompt_excerpt, "\n{EDITABLE_REGION_END_MARKER}").unwrap();
 
-    if point_range.end.row < snapshot.max_point().row {
+    if point_range.end.row < snapshot.max_point().row
+        && !snapshot.is_line_blank(point_range.end.row + 1)
+    {
         let extra_context_line_range = point_range.end
             ..Point::new(
                 point_range.end.row + 1,
@@ -435,14 +459,6 @@ fn excerpt_range_for_position(point: Point, snapshot: &BufferSnapshot) -> Range<
     excerpt_start.to_offset(snapshot)..excerpt_end.to_offset(snapshot)
 }
 
-const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
-const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
-const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
-const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
-const ORIGINAL_MARKER: &str = "<<<<<<< ORIGINAL\n";
-const SEPARATOR_MARKER: &str = "\n=======\n";
-const UPDATED_MARKER: &str = "\n>>>>>>> UPDATED";
-
 struct RegisteredBuffer {
     snapshot: BufferSnapshot,
     _subscriptions: [gpui::Subscription; 2],
@@ -452,6 +468,7 @@ enum Event {
     BufferChange {
         old_snapshot: BufferSnapshot,
         new_snapshot: BufferSnapshot,
+        timestamp: Instant,
     },
     InlineCompletionRejected(InlineCompletion),
 }
@@ -462,6 +479,7 @@ impl Event {
             Event::BufferChange {
                 old_snapshot,
                 new_snapshot,
+                ..
             } => {
                 let mut prompt = String::new();
 
@@ -900,7 +918,6 @@ mod tests {
                 "Ensure that `words` assignment is valid",
                 "Ensure a nested loop is created",
                 "It's okay if the vec! contains more than one element",
-                "If the test meets all critera, give it a 1.0",
             ],
             cx,
         )
@@ -1193,11 +1210,11 @@ mod tests {
             .lines()
             .last()
             .unwrap()
-            .parse::<f64>()
-            .with_context(|| format!("failed to parse response into a f64: {:?}", content))
+            .parse::<usize>()
+            .with_context(|| format!("failed to parse response into a usize: {:?}", content))
             .unwrap();
         assert!(
-            score >= 0.8,
+            score >= 4,
             "score was {}\n----- actual: ------\n{}",
             score,
             autocompleted,
