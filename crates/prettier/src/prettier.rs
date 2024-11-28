@@ -138,7 +138,7 @@ impl Prettier {
         fs: &dyn Fs,
         prettier_ignores: &HashSet<Option<PathBuf>>,
         locate_from: &Path,
-    ) -> anyhow::Result<Option<PathBuf>> {
+    ) -> anyhow::Result<ControlFlow<(), Option<PathBuf>>> {
         let mut path_to_check = locate_from
             .components()
             .take_while(|component| component.as_os_str().to_string_lossy() != "node_modules")
@@ -147,7 +147,7 @@ impl Prettier {
             log::debug!(
                 "Skipping prettier ignore location for path {path_to_check:?} that is inside node_modules"
             );
-            return Ok(None);
+            return Ok(ControlFlow::Break(()));
         }
 
         let path_to_check_metadata = fs
@@ -163,7 +163,7 @@ impl Prettier {
         loop {
             if prettier_ignores.contains(&Some(path_to_check.clone())) {
                 log::debug!("Found prettier ignore at {path_to_check:?}");
-                return Ok(Some(path_to_check));
+                return Ok(ControlFlow::Continue(Some(path_to_check)));
             } else if let Some(package_json_contents) =
                 read_package_json(fs, &path_to_check).await?
             {
@@ -175,7 +175,7 @@ impl Prettier {
                 {
                     if !metadata.is_dir && !metadata.is_symlink {
                         log::info!("Found prettier ignore at {ignore_path:?}");
-                        return Ok(Some(path_to_check));
+                        return Ok(ControlFlow::Continue(Some(path_to_check)));
                     }
                 }
                 match &closest_package_json_path {
@@ -213,7 +213,7 @@ impl Prettier {
                                 if let Some(metadata) = fs.metadata(&workspace_ignore).await? {
                                     if !metadata.is_dir {
                                         log::info!("Found prettier ignore at workspace root {workspace_ignore:?}");
-                                        return Ok(Some(path_to_check));
+                                        return Ok(ControlFlow::Continue(Some(path_to_check)));
                                     }
                                 }
                             }
@@ -224,7 +224,7 @@ impl Prettier {
 
             if !path_to_check.pop() {
                 log::debug!("Found no prettier ignore in ancestors of {locate_from:?}");
-                return Ok(None);
+                return Ok(ControlFlow::Continue(None));
             }
         }
     }

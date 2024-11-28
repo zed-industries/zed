@@ -49,7 +49,7 @@ class Prettier {
     )}\n`,
   );
   process.stdin.resume();
-  handleBuffer(new Prettier(prettierPath, prettier, config, null));
+  handleBuffer(new Prettier(prettierPath, prettier, config));
 })();
 
 async function handleBuffer(prettier) {
