@@ -359,3 +359,20 @@ fn load_queries(name: &str) -> LanguageQueries {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_queries_basic_loading() {
+        // Test loading queries for a language with basic queries
+        let languages = vec!["rust", "typescript", "tsx", "python", "cpp", "c"];
+
+        for language in languages {
+            let queries = load_queries(language);
+            assert!(queries.highlights.is_some(), "Should load highlights query");
+            assert!(queries.text_objects.is_some(), "Should load text objects");
+        }
+    }
+}
