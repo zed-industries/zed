@@ -344,8 +344,6 @@ pub enum BufferEvent {
     Reloaded,
     /// The buffer is in need of a reload
     ReloadNeeded,
-    /// The buffer's diff_base changed.
-    DiffBaseChanged,
     /// The buffer's language was changed.
     LanguageChanged,
     /// The buffer's syntax trees were updated.
@@ -902,7 +900,7 @@ impl Buffer {
         }
 
         let operation = base_buffer.update(cx, |base_buffer, cx| {
-            cx.emit(BufferEvent::DiffBaseChanged);
+            // cx.emit(BufferEvent::DiffBaseChanged);
             base_buffer.edit(edits, None, cx)
         });
 
@@ -1125,27 +1123,6 @@ impl Buffer {
             BufferDiffBase::Git(rope) | BufferDiffBase::PastBufferVersion { rope, .. } => {
                 Some(rope)
             }
-        }
-    }
-
-    /// Sets the text that will be used to compute a Git diff
-    /// against the buffer text.
-    pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &ModelContext<Self>) {
-        self.diff_base = diff_base.map(|mut raw_diff_base| {
-            LineEnding::normalize(&mut raw_diff_base);
-            BufferDiffBase::Git(Rope::from(raw_diff_base))
-        });
-        self.diff_base_version += 1;
-        if let Some(recalc_task) = self.recalculate_diff(cx) {
-            cx.spawn(|buffer, mut cx| async move {
-                recalc_task.await;
-                buffer
-                    .update(&mut cx, |_, cx| {
-                        cx.emit(BufferEvent::DiffBaseChanged);
-                    })
-                    .ok();
-            })
-            .detach();
         }
     }
 
@@ -3870,11 +3847,6 @@ impl BufferSnapshot {
                     set.selections[start_ix..end_ix].iter(),
                 )
             })
-    }
-
-    /// Whether the buffer contains any Git changes.
-    pub fn has_git_diff(&self) -> bool {
-        !self.git_diff.is_empty()
     }
 
     /// Returns all the Git diff hunks intersecting the given row range.

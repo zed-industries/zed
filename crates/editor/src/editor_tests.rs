@@ -25,7 +25,7 @@ use language::{
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
-use project::FakeFs;
+use project::{buffer_store::BufferChangeSet, FakeFs};
 use project::{
     lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
     project_settings::{LspSettings, ProjectSettings},
@@ -3356,12 +3356,11 @@ async fn test_custom_newlines_cause_no_false_positive_diffs(
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
         assert_eq!(
-            editor
-                .buffer()
-                .read(cx)
-                .snapshot(cx)
-                .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
+            snapshot
+                .diff_map
+                .diff_hunks_in_range(0..snapshot.buffer_snapshot.len(), &snapshot.buffer_snapshot)
                 .collect::<Vec<_>>(),
             Vec::new(),
             "Should not have any diffs for files with custom newlines"
@@ -10929,17 +10928,18 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
 async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
-    let base_text = indoc! {r#"struct Row;
-struct Row1;
-struct Row2;
+    let base_text = indoc! {r#"
+        struct Row;
+        struct Row1;
+        struct Row2;
 
-struct Row4;
-struct Row5;
-struct Row6;
+        struct Row4;
+        struct Row5;
+        struct Row6;
 
-struct Row8;
-struct Row9;
-struct Row10;"#};
+        struct Row8;
+        struct Row9;
+        struct Row10;"#};
 
     // When addition hunks are not adjacent to carets, no hunk revert is performed
     assert_hunk_revert(
@@ -11070,17 +11070,18 @@ struct Row10;"#};
 async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
-    let base_text = indoc! {r#"struct Row;
-struct Row1;
-struct Row2;
+    let base_text = indoc! {r#"
+        struct Row;
+        struct Row1;
+        struct Row2;
 
-struct Row4;
-struct Row5;
-struct Row6;
+        struct Row4;
+        struct Row5;
+        struct Row6;
 
-struct Row8;
-struct Row9;
-struct Row10;"#};
+        struct Row8;
+        struct Row9;
+        struct Row10;"#};
 
     // Modification hunks behave the same as the addition ones.
     assert_hunk_revert(
@@ -11298,54 +11299,18 @@ struct Row10;"#};
 async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let cols = 4;
-    let rows = 10;
-    let sample_text_1 = sample_text(rows, cols, 'a');
-    assert_eq!(
-        sample_text_1,
-        "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
-    );
-    let sample_text_2 = sample_text(rows, cols, 'l');
-    assert_eq!(
-        sample_text_2,
-        "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu"
-    );
-    let sample_text_3 = sample_text(rows, cols, 'v');
-    assert_eq!(
-        sample_text_3,
-        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}"
-    );
+    let base_text_1 = "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj";
+    let base_text_2 = "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu";
+    let base_text_3 =
+        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}";
 
-    fn diff_every_buffer_row(
-        buffer: &Model<Buffer>,
-        sample_text: String,
-        cols: usize,
-        cx: &mut gpui::TestAppContext,
-    ) {
-        // revert first character in each row, creating one large diff hunk per buffer
-        let is_first_char = |offset: usize| offset % cols == 0;
-        buffer.update(cx, |buffer, cx| {
-            buffer.set_text(
-                sample_text
-                    .chars()
-                    .enumerate()
-                    .map(|(offset, c)| if is_first_char(offset) { 'X' } else { c })
-                    .collect::<String>(),
-                cx,
-            );
-            buffer.set_diff_base(Some(sample_text), cx);
-        });
-        cx.executor().run_until_parked();
-    }
+    let text_1 = edit_first_char_of_every_line(base_text_1);
+    let text_2 = edit_first_char_of_every_line(base_text_2);
+    let text_3 = edit_first_char_of_every_line(base_text_3);
 
-    let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text_1.clone(), cx));
-    diff_every_buffer_row(&buffer_1, sample_text_1.clone(), cols, cx);
-
-    let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text_2.clone(), cx));
-    diff_every_buffer_row(&buffer_2, sample_text_2.clone(), cols, cx);
-
-    let buffer_3 = cx.new_model(|cx| Buffer::local(sample_text_3.clone(), cx));
-    diff_every_buffer_row(&buffer_3, sample_text_3.clone(), cols, cx);
+    let buffer_1 = cx.new_model(|cx| Buffer::local(text_1.clone(), cx));
+    let buffer_2 = cx.new_model(|cx| Buffer::local(text_2.clone(), cx));
+    let buffer_3 = cx.new_model(|cx| Buffer::local(text_3.clone(), cx));
 
     let multibuffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
@@ -11408,34 +11373,49 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
     editor.update(cx, |editor, cx| {
+        for (buffer, diff_base) in [
+            (buffer_1.clone(), base_text_1),
+            (buffer_2.clone(), base_text_2),
+            (buffer_3.clone(), base_text_3),
+        ] {
+            let change_set =
+                cx.new_model(|cx| BufferChangeSet::new(Some(diff_base.to_string()), buffer, cx));
+            editor.expanded_hunks.add_change_set(change_set, cx)
+        }
+    });
+
+    editor.update(cx, |editor, cx| {
         assert_eq!(editor.text(cx), "XaaaXbbbX\nccXc\ndXdd\n\nhXhh\nXiiiXjjjX\n\nXlllXmmmX\nnnXn\noXoo\n\nsXss\nXtttXuuuX\n\nXvvvXwwwX\nxxXx\nyXyy\n\n}X}}\nX~~~X\u{7f}\u{7f}\u{7f}X\n");
         editor.select_all(&SelectAll, cx);
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
     });
     cx.executor().run_until_parked();
+
     // When all ranges are selected, all buffer hunks are reverted.
     editor.update(cx, |editor, cx| {
         assert_eq!(editor.text(cx), "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n\n\nllll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu\n\n\nvvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}\n\n");
     });
     buffer_1.update(cx, |buffer, _| {
-        assert_eq!(buffer.text(), sample_text_1);
+        assert_eq!(buffer.text(), base_text_1);
     });
     buffer_2.update(cx, |buffer, _| {
-        assert_eq!(buffer.text(), sample_text_2);
+        assert_eq!(buffer.text(), base_text_2);
     });
     buffer_3.update(cx, |buffer, _| {
-        assert_eq!(buffer.text(), sample_text_3);
+        assert_eq!(buffer.text(), base_text_3);
     });
 
-    diff_every_buffer_row(&buffer_1, sample_text_1.clone(), cols, cx);
-    diff_every_buffer_row(&buffer_2, sample_text_2.clone(), cols, cx);
-    diff_every_buffer_row(&buffer_3, sample_text_3.clone(), cols, cx);
+    editor.update(cx, |editor, cx| {
+        editor.undo(&Default::default(), cx);
+    });
+
     editor.update(cx, |editor, cx| {
         editor.change_selections(None, cx, |s| {
             s.select_ranges(Some(Point::new(0, 0)..Point::new(6, 0)));
         });
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
     });
+
     // Now, when all ranges selected belong to buffer_1, the revert should succeed,
     // but not affect buffer_2 and its related excerpts.
     editor.update(cx, |editor, cx| {
@@ -11445,7 +11425,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
         );
     });
     buffer_1.update(cx, |buffer, _| {
-        assert_eq!(buffer.text(), sample_text_1);
+        assert_eq!(buffer.text(), base_text_1);
     });
     buffer_2.update(cx, |buffer, _| {
         assert_eq!(
@@ -11459,10 +11439,17 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             "XvvvXwwwX\nxxXx\nyXyy\nXzzzX{{{X\n||X|\n}X}}\nX~~~X\u{7f}\u{7f}\u{7f}X"
         );
     });
+
+    fn edit_first_char_of_every_line(text: &str) -> String {
+        text.split('\n')
+            .map(|line| format!("X{}", &line[1..]))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 #[gpui::test]
-async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
+async fn test_multibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let cols = 4;
@@ -12159,21 +12146,9 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     let file_3_old = "111\n222\n333\n444\n555\n777\n888\n999\n000\n!!!";
     let file_3_new = "111\n222\n333\n444\n555\n666\n777\n888\n999\n000\n!!!";
 
-    let buffer_1 = cx.new_model(|cx| {
-        let mut buffer = Buffer::local(file_1_new.to_string(), cx);
-        buffer.set_diff_base(Some(file_1_old.into()), cx);
-        buffer
-    });
-    let buffer_2 = cx.new_model(|cx| {
-        let mut buffer = Buffer::local(file_2_new.to_string(), cx);
-        buffer.set_diff_base(Some(file_2_old.into()), cx);
-        buffer
-    });
-    let buffer_3 = cx.new_model(|cx| {
-        let mut buffer = Buffer::local(file_3_new.to_string(), cx);
-        buffer.set_diff_base(Some(file_3_old.into()), cx);
-        buffer
-    });
+    let buffer_1 = cx.new_model(|cx| Buffer::local(file_1_new.to_string(), cx));
+    let buffer_2 = cx.new_model(|cx| Buffer::local(file_2_new.to_string(), cx));
+    let buffer_3 = cx.new_model(|cx| Buffer::local(file_3_new.to_string(), cx));
 
     let multi_buffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
@@ -12235,6 +12210,20 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     });
 
     let editor = cx.add_window(|cx| Editor::new(EditorMode::Full, multi_buffer, None, true, cx));
+    editor
+        .update(cx, |editor, cx| {
+            for (buffer, diff_base) in [
+                (buffer_1.clone(), file_1_old),
+                (buffer_2.clone(), file_2_old),
+                (buffer_3.clone(), file_3_old),
+            ] {
+                let change_set = cx
+                    .new_model(|cx| BufferChangeSet::new(Some(diff_base.to_string()), buffer, cx));
+                editor.expanded_hunks.add_change_set(change_set, cx)
+            }
+        })
+        .unwrap();
+
     let mut cx = EditorTestContext::for_editor(editor, cx).await;
     cx.run_until_parked();
 
@@ -12314,12 +12303,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     let base = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\n";
     let text = "aaa\nBBB\nBB2\nccc\nDDD\nEEE\nfff\nggg\n";
 
-    let buffer = cx.new_model(|cx| {
-        let mut buffer = Buffer::local(text.to_string(), cx);
-        buffer.set_diff_base(Some(base.into()), cx);
-        buffer
-    });
-
+    let buffer = cx.new_model(|cx| Buffer::local(text.to_string(), cx));
     let multi_buffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
@@ -12340,6 +12324,14 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     });
 
     let editor = cx.add_window(|cx| Editor::new(EditorMode::Full, multi_buffer, None, true, cx));
+    editor
+        .update(cx, |editor, cx| {
+            let change_set =
+                cx.new_model(|cx| BufferChangeSet::new(Some(base.to_string()), buffer, cx));
+            editor.expanded_hunks.add_change_set(change_set, cx)
+        })
+        .unwrap();
+
     let mut cx = EditorTestContext::for_editor(editor, cx).await;
     cx.run_until_parked();
 
@@ -13935,22 +13927,14 @@ fn assert_hunk_revert(
     cx: &mut EditorLspTestContext,
 ) {
     cx.set_state(not_reverted_text_with_selections);
-    cx.update_editor(|editor, cx| {
-        editor
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .unwrap()
-            .update(cx, |buffer, cx| {
-                buffer.set_diff_base(Some(base_text.into()), cx);
-            });
-    });
+    cx.set_diff_base(Some(base_text));
     cx.executor().run_until_parked();
 
     let reverted_hunk_statuses = cx.update_editor(|editor, cx| {
-        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let snapshot = editor.snapshot(cx);
         let reverted_hunk_statuses = snapshot
-            .git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX)
+            .diff_map
+            .diff_hunks_in_range(0..snapshot.buffer_snapshot.len(), &snapshot.buffer_snapshot)
             .map(|hunk| hunk_status(&hunk))
             .collect::<Vec<_>>();
 

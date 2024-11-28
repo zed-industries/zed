@@ -95,7 +95,6 @@ pub enum Event {
     },
     Reloaded,
     ReloadNeeded,
-    DiffBaseChanged,
 
     LanguageChanged(BufferId),
     CapabilityChanged,
@@ -1742,7 +1741,6 @@ impl MultiBuffer {
             language::BufferEvent::FileHandleChanged => Event::FileHandleChanged,
             language::BufferEvent::Reloaded => Event::Reloaded,
             language::BufferEvent::ReloadNeeded => Event::ReloadNeeded,
-            language::BufferEvent::DiffBaseChanged => Event::DiffBaseChanged,
             language::BufferEvent::LanguageChanged => {
                 Event::LanguageChanged(buffer.read(cx).remote_id())
             }
@@ -3766,151 +3764,6 @@ impl MultiBufferSnapshot {
                     reversed,
                 )
             })
-    }
-
-    pub fn has_git_diffs(&self) -> bool {
-        for excerpt in self.excerpts.iter() {
-            if excerpt.buffer.has_git_diff() {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn git_diff_hunks_in_range_rev(
-        &self,
-        row_range: Range<MultiBufferRow>,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
-        let mut cursor = self.excerpts.cursor::<Point>(&());
-
-        cursor.seek(&Point::new(row_range.end.0, 0), Bias::Left, &());
-        if cursor.item().is_none() {
-            cursor.prev(&());
-        }
-
-        std::iter::from_fn(move || {
-            let excerpt = cursor.item()?;
-            let multibuffer_start = *cursor.start();
-            let multibuffer_end = multibuffer_start + excerpt.text_summary.lines;
-            if multibuffer_start.row >= row_range.end.0 {
-                return None;
-            }
-
-            let mut buffer_start = excerpt.range.context.start;
-            let mut buffer_end = excerpt.range.context.end;
-            let excerpt_start_point = buffer_start.to_point(&excerpt.buffer);
-            let excerpt_end_point = excerpt_start_point + excerpt.text_summary.lines;
-
-            if row_range.start.0 > multibuffer_start.row {
-                let buffer_start_point =
-                    excerpt_start_point + Point::new(row_range.start.0 - multibuffer_start.row, 0);
-                buffer_start = excerpt.buffer.anchor_before(buffer_start_point);
-            }
-
-            if row_range.end.0 < multibuffer_end.row {
-                let buffer_end_point =
-                    excerpt_start_point + Point::new(row_range.end.0 - multibuffer_start.row, 0);
-                buffer_end = excerpt.buffer.anchor_before(buffer_end_point);
-            }
-
-            let buffer_hunks = excerpt
-                .buffer
-                .git_diff_hunks_intersecting_range_rev(buffer_start..buffer_end)
-                .map(move |hunk| {
-                    let start = multibuffer_start.row
-                        + hunk.row_range.start.saturating_sub(excerpt_start_point.row);
-                    let end = multibuffer_start.row
-                        + hunk
-                            .row_range
-                            .end
-                            .min(excerpt_end_point.row + 1)
-                            .saturating_sub(excerpt_start_point.row);
-
-                    MultiBufferDiffHunk {
-                        row_range: MultiBufferRow(start)..MultiBufferRow(end),
-                        diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-                        buffer_range: hunk.buffer_range.clone(),
-                        buffer_id: excerpt.buffer_id,
-                    }
-                });
-
-            cursor.prev(&());
-
-            Some(buffer_hunks)
-        })
-        .flatten()
-    }
-
-    pub fn git_diff_hunks_in_range(
-        &self,
-        row_range: Range<MultiBufferRow>,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
-        let mut cursor = self.excerpts.cursor::<Point>(&());
-
-        cursor.seek(&Point::new(row_range.start.0, 0), Bias::Left, &());
-
-        std::iter::from_fn(move || {
-            let excerpt = cursor.item()?;
-            let multibuffer_start = *cursor.start();
-            let multibuffer_end = multibuffer_start + excerpt.text_summary.lines;
-            let mut buffer_start = excerpt.range.context.start;
-            let mut buffer_end = excerpt.range.context.end;
-
-            let excerpt_rows = match multibuffer_start.row.cmp(&row_range.end.0) {
-                cmp::Ordering::Less => {
-                    let excerpt_start_point = buffer_start.to_point(&excerpt.buffer);
-                    let excerpt_end_point = excerpt_start_point + excerpt.text_summary.lines;
-
-                    if row_range.start.0 > multibuffer_start.row {
-                        let buffer_start_point = excerpt_start_point
-                            + Point::new(row_range.start.0 - multibuffer_start.row, 0);
-                        buffer_start = excerpt.buffer.anchor_before(buffer_start_point);
-                    }
-
-                    if row_range.end.0 < multibuffer_end.row {
-                        let buffer_end_point = excerpt_start_point
-                            + Point::new(row_range.end.0 - multibuffer_start.row, 0);
-                        buffer_end = excerpt.buffer.anchor_before(buffer_end_point);
-                    }
-                    excerpt_start_point.row..excerpt_end_point.row
-                }
-                cmp::Ordering::Equal if row_range.end.0 == 0 => {
-                    buffer_end = buffer_start;
-                    0..0
-                }
-                cmp::Ordering::Greater | cmp::Ordering::Equal => return None,
-            };
-
-            let buffer_hunks = excerpt
-                .buffer
-                .git_diff_hunks_intersecting_range(buffer_start..buffer_end)
-                .map(move |hunk| {
-                    let buffer_range = if excerpt_rows.start == 0 && excerpt_rows.end == 0 {
-                        MultiBufferRow(0)..MultiBufferRow(1)
-                    } else {
-                        let start = multibuffer_start.row
-                            + hunk.row_range.start.saturating_sub(excerpt_rows.start);
-                        let end = multibuffer_start.row
-                            + hunk
-                                .row_range
-                                .end
-                                .min(excerpt_rows.end + 1)
-                                .saturating_sub(excerpt_rows.start);
-                        MultiBufferRow(start)..MultiBufferRow(end)
-                    };
-                    MultiBufferDiffHunk {
-                        row_range: buffer_range,
-                        diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-                        buffer_range: hunk.buffer_range.clone(),
-                        buffer_id: excerpt.buffer_id,
-                    }
-                });
-
-            cursor.next(&());
-
-            Some(buffer_hunks)
-        })
-        .flatten()
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {

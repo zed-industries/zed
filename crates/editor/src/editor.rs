@@ -12666,11 +12666,11 @@ impl Editor {
             multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {
                 cx.emit(EditorEvent::TitleChanged)
             }
-            multi_buffer::Event::DiffBaseChanged => {
-                self.scrollbar_marker_state.dirty = true;
-                cx.emit(EditorEvent::DiffBaseChanged);
-                cx.notify();
-            }
+            // multi_buffer::Event::DiffBaseChanged => {
+            //     self.scrollbar_marker_state.dirty = true;
+            //     cx.emit(EditorEvent::DiffBaseChanged);
+            //     cx.notify();
+            // }
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);

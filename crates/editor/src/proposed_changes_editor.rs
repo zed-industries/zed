@@ -217,14 +217,14 @@ impl ProposedChangesEditor {
                     })
                     .ok();
             }
-            BufferEvent::DiffBaseChanged => {
-                self.recalculate_diffs_tx
-                    .unbounded_send(RecalculateDiff {
-                        buffer,
-                        debounce: false,
-                    })
-                    .ok();
-            }
+            // BufferEvent::DiffBaseChanged => {
+            //     self.recalculate_diffs_tx
+            //         .unbounded_send(RecalculateDiff {
+            //             buffer,
+            //             debounce: false,
+            //         })
+            //         .ok();
+            // }
             _ => (),
         }
     }

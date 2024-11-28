@@ -2279,10 +2279,7 @@ impl Project {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        if matches!(
-            event,
-            BufferEvent::Edited { .. } | BufferEvent::Reloaded | BufferEvent::DiffBaseChanged
-        ) {
+        if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 

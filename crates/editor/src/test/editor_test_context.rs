@@ -13,7 +13,7 @@ use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
 use multi_buffer::{ExcerptRange, ToPoint};
 use parking_lot::RwLock;
-use project::{FakeFs, Project};
+use project::{buffer_store::BufferChangeSet, FakeFs, Project};
 use std::{
     any::TypeId,
     ops::{Deref, DerefMut, Range},
@@ -277,7 +277,12 @@ impl EditorTestContext {
     }
 
     pub fn set_diff_base(&mut self, diff_base: Option<&str>) {
-        self.update_buffer(|buffer, cx| buffer.set_diff_base(diff_base.map(ToOwned::to_owned), cx));
+        self.update_editor(|editor, cx| {
+            let buffer = editor.buffer.read(cx).as_singleton().unwrap();
+            let change_set =
+                cx.new_model(|cx| BufferChangeSet::new(diff_base.map(str::to_string), buffer, cx));
+            editor.expanded_hunks.add_change_set(change_set, cx)
+        });
     }
 
     /// Change the editor's text and selections using a string containing

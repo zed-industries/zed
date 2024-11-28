@@ -842,7 +842,6 @@ impl BufferStore {
         client.add_model_message_handler(Self::handle_buffer_reloaded);
         client.add_model_message_handler(Self::handle_buffer_saved);
         client.add_model_message_handler(Self::handle_update_buffer_file);
-        client.add_model_message_handler(Self::handle_update_diff_base);
         client.add_model_request_handler(Self::handle_save_buffer);
         client.add_model_request_handler(Self::handle_blame_buffer);
         client.add_model_request_handler(Self::handle_reload_buffers);
@@ -1642,32 +1641,6 @@ impl BufferStore {
                         project_id: *project_id,
                         buffer_id: buffer_id.into(),
                         file: envelope.payload.file,
-                    })
-                    .log_err();
-            }
-            Ok(())
-        })?
-    }
-
-    pub async fn handle_update_diff_base(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::UpdateDiffBase>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            let buffer_id = envelope.payload.buffer_id;
-            let buffer_id = BufferId::new(buffer_id)?;
-            if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
-                buffer.update(cx, |buffer, cx| {
-                    buffer.set_diff_base(envelope.payload.diff_base.clone(), cx)
-                });
-            }
-            if let Some((downstream_client, project_id)) = this.downstream_client.as_ref() {
-                downstream_client
-                    .send(proto::UpdateDiffBase {
-                        project_id: *project_id,
-                        buffer_id: buffer_id.into(),
-                        diff_base: envelope.payload.diff_base,
                     })
                     .log_err();
             }

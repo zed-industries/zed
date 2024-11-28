@@ -111,6 +111,10 @@ impl ExpandedHunks {
 }
 
 impl DiffMapSnapshot {
+    pub fn is_empty(&self) -> bool {
+        self.0.values().all(|diff| diff.is_empty())
+    }
+
     pub fn diff_hunks<'a>(
         &'a self,
         buffer_snapshot: &'a MultiBufferSnapshot,
@@ -1340,78 +1344,57 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
 
         // buffer has two modified hunks with two rows each
-        let buffer_1 = project.update(cx, |project, cx| {
-            project.create_local_buffer(
-                "
-                    1.zero
-                    1.ONE
-                    1.TWO
-                    1.three
-                    1.FOUR
-                    1.FIVE
-                    1.six
-                "
-                .unindent()
-                .as_str(),
-                None,
-                cx,
-            )
-        });
-        buffer_1.update(cx, |buffer, cx| {
-            buffer.set_diff_base(
-                Some(
-                    "
-                    1.zero
-                    1.one
-                    1.two
-                    1.three
-                    1.four
-                    1.five
-                    1.six
-                    "
-                    .unindent(),
-                ),
-                cx,
-            );
-        });
+        let diff_base_1 = "
+            1.zero
+            1.one
+            1.two
+            1.three
+            1.four
+            1.five
+            1.six
+        "
+        .unindent();
+
+        let text_1 = "
+            1.zero
+            1.ONE
+            1.TWO
+            1.three
+            1.FOUR
+            1.FIVE
+            1.six
+        "
+        .unindent();
 
         // buffer has a deletion hunk and an insertion hunk
-        let buffer_2 = project.update(cx, |project, cx| {
-            project.create_local_buffer(
-                "
-                    2.zero
-                    2.one
-                    2.two
-                    2.three
-                    2.four
-                    2.five
-                    2.six
-                "
-                .unindent()
-                .as_str(),
-                None,
-                cx,
-            )
-        });
-        buffer_2.update(cx, |buffer, cx| {
-            buffer.set_diff_base(
-                Some(
-                    "
-                    2.zero
-                    2.one
-                    2.one-and-a-half
-                    2.two
-                    2.three
-                    2.four
-                    2.six
-                    "
-                    .unindent(),
-                ),
-                cx,
-            );
-        });
+        let diff_base_2 = "
+            2.zero
+            2.one
+            2.one-and-a-half
+            2.two
+            2.three
+            2.four
+            2.six
+        "
+        .unindent();
 
-        cx.background_executor.run_until_parked();
+        let text_2 = "
+            2.zero
+            2.one
+            2.two
+            2.three
+            2.four
+            2.five
+            2.six
+        "
+        .unindent();
+
+        let buffer_1 = project.update(cx, |project, cx| {
+            project.create_local_buffer(text_1.as_str(), None, cx)
+        });
+        let buffer_2 = project.update(cx, |project, cx| {
+            project.create_local_buffer(text_2.as_str(), None, cx)
+        });
 
         let multibuffer = cx.new_model(|cx| {
             let mut multibuffer = MultiBuffer::new(ReadWrite);
@@ -1460,7 +1443,23 @@ mod tests {
             multibuffer
         });
 
-        let snapshot = multibuffer.read_with(cx, |b, cx| b.snapshot(cx));
+        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, cx));
+        editor
+            .update(cx, |editor, cx| {
+                for (buffer, diff_base) in [
+                    (buffer_1.clone(), diff_base_1),
+                    (buffer_2.clone(), diff_base_2),
+                ] {
+                    let change_set = cx.new_model(|cx| {
+                        BufferChangeSet::new(Some(diff_base.to_string()), buffer, cx)
+                    });
+                    editor.expanded_hunks.add_change_set(change_set, cx)
+                }
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        let snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
 
         assert_eq!(
             snapshot.text(),
@@ -1506,7 +1505,8 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .git_diff_hunks_in_range(MultiBufferRow(0)..MultiBufferRow(12))
+                .diff_map
+                .diff_hunks_in_range(Point::zero()..Point::new(12, 0), &snapshot.buffer_snapshot)
                 .map(|hunk| (hunk_status(&hunk), hunk.row_range))
                 .collect::<Vec<_>>(),
             &expected,
@@ -1514,7 +1514,11 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .git_diff_hunks_in_range_rev(MultiBufferRow(0)..MultiBufferRow(12))
+                .diff_map
+                .diff_hunks_in_range_rev(
+                    Point::zero()..Point::new(12, 0),
+                    &snapshot.buffer_snapshot
+                )
                 .map(|hunk| (hunk_status(&hunk), hunk.row_range))
                 .collect::<Vec<_>>(),
             expected

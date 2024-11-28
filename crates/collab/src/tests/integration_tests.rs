@@ -2564,9 +2564,6 @@ async fn test_git_diff_base_change(
 
     // Wait for it to catch up to the new diff
     executor.run_until_parked();
-
-    // Smoke test diffing
-
     buffer_local_a.read_with(cx_a, |buffer, _| {
         assert_eq!(
             buffer.diff_base().map(|rope| rope.to_string()).as_deref(),

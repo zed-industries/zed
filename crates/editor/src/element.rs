@@ -1166,7 +1166,7 @@ impl EditorElement {
                 let editor = self.editor.read(cx);
                 let is_singleton = editor.is_singleton(cx);
                 // Git
-                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
+                (is_singleton && scrollbar_settings.git_diff && !snapshot.diff_map.is_empty())
                     ||
                     // Buffer Search Results
                     (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
