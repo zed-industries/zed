@@ -976,10 +976,10 @@ mod tests {
                 }
             "},
             vec![
-                "Ensure that `pixels` is private",
-                "Ensure that `stride` is private",
-                "Ensure that `size` is private",
-                "Ensure that `format` is private",
+                "Ensure that `pixels` does not have a visibility modifier",
+                "Ensure that `stride` does not have a visibility modifier",
+                "Ensure that `size` does not have a visibility modifier",
+                "Ensure that `format` does not have a visibility modifier",
             ],
             cx,
         )
