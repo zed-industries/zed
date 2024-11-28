@@ -233,7 +233,6 @@ impl Prettier {
     pub async fn start(
         _: LanguageServerId,
         prettier_dir: PathBuf,
-        _: Option<PathBuf>,
         _: NodeRuntime,
         _: AsyncAppContext,
     ) -> anyhow::Result<Self> {
@@ -247,7 +246,6 @@ impl Prettier {
     pub async fn start(
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
-        ignore_dir: Option<PathBuf>,
         node: NodeRuntime,
         cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
@@ -270,13 +268,7 @@ impl Prettier {
         let server_name = LanguageServerName("prettier".into());
         let server_binary = LanguageServerBinary {
             path: node_path,
-            arguments: vec![
-                prettier_server.into(),
-                prettier_dir.as_path().into(),
-                ignore_dir
-                    .map(|path| path.as_path().into())
-                    .unwrap_or_default(),
-            ],
+            arguments: vec![prettier_server.into(), prettier_dir.as_path().into()],
             env: None,
         };
         let server = LanguageServer::new(
@@ -304,6 +296,7 @@ impl Prettier {
         &self,
         buffer: &Model<Buffer>,
         buffer_path: Option<PathBuf>,
+        ignore_dir: Option<PathBuf>,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<Diff> {
         match self {
@@ -418,11 +411,24 @@ impl Prettier {
 
                         }
 
+                        let ignore_path = if let Some(dir) = ignore_dir {
+                            let ignore_file = dir.join(".prettierignore");
+                            if ignore_file.is_file() {
+                                Some(ignore_file)
+                            } else {
+                                log::error!("Prettier ignore file not found at {:?}", ignore_file);
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
                         log::debug!(
-                            "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}",
+                            "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}, ignore_path: {:?}",
                             buffer.file().map(|f| f.full_path(cx)),
                             plugins,
                             prettier_options,
+                            ignore_path,
                         );
 
                         anyhow::Ok(FormatParams {
@@ -432,6 +438,7 @@ impl Prettier {
                                 plugins,
                                 path: buffer_path,
                                 prettier_options,
+                                ignore_path,
                             },
                         })
                     })?
@@ -552,6 +559,7 @@ struct FormatOptions {
     #[serde(rename = "filepath")]
     path: Option<PathBuf>,
     prettier_options: Option<HashMap<String, serde_json::Value>>,
+    ignore_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
