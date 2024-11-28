@@ -3264,7 +3264,7 @@ impl EditorElement {
                                         hunk_hitbox.origin.x - hunk_hitbox.size.width,
                                         hunk_hitbox.origin.y,
                                     ),
-                                    size(hunk_hitbox.size.width * px(2.5), hunk_hitbox.size.height),
+                                    size(hunk_hitbox.size.width * px(2.2), hunk_hitbox.size.height),
                                 ),
                                 cx.theme().status().deleted,
                                 Corners::all(1. * line_height),
