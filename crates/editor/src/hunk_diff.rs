@@ -1051,13 +1051,16 @@ fn create_diff_base_buffer(buffer: &Model<Buffer>, cx: &mut AppContext) -> Optio
             })
         })
 }
-
 fn added_hunk_color(cx: &AppContext) -> Hsla {
-    cx.theme().status().created_background
+    let mut created_color = cx.theme().status().git().created;
+    created_color.fade_out(0.8);
+    created_color
 }
 
 fn deleted_hunk_color(cx: &AppContext) -> Hsla {
-    cx.theme().status().deleted_background
+    let mut deleted_color = cx.theme().status().deleted;
+    deleted_color.fade_out(0.8);
+    deleted_color
 }
 
 fn editor_with_deleted_text(
