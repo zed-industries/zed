@@ -411,17 +411,10 @@ impl Prettier {
 
                         }
 
-                        let ignore_path = if let Some(dir) = ignore_dir {
+                        let ignore_path = ignore_dir.and_then(|dir| {
                             let ignore_file = dir.join(".prettierignore");
-                            if ignore_file.is_file() {
-                                Some(ignore_file)
-                            } else {
-                                log::error!("Prettier ignore file not found at {:?}", ignore_file);
-                                None
-                            }
-                        } else {
-                            None
-                        };
+                            ignore_file.is_file().then_some(ignore_file)
+                        });
 
                         log::debug!(
                             "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}, ignore_path: {:?}",
@@ -950,5 +943,137 @@ mod tests {
                 assert!(message.contains("/root/work/full-stack-foundations"), "Error message should mention potential candidates without prettier node_modules contents");
             },
         };
+    }
+
+    #[gpui::test]
+    async fn test_prettier_ignore_with_editor_prettier(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    "src": {
+                        "index.js": "// index.js file contents",
+                        "ignored.js": "// this file should be ignored",
+                    },
+                    ".prettierignore": "ignored.js",
+                    "package.json": r#"{
+                        "name": "test-project"
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            Prettier::locate_prettier_ignore(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/project/src/index.js"),
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(Some(PathBuf::from("/root/project"))),
+            "Should find prettierignore in project root"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_prettier_ignore_in_monorepo_child(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "monorepo": {
+                    "node_modules": {
+                        "prettier": {
+                            "index.js": "// Dummy prettier package file",
+                        }
+                    },
+                    "packages": {
+                        "web": {
+                            "src": {
+                                "index.js": "// index.js contents",
+                                "ignored.js": "// this should be ignored",
+                            },
+                            ".prettierignore": "ignored.js",
+                            "package.json": r#"{
+                                "name": "web-package"
+                            }"#
+                        }
+                    },
+                    "package.json": r#"{
+                        "workspaces": ["packages/*"],
+                        "devDependencies": {
+                            "prettier": "^2.0.0"
+                        }
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            Prettier::locate_prettier_ignore(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/monorepo/packages/web/src/index.js"),
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(Some(PathBuf::from("/root/monorepo/packages/web"))),
+            "Should find prettierignore in child package"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_prettier_ignore_in_monorepo_with_root_and_child_ignores(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "monorepo": {
+                    "node_modules": {
+                        "prettier": {
+                            "index.js": "// Dummy prettier package file",
+                        }
+                    },
+                    ".prettierignore": "*.test.js",
+                    "packages": {
+                        "web": {
+                            "src": {
+                                "index.js": "// index.js contents",
+                                "ignored.js": "// this should be ignored",
+                            },
+                            ".prettierignore": "ignored.js",
+                            "package.json": r#"{
+                                "name": "web-package"
+                            }"#
+                        }
+                    },
+                    "package.json": r#"{
+                        "workspaces": ["packages/*"],
+                        "devDependencies": {
+                            "prettier": "^2.0.0"
+                        }
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            Prettier::locate_prettier_ignore(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/monorepo/packages/web/src/ignored.js"),
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(Some(PathBuf::from("/root/monorepo/packages/web"))),
+            "Should find child package prettierignore first"
+        );
     }
 }
