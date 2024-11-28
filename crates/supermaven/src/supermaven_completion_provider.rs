@@ -57,12 +57,6 @@ fn completion_state_from_diff(
         .text_for_range(delete_range.clone())
         .collect::<String>();
 
-    let delete_range = if buffer_text.is_empty() {
-        None
-    } else {
-        Some(delete_range)
-    };
-
     let mut edits: Vec<CompletionEdit> = Vec::new();
 
     let completion_graphemes: Vec<&str> = completion_text.graphemes(true).collect();
@@ -80,11 +74,11 @@ fn completion_state_from_diff(
         match k {
             Some(k) => {
                 if k != 0 {
+                    let offset = snapshot.anchor_after(offset);
                     // the range from the current position to item is an inlay.
                     edits.push(CompletionEdit {
-                        position: snapshot.anchor_after(offset),
-                        text: Some(completion_graphemes[i..i + k].join("").into()),
-                        delete_range: delete_range.clone(),
+                        text: completion_graphemes[i..i + k].join("").into(),
+                        range: offset..offset,
                     });
                 }
                 i += k + 1;
@@ -100,11 +94,11 @@ fn completion_state_from_diff(
     }
 
     if j == buffer_graphemes.len() && i < completion_graphemes.len() {
+        let offset = snapshot.anchor_after(offset);
         // there is leftover completion text, so drop it as an inlay.
         edits.push(CompletionEdit {
-            position: snapshot.anchor_after(offset),
-            text: Some(completion_graphemes[i..].join("").into()),
-            delete_range,
+            text: completion_graphemes[i..].join("").into(),
+            range: offset..offset,
         });
     }
 

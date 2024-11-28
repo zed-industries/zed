@@ -267,11 +267,11 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             if completion_text.trim().is_empty() {
                 None
             } else {
+                let position = cursor_position.bias_right(buffer);
                 Some(CompletionProposal {
                     edits: vec![CompletionEdit {
-                        position: cursor_position.bias_right(buffer),
-                        text: Some(completion_text.into()),
-                        delete_range: None,
+                        text: completion_text.into(),
+                        range: position..position,
                     }],
                 })
             }

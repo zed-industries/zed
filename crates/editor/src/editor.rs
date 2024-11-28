@@ -475,13 +475,14 @@ impl CompletionState {
 
 enum ComputedCompletionEdit {
     Insertion {
-        position: multi_buffer::Anchor,
         text: Rope,
+        position: multi_buffer::Anchor,
+
         render_inlay_ids: Vec<InlayId>,
     },
     Diff {
         text: Rope,
-        delete_range: Range<multi_buffer::Anchor>,
+        range: Range<multi_buffer::Anchor>,
 
         additions: Arc<Vec<Range<usize>>>,
         deletions: Vec<Range<multi_buffer::Anchor>>,
@@ -502,23 +503,24 @@ impl ComputedCompletionEdit {
         excerpt_id: ExcerptId,
         snapshot: &MultiBufferSnapshot,
     ) -> Option<Self> {
-        let position = snapshot.anchor_in_excerpt(excerpt_id, edit.position)?;
-        let text = edit.text.clone()?;
+        let text = edit.text.clone();
 
-        if let Some(delete_range) = edit.delete_range.as_ref() {
-            let start = snapshot.anchor_in_excerpt(excerpt_id, delete_range.start)?;
-            let end = snapshot.anchor_in_excerpt(excerpt_id, delete_range.end)?;
+        let start = snapshot.anchor_in_excerpt(excerpt_id, edit.range.start)?;
+        let end = snapshot.anchor_in_excerpt(excerpt_id, edit.range.end)?;
 
-            let old_text = snapshot.text_for_range(start..end).collect::<String>();
-            let new_text = edit
-                .text
-                .as_ref()
-                .map(|text| text.to_string())
-                .unwrap_or("".to_string());
+        let old_text = snapshot.text_for_range(start..end).collect::<String>();
 
+        if old_text.is_empty() {
+            Some(Self::Insertion {
+                position: start,
+                text,
+                render_inlay_ids: Vec::new(),
+            })
+        } else {
+            let new_text = edit.text.to_string();
             let diff = similar::TextDiff::from_chars(&old_text, &new_text);
 
-            let start_offset = position.to_offset(snapshot);
+            let start_offset = start.to_offset(snapshot);
 
             let mut deletions = Vec::new();
             let mut additions = Vec::new();
@@ -539,15 +541,9 @@ impl ComputedCompletionEdit {
 
             Some(Self::Diff {
                 text,
+                range: start..end,
                 deletions,
                 additions: Arc::new(additions),
-                delete_range: start..end,
-            })
-        } else {
-            Some(Self::Insertion {
-                position,
-                text,
-                render_inlay_ids: Vec::new(),
             })
         }
     }
@@ -555,7 +551,7 @@ impl ComputedCompletionEdit {
     pub fn position(&self) -> Anchor {
         match self {
             ComputedCompletionEdit::Insertion { position, .. } => *position,
-            ComputedCompletionEdit::Diff { delete_range, .. } => delete_range.start,
+            ComputedCompletionEdit::Diff { range, .. } => range.start,
         }
     }
 }
@@ -5512,9 +5508,7 @@ impl Editor {
 
         let (selection_range, text) = match completion_edit {
             ComputedCompletionEdit::Insertion { position, text, .. } => (position..position, text),
-            ComputedCompletionEdit::Diff {
-                text, delete_range, ..
-            } => (delete_range, text),
+            ComputedCompletionEdit::Diff { range, text, .. } => (range, text),
         };
 
         self.change_selections(None, cx, |s| s.select_ranges([selection_range]));
@@ -5678,10 +5672,10 @@ impl Editor {
                         return;
                     }
                     ComputedCompletionEdit::Diff {
+                        range,
                         text,
                         deletions,
                         additions,
-                        delete_range,
                     } => {
                         self.display_map.update(cx, {
                             let deletions = deletions.clone();
@@ -5699,7 +5693,7 @@ impl Editor {
                             }
                         });
                         self.active_inline_completion_popover = Some(CompletionEditDiffOverlay {
-                            position: delete_range.start,
+                            position: range.start,
                             text: text.clone(),
                             additions: additions.clone(),
                         });
