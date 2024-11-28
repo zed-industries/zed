@@ -17,6 +17,7 @@ use file_icons::FileIcons;
 
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, BTreeSet, HashMap};
+use command_palette_hooks::CommandPaletteFilter;
 use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
@@ -38,6 +39,7 @@ use project_panel_settings::{
 };
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use std::any::TypeId;
 use std::{
     cell::OnceCell,
     cmp,
@@ -310,6 +312,15 @@ impl ProjectPanel {
                 _ => {}
             })
             .detach();
+
+            let tash_action = [TypeId::of::<Trash>()];
+            let is_remote = project.read(cx).is_via_collab();
+
+            if !is_remote {
+                CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                    filter.hide_action_types(&tash_action);
+                });
+            }
 
             let filename_editor = cx.new_view(Editor::single_line);
 
