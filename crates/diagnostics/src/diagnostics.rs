@@ -134,16 +134,27 @@ impl ProjectDiagnosticsEditor {
                     language_server_id,
                     path,
                 } => {
-                    this.paths_to_update
-                        .insert((path.clone(), Some(*language_server_id)));
-                    this.summary = project.read(cx).diagnostic_summary(false, cx);
-                    cx.emit(EditorEvent::TitleChanged);
+                    let max_severity = this.max_severity();
+                    let has_diagnostics_to_display = project.read(cx).lsp_store().read(cx).diagnostics_for_buffer(path)
+                        .into_iter().flatten()
+                        .filter(|(server_id, _)| language_server_id == server_id)
+                        .flat_map(|(_, diagnostics)| diagnostics)
+                        .any(|diagnostic| diagnostic.diagnostic.severity <= max_severity);
 
-                    if this.editor.focus_handle(cx).contains_focused(cx) || this.focus_handle.contains_focused(cx) {
-                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
+                    if has_diagnostics_to_display {
+                        this.paths_to_update
+                            .insert((path.clone(), Some(*language_server_id)));
+                        this.summary = project.read(cx).diagnostic_summary(false, cx);
+                        cx.emit(EditorEvent::TitleChanged);
+
+                        if this.editor.focus_handle(cx).contains_focused(cx) || this.focus_handle.contains_focused(cx) {
+                            log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
+                        } else {
+                            log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
+                            this.update_stale_excerpts(cx);
+                        }
                     } else {
-                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
-                        this.update_stale_excerpts(cx);
+                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. no diagnostics to display");
                     }
                 }
                 _ => {}
@@ -329,16 +340,12 @@ impl ProjectDiagnosticsEditor {
             ExcerptId::min()
         };
 
+        let max_severity = self.max_severity();
         let path_state = &mut self.path_states[path_ix];
         let mut new_group_ixs = Vec::new();
         let mut blocks_to_add = Vec::new();
         let mut blocks_to_remove = HashSet::default();
         let mut first_excerpt_id = None;
-        let max_severity = if self.include_warnings {
-            DiagnosticSeverity::WARNING
-        } else {
-            DiagnosticSeverity::ERROR
-        };
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, cx| {
             let mut old_groups = mem::take(&mut path_state.diagnostic_groups)
                 .into_iter()
@@ -625,6 +632,14 @@ impl ProjectDiagnosticsEditor {
                 }
             }
             prev_path = Some(path);
+        }
+    }
+
+    fn max_severity(&self) -> DiagnosticSeverity {
+        if self.include_warnings {
+            DiagnosticSeverity::WARNING
+        } else {
+            DiagnosticSeverity::ERROR
         }
     }
 }

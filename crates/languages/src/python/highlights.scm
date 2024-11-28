@@ -18,6 +18,12 @@
   (tuple (identifier) @type)
 )
 
+; Forward references
+(type
+  (string) @type
+)
+
+
 ; Function calls
 
 (decorator

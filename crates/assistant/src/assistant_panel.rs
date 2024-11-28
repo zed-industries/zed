@@ -416,7 +416,6 @@ impl AssistantPanel {
                 ControlFlow::Break(())
             });
 
-            pane.set_can_split(false, cx);
             pane.set_can_navigate(true, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);

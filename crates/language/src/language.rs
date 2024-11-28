@@ -30,7 +30,10 @@ use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
+use lsp::{
+    CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions,
+    LanguageServerName,
+};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -483,6 +486,11 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn language_ids(&self) -> HashMap<String, String> {
         Default::default()
+    }
+
+    /// Support custom initialize params.
+    fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
+        Ok(original)
     }
 }
 
