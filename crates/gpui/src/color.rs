@@ -314,7 +314,7 @@ pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
 }
 
 /// Pure black in [`Hsla`]
-pub fn black() -> Hsla {
+pub const fn black() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -324,7 +324,7 @@ pub fn black() -> Hsla {
 }
 
 /// Transparent black in [`Hsla`]
-pub fn transparent_black() -> Hsla {
+pub const fn transparent_black() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -334,7 +334,7 @@ pub fn transparent_black() -> Hsla {
 }
 
 /// Transparent black in [`Hsla`]
-pub fn transparent_white() -> Hsla {
+pub const fn transparent_white() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -354,7 +354,7 @@ pub fn opaque_grey(lightness: f32, opacity: f32) -> Hsla {
 }
 
 /// Pure white in [`Hsla`]
-pub fn white() -> Hsla {
+pub const fn white() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -364,7 +364,7 @@ pub fn white() -> Hsla {
 }
 
 /// The color red in [`Hsla`]
-pub fn red() -> Hsla {
+pub const fn red() -> Hsla {
     Hsla {
         h: 0.,
         s: 1.,
@@ -374,7 +374,7 @@ pub fn red() -> Hsla {
 }
 
 /// The color blue in [`Hsla`]
-pub fn blue() -> Hsla {
+pub const fn blue() -> Hsla {
     Hsla {
         h: 240. / 360.,
         s: 1.,
@@ -384,7 +384,7 @@ pub fn blue() -> Hsla {
 }
 
 /// The color green in [`Hsla`]
-pub fn green() -> Hsla {
+pub const fn green() -> Hsla {
     Hsla {
         h: 120. / 360.,
         s: 1.,
@@ -394,7 +394,7 @@ pub fn green() -> Hsla {
 }
 
 /// The color yellow in [`Hsla`]
-pub fn yellow() -> Hsla {
+pub const fn yellow() -> Hsla {
     Hsla {
         h: 60. / 360.,
         s: 1.,
