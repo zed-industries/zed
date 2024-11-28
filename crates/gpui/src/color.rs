@@ -376,7 +376,7 @@ pub const fn red() -> Hsla {
 /// The color blue in [`Hsla`]
 pub const fn blue() -> Hsla {
     Hsla {
-        h: 240. / 360.,
+        h: 0.6666666667,
         s: 1.,
         l: 0.5,
         a: 1.,
@@ -386,7 +386,7 @@ pub const fn blue() -> Hsla {
 /// The color green in [`Hsla`]
 pub const fn green() -> Hsla {
     Hsla {
-        h: 120. / 360.,
+        h: 0.3333333333,
         s: 1.,
         l: 0.5,
         a: 1.,
@@ -396,7 +396,7 @@ pub const fn green() -> Hsla {
 /// The color yellow in [`Hsla`]
 pub const fn yellow() -> Hsla {
     Hsla {
-        h: 60. / 360.,
+        h: 0.1666666667,
         s: 1.,
         l: 0.5,
         a: 1.,
@@ -410,32 +410,32 @@ impl Hsla {
     }
 
     /// The color red
-    pub fn red() -> Self {
+    pub const fn red() -> Self {
         red()
     }
 
     /// The color green
-    pub fn green() -> Self {
+    pub const fn green() -> Self {
         green()
     }
 
     /// The color blue
-    pub fn blue() -> Self {
+    pub const fn blue() -> Self {
         blue()
     }
 
     /// The color black
-    pub fn black() -> Self {
+    pub const fn black() -> Self {
         black()
     }
 
     /// The color white
-    pub fn white() -> Self {
+    pub const fn white() -> Self {
         white()
     }
 
     /// The color transparent black
-    pub fn transparent_black() -> Self {
+    pub const fn transparent_black() -> Self {
         transparent_black()
     }
 
