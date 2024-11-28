@@ -1,30 +1,15 @@
 use gpui::{
     canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, App, AppContext,
-    Bounds, ColorSpace, Half, Hsla, Render, ViewContext, WindowOptions,
+    Bounds, ColorSpace, Half, Render, ViewContext, WindowOptions,
 };
 
-const COLORS: [(Hsla, Hsla); 10] = [
-    (gpui::red(), gpui::blue()),
-    (gpui::red(), gpui::green()),
-    (gpui::red(), gpui::yellow()),
-    (gpui::blue(), gpui::green()),
-    (gpui::blue(), gpui::yellow()),
-    (gpui::green(), gpui::yellow()),
-    (gpui::red(), gpui::white()),
-    (gpui::blue(), gpui::white()),
-    (gpui::green(), gpui::white()),
-    (gpui::yellow(), gpui::white()),
-];
-
 struct GradientViewer {
-    color_ix: usize,
     color_space: ColorSpace,
 }
 
 impl GradientViewer {
     fn new() -> Self {
         Self {
-            color_ix: 0,
             color_space: ColorSpace::default(),
         }
     }
@@ -32,7 +17,6 @@ impl GradientViewer {
 
 impl Render for GradientViewer {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let (color0, color1) = COLORS[self.color_ix];
         let color_space = self.color_space;
 
         div()
@@ -51,45 +35,25 @@ impl Render for GradientViewer {
                     .items_center()
                     .child("Gradient Examples")
                     .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .id("method")
-                                    .flex()
-                                    .px_3()
-                                    .py_1()
-                                    .text_sm()
-                                    .bg(gpui::black())
-                                    .text_color(gpui::white())
-                                    .child(format!("{}", color_space))
-                                    .active(|this| this.opacity(0.8))
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.color_space = match this.color_space {
-                                            ColorSpace::Oklab => ColorSpace::Srgb,
-                                            ColorSpace::Srgb => ColorSpace::Oklab,
-                                        };
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id("next")
-                                    .flex()
-                                    .px_3()
-                                    .py_1()
-                                    .text_sm()
-                                    .bg(gpui::black())
-                                    .text_color(gpui::white())
-                                    .child("Switch Color")
-                                    .active(|this| this.opacity(0.8))
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.color_ix = (this.color_ix + 1) % COLORS.len();
-                                        cx.notify();
-                                    })),
-                            ),
+                        div().flex().gap_2().items_center().child(
+                            div()
+                                .id("method")
+                                .flex()
+                                .px_3()
+                                .py_1()
+                                .text_sm()
+                                .bg(gpui::black())
+                                .text_color(gpui::white())
+                                .child(format!("{}", color_space))
+                                .active(|this| this.opacity(0.8))
+                                .on_click(cx.listener(move |this, _, cx| {
+                                    this.color_space = match this.color_space {
+                                        ColorSpace::Oklab => ColorSpace::Srgb,
+                                        ColorSpace::Srgb => ColorSpace::Oklab,
+                                    };
+                                    cx.notify();
+                                })),
+                        ),
                     ),
             )
             .child(
@@ -104,7 +68,7 @@ impl Render for GradientViewer {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .bg(color0)
+                            .bg(gpui::red())
                             .text_color(gpui::white())
                             .child("Solid Color"),
                     )
@@ -115,7 +79,7 @@ impl Render for GradientViewer {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .bg(color1)
+                            .bg(gpui::blue())
                             .text_color(gpui::white())
                             .child("Solid Color"),
                     ),
@@ -130,32 +94,32 @@ impl Render for GradientViewer {
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
                             45.,
-                            linear_color_stop(color0, 0.),
-                            linear_color_stop(color1, 1.),
+                            linear_color_stop(gpui::red(), 0.),
+                            linear_color_stop(gpui::blue(), 1.),
                         )
                         .color_space(color_space)),
                     )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
                             135.,
-                            linear_color_stop(color0, 0.),
-                            linear_color_stop(color1, 1.),
+                            linear_color_stop(gpui::red(), 0.),
+                            linear_color_stop(gpui::green(), 1.),
                         )
                         .color_space(color_space)),
                     )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
                             225.,
-                            linear_color_stop(color0, 0.),
-                            linear_color_stop(color1, 1.),
+                            linear_color_stop(gpui::green(), 0.),
+                            linear_color_stop(gpui::blue(), 1.),
                         )
                         .color_space(color_space)),
                     )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
                             315.,
-                            linear_color_stop(color0, 0.),
-                            linear_color_stop(color1, 1.),
+                            linear_color_stop(gpui::yellow(), 0.),
+                            linear_color_stop(gpui::green(), 1.),
                         )
                         .color_space(color_space)),
                     ),
@@ -170,32 +134,32 @@ impl Render for GradientViewer {
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
                             0.,
-                            linear_color_stop(color0, 0.),
-                            linear_color_stop(color1, 1.),
+                            linear_color_stop(gpui::red(), 0.),
+                            linear_color_stop(gpui::white(), 1.),
                         )
                         .color_space(color_space)),
                     )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
                             90.,
-                            linear_color_stop(color0, 0.),
-                            linear_color_stop(color1, 1.),
+                            linear_color_stop(gpui::blue(), 0.),
+                            linear_color_stop(gpui::white(), 1.),
                         )
                         .color_space(color_space)),
                     )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
                             180.,
-                            linear_color_stop(color0, 0.),
-                            linear_color_stop(color1, 1.),
+                            linear_color_stop(gpui::green(), 0.),
+                            linear_color_stop(gpui::white(), 1.),
                         )
                         .color_space(color_space)),
                     )
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
                             360.,
-                            linear_color_stop(color0, 0.),
-                            linear_color_stop(color1, 1.),
+                            linear_color_stop(gpui::yellow(), 0.),
+                            linear_color_stop(gpui::white(), 1.),
                         )
                         .color_space(color_space)),
                     ),
@@ -203,16 +167,16 @@ impl Render for GradientViewer {
             .child(
                 div().flex_1().rounded_xl().bg(linear_gradient(
                     0.,
-                    linear_color_stop(color0, 0.05),
-                    linear_color_stop(color1, 0.95),
+                    linear_color_stop(gpui::blue(), 0.05),
+                    linear_color_stop(gpui::green(), 0.95),
                 )
                 .color_space(color_space)),
             )
             .child(
                 div().flex_1().rounded_xl().bg(linear_gradient(
                     90.,
-                    linear_color_stop(color0, 0.05),
-                    linear_color_stop(color1, 0.95),
+                    linear_color_stop(gpui::blue(), 0.05),
+                    linear_color_stop(gpui::red(), 0.95),
                 )
                 .color_space(color_space)),
             )
@@ -225,8 +189,8 @@ impl Render for GradientViewer {
                         div().flex().flex_1().gap_3().child(
                             div().flex_1().rounded_xl().bg(linear_gradient(
                                 90.,
-                                linear_color_stop(color0, 0.5),
-                                linear_color_stop(color1, 0.5),
+                                linear_color_stop(gpui::blue(), 0.5),
+                                linear_color_stop(gpui::red(), 0.5),
                             )
                             .color_space(color_space)),
                         ),
@@ -234,8 +198,8 @@ impl Render for GradientViewer {
                     .child(
                         div().flex_1().rounded_xl().bg(linear_gradient(
                             180.,
-                            linear_color_stop(color0, 0.),
-                            linear_color_stop(color1, 0.5),
+                            linear_color_stop(gpui::green(), 0.),
+                            linear_color_stop(gpui::blue(), 0.5),
                         )
                         .color_space(color_space)),
                     ),
@@ -265,8 +229,8 @@ impl Render for GradientViewer {
                         path,
                         linear_gradient(
                             180.,
-                            linear_color_stop(color0, 0.),
-                            linear_color_stop(color1, 1.),
+                            linear_color_stop(gpui::red(), 0.),
+                            linear_color_stop(gpui::blue(), 1.),
                         )
                         .color_space(color_space),
                     );
