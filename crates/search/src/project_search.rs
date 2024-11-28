@@ -34,8 +34,8 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    h_flex, prelude::*, v_flex, Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label,
-    LabelCommon, LabelSize, Selectable, Tooltip,
+    h_flex, prelude::*, utils::SearchInputWidth, v_flex, Icon, IconButton, IconButtonShape,
+    IconName, KeyBinding, Label, LabelCommon, LabelSize, Selectable, Tooltip,
 };
 use util::paths::PathMatcher;
 use workspace::{
@@ -1586,9 +1586,15 @@ impl Render for ProjectSearchBar {
         let search = search.read(cx);
         let focus_handle = search.focus_handle(cx);
 
+        let container_width = cx.viewport_size().width;
+        let is_fullscreen = cx.is_fullscreen();
+
+        let size = SearchInputWidth::from_container_width(container_width);
+        let input_width = size.calc_width(container_width, is_fullscreen);
+
         let input_base_styles = || {
             h_flex()
-                .w_full()
+                .w(input_width)
                 .h_8()
                 .px_2()
                 .py_1()
