@@ -3,7 +3,6 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use dap::client::DebugAdapterClientId;
 use dap::StackFrame;
-use editor::Editor;
 use gpui::{
     list, AnyElement, EventEmitter, FocusHandle, ListState, Subscription, Task, View, WeakView,
 };
@@ -155,20 +154,16 @@ impl StackFrameList {
             let client_id = self.client_id;
             let workspace = self.workspace.clone();
             move |this, mut cx| async move {
-                let task = workspace.update(&mut cx, |workspace, cx| {
-                    workspace.open_path_preview(project_path.clone(), None, false, true, cx)
-                })?;
-
-                let editor = task.await?.downcast::<Editor>().unwrap();
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.open_path_preview(project_path.clone(), None, false, true, cx)
+                    })?
+                    .await?;
 
                 this.update(&mut cx, |this, cx| {
                     this.dap_store.update(cx, |store, cx| {
                         store.set_active_debug_line(&client_id, &project_path, row, cx);
                     })
-                })?;
-
-                workspace.update(&mut cx, |_, cx| {
-                    editor.update(cx, |editor, cx| editor.go_to_active_debug_line(cx))
                 })
             }
         })

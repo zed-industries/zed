@@ -408,7 +408,11 @@ impl Server {
                     )
                 }
             })
-            .add_message_handler(update_breakpoints);
+            .add_message_handler(update_breakpoints)
+            .add_message_handler(broadcast_project_message_from_host::<proto::SetActiveDebugLine>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RemoveActiveDebugLine>,
+            );
 
         Arc::new(server)
     }

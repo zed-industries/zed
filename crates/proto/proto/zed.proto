@@ -303,7 +303,9 @@ message Envelope {
         SyncExtensionsResponse sync_extensions_response = 286;
         InstallExtension install_extension = 287;
 
-        SynchronizeBreakpoints Synchronize_breakpoints = 288; // current max
+        SynchronizeBreakpoints Synchronize_breakpoints = 288;
+        SetActiveDebugLine set_active_debug_line = 289;
+        RemoveActiveDebugLine remove_active_debug_line = 290; // current max
     }
 
     reserved 87 to 88;
@@ -2407,6 +2409,17 @@ message SynchronizeBreakpoints {
     uint64 project_id = 1;
     ProjectPath project_path = 2;
     repeated Breakpoint breakpoints = 3;
+}
+
+message SetActiveDebugLine {
+    uint64 project_id = 1;
+    ProjectPath project_path  = 2;
+    uint64 client_id = 3;
+    uint32 row = 4;
+}
+
+message RemoveActiveDebugLine {
+    uint64 project_id = 1;
 }
 
 // Remote FS

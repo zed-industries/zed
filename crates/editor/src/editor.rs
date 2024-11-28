@@ -2047,6 +2047,8 @@ impl Editor {
                                 }
                             }
                         }
+                    } else if let project::Event::ActiveDebugLineChanged = event {
+                        editor.go_to_active_debug_line(cx);
                     }
                 }));
                 if let Some(task_inventory) = project
@@ -12248,8 +12250,13 @@ impl Editor {
                     Some(cx.theme().colors().editor_debugger_active_line_background),
                     cx,
                 );
+
+                return;
             }
         }
+
+        self.clear_row_highlights::<DebugCurrentRowHighlight>();
+        cx.notify();
     }
 
     pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {

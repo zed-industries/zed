@@ -62,6 +62,7 @@ pub enum DapStoreEvent {
     },
     Notification(String),
     BreakpointsChanged,
+    ActiveDebugLineChanged,
 }
 
 pub enum DebugAdapterClientState {
@@ -103,6 +104,8 @@ impl DapStore {
 
     pub fn init(client: &AnyProtoClient) {
         client.add_model_message_handler(DapStore::handle_synchronize_breakpoints);
+        client.add_model_message_handler(DapStore::handle_set_active_debug_line);
+        client.add_model_message_handler(DapStore::handle_remove_active_debug_line);
     }
 
     pub fn new_local(
@@ -243,7 +246,21 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) {
         self.active_debug_line = Some((*client_id, project_path.clone(), row));
+        cx.emit(DapStoreEvent::ActiveDebugLineChanged);
         cx.notify();
+
+        if let Some((client, project_id)) =
+            self.upstream_client().or(self.downstream_client.clone())
+        {
+            client
+                .send(client::proto::SetActiveDebugLine {
+                    row,
+                    project_id,
+                    client_id: client_id.0 as u64,
+                    project_path: Some(project_path.to_proto()),
+                })
+                .log_err();
+        }
     }
 
     pub fn remove_active_debug_line_for_client(
@@ -254,7 +271,16 @@ impl DapStore {
         if let Some(active_line) = &self.active_debug_line {
             if active_line.0 == *client_id {
                 self.active_debug_line.take();
+                cx.emit(DapStoreEvent::ActiveDebugLineChanged);
                 cx.notify();
+
+                if let Some((client, project_id)) =
+                    self.upstream_client().or(self.downstream_client.clone())
+                {
+                    client
+                        .send(client::proto::RemoveActiveDebugLine { project_id })
+                        .log_err();
+                }
             }
         }
     }
@@ -1226,6 +1252,43 @@ impl DapStore {
 
             cx.emit(DapStoreEvent::BreakpointsChanged);
 
+            cx.notify();
+        })
+    }
+
+    async fn handle_set_active_debug_line(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::SetActiveDebugLine>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let project_path = ProjectPath::from_proto(
+            envelope
+                .payload
+                .project_path
+                .context("Invalid Breakpoint call")?,
+        );
+
+        this.update(&mut cx, |store, cx| {
+            store.active_debug_line = Some((
+                DebugAdapterClientId(envelope.payload.client_id as usize),
+                project_path,
+                envelope.payload.row,
+            ));
+
+            cx.emit(DapStoreEvent::ActiveDebugLineChanged);
+            cx.notify();
+        })
+    }
+
+    async fn handle_remove_active_debug_line(
+        this: Model<Self>,
+        _: TypedEnvelope<proto::RemoveActiveDebugLine>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |store, cx| {
+            store.active_debug_line.take();
+
+            cx.emit(DapStoreEvent::ActiveDebugLineChanged);
             cx.notify();
         })
     }

@@ -250,6 +250,7 @@ pub enum Event {
     LanguageNotFound(Model<Buffer>),
     DebugClientStarted(DebugAdapterClientId),
     DebugClientStopped(DebugAdapterClientId),
+    ActiveDebugLineChanged,
     DebugClientEvent {
         client_id: DebugAdapterClientId,
         message: Message,
@@ -2426,6 +2427,9 @@ impl Project {
             }
             DapStoreEvent::BreakpointsChanged => {
                 cx.notify();
+            }
+            DapStoreEvent::ActiveDebugLineChanged => {
+                cx.emit(Event::ActiveDebugLineChanged);
             }
         }
     }

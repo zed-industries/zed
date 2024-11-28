@@ -372,6 +372,8 @@ messages!(
     (SyncExtensionsResponse, Background),
     (InstallExtension, Background),
     (SynchronizeBreakpoints, Background),
+    (SetActiveDebugLine, Background),
+    (RemoveActiveDebugLine, Background),
 );
 
 request_messages!(
@@ -582,6 +584,8 @@ entity_messages!(
     GetPathMetadata,
     CancelLanguageServerWork,
     SynchronizeBreakpoints,
+    SetActiveDebugLine,
+    RemoveActiveDebugLine,
 );
 
 entity_messages!(
