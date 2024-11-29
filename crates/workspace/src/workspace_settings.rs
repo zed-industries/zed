@@ -55,12 +55,6 @@ pub enum BottomDockLayout {
     Contained,
 }
 
-impl Default for BottomDockLayout {
-    fn default() -> Self {
-        Self::Contained
-    }
-}
-
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseWindowWhenNoItems {
