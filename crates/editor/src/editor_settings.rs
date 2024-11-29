@@ -223,7 +223,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 3.
     pub vertical_scroll_margin: Option<f32>,
-    /// Auto-scrolling by `vertical_scroll_margin` is not applied through mouse interactions.
+    /// Whether to scroll when clicking near the edge of the visible text area.
     ///
     /// Default: false
     pub autoscroll_on_clicks: Option<bool>,
