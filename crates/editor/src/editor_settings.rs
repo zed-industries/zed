@@ -18,7 +18,7 @@ pub struct EditorSettings {
     pub gutter: Gutter,
     pub scroll_beyond_last_line: ScrollBeyondLastLine,
     pub vertical_scroll_margin: f32,
-    pub vertical_scroll_margin_ignore_mouse_interaction: bool,
+    pub autoscroll_on_clicks: bool,
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
@@ -226,7 +226,7 @@ pub struct EditorSettingsContent {
     /// Auto-scrolling by `vertical_scroll_margin` is not applied through mouse interactions.
     ///
     /// Default: false
-    pub vertical_scroll_margin_ignore_mouse_interaction: Option<bool>,
+    pub autoscroll_on_clicks: Option<bool>,
     /// Scroll sensitivity multiplier. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling.
     ///
