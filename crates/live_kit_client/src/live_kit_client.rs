@@ -23,14 +23,14 @@ use webrtc::{
     video_stream::native::NativeVideoStream,
 };
 
-#[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
+// #[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
 use livekit::track::RemoteAudioTrack;
-#[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
+// #[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
 pub use livekit::*;
-#[cfg(any(test, feature = "test-support", target_os = "windows"))]
-use test::track::RemoteAudioTrack;
-#[cfg(any(test, feature = "test-support", target_os = "windows"))]
-pub use test::*;
+// #[cfg(any(test, feature = "test-support", target_os = "windows"))]
+// use test::track::RemoteAudioTrack;
+// #[cfg(any(test, feature = "test-support", target_os = "windows"))]
+// pub use test::*;
 
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 
@@ -143,7 +143,8 @@ pub fn init(
 pub async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
-    let resolution = capture_source.resolution()?;
+    let resolution = capture_source.resolution();
+    dbg!(&resolution);
     let track_source = NativeVideoSource::new(VideoResolution {
         width: resolution.width.0 as u32,
         height: resolution.height.0 as u32,

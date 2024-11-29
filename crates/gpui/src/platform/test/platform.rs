@@ -46,8 +46,8 @@ pub struct TestScreenCaptureSource {}
 pub struct TestScreenCaptureStream {}
 
 impl ScreenCaptureSource for TestScreenCaptureSource {
-    fn resolution(&self) -> Result<crate::Size<crate::Pixels>> {
-        Ok(size(px(1.), px(1.)))
+    fn resolution(&self) -> crate::Size<crate::DevicePixels> {
+        size(crate::DevicePixels(1), crate::DevicePixels(1))
     }
 
     fn stream(

@@ -1,6 +1,6 @@
 use crate::{
     platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
-    px, size, Pixels, Size,
+    size, DevicePixels, Size,
 };
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
@@ -9,6 +9,10 @@ use cocoa::{
     foundation::NSArray,
 };
 use core_foundation::base::TCFType;
+use core_graphics::display::{
+    CGDirectDisplayID, CGDisplayCopyDisplayMode, CGDisplayModeGetPixelHeight,
+    CGDisplayModeGetPixelWidth, CGDisplayModeRelease,
+};
 use ctor::ctor;
 use futures::channel::oneshot;
 use media::core_media::{CMSampleBuffer, CMSampleBufferRef};
@@ -25,6 +29,7 @@ use std::{cell::RefCell, ffi::c_void, mem, ptr, rc::Rc};
 #[derive(Clone)]
 pub struct MacScreenCaptureSource {
     sc_display: id,
+    size: Size<DevicePixels>,
 }
 
 pub struct MacScreenCaptureStream {
@@ -43,12 +48,9 @@ const FRAME_CALLBACK_IVAR: &str = "frame_callback";
 const SCStreamOutputTypeScreen: NSInteger = 0;
 
 impl ScreenCaptureSource for MacScreenCaptureSource {
-    fn resolution(&self) -> Result<Size<Pixels>> {
-        unsafe {
-            let width: i64 = msg_send![self.sc_display, width];
-            let height: i64 = msg_send![self.sc_display, height];
-            Ok(size(px(width as f32), px(height as f32)))
-        }
+    fn resolution(&self) -> Size<DevicePixels> {
+        // Remove this / 2 to break track publication
+        self.size.map(|u| u / 1)
     }
 
     fn stream(
@@ -67,6 +69,10 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let configuration: id = msg_send![configuration, init];
             let delegate: id = msg_send![delegate, init];
             let output: id = msg_send![output, init];
+
+            let resolution = self.resolution();
+            let _: () = msg_send![configuration, setWidth:resolution.width.0];
+            let _: () = msg_send![configuration, setHeight:resolution.height.0];
 
             output.as_mut().unwrap().set_ivar(
                 FRAME_CALLBACK_IVAR,
@@ -156,12 +162,23 @@ pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptur
             };
             let result = if error == nil {
                 let displays: id = msg_send![shareable_content, displays];
+
                 let mut result = Vec::new();
                 for i in 0..displays.count() {
                     let display = displays.objectAtIndex(i);
+                    let display: id = msg_send![display, retain];
+
+                    let display_id: CGDirectDisplayID = msg_send![display, displayID];
+                    let display_mode_ref = CGDisplayCopyDisplayMode(display_id);
+                    let width = CGDisplayModeGetPixelWidth(display_mode_ref);
+                    let height = CGDisplayModeGetPixelHeight(display_mode_ref);
+                    CGDisplayModeRelease(display_mode_ref);
+
                     let source = MacScreenCaptureSource {
-                        sc_display: msg_send![display, retain],
+                        sc_display: display,
+                        size: size(DevicePixels(width as i32), DevicePixels(height as i32)),
                     };
+
                     result.push(Box::new(source) as Box<dyn ScreenCaptureSource>);
                 }
                 Ok(result)
