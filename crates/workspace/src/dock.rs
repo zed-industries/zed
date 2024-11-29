@@ -649,7 +649,6 @@ impl Render for Dock {
                         handle
                             .absolute()
                             .top(-RESIZE_HANDLE_SIZE / 2.)
-                            .left(px(0.))
                             .w_full()
                             .h(RESIZE_HANDLE_SIZE)
                             .cursor_row_resize(),
