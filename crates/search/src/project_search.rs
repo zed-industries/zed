@@ -333,20 +333,20 @@ impl Render for ProjectSearchView {
             let model = self.model.read(cx);
             let has_no_results = model.no_results.unwrap_or(false);
             let is_search_underway = model.pending_search.is_some();
-            let major_text = if is_search_underway {
-                "Searching..."
+
+            let heading_text = if is_search_underway {
+                "Searching…"
             } else if has_no_results {
-                "No results"
+                "No Results"
             } else {
-                "Search all files"
+                "Search All Files"
             };
 
-            let major_text = div()
+            let heading_text = div()
                 .justify_center()
-                .max_w_96()
-                .child(Label::new(major_text).size(LabelSize::Large));
+                .child(Label::new(heading_text).size(LabelSize::Large));
 
-            let minor_text: Option<AnyElement> = if let Some(no_results) = model.no_results {
+            let page_content: Option<AnyElement> = if let Some(no_results) = model.no_results {
                 if model.pending_search.is_none() && no_results {
                     Some(
                         Label::new("No results found in this project for the provided query")
@@ -359,20 +359,22 @@ impl Render for ProjectSearchView {
             } else {
                 Some(self.landing_text_minor(cx).into_any_element())
             };
-            let minor_text = minor_text.map(|text| div().items_center().max_w_96().child(text));
+
+            let page_content = page_content.map(|text| div().child(text));
+
             v_flex()
-                .flex_1()
                 .size_full()
+                .items_center()
                 .justify_center()
+                .overflow_hidden()
                 .bg(cx.theme().colors().editor_background)
                 .track_focus(&self.focus_handle(cx))
                 .child(
-                    h_flex()
-                        .size_full()
-                        .justify_center()
-                        .child(h_flex().flex_1())
-                        .child(v_flex().gap_1().child(major_text).children(minor_text))
-                        .child(h_flex().flex_1()),
+                    v_flex()
+                        .max_w_80()
+                        .gap_1()
+                        .child(heading_text)
+                        .children(page_content),
                 )
         }
     }
