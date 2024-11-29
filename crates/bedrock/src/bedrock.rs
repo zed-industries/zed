@@ -1,15 +1,14 @@
 mod models;
 
 use anyhow::{anyhow, Context, Result};
+use aws_sdk_bedrockruntime::config::SharedHttpClient;
+use http_client::HttpClient;
 use serde::{Deserialize, Serialize};
-use std::any::Any;
-use std::str::FromStr;
+use std::sync::Arc;
 use thiserror::Error;
 
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
-use aws_sdk_bedrockruntime::types::{ConverseStreamOutput, Message};
-use aws_sdk_bedrockruntime::types::error::ConverseStreamOutputError;
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 pub use bedrock::types::ContentBlock as BedrockRequestContent;
 pub use bedrock::types::ConversationRole as BedrockRole;
@@ -17,8 +16,6 @@ use bedrock::types::ConverseOutput as Response;
 pub use bedrock::types::ConverseStreamOutput as BedrockStreamingResponse;
 pub use bedrock::types::Message as BedrockMessage;
 pub use bedrock::types::ResponseStream as BedrockResponseStream;
-use futures::stream::BoxStream;
-use futures::StreamExt;
 use strum::Display;
 //TODO: Re-export the Bedrock stuff
 // https://doc.rust-lang.org/rustdoc/write-documentation/re-exports.html
@@ -32,15 +29,13 @@ pub async fn complete(
     let mut response = bedrock::Client::converse(client)
         .model_id(request.model.clone())
         .set_messages(request.messages.into())
-        .send().await.context("Failed to send request to Bedrock");
+        .send()
+        .await
+        .context("Failed to send request to Bedrock");
 
     match response {
-        Ok(output) => {
-            Ok(output.output.unwrap())
-        }
-        Err(err) => {
-            Err(BedrockError::Other(err))
-        }
+        Ok(output) => Ok(output.output.unwrap()),
+        Err(err) => Err(BedrockError::Other(err)),
     }
 }
 
@@ -48,33 +43,23 @@ pub async fn stream_completion(
     client: &bedrock::Client,
     request: Request,
 ) -> Result<Option<BedrockStreamingResponse>, BedrockError> {
-
     let response = bedrock::Client::converse_stream(client)
         .model_id(request.model)
-        .set_messages(request.messages.into()).send().await;
-
+        .set_messages(request.messages.into())
+        .send()
+        .await;
 
     match response {
-        Ok(mut output) => {
-            match output.stream.recv().await {
-                Ok(resp) => {
-                    match resp {
-                        None => {
-                            Ok(None)
-                        }
-                        Some(output) => {
-                            Ok(Some(output))
-                        }
-                    }
-                }
-                Err(e) => {
-                    Err(BedrockError::ClientError(anyhow!("Failed to receive response from Bedrock")))
-                }
-            }
+        Ok(mut output) => match output.stream.recv().await {
+            Ok(resp) => match resp {
+                None => Ok(None),
+                Some(output) => Ok(Some(output)),
+            },
+            Err(e) => Err(BedrockError::ClientError(anyhow!(
+                "Failed to receive response from Bedrock"
+            ))),
         },
-        Err(e) => Err(
-            BedrockError::ClientError(anyhow!(e))
-        ),
+        Err(e) => Err(BedrockError::ClientError(anyhow!(e))),
     }
 }
 
@@ -108,5 +93,5 @@ pub struct Metadata {
 pub enum BedrockError {
     ClientError(anyhow::Error),
     ExtensionError(anyhow::Error),
-    Other(anyhow::Error)
+    Other(anyhow::Error),
 }

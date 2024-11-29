@@ -3,13 +3,20 @@ pub mod github;
 
 pub use anyhow::{anyhow, Result};
 pub use async_body::{AsyncBody, Inner};
+use aws_smithy_runtime_api::http::StatusCode as AwsStatusCode;
 use derive_more::Deref;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
+use std::fmt;
 
+use aws_smithy_runtime_api::client::http::{HttpConnector, HttpConnectorFuture};
+use aws_smithy_runtime_api::client::orchestrator::{
+    HttpRequest as AwsRequest, HttpResponse as AwsResponse,
+};
 use futures::future::BoxFuture;
 use http::request::Builder;
+
 #[cfg(feature = "test-support")]
-use std::fmt;
+use std::fmt::{Debug, Formatter};
 use std::{
     any::type_name,
     sync::{Arc, Mutex},
@@ -324,6 +331,74 @@ impl HttpClient for BlockedHttpClient {
     fn type_name(&self) -> &'static str {
         type_name::<Self>()
     }
+}
+
+impl Debug for HttpClientWithUrl {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        todo!()
+    }
+}
+
+impl HttpConnector for HttpClientWithUrl {
+    fn call(&self, request: HttpRequest) -> HttpConnectorFuture {
+        let response = self.client.send(request);
+    }
+}
+
+// Helper to convert AWS SDK request to your HttpClient request
+fn convert_aws_request(aws_request: AwsRequest) -> Result<http::Request<AsyncBody>, anyhow::Error> {
+    let owned_request = match aws_request.try_clone() {
+        Some(req) => req,
+        None => {
+            return Err(anyhow!(
+                "Failed to clone the AWS request, this is likely a bug in the SDK"
+            ))
+        }
+    };
+
+    // Convert the request details
+    let mut builder = http::Request::builder()
+        .method(owned_request.method())
+        .uri(owned_request.uri());
+
+    // Add headers
+    for (name, value) in owned_request.headers() {
+        builder = builder.header(name, value);
+    }
+
+    // Convert body
+    let body = AsyncBody::from(owned_request.body());
+
+    Ok(builder.body(body)?)
+}
+
+// Helper to convert your response to AWS SDK response
+fn convert_to_aws_response(
+    response: http::Response<AsyncBody>,
+) -> Result<AwsResponse, anyhow::Error> {
+    let (parts, body) = response.into_parts();
+
+    let mut aws_response =
+        AwsResponse::new(AwsStatusCode::from(response.status()), response.body());
+
+    // Copy headers
+    for (name, value) in parts.headers {
+        let val = match value.to_str() {
+            Ok(val) => val,
+            Err(e) => {
+                return Err(anyhow!("Failed to convert header value to string: {}", e));
+            }
+        };
+        let header_name = match name {
+            None => {
+                return Err(anyhow!("Failed to convert header name to string"));
+            }
+            Some(header) => header.as_str(),
+        };
+        aws_response.headers_mut().insert(header_name, val);
+    }
+
+    Ok(aws_response)
 }
 
 #[cfg(feature = "test-support")]

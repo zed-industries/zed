@@ -5656,6 +5656,7 @@ name = "http_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aws-smithy-runtime-api",
  "bytes 1.8.0",
  "derive_more",
  "futures 0.3.31",
@@ -6627,6 +6628,7 @@ dependencies = [
  "anyhow",
  "aws-config",
  "aws-credential-types",
+ "aws-smithy-runtime-api",
  "bedrock",
  "client",
  "collections",
