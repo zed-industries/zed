@@ -2828,17 +2828,20 @@ impl Editor {
         let start;
         let end;
         let mode;
+        let mut auto_scroll;
         match click_count {
             1 => {
                 start = buffer.anchor_before(position.to_point(&display_map));
                 end = start;
                 mode = SelectMode::Character;
+                auto_scroll = true;
             }
             2 => {
                 let range = movement::surrounding_word(&display_map, position);
                 start = buffer.anchor_before(range.start.to_point(&display_map));
                 end = buffer.anchor_before(range.end.to_point(&display_map));
                 mode = SelectMode::Word(start..end);
+                auto_scroll = true;
             }
             3 => {
                 let position = display_map
@@ -2852,13 +2855,17 @@ impl Editor {
                 start = buffer.anchor_before(line_start);
                 end = buffer.anchor_before(next_line_start);
                 mode = SelectMode::Line(start..end);
+                auto_scroll = true;
             }
             _ => {
                 start = buffer.anchor_before(0);
                 end = buffer.anchor_before(buffer.len());
                 mode = SelectMode::All;
+                auto_scroll = false;
             }
         }
+        auto_scroll &=
+            !EditorSettings::get_global(cx).vertical_scroll_margin_ignore_mouse_interaction;
 
         let point_to_delete: Option<usize> = {
             let selected_points: Vec<Selection<Point>> =
@@ -2881,7 +2888,7 @@ impl Editor {
 
         let selections_count = self.selections.count();
 
-        self.change_selections(None, cx, |s| {
+        self.change_selections(auto_scroll.then(Autoscroll::newest), cx, |s| {
             if let Some(point_to_delete) = point_to_delete {
                 s.delete(point_to_delete);
 
