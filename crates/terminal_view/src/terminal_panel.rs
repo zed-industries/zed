@@ -957,6 +957,13 @@ impl Render for TerminalPanel {
                             cx,
                         ) {
                             cx.focus_view(&pane);
+                        } else {
+                            terminal_panel
+                                .workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.activate_pane_in_direction(action.0, cx)
+                                })
+                                .ok();
                         }
                     })
                 })

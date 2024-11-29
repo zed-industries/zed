@@ -18,6 +18,7 @@ pub struct EditorSettings {
     pub gutter: Gutter,
     pub scroll_beyond_last_line: ScrollBeyondLastLine,
     pub vertical_scroll_margin: f32,
+    pub autoscroll_on_clicks: bool,
     pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
@@ -238,6 +239,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 3.
     pub vertical_scroll_margin: Option<f32>,
+    /// Whether to scroll when clicking near the edge of the visible text area.
+    ///
+    /// Default: false
+    pub autoscroll_on_clicks: Option<bool>,
     /// The number of characters to keep on either side when scrolling with the mouse.
     ///
     /// Default: 5.

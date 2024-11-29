@@ -71,7 +71,7 @@ impl StatusBar {
 
     fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
-            .gap(DynamicSpacing::Base08.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
             .children(self.right_items.iter().rev().map(|item| item.to_any()))
     }
 }
