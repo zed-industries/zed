@@ -7029,7 +7029,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.7"
-source = "git+https://github.com/zed-industries/rust-sdks?rev=4262308983646ab5b0e0802c3d8bc52154f99aab#4262308983646ab5b0e0802c3d8bc52154f99aab"
+source = "git+https://github.com/zed-industries/rust-sdks?rev=c7b7b64f65ae75b6839de8b311e2a131f4204100#c7b7b64f65ae75b6839de8b311e2a131f4204100"
 dependencies = [
  "cxx",
  "jni",
@@ -7163,7 +7163,7 @@ dependencies = [
 [[package]]
 name = "livekit"
 version = "0.7.0"
-source = "git+https://github.com/zed-industries/rust-sdks?rev=4262308983646ab5b0e0802c3d8bc52154f99aab#4262308983646ab5b0e0802c3d8bc52154f99aab"
+source = "git+https://github.com/zed-industries/rust-sdks?rev=c7b7b64f65ae75b6839de8b311e2a131f4204100#c7b7b64f65ae75b6839de8b311e2a131f4204100"
 dependencies = [
  "chrono",
  "futures-util",
@@ -7185,7 +7185,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.1"
-source = "git+https://github.com/zed-industries/rust-sdks?rev=4262308983646ab5b0e0802c3d8bc52154f99aab#4262308983646ab5b0e0802c3d8bc52154f99aab"
+source = "git+https://github.com/zed-industries/rust-sdks?rev=c7b7b64f65ae75b6839de8b311e2a131f4204100#c7b7b64f65ae75b6839de8b311e2a131f4204100"
 dependencies = [
  "async-tungstenite 0.25.1",
  "futures-util",
@@ -7210,7 +7210,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.3.6"
-source = "git+https://github.com/zed-industries/rust-sdks?rev=4262308983646ab5b0e0802c3d8bc52154f99aab#4262308983646ab5b0e0802c3d8bc52154f99aab"
+source = "git+https://github.com/zed-industries/rust-sdks?rev=c7b7b64f65ae75b6839de8b311e2a131f4204100#c7b7b64f65ae75b6839de8b311e2a131f4204100"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -7227,7 +7227,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.3.1"
-source = "git+https://github.com/zed-industries/rust-sdks?rev=4262308983646ab5b0e0802c3d8bc52154f99aab#4262308983646ab5b0e0802c3d8bc52154f99aab"
+source = "git+https://github.com/zed-industries/rust-sdks?rev=c7b7b64f65ae75b6839de8b311e2a131f4204100#c7b7b64f65ae75b6839de8b311e2a131f4204100"
 dependencies = [
  "async-io 2.4.0",
  "async-std",
@@ -14906,7 +14906,7 @@ checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
 [[package]]
 name = "webrtc-sys"
 version = "0.3.5"
-source = "git+https://github.com/zed-industries/rust-sdks?rev=4262308983646ab5b0e0802c3d8bc52154f99aab#4262308983646ab5b0e0802c3d8bc52154f99aab"
+source = "git+https://github.com/zed-industries/rust-sdks?rev=c7b7b64f65ae75b6839de8b311e2a131f4204100#c7b7b64f65ae75b6839de8b311e2a131f4204100"
 dependencies = [
  "cc",
  "cxx",
@@ -14919,7 +14919,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.5"
-source = "git+https://github.com/zed-industries/rust-sdks?rev=4262308983646ab5b0e0802c3d8bc52154f99aab#4262308983646ab5b0e0802c3d8bc52154f99aab"
+source = "git+https://github.com/zed-industries/rust-sdks?rev=c7b7b64f65ae75b6839de8b311e2a131f4204100#c7b7b64f65ae75b6839de8b311e2a131f4204100"
 dependencies = [
  "fs2",
  "regex",
