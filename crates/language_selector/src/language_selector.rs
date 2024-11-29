@@ -10,7 +10,7 @@ use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
-use language::{Buffer, LanguageRegistry};
+use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use settings::Settings;
@@ -119,28 +119,49 @@ impl LanguageSelectorDelegate {
         }
     }
 
-    fn get_language_icon(&self, language_name: &str, cx: &AppContext) -> Option<SharedString> {
-        // Try custom language suffixes
-        let custom_suffixes = match language_name.to_lowercase().as_str() {
-            "rust" => vec!["rs"],
-            "javascript" => vec!["js", "mjs"],
-            "typescript" => vec!["ts", "tsx"],
-            "python" => vec!["py"],
-            "c++" => vec!["cpp", "cxx", "cc"],
-            "c#" => vec!["cs"],
-            _ => vec![],
-        };
-
-        for extension in custom_suffixes {
-            if let Some(icon) = FileIcons::get_icon(Path::new(&format!("file.{}", extension)), cx) {
-                return Some(icon);
+    fn language_data_for_match(
+        &self,
+        mat: &StringMatch,
+        cx: &AppContext,
+    ) -> (String, Option<Icon>) {
+        let mut label = mat.string.clone();
+        let buffer_language = self.buffer.read(cx).language();
+        let need_icon = FileFinderSettings::get_global(cx).file_icons;
+        if let Some(buffer_language) = buffer_language {
+            let buffer_language_name = buffer_language.name();
+            if buffer_language_name.0.as_ref() == mat.string.as_str() {
+                label.push_str(" (current)");
+                let icon = need_icon
+                    .then(|| self.language_icon(&buffer_language.config().matcher, cx))
+                    .flatten();
+                return (label, icon);
             }
         }
 
-        // Use the language name itself if there's no custom suffix
-        let normalized_name = language_name.to_lowercase().replace(' ', "_");
-        FileIcons::get_icon(Path::new(&format!("file.{}", normalized_name)), cx)
-            .or_else(|| FileIcons::get_icon(Path::new(language_name), cx))
+        if need_icon {
+            let language_name = LanguageName::new(mat.string.as_str());
+            match self
+                .language_registry
+                .available_language_for_name(&language_name)
+            {
+                Some(available_language) => {
+                    let icon = self.language_icon(available_language.matcher(), cx);
+                    (label, icon)
+                }
+                None => (label, None),
+            }
+        } else {
+            (label, None)
+        }
+    }
+
+    fn language_icon(&self, matcher: &LanguageMatcher, cx: &AppContext) -> Option<Icon> {
+        matcher
+            .path_suffixes
+            .iter()
+            .find_map(|extension| FileIcons::get_icon(Path::new(&format!("file.{extension}")), cx))
+            .map(Icon::from_path)
+            .map(|icon| icon.color(Color::Muted))
     }
 }
 
@@ -242,22 +263,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
-        let buffer_language_name = self.buffer.read(cx).language().map(|l| l.name());
-        let mut label = mat.string.clone();
-        if buffer_language_name.map(|n| n.0).as_deref() == Some(mat.string.as_str()) {
-            label.push_str(" (current)");
-        }
-
-        let settings = FileFinderSettings::get_global(cx);
-
-        let language_icon = if settings.file_icons {
-            self.get_language_icon(&mat.string, cx)
-                .map(Icon::from_path)
-                .map(|icon| icon.color(Color::Muted))
-        } else {
-            None
-        };
-
+        let (label, language_icon) = self.language_data_for_match(mat, cx);
         Some(
             ListItem::new(ix)
                 .inset(true)
