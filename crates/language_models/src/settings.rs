@@ -8,6 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsSources};
 
+use crate::provider::bedrock::{AmazonBedrockCredentials, AmazonBedrockSettings};
 use crate::provider::{
     self,
     anthropic::AnthropicSettings,
@@ -18,7 +19,6 @@ use crate::provider::{
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
 };
-use crate::provider::bedrock::{AmazonBedrockCredentials, AmazonBedrockSettings};
 
 /// Initializes the language model settings.
 pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
@@ -55,8 +55,8 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
 
 #[derive(Default)]
 pub struct AllLanguageModelSettings {
-    pub bedrock: AmazonBedrockSettings,
     pub anthropic: AnthropicSettings,
+    pub bedrock: AmazonBedrockSettings,
     pub ollama: OllamaSettings,
     pub openai: OpenAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
@@ -83,7 +83,7 @@ pub struct BedrockSettingsContent {
     pub region: Option<String>,
     pub access_key_id: Option<String>,
     pub secret_access_key: Option<String>,
-    pub available_models: Option<Vec<provider::bedrock::AvailableModel>>
+    pub available_models: Option<Vec<provider::bedrock::AvailableModel>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
