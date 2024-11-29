@@ -14,6 +14,7 @@ path = "src/language_models.rs"
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
+aws-smithy-runtime-api.workspace = true
 aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
 aws-config = { workspace = true, features = ["behavior-version-latest"]}
 bedrock.workspace = true

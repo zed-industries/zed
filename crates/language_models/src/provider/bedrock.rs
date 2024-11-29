@@ -2,6 +2,9 @@ use crate::AllLanguageModelSettings;
 use anyhow::{anyhow, Context as _, Result};
 use aws_config::Region;
 use aws_credential_types::Credentials;
+use aws_smithy_runtime_api::client::http::{http_client_fn, SharedHttpClient, SharedHttpConnector};
+use aws_smithy_runtime_api::client::orchestrator::{HttpRequest, HttpResponse};
+use aws_smithy_runtime_api::http::StatusCode;
 use bedrock::bedrock_client::types::{
     ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput,
 };
@@ -15,7 +18,7 @@ use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
     View, WhiteSpace,
 };
-use http_client::HttpClient;
+use http_client::{http, AsyncBody, HttpClient};
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
@@ -27,10 +30,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
-use bedrock::bedrock_client::config::{IntoShared, SharedHttpClient};
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::{maybe, ResultExt};
@@ -220,8 +221,20 @@ impl BedrockLanguageModelProvider {
             .or_else(|| Some(AmazonBedrockCredentials::default()))
             .unwrap();
 
+        let aws_connector = http_client_fn(move |settings, components| {
+            let client = http_client.clone();
+            SharedHttpConnector::new(move |request| {
+                let client = client.clone();
+                Box::pin(async move {
+                    let request = convert_aws_request(request)?;
+                    let response = client.send(request).await?;
+                    Ok(convert_to_aws_response(response)?)
+                })
+            })
+        });
+
         let client_config = Config::builder()
-            .http_client(SharedHttpClient::new(http_client.as_ref()))
+            .http_client(SharedHttpClient::new(aws_connector))
             .region(Region::new(region_def))
             .credentials_provider(Credentials::from_keys(
                 &creds_clone.clone().access_key_id,
@@ -251,7 +264,7 @@ impl BedrockModel {
     fn stream_completion(
         &self,
         request: bedrock::Request,
-        _: &AsyncAppContext
+        _: &AsyncAppContext,
     ) -> BoxFuture<
         'static,
         Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
