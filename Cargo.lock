@@ -6298,7 +6298,7 @@ dependencies = [
  "serde",
  "tempfile",
  "uuid",
- "windows 0.48.0",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -14697,15 +14697,6 @@ dependencies = [
  "wasmparser 0.215.0",
  "wasmtime-cranelift",
  "wasmtime-environ",
-]
-
-[[package]]
-name = "windows"
-version = "0.48.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e686886bc078bc1b0b600cac0147aadb815089b6e4da64016cbd754b6342700f"
-dependencies = [
- "windows-targets 0.48.5",
 ]
 
 [[package]]
