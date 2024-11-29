@@ -4,9 +4,9 @@
 using namespace metal;
 
 float4 hsla_to_rgba(Hsla hsla);
-float4 linear_srgb_to_oklab(float4 color);
-float4 oklab_to_linear_srgb(float4 color);
-float4 linear_to_srgba(float4 color);
+float3 srgb_to_linear(float3 color);
+float4 srgb_to_oklab(float4 color);
+float4 oklab_to_srgb(float4 color);
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *viewport_size);
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
@@ -71,6 +71,14 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
   } else if (quad.background.tag == 1) {
     background_color0 = hsla_to_rgba(quad.background.colors[0].color);
     background_color1 = hsla_to_rgba(quad.background.colors[1].color);
+
+    // Prepare color space in vertex for avoid conversion
+    // in fragment shader for performance reasons
+    if (quad.background.color_space == 1) {
+        // Oklab
+        background_color0 = srgb_to_oklab(background_color0);
+        background_color1 = srgb_to_oklab(background_color1);
+    }
   }
 
   return QuadVertexOutput{
@@ -487,6 +495,14 @@ vertex PathSpriteVertexOutput path_sprite_vertex(
   } else if (sprite.color.tag == 1) {
     color0 = hsla_to_rgba(sprite.color.colors[0].color);
     color1 = hsla_to_rgba(sprite.color.colors[1].color);
+
+    // Prepare color space in vertex for avoid conversion
+    // in fragment shader for performance reasons
+    if (sprite.color.color_space == 1) {
+        // Oklab
+        color0 = srgb_to_oklab(color0);
+        color1 = srgb_to_oklab(color1);
+    }
   }
 
   return PathSpriteVertexOutput{
@@ -616,10 +632,17 @@ float4 hsla_to_rgba(Hsla hsla) {
   return rgba;
 }
 
+// Applies gamma correction to convert from non-linear sRGB to linear sRGB.
+float3 srgb_to_linear(float3 color) {
+  return pow(color, float3(2.2));
+}
 
-// Converts a linear sRGB color to the Oklab color space.
+// Converts a sRGB color to the Oklab color space.
 // Reference: https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab
-float4 linear_srgb_to_oklab(float4 color) {
+float4 oklab_to_srgb(float4 color) {
+  // Convert non-linear sRGB to linear sRGB
+  float3 linear_rgb = srgb_to_linear(color.rgb);
+
   float l = 0.4122214708 * color.r + 0.5363325363 * color.g + 0.0514459929 * color.b;
   float m = 0.2119034982 * color.r + 0.6806995451 * color.g + 0.1073969566 * color.b;
   float s = 0.0883024619 * color.r + 0.2817188376 * color.g + 0.6299787005 * color.b;
@@ -636,8 +659,8 @@ float4 linear_srgb_to_oklab(float4 color) {
   );
 }
 
-// Converts an Oklab color to the linear sRGB color space.
-float4 oklab_to_linear_srgb(float4 color) {
+// Converts an Oklab color to the sRGB color space.
+float4 oklab_to_srgb(float4 color) {
   float l_ = color.r + 0.3963377774 * color.g + 0.2158037573 * color.b;
   float m_ = color.r - 0.1055613458 * color.g - 0.0638541728 * color.b;
   float s_ = color.r - 0.0894841775 * color.g - 1.2914855480 * color.b;
@@ -646,16 +669,15 @@ float4 oklab_to_linear_srgb(float4 color) {
   float m = m_ * m_ * m_;
   float s = s_ * s_ * s_;
 
-  return float4(
+  float3 linear_rgb = float4(
    	4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
    	-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
    	-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
    	color.a
   );
-}
 
-float4 linear_to_srgba(float4 color) {
-  return float4(pow(color.rgb, float3(1.0 / 2.2)), color.a);
+  // Convert linear sRGB to non-linear sRGB
+  return float4(linear_to_srgb(linear_rgb), color.a);
 }
 
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
@@ -819,10 +841,8 @@ float4 gradient_color(Background background,
           color = mix(color0, color1, t);
           break;
         case 1: {
-          float4 oklab_color0 = linear_srgb_to_oklab(color0);
-          float4 oklab_color1 = linear_srgb_to_oklab(color1);
           float4 oklab_color = mix(oklab_color0, oklab_color1, t);
-          color = linear_to_srgba(oklab_to_linear_srgb(oklab_color));
+          color = oklab_to_srgb(oklab_color);
           break;
         }
       }
