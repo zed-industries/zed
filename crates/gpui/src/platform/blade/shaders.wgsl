@@ -318,9 +318,7 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
                     background_color = srgba_to_linear(mix(color0, color1, t));
                 }
                 case 1u: {
-                    let oklab_color0 = linear_srgb_to_oklab(color0);
-                    let oklab_color1 = linear_srgb_to_oklab(color1);
-                    let oklab_color = mix(oklab_color0, oklab_color1, t);
+                    let oklab_color = mix(color0, color1, t);
                     background_color = oklab_to_linear_srgb(oklab_color);
                 }
             }
@@ -365,8 +363,23 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     if (quad.background.tag == 0u) {
         out.background_solid = hsla_to_rgba(quad.background.solid);
     } else if (quad.background.tag == 1u) {
-        out.background_color0 = linear_to_srgba(hsla_to_rgba(quad.background.colors[0].color));
-        out.background_color1 = linear_to_srgba(hsla_to_rgba(quad.background.colors[1].color));
+        let color_space = quad.background.color_space;
+
+        // The hsla_to_rgba is returns a linear sRGB color
+        out.background_color0 = hsla_to_rgba(quad.background.colors[0].color);
+        out.background_color1 = hsla_to_rgba(quad.background.colors[1].color);
+
+        // Prepare color space in vertex for avoid conversion
+        // in fragment shader for performance reasons
+        if (color_space == 0u) {
+            // sRGB
+            out.background_color0 = linear_to_srgba(out.background_color0);
+            out.background_color1 = linear_to_srgba(out.background_color1);
+        } else if (color_space == 1u) {
+            // Oklab
+            out.background_color0 = linear_srgb_to_oklab(out.background_color0);
+            out.background_color1 = linear_srgb_to_oklab(out.background_color1);
+        }
     }
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
@@ -577,8 +590,21 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     if (sprite.color.tag == 0u) {
         out.color_solid = hsla_to_rgba(sprite.color.solid);
     } else if (sprite.color.tag == 1u) {
-        out.color0 = linear_to_srgba(hsla_to_rgba(sprite.color.colors[0].color));
-        out.color1 = linear_to_srgba(hsla_to_rgba(sprite.color.colors[1].color));
+        // The hsla_to_rgba is returns a linear sRGB color
+        out.color0 = hsla_to_rgba(sprite.color.colors[0].color);
+        out.color1 = hsla_to_rgba(sprite.color.colors[1].color);
+
+        // Prepare color space in vertex for avoid conversion
+        // in fragment shader for performance reasons
+        if (sprite.color.color_space == 0u) {
+            // sRGB
+            out.color0 = linear_to_srgba(out.color0);
+            out.color1 = linear_to_srgba(out.color1);
+        } else if (sprite.color.color_space == 1u) {
+            // Oklab
+            out.color0 = linear_srgb_to_oklab(out.color0);
+            out.color1 = linear_srgb_to_oklab(out.color1);
+        }
     }
     return out;
 }
