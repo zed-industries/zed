@@ -2931,7 +2931,7 @@ impl Editor {
         let start;
         let end;
         let mode;
-        let auto_scroll;
+        let mut auto_scroll;
         match click_count {
             1 => {
                 start = buffer.anchor_before(position.to_point(&display_map));
@@ -2967,6 +2967,7 @@ impl Editor {
                 auto_scroll = false;
             }
         }
+        auto_scroll &= !EditorSettings::get_global(cx).autoscroll_on_clicks;
 
         let point_to_delete: Option<usize> = {
             let selected_points: Vec<Selection<Point>> =
