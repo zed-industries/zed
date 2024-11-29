@@ -132,6 +132,7 @@ impl Zeta {
                         && old_snapshot.version == last_new_snapshot.version
                     {
                         *last_new_snapshot = new_snapshot.clone();
+                        *last_timestamp = *timestamp;
                         return;
                     }
                 }
