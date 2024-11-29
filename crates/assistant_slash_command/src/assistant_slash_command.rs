@@ -18,6 +18,7 @@ use workspace::{ui::IconName, Workspace};
 
 pub fn init(cx: &mut AppContext) {
     SlashCommandRegistry::default_global(cx);
+    extension_slash_command::init(cx);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

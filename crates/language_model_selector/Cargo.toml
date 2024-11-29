@@ -1,0 +1,22 @@
+[package]
+name = "language_model_selector"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/language_model_selector.rs"
+
+[dependencies]
+feature_flags.workspace = true
+gpui.workspace = true
+language_model.workspace = true
+picker.workspace = true
+proto.workspace = true
+ui.workspace = true
+workspace.workspace = true
+zed_actions.workspace = true

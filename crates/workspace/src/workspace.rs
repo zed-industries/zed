@@ -21,7 +21,7 @@ use client::{
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
-use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
+use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -97,7 +97,7 @@ use ui::{
     IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
     VisualContext as _, WindowContext,
 };
-use util::{ResultExt, TryFutureExt};
+use util::{paths::SanitizedPath, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
@@ -777,7 +777,7 @@ pub struct ViewId {
     pub id: u64,
 }
 
-struct FollowerState {
+pub struct FollowerState {
     center_pane: View<Pane>,
     dock_pane: Option<View<Pane>>,
     active_view_id: Option<ViewId>,
@@ -887,14 +887,16 @@ impl Workspace {
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
         let center_pane = cx.new_view(|cx| {
-            Pane::new(
+            let mut center_pane = Pane::new(
                 weak_handle.clone(),
                 project.clone(),
                 pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
                 cx,
-            )
+            );
+            center_pane.set_can_split(Some(Arc::new(|_, _, _| true)));
+            center_pane
         });
         cx.subscribe(&center_pane, Self::handle_pane_event).detach();
 
@@ -1096,10 +1098,17 @@ impl Workspace {
         );
 
         cx.spawn(|mut cx| async move {
-            let serialized_workspace: Option<SerializedWorkspace> =
-                persistence::DB.workspace_for_roots(abs_paths.as_slice());
+            let mut paths_to_open = Vec::with_capacity(abs_paths.len());
+            for path in abs_paths.into_iter() {
+                if let Some(canonical) = app_state.fs.canonicalize(&path).await.ok() {
+                    paths_to_open.push(canonical)
+                } else {
+                    paths_to_open.push(path)
+                }
+            }
 
-            let mut paths_to_open = abs_paths;
+            let serialized_workspace: Option<SerializedWorkspace> =
+                persistence::DB.workspace_for_roots(paths_to_open.as_slice());
 
             let workspace_location = serialized_workspace
                 .as_ref()
@@ -2015,7 +2024,7 @@ impl Workspace {
                 };
 
                 let this = this.clone();
-                let abs_path = abs_path.clone();
+                let abs_path: Arc<Path> = SanitizedPath::from(abs_path.clone()).into();
                 let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(move |mut cx| async move {
@@ -2024,7 +2033,7 @@ impl Workspace {
                         this.update(&mut cx, |workspace, cx| {
                             let worktree = worktree.read(cx);
                             let worktree_abs_path = worktree.abs_path();
-                            let entry_id = if abs_path == worktree_abs_path.as_ref() {
+                            let entry_id = if abs_path.as_ref() == worktree_abs_path.as_ref() {
                                 worktree.root_entry()
                             } else {
                                 abs_path
@@ -2457,14 +2466,16 @@ impl Workspace {
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> View<Pane> {
         let pane = cx.new_view(|cx| {
-            Pane::new(
+            let mut pane = Pane::new(
                 self.weak_handle(),
                 self.project.clone(),
                 self.pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
                 cx,
-            )
+            );
+            pane.set_can_split(Some(Arc::new(|_, _, _| true)));
+            pane
         });
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         self.panes.push(pane.clone());
@@ -2939,35 +2950,18 @@ impl Workspace {
         }
     }
 
+    pub fn bounding_box_for_pane(&self, pane: &View<Pane>) -> Option<Bounds<Pixels>> {
+        self.center.bounding_box_for_pane(pane)
+    }
+
     pub fn find_pane_in_direction(
         &mut self,
         direction: SplitDirection,
         cx: &WindowContext,
     ) -> Option<View<Pane>> {
-        let bounding_box = self.center.bounding_box_for_pane(&self.active_pane)?;
-        let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
-        let center = match cursor {
-            Some(cursor) if bounding_box.contains(&cursor) => cursor,
-            _ => bounding_box.center(),
-        };
-
-        let distance_to_next = pane_group::HANDLE_HITBOX_SIZE;
-
-        let target = match direction {
-            SplitDirection::Left => {
-                Point::new(bounding_box.left() - distance_to_next.into(), center.y)
-            }
-            SplitDirection::Right => {
-                Point::new(bounding_box.right() + distance_to_next.into(), center.y)
-            }
-            SplitDirection::Up => {
-                Point::new(center.x, bounding_box.top() - distance_to_next.into())
-            }
-            SplitDirection::Down => {
-                Point::new(center.x, bounding_box.bottom() + distance_to_next.into())
-            }
-        };
-        self.center.pane_at_pixel_position(target).cloned()
+        self.center
+            .find_pane_in_direction(&self.active_pane, direction, cx)
+            .cloned()
     }
 
     pub fn swap_pane_in_direction(
@@ -2979,6 +2973,17 @@ impl Workspace {
             self.center.swap(&self.active_pane.clone(), &to);
             cx.notify();
         }
+    }
+
+    pub fn resize_pane(&mut self, axis: gpui::Axis, amount: Pixels, cx: &mut ViewContext<Self>) {
+        self.center
+            .resize(&self.active_pane.clone(), axis, amount, &self.bounds);
+        cx.notify();
+    }
+
+    pub fn reset_pane_sizes(&mut self, cx: &mut ViewContext<Self>) {
+        self.center.reset_pane_sizes();
+        cx.notify();
     }
 
     fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
@@ -4569,6 +4574,10 @@ impl Workspace {
         let window = cx.window_handle().downcast::<Workspace>()?;
         cx.read_window(&window, |workspace, _| workspace).ok()
     }
+
+    pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
+        self.zoomed.as_ref()
+    }
 }
 
 fn leader_border_for_pane(
@@ -4817,7 +4826,27 @@ impl Render for Workspace {
                                     let this = cx.view().clone();
                                     canvas(
                                         move |bounds, cx| {
-                                            this.update(cx, |this, _cx| this.bounds = bounds)
+                                            this.update(cx, |this, cx| {
+                                                let bounds_changed = this.bounds != bounds;
+                                                this.bounds = bounds;
+
+                                                if bounds_changed {
+                                                    this.left_dock.update(cx, |dock, cx| {
+                                                        dock.clamp_panel_size(bounds.size.width, cx)
+                                                    });
+
+                                                    this.right_dock.update(cx, |dock, cx| {
+                                                        dock.clamp_panel_size(bounds.size.width, cx)
+                                                    });
+
+                                                    this.bottom_dock.update(cx, |dock, cx| {
+                                                        dock.clamp_panel_size(
+                                                            bounds.size.height,
+                                                            cx,
+                                                        )
+                                                    });
+                                                }
+                                            })
                                         },
                                         |_, _, _| {},
                                     )
@@ -4829,42 +4858,27 @@ impl Render for Workspace {
                                         |workspace, e: &DragMoveEvent<DraggedDock>, cx| {
                                             match e.drag(cx).0 {
                                                 DockPosition::Left => {
-                                                    let size = e.event.position.x
-                                                        - workspace.bounds.left();
-                                                    workspace.left_dock.update(
+                                                    resize_left_dock(
+                                                        e.event.position.x
+                                                            - workspace.bounds.left(),
+                                                        workspace,
                                                         cx,
-                                                        |left_dock, cx| {
-                                                            left_dock.resize_active_panel(
-                                                                Some(size),
-                                                                cx,
-                                                            );
-                                                        },
                                                     );
                                                 }
                                                 DockPosition::Right => {
-                                                    let size = workspace.bounds.right()
-                                                        - e.event.position.x;
-                                                    workspace.right_dock.update(
+                                                    resize_right_dock(
+                                                        workspace.bounds.right()
+                                                            - e.event.position.x,
+                                                        workspace,
                                                         cx,
-                                                        |right_dock, cx| {
-                                                            right_dock.resize_active_panel(
-                                                                Some(size),
-                                                                cx,
-                                                            );
-                                                        },
                                                     );
                                                 }
                                                 DockPosition::Bottom => {
-                                                    let size = workspace.bounds.bottom()
-                                                        - e.event.position.y;
-                                                    workspace.bottom_dock.update(
+                                                    resize_bottom_dock(
+                                                        workspace.bounds.bottom()
+                                                            - e.event.position.y,
+                                                        workspace,
                                                         cx,
-                                                        |bottom_dock, cx| {
-                                                            bottom_dock.resize_active_panel(
-                                                                Some(size),
-                                                                cx,
-                                                            );
-                                                        },
                                                     );
                                                 }
                                             }
@@ -4950,6 +4964,40 @@ impl Render for Workspace {
             cx,
         )
     }
+}
+
+fn resize_bottom_dock(
+    new_size: Pixels,
+    workspace: &mut Workspace,
+    cx: &mut ViewContext<'_, Workspace>,
+) {
+    let size = new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE);
+    workspace.bottom_dock.update(cx, |bottom_dock, cx| {
+        bottom_dock.resize_active_panel(Some(size), cx);
+    });
+}
+
+fn resize_right_dock(
+    new_size: Pixels,
+    workspace: &mut Workspace,
+    cx: &mut ViewContext<'_, Workspace>,
+) {
+    let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
+    workspace.right_dock.update(cx, |right_dock, cx| {
+        right_dock.resize_active_panel(Some(size), cx);
+    });
+}
+
+fn resize_left_dock(
+    new_size: Pixels,
+    workspace: &mut Workspace,
+    cx: &mut ViewContext<'_, Workspace>,
+) {
+    let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
+
+    workspace.left_dock.update(cx, |left_dock, cx| {
+        left_dock.resize_active_panel(Some(size), cx);
+    });
 }
 
 impl WorkspaceStore {

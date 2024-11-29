@@ -139,7 +139,7 @@
         }
       },
       "patternProperties": {
-        "^(?![\\.0-9]).": {
+        "^[^.0-9]+$": {
           "$ref": "#/definitions/packageExportsEntryOrFallback",
           "description": "The module path that is resolved when this environment matches the property name."
         }
@@ -616,7 +616,7 @@
         }
       }
     },
-    "bundledDependencies": {
+    "bundleDependencies": {
       "description": "Array of package names that will be bundled when publishing the package.",
       "oneOf": [
         {
@@ -630,8 +630,8 @@
         }
       ]
     },
-    "bundleDependencies": {
-      "description": "DEPRECATED: This field is honored, but \"bundledDependencies\" is the correct field name.",
+    "bundledDependencies": {
+      "description": "DEPRECATED: This field is honored, but \"bundleDependencies\" is the correct field name.",
       "oneOf": [
         {
           "type": "array",
@@ -734,6 +734,9 @@
         "registry": {
           "type": "string",
           "format": "uri"
+        },
+        "provenance": {
+          "type": "boolean"
         }
       },
       "additionalProperties": true

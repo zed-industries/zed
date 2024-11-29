@@ -1,6 +1,5 @@
 use crate::slash_command::file_command::codeblock_fence_for_path;
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -17,12 +16,13 @@ use crate::{
     ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
     DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
     InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
-    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
-    ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    RequestType, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    MessageMetadata, MessageStatus, NewContext, ParsedSlashCommand, PendingSlashCommandStatus,
+    QuoteSelection, RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
+use assistant_tool::ToolWorkingSet;
 use client::{proto, zed_urls, Client, Status};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use editor::{
@@ -50,11 +50,12 @@ use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, BufferSnapshot, LanguageRegistry, LspAdapterDelegate, ToOffset,
 };
-use language_model::{
-    provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelRegistry, Role,
-};
 use language_model::{LanguageModelImage, LanguageModelToolUse};
+use language_model::{
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role,
+    ZED_CLOUD_PROVIDER_ID,
+};
+use language_model_selector::{LanguageModelPickerDelegate, LanguageModelSelector};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
@@ -142,7 +143,7 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
-    model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
+    model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
@@ -415,7 +416,6 @@ impl AssistantPanel {
                 ControlFlow::Break(())
             });
 
-            pane.set_can_split(false, cx);
             pane.set_can_navigate(true, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
@@ -664,7 +664,7 @@ impl AssistantPanel {
         // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
         // the provider, we want to show a nudge to sign in.
         let show_zed_ai_notice = client_status.is_signed_out()
-            && active_provider.map_or(true, |provider| provider.id().0 == PROVIDER_ID);
+            && active_provider.map_or(true, |provider| provider.id().0 == ZED_CLOUD_PROVIDER_ID);
 
         self.show_zed_ai_notice = show_zed_ai_notice;
         cx.notify();
@@ -1315,7 +1315,7 @@ impl AssistantPanel {
 
     fn restart_context_servers(
         workspace: &mut Workspace,
-        _action: &context_servers::Restart,
+        _action: &context_server::Restart,
         cx: &mut ViewContext<Workspace>,
     ) {
         let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
@@ -1924,7 +1924,7 @@ impl ContextEditor {
                                     Content::ToolUse {
                                         range: tool_use.source_range.clone(),
                                         tool_use: LanguageModelToolUse {
-                                            id: tool_use.id.to_string(),
+                                            id: tool_use.id.clone(),
                                             name: tool_use.name.clone(),
                                             input: tool_use.input.clone(),
                                         },
@@ -4457,13 +4457,13 @@ pub struct ContextEditorToolbarItem {
     fs: Arc<dyn Fs>,
     active_context_editor: Option<WeakView<ContextEditor>>,
     model_summary_editor: View<Editor>,
-    model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
+    model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
 }
 
 impl ContextEditorToolbarItem {
     pub fn new(
         workspace: &Workspace,
-        model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
+        model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
         model_summary_editor: View<Editor>,
     ) -> Self {
         Self {
@@ -4559,8 +4559,17 @@ impl Render for ContextEditorToolbarItem {
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
             .child(
-                ModelSelector::new(
-                    self.fs.clone(),
+                LanguageModelSelector::new(
+                    {
+                        let fs = self.fs.clone();
+                        move |model, cx| {
+                            update_settings_file::<AssistantSettings>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| settings.set_model(model.clone()),
+                            );
+                        }
+                    },
                     ButtonLike::new("active-model")
                         .style(ButtonStyle::Subtle)
                         .child(

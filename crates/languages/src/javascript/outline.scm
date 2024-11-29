@@ -62,12 +62,20 @@
     name: (_) @name) @item
 
 ; Add support for (node:test, bun:test and Jest) runnable
-(call_expression
-    function: (_) @context
-    (#any-of? @context "it" "test" "describe")
-    arguments: (
-        arguments . (string
-            (string_fragment) @name
+(
+    (call_expression
+        function: [
+            (identifier) @_name
+            (member_expression
+                object: [
+                    (identifier) @_name
+                    (member_expression object: (identifier) @_name)
+                ]*
+            )
+        ]* @context
+        (#any-of? @_name "it" "test" "describe")
+        arguments: (
+            arguments . (string (string_fragment) @name)
         )
     )
 ) @item

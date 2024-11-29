@@ -16,11 +16,15 @@ doctest = false
 name = "cli"
 path = "src/main.rs"
 
+[features]
+no-bundled-uninstall = []
+default = []
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
 collections.workspace = true
-ipc-channel = "0.18"
+ipc-channel = "0.19"
 once_cell.workspace = true
 parking_lot.workspace = true
 paths.workspace = true

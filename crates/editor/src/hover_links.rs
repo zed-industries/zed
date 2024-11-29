@@ -1,8 +1,9 @@
 use crate::{
+    editor_settings::MultiCursorModifier,
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
-    Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition,
-    GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
+    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
+    GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
 };
 use gpui::{px, AppContext, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};
@@ -12,6 +13,7 @@ use project::{
     HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink, Project,
     ResolveState, ResolvedPath,
 };
+use settings::Settings;
 use std::ops::Range;
 use theme::ActiveTheme as _;
 use util::{maybe, ResultExt, TryFutureExt as _};
@@ -117,7 +119,12 @@ impl Editor {
         modifiers: Modifiers,
         cx: &mut ViewContext<Self>,
     ) {
-        if !modifiers.secondary() || self.has_pending_selection() {
+        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+        let hovered_link_modifier = match multi_cursor_setting {
+            MultiCursorModifier::Alt => modifiers.secondary(),
+            MultiCursorModifier::CmdOrCtrl => modifiers.alt,
+        };
+        if !hovered_link_modifier || self.has_pending_selection() {
             self.hide_hovered_link(cx);
             return;
         }
@@ -137,7 +144,7 @@ impl Editor {
                     snapshot,
                     point_for_position,
                     self,
-                    modifiers.secondary(),
+                    hovered_link_modifier,
                     modifiers.shift,
                     cx,
                 );

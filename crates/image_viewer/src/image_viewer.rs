@@ -16,7 +16,7 @@ use settings::Settings;
 use util::paths::PathExt;
 use workspace::{
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
-    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    ItemId, ItemSettings, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 const IMAGE_VIEWER_KIND: &str = "ImageView";
@@ -116,7 +116,7 @@ impl Item for ImageView {
             .map(Icon::from_path)
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
         ToolbarItemLocation::PrimaryLeft
     }
 
@@ -172,9 +172,9 @@ impl SerializableItem for ImageView {
         _workspace: WeakView<Workspace>,
         workspace_id: WorkspaceId,
         item_id: ItemId,
-        cx: &mut ViewContext<Pane>,
+        cx: &mut WindowContext,
     ) -> Task<gpui::Result<View<Self>>> {
-        cx.spawn(|_pane, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let image_path = IMAGE_VIEWER
                 .get_image_path(item_id, workspace_id)?
                 .ok_or_else(|| anyhow::anyhow!("No image path found"))?;
@@ -301,7 +301,8 @@ impl Render for ImageView {
                         img(image)
                             .object_fit(ObjectFit::ScaleDown)
                             .max_w_full()
-                            .max_h_full(),
+                            .max_h_full()
+                            .id("img"),
                     ),
             )
     }

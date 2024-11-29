@@ -6,7 +6,7 @@ use futures::{
     future::Shared,
     stream,
 };
-use gpui::{AppContext, Model, Task};
+use gpui::{AppContext, Model, Task, WindowContext};
 use language::LanguageName;
 pub use native_kernel::*;
 
@@ -15,9 +15,9 @@ use project::{Project, WorktreeId};
 pub use remote_kernels::*;
 
 use anyhow::Result;
-use runtimelib::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
-use smol::process::Command;
-use ui::SharedString;
+use jupyter_protocol::JupyterKernelspec;
+use runtimelib::{ExecutionState, JupyterMessage, KernelInfoReply};
+use ui::{Icon, IconName, SharedString};
 
 pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 
@@ -60,6 +60,19 @@ impl KernelSpecification {
             Self::Remote(spec) => spec.kernelspec.language.clone(),
         })
     }
+
+    pub fn icon(&self, cx: &AppContext) -> Icon {
+        let lang_name = match self {
+            Self::Jupyter(spec) => spec.kernelspec.language.clone(),
+            Self::PythonEnv(spec) => spec.kernelspec.language.clone(),
+            Self::Remote(spec) => spec.kernelspec.language.clone(),
+        };
+
+        file_icons::FileIcons::get(cx)
+            .get_type_icon(&lang_name.to_lowercase())
+            .map(Icon::from_path)
+            .unwrap_or(Icon::new(IconName::ReplNeutral))
+    }
 }
 
 pub fn python_env_kernel_specifications(
@@ -85,7 +98,7 @@ pub fn python_env_kernel_specifications(
                 let python_path = toolchain.path.to_string();
 
                 // Check if ipykernel is installed
-                let ipykernel_check = Command::new(&python_path)
+                let ipykernel_check = util::command::new_smol_command(&python_path)
                     .args(&["-c", "import ipykernel"])
                     .output()
                     .await;
@@ -135,7 +148,7 @@ pub trait RunningKernel: Send + Debug {
     fn set_execution_state(&mut self, state: ExecutionState);
     fn kernel_info(&self) -> Option<&KernelInfoReply>;
     fn set_kernel_info(&mut self, info: KernelInfoReply);
-    fn force_shutdown(&mut self) -> anyhow::Result<()>;
+    fn force_shutdown(&mut self, cx: &mut WindowContext) -> Task<anyhow::Result<()>>;
 }
 
 #[derive(Debug, Clone)]

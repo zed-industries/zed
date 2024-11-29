@@ -4,7 +4,7 @@ use assistant_slash_command::{
     SlashCommandOutputSection, SlashCommandResult,
 };
 use collections::HashMap;
-use context_servers::{
+use context_server::{
     manager::{ContextServer, ContextServerManager},
     types::Prompt,
 };
@@ -95,9 +95,9 @@ impl SlashCommand for ContextServerSlashCommand {
 
                 let completion_result = protocol
                     .completion(
-                        context_servers::types::CompletionReference::Prompt(
-                            context_servers::types::PromptReference {
-                                r#type: context_servers::types::PromptReferenceType::Prompt,
+                        context_server::types::CompletionReference::Prompt(
+                            context_server::types::PromptReference {
+                                r#type: context_server::types::PromptReferenceType::Prompt,
                                 name: prompt_name,
                             },
                         ),
@@ -152,7 +152,7 @@ impl SlashCommand for ContextServerSlashCommand {
                 if result
                     .messages
                     .iter()
-                    .any(|msg| !matches!(msg.role, context_servers::types::Role::User))
+                    .any(|msg| !matches!(msg.role, context_server::types::Role::User))
                 {
                     return Err(anyhow!(
                         "Prompt contains non-user roles, which is not supported"
@@ -164,7 +164,7 @@ impl SlashCommand for ContextServerSlashCommand {
                     .messages
                     .into_iter()
                     .filter_map(|msg| match msg.content {
-                        context_servers::types::MessageContent::Text { text } => Some(text),
+                        context_server::types::MessageContent::Text { text } => Some(text),
                         _ => None,
                     })
                     .collect::<Vec<String>>()

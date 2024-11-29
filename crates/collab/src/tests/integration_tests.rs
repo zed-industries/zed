@@ -6,7 +6,8 @@ use crate::{
     },
 };
 use anyhow::{anyhow, Result};
-use assistant::{ContextStore, PromptBuilder, SlashCommandWorkingSet, ToolWorkingSet};
+use assistant::{ContextStore, PromptBuilder, SlashCommandWorkingSet};
+use assistant_tool::ToolWorkingSet;
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -6486,8 +6487,8 @@ async fn test_context_collaboration_with_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
-    cx_a.update(context_servers::init);
-    cx_b.update(context_servers::init);
+    cx_a.update(context_server::init);
+    cx_b.update(context_server::init);
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context_store_a = cx_a
         .update(|cx| {
