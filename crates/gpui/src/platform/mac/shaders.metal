@@ -5,6 +5,7 @@ using namespace metal;
 
 float4 hsla_to_rgba(Hsla hsla);
 float3 srgb_to_linear(float3 color);
+float3 linear_to_srgb(float3 color);
 float4 srgb_to_oklab(float4 color);
 float4 oklab_to_srgb(float4 color);
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
@@ -632,16 +633,19 @@ float4 hsla_to_rgba(Hsla hsla) {
   return rgba;
 }
 
-// Applies gamma correction to convert from non-linear sRGB to linear sRGB.
 float3 srgb_to_linear(float3 color) {
   return pow(color, float3(2.2));
 }
 
+float3 linear_to_srgb(float3 color) {
+  return pow(color, float3(1.0 / 2.2));
+}
+
 // Converts a sRGB color to the Oklab color space.
 // Reference: https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab
-float4 oklab_to_srgb(float4 color) {
+float4 srgb_to_oklab(float4 color) {
   // Convert non-linear sRGB to linear sRGB
-  float3 linear_rgb = srgb_to_linear(color.rgb);
+  color = float4(srgb_to_linear(color.rgb), color.a);
 
   float l = 0.4122214708 * color.r + 0.5363325363 * color.g + 0.0514459929 * color.b;
   float m = 0.2119034982 * color.r + 0.6806995451 * color.g + 0.1073969566 * color.b;
@@ -669,11 +673,10 @@ float4 oklab_to_srgb(float4 color) {
   float m = m_ * m_ * m_;
   float s = s_ * s_ * s_;
 
-  float3 linear_rgb = float4(
+  float3 linear_rgb = float3(
    	4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
    	-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-   	-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
-   	color.a
+   	-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
   );
 
   // Convert linear sRGB to non-linear sRGB
@@ -841,7 +844,7 @@ float4 gradient_color(Background background,
           color = mix(color0, color1, t);
           break;
         case 1: {
-          float4 oklab_color = mix(oklab_color0, oklab_color1, t);
+          float4 oklab_color = mix(color0, color1, t);
           color = oklab_to_srgb(oklab_color);
           break;
         }
