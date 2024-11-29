@@ -5,13 +5,12 @@ use anthropic::Model as AnthropicModel;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{AppContext, Pixels};
-use language_model::provider::open_ai;
-use language_model::settings::{
-    AnthropicSettingsContent, AnthropicSettingsContentV1, OllamaSettingsContent,
-    OpenAiSettingsContent, OpenAiSettingsContentV1, VersionedAnthropicSettingsContent,
-    VersionedOpenAiSettingsContent,
+use language_model::{CloudModel, LanguageModel};
+use language_models::{
+    provider::open_ai, AllLanguageModelSettings, AnthropicSettingsContent,
+    AnthropicSettingsContentV1, OllamaSettingsContent, OpenAiSettingsContent,
+    OpenAiSettingsContentV1, VersionedAnthropicSettingsContent, VersionedOpenAiSettingsContent,
 };
-use language_model::{settings::AllLanguageModelSettings, CloudModel, LanguageModel};
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
@@ -60,7 +59,6 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
-    pub show_hints: bool,
 }
 
 impl AssistantSettings {
@@ -203,7 +201,6 @@ impl AssistantSettingsContent {
             AssistantSettingsContent::Versioned(settings) => match settings {
                 VersionedAssistantSettingsContent::V1(settings) => AssistantSettingsContentV2 {
                     enabled: settings.enabled,
-                    show_hints: None,
                     button: settings.button,
                     dock: settings.dock,
                     default_width: settings.default_width,
@@ -244,7 +241,6 @@ impl AssistantSettingsContent {
             },
             AssistantSettingsContent::Legacy(settings) => AssistantSettingsContentV2 {
                 enabled: None,
-                show_hints: None,
                 button: settings.button,
                 dock: settings.dock,
                 default_width: settings.default_width,
@@ -357,7 +353,6 @@ impl Default for VersionedAssistantSettingsContent {
     fn default() -> Self {
         Self::V2(AssistantSettingsContentV2 {
             enabled: None,
-            show_hints: None,
             button: None,
             dock: None,
             default_width: None,
@@ -375,11 +370,6 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: true
     enabled: Option<bool>,
-    /// Whether to show inline hints that show keybindings for inline assistant
-    /// and assistant panel.
-    ///
-    /// Default: true
-    show_hints: Option<bool>,
     /// Whether to show the assistant panel button in the status bar.
     ///
     /// Default: true
@@ -514,7 +504,6 @@ impl Settings for AssistantSettings {
 
             let value = value.upgrade();
             merge(&mut settings.enabled, value.enabled);
-            merge(&mut settings.show_hints, value.show_hints);
             merge(&mut settings.button, value.button);
             merge(&mut settings.dock, value.dock);
             merge(
@@ -585,7 +574,6 @@ mod tests {
                             }),
                             inline_alternatives: None,
                             enabled: None,
-                            show_hints: None,
                             button: None,
                             dock: None,
                             default_width: None,

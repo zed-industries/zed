@@ -52,34 +52,44 @@ impl CursorPosition {
 
             editor
                 .update(&mut cx, |editor, cx| {
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
                     cursor_position.update(cx, |cursor_position, cx| {
                         cursor_position.selected_count = SelectionStats::default();
                         cursor_position.selected_count.selections = editor.selections.count();
-                        let mut last_selection = None::<Selection<usize>>;
-                        for selection in editor.selections.all::<usize>(cx) {
-                            cursor_position.selected_count.characters += buffer
-                                .text_for_range(selection.start..selection.end)
-                                .map(|t| t.chars().count())
-                                .sum::<usize>();
-                            if last_selection
-                                .as_ref()
-                                .map_or(true, |last_selection| selection.id > last_selection.id)
-                            {
-                                last_selection = Some(selection);
+                        match editor.mode() {
+                            editor::EditorMode::AutoHeight { .. }
+                            | editor::EditorMode::SingleLine { .. } => {
+                                cursor_position.position = None
                             }
-                        }
-                        for selection in editor.selections.all::<Point>(cx) {
-                            if selection.end != selection.start {
-                                cursor_position.selected_count.lines +=
-                                    (selection.end.row - selection.start.row) as usize;
-                                if selection.end.column != 0 {
-                                    cursor_position.selected_count.lines += 1;
+                            editor::EditorMode::Full => {
+                                let mut last_selection = None::<Selection<usize>>;
+                                let buffer = editor.buffer().read(cx).snapshot(cx);
+                                if buffer.excerpts().count() > 0 {
+                                    for selection in editor.selections.all::<usize>(cx) {
+                                        cursor_position.selected_count.characters += buffer
+                                            .text_for_range(selection.start..selection.end)
+                                            .map(|t| t.chars().count())
+                                            .sum::<usize>();
+                                        if last_selection.as_ref().map_or(true, |last_selection| {
+                                            selection.id > last_selection.id
+                                        }) {
+                                            last_selection = Some(selection);
+                                        }
+                                    }
+                                    for selection in editor.selections.all::<Point>(cx) {
+                                        if selection.end != selection.start {
+                                            cursor_position.selected_count.lines +=
+                                                (selection.end.row - selection.start.row) as usize;
+                                            if selection.end.column != 0 {
+                                                cursor_position.selected_count.lines += 1;
+                                            }
+                                        }
+                                    }
                                 }
+                                cursor_position.position =
+                                    last_selection.map(|s| s.head().to_point(&buffer));
                             }
                         }
-                        cursor_position.position =
-                            last_selection.map(|s| s.head().to_point(&buffer));
+
                         cx.notify();
                     })
                 })

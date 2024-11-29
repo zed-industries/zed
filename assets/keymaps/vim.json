@@ -55,6 +55,10 @@
       "n": "vim::MoveToNextMatch",
       "shift-n": "vim::MoveToPrevMatch",
       "%": "vim::Matching",
+      "] }": ["vim::UnmatchedForward", { "char": "}" } ],
+      "[ {": ["vim::UnmatchedBackward", { "char": "{" } ],
+      "] )": ["vim::UnmatchedForward", { "char": ")" } ],
+      "[ (": ["vim::UnmatchedBackward", { "char": "(" } ],
       "f": ["vim::PushOperator", { "FindForward": { "before": false } }],
       "t": ["vim::PushOperator", { "FindForward": { "before": true } }],
       "shift-f": ["vim::PushOperator", { "FindBackward": { "after": false } }],
@@ -381,8 +385,9 @@
       "shift-b": "vim::CurlyBrackets",
       "<": "vim::AngleBrackets",
       ">": "vim::AngleBrackets",
-      "a": "vim::AngleBrackets",
-      "g": "vim::Argument"
+      "a": "vim::Argument",
+      "i": "vim::IndentObj",
+      "shift-i": ["vim::IndentObj", { "includeBelow": true }]
     }
   },
   {
@@ -552,6 +557,12 @@
       "ctrl-w shift-l": ["workspace::SwapPaneInDirection", "Right"],
       "ctrl-w shift-k": ["workspace::SwapPaneInDirection", "Up"],
       "ctrl-w shift-j": ["workspace::SwapPaneInDirection", "Down"],
+      "ctrl-w >": ["vim::ResizePane", "Widen"],
+      "ctrl-w <": ["vim::ResizePane", "Narrow"],
+      "ctrl-w -": ["vim::ResizePane", "Shorten"],
+      "ctrl-w +": ["vim::ResizePane", "Lengthen"],
+      "ctrl-w _": "vim::MaximizePane",
+      "ctrl-w =": "vim::ResetPaneSizes",
       "ctrl-w g t": "pane::ActivateNextItem",
       "ctrl-w ctrl-g t": "pane::ActivateNextItem",
       "ctrl-w g shift-t": "pane::ActivatePrevItem",
@@ -578,7 +589,7 @@
     }
   },
   {
-    "context": "EmptyPane || SharedScreen || MarkdownPreview || KeyContextView",
+    "context": "EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
     "use_layout_keys": true,
     "bindings": {
       ":": "command_palette::Toggle",

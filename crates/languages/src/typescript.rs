@@ -412,7 +412,7 @@ impl LspAdapter for EsLintLspAdapter {
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let url = build_asset_url(
-            "microsoft/vscode-eslint",
+            "zed-industries/vscode-eslint",
             Self::CURRENT_VERSION_TAG_NAME,
             Self::GITHUB_ASSET_KIND,
         )?;

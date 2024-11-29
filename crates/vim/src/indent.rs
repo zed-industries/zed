@@ -16,7 +16,7 @@ actions!(vim, [Indent, Outdent,]);
 pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &Indent, cx| {
         vim.record_current_action(cx);
-        let count = vim.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         vim.store_visual_marks(cx);
         vim.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -34,7 +34,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &Outdent, cx| {
         vim.record_current_action(cx);
-        let count = vim.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         vim.store_visual_marks(cx);
         vim.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {

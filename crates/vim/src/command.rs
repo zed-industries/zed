@@ -101,7 +101,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         let Some(workspace) = vim.workspace(cx) else {
             return;
         };
-        let count = vim.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         workspace.update(cx, |workspace, cx| {
             command_palette::CommandPalette::toggle(
                 workspace,

@@ -33,8 +33,8 @@ use workspace::{
     notifications::NotifyResultExt,
     register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, Pane, ToolbarItemLocation,
-    Workspace, WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
+    WorkspaceId,
 };
 
 use anyhow::Context;
@@ -109,7 +109,7 @@ pub struct TerminalView {
     blink_epoch: usize,
     can_navigate_to_selected_word: bool,
     workspace_id: Option<WorkspaceId>,
-    show_title: bool,
+    show_breadcrumbs: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
     scroll_top: Pixels,
     _subscriptions: Vec<Subscription>,
@@ -189,7 +189,7 @@ impl TerminalView {
             blink_epoch: 0,
             can_navigate_to_selected_word: false,
             workspace_id,
-            show_title: TerminalSettings::get_global(cx).toolbar.title,
+            show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
             _subscriptions: vec![
@@ -259,7 +259,7 @@ impl TerminalView {
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         let settings = TerminalSettings::get_global(cx);
-        self.show_title = settings.toolbar.title;
+        self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
         let new_cursor_shape = settings.cursor_shape.unwrap_or_default();
         let old_cursor_shape = self.cursor_shape;
@@ -798,7 +798,6 @@ fn possible_open_paths_metadata(
     cx.background_executor().spawn(async move {
         let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
 
-        #[cfg(not(target_os = "windows"))]
         let mut fetch_metadata_tasks = potential_paths
             .into_iter()
             .map(|potential_path| async {
@@ -811,20 +810,6 @@ fn possible_open_paths_metadata(
                     },
                     metadata,
                 )
-            })
-            .collect::<FuturesUnordered<_>>();
-
-        #[cfg(target_os = "windows")]
-        let mut fetch_metadata_tasks = potential_paths
-            .iter()
-            .map(|potential_path| async {
-                let metadata = fs.metadata(potential_path).await.ok().flatten();
-                let path = PathBuf::from(
-                    potential_path
-                        .to_string_lossy()
-                        .trim_start_matches("\\\\?\\"),
-                );
-                (PathWithPosition { path, row, column }, metadata)
             })
             .collect::<FuturesUnordered<_>>();
 
@@ -1044,8 +1029,8 @@ impl Item for TerminalView {
                 .shape(ui::IconButtonShape::Square)
                 .tooltip(|cx| Tooltip::text("Rerun task", cx))
                 .on_click(move |_, cx| {
-                    cx.dispatch_action(Box::new(tasks_ui::Rerun {
-                        task_id: Some(task_id.clone()),
+                    cx.dispatch_action(Box::new(zed_actions::Rerun {
+                        task_id: Some(task_id.0.clone()),
                         allow_concurrent_runs: Some(true),
                         use_new_terminal: Some(false),
                         reevaluate_context: false,
@@ -1145,8 +1130,8 @@ impl Item for TerminalView {
         Some(Box::new(handle.clone()))
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        if self.show_title {
+    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {
+        if self.show_breadcrumbs && !self.terminal().read(cx).breadcrumb_text.trim().is_empty() {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
@@ -1222,10 +1207,10 @@ impl SerializableItem for TerminalView {
         workspace: WeakView<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
-        cx: &mut ViewContext<Pane>,
+        cx: &mut WindowContext,
     ) -> Task<anyhow::Result<View<Self>>> {
         let window = cx.window_handle();
-        cx.spawn(|pane, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let cwd = cx
                 .update(|cx| {
                     let from_db = TERMINAL_DB
@@ -1249,7 +1234,7 @@ impl SerializableItem for TerminalView {
             let terminal = project.update(&mut cx, |project, cx| {
                 project.create_terminal(TerminalKind::Shell(cwd), window, cx)
             })??;
-            pane.update(&mut cx, |_, cx| {
+            cx.update(|cx| {
                 cx.new_view(|cx| TerminalView::new(terminal, workspace, Some(workspace_id), cx))
             })
         })

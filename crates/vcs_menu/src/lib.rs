@@ -2,10 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
-    actions, rems, AnyElement, AppContext, AsyncAppContext, DismissEvent, EventEmitter,
-    FocusHandle, FocusableView, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    rems, AnyElement, AppContext, AsyncAppContext, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
@@ -14,8 +13,7 @@ use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
-
-actions!(branches, [OpenRecent]);
+use zed_actions::branches::OpenRecent;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {

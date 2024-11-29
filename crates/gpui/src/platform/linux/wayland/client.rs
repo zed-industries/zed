@@ -1208,7 +1208,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             compose.feed(keysym);
                             match compose.status() {
                                 xkb::Status::Composing => {
-                                    keystroke.ime_key = None;
+                                    keystroke.key_char = None;
                                     state.pre_edit_text =
                                         compose.utf8().or(Keystroke::underlying_dead_key(keysym));
                                     let pre_edit =
@@ -1220,7 +1220,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                                 xkb::Status::Composed => {
                                     state.pre_edit_text.take();
-                                    keystroke.ime_key = compose.utf8();
+                                    keystroke.key_char = compose.utf8();
                                     if let Some(keysym) = compose.keysym() {
                                         keystroke.key = xkb::keysym_get_name(keysym);
                                     }
@@ -1340,7 +1340,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                             keystroke: Keystroke {
                                 modifiers: Modifiers::default(),
                                 key: commit_text.clone(),
-                                ime_key: Some(commit_text),
+                                key_char: Some(commit_text),
                             },
                             is_held: false,
                         }));

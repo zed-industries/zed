@@ -1,5 +1,5 @@
 use anyhow::Result;
-use copilot::{Copilot, CopilotCodeVerification, Status};
+use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
 use fs::Fs;
 use gpui::{
@@ -15,7 +15,6 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use supermaven::{AccountStatus, Supermaven};
-use util::ResultExt;
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -28,8 +27,6 @@ use workspace::{
 use zed_actions::OpenBrowser;
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
-
-struct CopilotStartingToast;
 
 struct CopilotErrorToast;
 
@@ -221,7 +218,7 @@ impl InlineCompletionButton {
     pub fn build_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(cx, |menu, _| {
-            menu.entry("Sign In", None, initiate_sign_in)
+            menu.entry("Sign In", None, copilot::initiate_sign_in)
                 .entry("Disable Copilot", None, {
                     let fs = fs.clone();
                     move |cx| hide_copilot(fs.clone(), cx)
@@ -483,69 +480,4 @@ fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
             .get_or_insert(Default::default())
             .inline_completion_provider = Some(InlineCompletionProvider::None);
     });
-}
-
-pub fn initiate_sign_in(cx: &mut WindowContext) {
-    let Some(copilot) = Copilot::global(cx) else {
-        return;
-    };
-    let status = copilot.read(cx).status();
-    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
-        return;
-    };
-    match status {
-        Status::Starting { task } => {
-            let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
-                return;
-            };
-
-            let Ok(workspace) = workspace.update(cx, |workspace, cx| {
-                workspace.show_toast(
-                    Toast::new(
-                        NotificationId::unique::<CopilotStartingToast>(),
-                        "Copilot is starting...",
-                    ),
-                    cx,
-                );
-                workspace.weak_handle()
-            }) else {
-                return;
-            };
-
-            cx.spawn(|mut cx| async move {
-                task.await;
-                if let Some(copilot) = cx.update(|cx| Copilot::global(cx)).ok().flatten() {
-                    workspace
-                        .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
-                            Status::Authorized => workspace.show_toast(
-                                Toast::new(
-                                    NotificationId::unique::<CopilotStartingToast>(),
-                                    "Copilot has started!",
-                                ),
-                                cx,
-                            ),
-                            _ => {
-                                workspace.dismiss_toast(
-                                    &NotificationId::unique::<CopilotStartingToast>(),
-                                    cx,
-                                );
-                                copilot
-                                    .update(cx, |copilot, cx| copilot.sign_in(cx))
-                                    .detach_and_log_err(cx);
-                            }
-                        })
-                        .log_err();
-                }
-            })
-            .detach();
-        }
-        _ => {
-            copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
-            workspace
-                .update(cx, |this, cx| {
-                    this.toggle_modal(cx, |cx| CopilotCodeVerification::new(&copilot, cx));
-                })
-                .ok();
-        }
-    }
 }

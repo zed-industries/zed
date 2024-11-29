@@ -16,11 +16,9 @@ use std::fs::File;
 use std::io::Write;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, CallEvent, CpuEvent, EditEvent, EditorEvent, Event,
-    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent,
-    SettingEvent,
+    ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, EditorEvent, Event,
+    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, ReplEvent, SettingEvent,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
@@ -226,6 +224,8 @@ impl Telemetry {
         cx.background_executor()
             .spawn({
                 let state = state.clone();
+                let os_version = os_version();
+                state.lock().os_version = Some(os_version.clone());
                 async move {
                     if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
                         state.lock().log_file = Some(tempfile);
@@ -293,48 +293,6 @@ impl Telemetry {
         state.session_id = Some(session_id);
         state.app_version = release_channel::AppVersion::global(cx).to_string();
         state.os_name = os_name();
-
-        drop(state);
-
-        let this = self.clone();
-        cx.background_executor()
-            .spawn(async move {
-                let mut system = System::new_with_specifics(
-                    RefreshKind::new().with_cpu(CpuRefreshKind::everything()),
-                );
-
-                let refresh_kind = ProcessRefreshKind::new().with_cpu().with_memory();
-                let current_process = Pid::from_u32(std::process::id());
-                system.refresh_processes_specifics(
-                    sysinfo::ProcessesToUpdate::Some(&[current_process]),
-                    refresh_kind,
-                );
-
-                // Waiting some amount of time before the first query is important to get a reasonable value
-                // https://docs.rs/sysinfo/0.29.10/sysinfo/trait.ProcessExt.html#tymethod.cpu_usage
-                const DURATION_BETWEEN_SYSTEM_EVENTS: Duration = Duration::from_secs(4 * 60);
-
-                loop {
-                    smol::Timer::after(DURATION_BETWEEN_SYSTEM_EVENTS).await;
-
-                    let current_process = Pid::from_u32(std::process::id());
-                    system.refresh_processes_specifics(
-                        sysinfo::ProcessesToUpdate::Some(&[current_process]),
-                        refresh_kind,
-                    );
-                    let Some(process) = system.process(current_process) else {
-                        log::error!(
-                            "Failed to find own process {current_process:?} in system process table"
-                        );
-                        // TODO: Fire an error telemetry event
-                        return;
-                    };
-
-                    this.report_memory_event(process.memory(), process.virtual_memory());
-                    this.report_cpu_event(process.cpu_usage(), system.cpus().len() as u32);
-                }
-            })
-            .detach();
     }
 
     pub fn metrics_enabled(self: &Arc<Self>) -> bool {
@@ -411,28 +369,6 @@ impl Telemetry {
             operation: operation.to_string(),
             room_id,
             channel_id: channel_id.map(|cid| cid.0),
-        });
-
-        self.report_event(event)
-    }
-
-    pub fn report_cpu_event(self: &Arc<Self>, usage_as_percentage: f32, core_count: u32) {
-        let event = Event::Cpu(CpuEvent {
-            usage_as_percentage,
-            core_count,
-        });
-
-        self.report_event(event)
-    }
-
-    pub fn report_memory_event(
-        self: &Arc<Self>,
-        memory_in_bytes: u64,
-        virtual_memory_in_bytes: u64,
-    ) {
-        let event = Event::Memory(MemoryEvent {
-            memory_in_bytes,
-            virtual_memory_in_bytes,
         });
 
         self.report_event(event)
@@ -595,6 +531,10 @@ impl Telemetry {
 
     pub fn metrics_id(self: &Arc<Self>) -> Option<Arc<str>> {
         self.state.lock().metrics_id.clone()
+    }
+
+    pub fn system_id(self: &Arc<Self>) -> Option<Arc<str>> {
+        self.state.lock().system_id.clone()
     }
 
     pub fn installation_id(self: &Arc<Self>) -> Option<Arc<str>> {

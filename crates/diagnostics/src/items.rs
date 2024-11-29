@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    rems, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View,
-    ViewContext, WeakView,
+    EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
+    WeakView,
 };
 use language::Diagnostic;
 use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
@@ -77,8 +77,10 @@ impl Render for DiagnosticIndicator {
         };
 
         h_flex()
-            .h(rems(1.375))
             .gap_2()
+            .pl_1()
+            .border_l_1()
+            .border_color(cx.theme().colors().border)
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)
