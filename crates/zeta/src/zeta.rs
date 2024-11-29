@@ -1080,7 +1080,7 @@ mod tests {
             "},
             vec![
                 "Ensure that `Element` has a `wedge` field",
-                "Ensure that `Element` has a `width` method that returns `self.wedge`",
+                "Ensure that `Element` has a method that returns `self.wedge`",
             ],
             cx,
         )
