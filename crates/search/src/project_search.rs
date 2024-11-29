@@ -371,6 +371,8 @@ impl Render for ProjectSearchView {
                 .track_focus(&self.focus_handle(cx))
                 .child(
                     v_flex()
+                        .id("project-search-landing-page")
+                        .overflow_y_scroll()
                         .max_w_80()
                         .gap_1()
                         .child(heading_text)
