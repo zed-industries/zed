@@ -160,6 +160,7 @@ pub struct ProjectSearchView {
     filters_enabled: bool,
     replace_enabled: bool,
     included_opened_only: bool,
+    should_focus_results: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -251,7 +252,7 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
-            let mut matches = search.ready_chunks(1024);
+            let mut matches = search.ready_chunks(4);
             let this = this.upgrade()?;
             this.update(&mut cx, |this, cx| {
                 this.match_ranges.clear();
@@ -686,6 +687,8 @@ impl ProjectSearchView {
                             this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }
                     }
+
+                    this.search_should_focus(false, cx)
                 }
                 cx.emit(ViewEvent::EditorEvent(event.clone()))
             }),
@@ -769,6 +772,7 @@ impl ProjectSearchView {
             filters_enabled,
             replace_enabled: false,
             included_opened_only: false,
+            should_focus_results: true,
             _subscriptions: subscriptions,
         };
         this.model_changed(cx);
@@ -910,7 +914,12 @@ impl ProjectSearchView {
     }
 
     fn search(&mut self, cx: &mut ViewContext<Self>) {
+        self.search_should_focus(true, cx);
+    }
+
+    fn search_should_focus(&mut self, should_focus: bool, cx: &mut ViewContext<Self>) {
         if let Some(query) = self.build_search_query(cx) {
+            self.should_focus_results = should_focus;
             self.model.update(cx, |model, cx| model.search(query, cx));
         }
     }
@@ -1126,7 +1135,7 @@ impl ProjectSearchView {
             let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
-                if is_new_search {
+                if is_new_search && self.should_focus_results {
                     let range_to_select = match_ranges
                         .first()
                         .map(|range| editor.range_for_match(range));
@@ -1141,7 +1150,10 @@ impl ProjectSearchView {
                     cx,
                 );
             });
-            if is_new_search && self.query_editor.focus_handle(cx).is_focused(cx) {
+            if is_new_search
+                && self.should_focus_results
+                && self.query_editor.focus_handle(cx).is_focused(cx)
+            {
                 self.focus_results_editor(cx);
             }
         }
