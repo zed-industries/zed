@@ -1049,12 +1049,11 @@ impl Window {
     }
 
     /// Determine the display on which the window is visible.
-    pub fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        todo!()
-        // self.platform
-        //     .displays()
-        //     .into_iter()
-        //     .find(|display| Some(display.id()) == self.display_id)
+    pub fn display(&self, cx: &AppContext) -> Option<Rc<dyn PlatformDisplay>> {
+        cx.platform
+            .displays()
+            .into_iter()
+            .find(|display| Some(display.id()) == self.display_id)
     }
 
     /// Show the platform character palette.
@@ -1196,10 +1195,9 @@ impl Window {
             || previous_window_active != current_window_active
         {
             if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
-                self.focus_lost_listeners.clone().retain(&(), |listener| {
-                    todo!()
-                    // listener(self)
-                });
+                self.focus_lost_listeners
+                    .clone()
+                    .retain(&(), |listener| listener(self, cx));
             }
 
             let event = WindowFocusEvent {
@@ -1214,10 +1212,9 @@ impl Window {
                     Default::default()
                 },
             };
-            self.focus_listeners.clone().retain(&(), |listener| {
-                todo!()
-                // listener(&event, self)
-            });
+            self.focus_listeners
+                .clone()
+                .retain(&(), |listener| listener(&event, self, cx));
         }
 
         self.reset_cursor_style();
@@ -1234,7 +1231,6 @@ impl Window {
     }
 
     fn draw_roots(&mut self, cx: &mut AppContext) {
-        todo!()
         // self.draw_phase = DrawPhase::Prepaint;
         // self.tooltip_bounds.take();
 
