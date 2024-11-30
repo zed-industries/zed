@@ -2967,7 +2967,7 @@ impl Editor {
                 auto_scroll = false;
             }
         }
-        auto_scroll &= !EditorSettings::get_global(cx).autoscroll_on_clicks;
+        auto_scroll &= EditorSettings::get_global(cx).autoscroll_on_clicks;
 
         let point_to_delete: Option<usize> = {
             let selected_points: Vec<Selection<Point>> =
