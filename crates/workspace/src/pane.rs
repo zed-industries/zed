@@ -1377,7 +1377,15 @@ impl Pane {
                 })?;
                 let should_save = dirty_project_item_ids
                     .iter()
-                    .any(|id| saved_project_items_ids.insert(*id));
+                    .any(|id| saved_project_items_ids.insert(*id))
+                    // Always propose to save singleton files without any project paths: those cannot be saved via multibuffer, as require a file path selection modal.
+                    || cx
+                        .update(|cx| {
+                            item_to_close.is_dirty(cx)
+                                && item_to_close.is_singleton(cx)
+                                && item_to_close.project_path(cx).is_none()
+                        })
+                        .unwrap_or(false);
 
                 if should_save
                     && !Self::save_item(
@@ -3733,9 +3741,18 @@ mod tests {
 
         assert_item_labels(&pane, [], cx);
 
-        add_labeled_item(&pane, "A", true, cx);
-        add_labeled_item(&pane, "B", true, cx);
-        add_labeled_item(&pane, "C", true, cx);
+        add_labeled_item(&pane, "A", true, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new(1, "A.txt", cx))
+        });
+        add_labeled_item(&pane, "B", true, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new(2, "B.txt", cx))
+        });
+        add_labeled_item(&pane, "C", true, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new(3, "C.txt", cx))
+        });
         assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
 
         let save = pane
@@ -3754,6 +3771,30 @@ mod tests {
         cx.simulate_prompt_answer(2);
         save.await.unwrap();
         assert_item_labels(&pane, [], cx);
+
+        add_labeled_item(&pane, "A", true, cx);
+        add_labeled_item(&pane, "B", true, cx);
+        add_labeled_item(&pane, "C", true, cx);
+        assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
+        let save = pane
+            .update(cx, |pane, cx| {
+                pane.close_all_items(
+                    &CloseAllItems {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer(2);
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer(2);
+        cx.executor().run_until_parked();
+        save.await.unwrap();
+        assert_item_labels(&pane, ["A*^", "B^", "C^"], cx);
     }
 
     #[gpui::test]
@@ -3841,14 +3882,14 @@ mod tests {
     }
 
     // Assert the item label, with the active item label suffixed with a '*'
+    #[track_caller]
     fn assert_item_labels<const COUNT: usize>(
         pane: &View<Pane>,
         expected_states: [&str; COUNT],
         cx: &mut VisualTestContext,
     ) {
-        pane.update(cx, |pane, cx| {
-            let actual_states = pane
-                .items
+        let actual_states = pane.update(cx, |pane, cx| {
+            pane.items
                 .iter()
                 .enumerate()
                 .map(|(ix, item)| {
@@ -3867,12 +3908,11 @@ mod tests {
                     }
                     state
                 })
-                .collect::<Vec<_>>();
-
-            assert_eq!(
-                actual_states, expected_states,
-                "pane items do not match expectation"
-            );
-        })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            actual_states, expected_states,
+            "pane items do not match expectation"
+        );
     }
 }
