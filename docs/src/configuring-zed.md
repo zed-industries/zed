@@ -1548,8 +1548,8 @@ All possible config values for `toggle_on_modifiers_press` are:
     "control": true,
     "shift": true,
     "alt": true,
-    "platform": "true",
-    "function": "true"
+    "platform": true,
+    "function": true
   }
 }
 ```
