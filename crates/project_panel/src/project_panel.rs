@@ -7511,7 +7511,7 @@ mod tests {
         path: ProjectPath,
     }
 
-    impl project::Item for TestProjectItem {
+    impl project::ProjectItem for TestProjectItem {
         fn try_open(
             _project: &Model<Project>,
             path: &ProjectPath,
@@ -7527,6 +7527,10 @@ mod tests {
 
         fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
             Some(self.path.clone())
+        }
+
+        fn is_dirty(&self) -> bool {
+            false
         }
     }
 
