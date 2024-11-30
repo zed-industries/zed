@@ -811,7 +811,7 @@ impl OutlinePanel {
         if self.filter_editor.focus_handle(cx).is_focused(cx) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.open_entry(&selected_entry, true, cx);
+            self.open_entry(&selected_entry, true, false, cx);
         }
     }
 
@@ -834,7 +834,7 @@ impl OutlinePanel {
         } else if let Some((active_editor, selected_entry)) =
             self.active_editor().zip(self.selected_entry().cloned())
         {
-            self.open_entry(&selected_entry, true, cx);
+            self.open_entry(&selected_entry, true, true, cx);
             active_editor.update(cx, |editor, cx| editor.open_excerpts(action, cx));
         }
     }
@@ -849,7 +849,7 @@ impl OutlinePanel {
         } else if let Some((active_editor, selected_entry)) =
             self.active_editor().zip(self.selected_entry().cloned())
         {
-            self.open_entry(&selected_entry, true, cx);
+            self.open_entry(&selected_entry, true, true, cx);
             active_editor.update(cx, |editor, cx| editor.open_excerpts_in_split(action, cx));
         }
     }
@@ -858,6 +858,7 @@ impl OutlinePanel {
         &mut self,
         entry: &PanelEntry,
         change_selection: bool,
+        change_focus: bool,
         cx: &mut ViewContext<OutlinePanel>,
     ) {
         let Some(active_editor) = self.active_editor() else {
@@ -929,9 +930,9 @@ impl OutlinePanel {
                 .workspace
                 .update(cx, |workspace, cx| match self.active_item() {
                     Some(active_item) => {
-                        workspace.activate_item(active_item.as_ref(), true, change_selection, cx)
+                        workspace.activate_item(active_item.as_ref(), true, change_focus, cx)
                     }
-                    None => workspace.activate_item(&active_editor, true, change_selection, cx),
+                    None => workspace.activate_item(&active_editor, true, change_focus, cx),
                 });
 
             if activate.is_ok() {
@@ -939,16 +940,20 @@ impl OutlinePanel {
                 if change_selection {
                     active_editor.update(cx, |editor, cx| {
                         editor.change_selections(
-                            Some(Autoscroll::Strategy(AutoscrollStrategy::Top)),
+                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
                             cx,
                             |s| s.select_ranges(Some(anchor..anchor)),
                         );
                     });
-                    active_editor.focus_handle(cx).focus(cx);
                 } else {
                     active_editor.update(cx, |editor, cx| {
                         editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, cx);
                     });
+                }
+
+                if change_focus {
+                    active_editor.focus_handle(cx).focus(cx);
+                } else {
                     self.focus_handle.focus(cx);
                 }
             }
@@ -969,7 +974,7 @@ impl OutlinePanel {
             self.select_first(&SelectFirst {}, cx)
         }
         if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.open_entry(&selected_entry, false, cx);
+            self.open_entry(&selected_entry, true, false, cx);
         }
     }
 
@@ -988,7 +993,7 @@ impl OutlinePanel {
             self.select_last(&SelectLast, cx)
         }
         if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.open_entry(&selected_entry, false, cx);
+            self.open_entry(&selected_entry, true, false, cx);
         }
     }
 
@@ -2027,9 +2032,9 @@ impl OutlinePanel {
                     if event.down.button == MouseButton::Right || event.down.first_mouse {
                         return;
                     }
-                    let change_selection = event.down.click_count > 1;
+                    let change_focus = event.down.click_count > 1;
                     outline_panel.toggle_expanded(&clicked_entry, cx);
-                    outline_panel.open_entry(&clicked_entry, change_selection, cx);
+                    outline_panel.open_entry(&clicked_entry, true, change_focus, cx);
                 })
             })
             .cursor_pointer()
@@ -4863,9 +4868,13 @@ mod tests {
                 ),
                 select_first_in_all_matches(navigated_outline_selection)
             );
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        outline_panel.update(cx, |_, cx| {
             assert_eq!(
                 selected_row_text(&active_editor, cx),
-                initial_outline_selection.replace("search: ", ""), // Clear outline metadata prefixes
+                navigated_outline_selection.replace("search: ", ""), // Clear outline metadata prefixes
                 "Should still have the initial caret position after SelectNext calls"
             );
         });
@@ -4895,9 +4904,13 @@ mod tests {
                 ),
                 select_first_in_all_matches(next_navigated_outline_selection)
             );
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        outline_panel.update(cx, |_, cx| {
             assert_eq!(
                 selected_row_text(&active_editor, cx),
-                navigated_outline_selection.replace("search: ", ""), // Clear outline metadata prefixes
+                next_navigated_outline_selection.replace("search: ", ""), // Clear outline metadata prefixes
                 "Should again preserve the selection after another SelectNext call"
             );
         });
