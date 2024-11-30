@@ -376,10 +376,20 @@ impl EditorTestContext {
                         .read(cx)
                         .excerpt_containing(hunk.hunk_range.start, cx)
                         .expect("no excerpt for expanded buffer's hunk start");
-                    let deleted_text = buffer
-                        .read(cx)
-                        .diff_base()
+                    let buffer_id = buffer.read(cx).remote_id();
+                    let change_set = &editor
+                        .expanded_hunks
+                        .diff_bases
+                        .get(&buffer_id)
                         .expect("should have a diff base for expanded hunk")
+                        .change_set;
+                    let deleted_text = change_set
+                        .read(cx)
+                        .base_text
+                        .as_ref()
+                        .expect("no base text for expanded hunk")
+                        .read(cx)
+                        .as_rope()
                         .slice(hunk.diff_base_byte_range.clone())
                         .to_string();
                     if let DiffHunkStatus::Modified | DiffHunkStatus::Removed = hunk.status {

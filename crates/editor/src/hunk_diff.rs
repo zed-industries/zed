@@ -531,7 +531,7 @@ impl Editor {
             .read(cx)
             .point_to_buffer_offset(hunk.multi_buffer_range.start, cx)
             .map_or(false, |(buffer, _, _)| {
-                buffer.read(cx).diff_base_buffer().is_some()
+                buffer.read(cx).base_buffer().is_some()
             });
 
         let border_color = cx.theme().colors().border_variant;
@@ -665,29 +665,9 @@ impl Editor {
                                                     let editor = editor.clone();
                                                     let hunk = hunk.clone();
                                                     move |_event, cx| {
-                                                        let multi_buffer =
-                                                            editor.read(cx).buffer().clone();
-                                                        let multi_buffer_snapshot =
-                                                            multi_buffer.read(cx).snapshot(cx);
-                                                        let mut revert_changes = HashMap::default();
-                                                        if let Some(hunk) =
-                                                            crate::hunk_diff::to_diff_hunk(
-                                                                &hunk,
-                                                                &multi_buffer_snapshot,
-                                                            )
-                                                        {
-                                                            Editor::prepare_revert_change(
-                                                                &mut revert_changes,
-                                                                &multi_buffer,
-                                                                &hunk,
-                                                                cx,
-                                                            );
-                                                        }
-                                                        if !revert_changes.is_empty() {
-                                                            editor.update(cx, |editor, cx| {
-                                                                editor.revert(revert_changes, cx)
-                                                            });
-                                                        }
+                                                        editor.update(cx, |editor, cx| {
+                                                            editor.revert_hunk(hunk.clone(), cx);
+                                                        });
                                                     }
                                                 }),
                                         )
@@ -1111,7 +1091,7 @@ impl Editor {
     }
 }
 
-fn to_diff_hunk(
+pub(crate) fn to_diff_hunk(
     hovered_hunk: &HoveredHunk,
     multi_buffer_snapshot: &MultiBufferSnapshot,
 ) -> Option<MultiBufferDiffHunk> {
@@ -1190,51 +1170,27 @@ fn editor_with_deleted_text(
                 });
             })]);
 
-        let original_multi_buffer_range = hunk.multi_buffer_range.clone();
-        let diff_base_range = hunk.diff_base_byte_range.clone();
         editor
             .register_action::<RevertSelectedHunks>({
+                let hunk = hunk.clone();
                 let parent_editor = parent_editor.clone();
                 move |_, cx| {
                     parent_editor
-                        .update(cx, |editor, cx| {
-                            let Some((buffer, original_text)) =
-                                editor.buffer().update(cx, |buffer, cx| {
-                                    let (_, buffer, _) = buffer.excerpt_containing(
-                                        original_multi_buffer_range.start,
-                                        cx,
-                                    )?;
-                                    let original_text =
-                                        buffer.read(cx).diff_base()?.slice(diff_base_range.clone());
-                                    Some((buffer, Arc::from(original_text.to_string())))
-                                })
-                            else {
-                                return;
-                            };
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.edit(
-                                    Some((
-                                        original_multi_buffer_range.start.text_anchor
-                                            ..original_multi_buffer_range.end.text_anchor,
-                                        original_text,
-                                    )),
-                                    None,
-                                    cx,
-                                )
-                            });
-                        })
+                        .update(cx, |editor, cx| editor.revert_hunk(hunk.clone(), cx))
                         .ok();
                 }
             })
             .detach();
-        let hunk = hunk.clone();
         editor
-            .register_action::<ToggleHunkDiff>(move |_, cx| {
-                parent_editor
-                    .update(cx, |editor, cx| {
-                        editor.toggle_hovered_hunk(&hunk, cx);
-                    })
-                    .ok();
+            .register_action::<ToggleHunkDiff>({
+                let hunk = hunk.clone();
+                move |_, cx| {
+                    parent_editor
+                        .update(cx, |editor, cx| {
+                            editor.toggle_hovered_hunk(&hunk, cx);
+                        })
+                        .ok();
+                }
             })
             .detach();
         editor

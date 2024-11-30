@@ -1792,7 +1792,6 @@ message BufferState {
     uint64 id = 1;
     optional File file = 2;
     string base_text = 3;
-    optional string diff_base = 4;
     LineEnding line_ending = 5;
     repeated VectorClockEntry saved_version = 6;
     reserved 7;

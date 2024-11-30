@@ -6570,7 +6570,7 @@ impl Editor {
             Some(Point::zero()..snapshot.buffer_snapshot.max_point()).into_iter(),
             &snapshot,
         ) {
-            Self::prepare_revert_change(&mut revert_changes, self.buffer(), &hunk, cx);
+            self.prepare_revert_change(&mut revert_changes, &hunk, cx);
         }
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {
@@ -6592,6 +6592,18 @@ impl Editor {
             self.transact(cx, |editor, cx| {
                 editor.revert(revert_changes, cx);
             });
+        }
+    }
+
+    fn revert_hunk(&mut self, hunk: HoveredHunk, cx: &mut ViewContext<Editor>) {
+        let snapshot = self.buffer.read(cx).read(cx);
+        if let Some(hunk) = crate::hunk_diff::to_diff_hunk(&hunk, &snapshot) {
+            drop(snapshot);
+            let mut revert_changes = HashMap::default();
+            self.prepare_revert_change(&mut revert_changes, &hunk, cx);
+            if !revert_changes.is_empty() {
+                self.revert(revert_changes, cx)
+            }
         }
     }
 
@@ -6620,20 +6632,31 @@ impl Editor {
         let mut revert_changes = HashMap::default();
         let snapshot = self.snapshot(cx);
         for hunk in hunks_for_selections(&snapshot, selections) {
-            Self::prepare_revert_change(&mut revert_changes, self.buffer(), &hunk, cx);
+            self.prepare_revert_change(&mut revert_changes, &hunk, cx);
         }
         revert_changes
     }
 
     pub fn prepare_revert_change(
+        &mut self,
         revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
-        multi_buffer: &Model<MultiBuffer>,
         hunk: &MultiBufferDiffHunk,
         cx: &AppContext,
     ) -> Option<()> {
-        let buffer = multi_buffer.read(cx).buffer(hunk.buffer_id)?;
+        let buffer = self.buffer.read(cx).buffer(hunk.buffer_id)?;
         let buffer = buffer.read(cx);
-        let original_text = buffer.diff_base()?.slice(hunk.diff_base_byte_range.clone());
+        let change_set = &self
+            .expanded_hunks
+            .diff_bases
+            .get(&hunk.buffer_id)?
+            .change_set;
+        let original_text = change_set
+            .read(cx)
+            .base_text
+            .as_ref()?
+            .read(cx)
+            .as_rope()
+            .slice(hunk.diff_base_byte_range.clone());
         let buffer_snapshot = buffer.snapshot();
         let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
         if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
@@ -12838,7 +12861,7 @@ impl Editor {
                         // When editing branch buffers, jump to the corresponding location
                         // in their base buffer.
                         let buffer = buffer_handle.read(cx);
-                        if let Some(base_buffer) = buffer.diff_base_buffer() {
+                        if let Some(base_buffer) = buffer.base_buffer() {
                             range = buffer.range_to_version(range, &base_buffer.read(cx).version());
                             buffer_handle = base_buffer;
                         }

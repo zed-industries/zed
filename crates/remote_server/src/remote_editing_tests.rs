@@ -78,13 +78,22 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         })
         .await
         .unwrap();
+    let change_set = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_changes(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    change_set.update(cx, |change_set, cx| {
+        assert_eq!(
+            change_set.base_text_string(cx).unwrap(),
+            "fn one() -> usize { 0 }"
+        );
+    });
 
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
-        assert_eq!(
-            buffer.diff_base().unwrap().to_string(),
-            "fn one() -> usize { 0 }"
-        );
         let ix = buffer.text().find('1').unwrap();
         buffer.edit([(ix..ix + 1, "100")], None, cx);
     });
@@ -140,9 +149,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         &[(Path::new("src/lib2.rs"), "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
-    buffer.update(cx, |buffer, _| {
+    change_set.update(cx, |change_set, cx| {
         assert_eq!(
-            buffer.diff_base().unwrap().to_string(),
+            change_set.base_text_string(cx).unwrap(),
             "fn one() -> usize { 100 }"
         );
     });

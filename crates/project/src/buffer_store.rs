@@ -745,7 +745,7 @@ impl LocalBufferStore {
                     .spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
                     .await;
                 cx.insert_model(reservation, |_| {
-                    Buffer::build(text_buffer, None, Some(loaded.file), Capability::ReadWrite)
+                    Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
                 })
             })
         });
@@ -758,7 +758,6 @@ impl LocalBufferStore {
                     let text_buffer = text::Buffer::new(0, buffer_id, "".into());
                     Buffer::build(
                         text_buffer,
-                        None,
                         Some(Arc::new(File {
                             worktree,
                             path,
@@ -1538,13 +1537,14 @@ impl BufferStore {
                         .log_err();
                 }
 
-                client
-                    .send(proto::UpdateDiffBase {
-                        project_id,
-                        buffer_id: buffer_id.into(),
-                        diff_base: buffer.diff_base().map(ToString::to_string),
-                    })
-                    .log_err();
+                // todo!(max): do something
+                // client
+                //     .send(proto::UpdateStagedText {
+                //         project_id,
+                //         buffer_id: buffer_id.into(),
+                //         diff_base: buffer.diff_base().map(ToString::to_string),
+                //     })
+                //     .log_err();
 
                 client
                     .send(proto::BufferReloaded {
@@ -2062,6 +2062,11 @@ impl BufferChangeSet {
     ) -> impl 'a + Iterator<Item = git::diff::DiffHunk> {
         self.diff_to_buffer
             .hunks_intersecting_range_rev(range, buffer_snapshot)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn base_text_string(&self, cx: &AppContext) -> Option<String> {
+        self.base_text.as_ref().map(|buffer| buffer.read(cx).text())
     }
 
     pub fn set_base_text(

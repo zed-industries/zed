@@ -75,7 +75,7 @@ impl ProposedChangesEditor {
             title: title.into(),
             buffer_entries: Vec::new(),
             recalculate_diffs_tx,
-            _recalculate_diffs_task: cx.spawn(|_, mut cx| async move {
+            _recalculate_diffs_task: cx.spawn(|this, mut cx| async move {
                 let mut buffers_to_diff = HashSet::default();
                 while let Some(mut recalculate_diff) = recalculate_diffs_rx.next().await {
                     buffers_to_diff.insert(recalculate_diff.buffer);
@@ -96,12 +96,31 @@ impl ProposedChangesEditor {
                         }
                     }
 
-                    join_all(buffers_to_diff.drain().filter_map(|buffer| {
-                        buffer
-                            .update(&mut cx, |buffer, cx| buffer.recalculate_diff(cx))
-                            .ok()?
-                    }))
-                    .await;
+                    let tasks = this
+                        .update(&mut cx, |this, cx| {
+                            buffers_to_diff
+                                .drain()
+                                .filter_map(|buffer| {
+                                    let buffer = buffer.read(cx).text_snapshot();
+                                    let change_set = this.editor.update(cx, |editor, _| {
+                                        Some(
+                                            editor
+                                                .expanded_hunks
+                                                .diff_bases
+                                                .get(&buffer.remote_id())?
+                                                .change_set
+                                                .clone(),
+                                        )
+                                    })?;
+                                    Some(change_set.update(cx, |change_set, cx| {
+                                        change_set.recalculate_diff(buffer, cx)
+                                    }))
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .ok()?;
+
+                    join_all(tasks).await;
                 }
                 None
             }),
@@ -373,7 +392,7 @@ impl BranchBufferSemanticsProvider {
         positions: &[text::Anchor],
         cx: &AppContext,
     ) -> Option<Model<Buffer>> {
-        let base_buffer = buffer.read(cx).diff_base_buffer()?;
+        let base_buffer = buffer.read(cx).base_buffer()?;
         let version = base_buffer.read(cx).version();
         if positions
             .iter()
