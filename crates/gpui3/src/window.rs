@@ -713,7 +713,7 @@ impl Window {
             let mut cx = cx.to_async();
             move |_, _| {
                 handle
-                    .update(&mut cx, |window, _cx| window.bounds_changed())
+                    .update(&mut cx, |window, cx| window.bounds_changed(cx))
                     .log_err();
             }
         }));
@@ -721,7 +721,7 @@ impl Window {
             let mut cx = cx.to_async();
             move || {
                 handle
-                    .update(&mut cx, |window, _cx| window.bounds_changed())
+                    .update(&mut cx, |window, cx| window.bounds_changed(cx))
                     .log_err();
             }
         }));
@@ -939,17 +939,16 @@ impl Window {
         // self.on_next_frame(move |_, cx| cx.notify(parent_id));
     }
 
-    fn bounds_changed(&mut self) {
-        todo!()
-        // self.scale_factor = self.platform_window.scale_factor();
-        // self.viewport_size = self.platform_window.content_size();
-        // self.display_id = self.platform_window.display().map(|display| display.id());
+    fn bounds_changed(&mut self, cx: &mut AppContext) {
+        self.scale_factor = self.platform_window.scale_factor();
+        self.viewport_size = self.platform_window.content_size();
+        self.display_id = self.platform_window.display().map(|display| display.id());
 
-        // self.refresh();
+        self.refresh();
 
-        // self.bounds_observers
-        //     .clone()
-        //     .retain(&(), |callback| callback(self));
+        self.bounds_observers
+            .clone()
+            .retain(&(), |callback| callback(self, cx));
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
