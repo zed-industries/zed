@@ -729,7 +729,7 @@ impl Window {
             let mut cx = cx.to_async();
             move || {
                 handle
-                    .update(&mut cx, |window, _cx| window.appearance_changed())
+                    .update(&mut cx, |window, cx| window.appearance_changed(cx))
                     .log_err();
             }
         }));
@@ -961,13 +961,12 @@ impl Window {
         self.platform_window.is_fullscreen()
     }
 
-    pub(crate) fn appearance_changed(&mut self) {
-        todo!()
-        // self.appearance = self.platform_window.appearance();
+    pub(crate) fn appearance_changed(&mut self, cx: &mut AppContext) {
+        self.appearance = self.platform_window.appearance();
 
-        // self.appearance_observers
-        //     .clone()
-        //     .retain(&(), |callback| callback(self));
+        self.appearance_observers
+            .clone()
+            .retain(&(), |callback| callback(self, cx));
     }
 
     /// Returns the appearance of the current window.

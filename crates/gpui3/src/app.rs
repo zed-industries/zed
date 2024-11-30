@@ -557,7 +557,7 @@ impl AppContext {
                     window.render.replace(Box::new(move |window, cx| {
                         render(window, cx).into_any_element()
                     }));
-                    window.appearance_changed();
+                    window.appearance_changed(cx);
                     cx.window_handles.insert(id, window.handle);
                     cx.windows.get_mut(id).unwrap().replace(window);
                     Ok(handle)
