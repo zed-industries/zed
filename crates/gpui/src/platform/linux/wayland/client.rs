@@ -496,7 +496,7 @@ impl WaylandClient {
                     XDPEvent::CursorTheme(theme) => {
                         if let Some(client) = client.0.upgrade() {
                             let mut client = client.borrow_mut();
-                            client.cursor.set_theme(theme.as_str(), None);
+                            client.cursor.set_theme(theme.as_str());
                         }
                     }
                     XDPEvent::CursorSize(size) => {
@@ -649,15 +649,16 @@ impl LinuxClient for WaylandClient {
 
             if let Some(cursor_shape_device) = &state.cursor_shape_device {
                 cursor_shape_device.set_shape(serial, style.to_shape());
-            } else if state.mouse_focused_window.is_some() {
+            } else if let Some(focused_window) = &state.mouse_focused_window {
                 // cursor-shape-v1 isn't supported, set the cursor using a surface.
                 let wl_pointer = state
                     .wl_pointer
                     .clone()
                     .expect("window is focused by pointer");
+                let scale = focused_window.primary_output_scale();
                 state
                     .cursor
-                    .set_icon(&wl_pointer, serial, &style.to_icon_name());
+                    .set_icon(&wl_pointer, serial, &style.to_icon_name(), scale);
             }
         }
     }
@@ -1439,9 +1440,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         if let Some(cursor_shape_device) = &state.cursor_shape_device {
                             cursor_shape_device.set_shape(serial, style.to_shape());
                         } else {
-                            state
-                                .cursor
-                                .set_icon(&wl_pointer, serial, &style.to_icon_name());
+                            let scale = window.primary_output_scale();
+                            state.cursor.set_icon(
+                                &wl_pointer,
+                                serial,
+                                &style.to_icon_name(),
+                                scale,
+                            );
                         }
                     }
                     drop(state);
