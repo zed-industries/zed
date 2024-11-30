@@ -1339,6 +1339,14 @@ impl Pane {
                 }
             }
             let mut saved_project_items_ids = HashSet::default();
+            dbg!((
+                "???",
+                &saved_project_items_ids,
+                items_to_close
+                    .iter()
+                    .map(|item| item.item_id())
+                    .collect::<Vec<_>>()
+            ));
             for item in items_to_close.clone() {
                 // Find the item's current index and its set of project item models. Avoid
                 // storing these in advance, in case they have changed since this task
@@ -1350,6 +1358,8 @@ impl Pane {
                     continue;
                 };
 
+                dbg!(("@@@@before cleanup", &project_item_ids));
+
                 // Check if this view has any project items that are not open anywhere else
                 // in the workspace, AND that the user has not already been prompted to save.
                 // If there are any such project entries, prompt the user to save this item.
@@ -1360,11 +1370,13 @@ impl Pane {
                             .any(|item_to_close| item_to_close.item_id() == item.item_id())
                         {
                             let other_project_item_ids = item.project_item_model_ids(cx);
+                            dbg!(&other_project_item_ids);
                             project_item_ids.retain(|id| !other_project_item_ids.contains(id));
                         }
                     }
                     workspace.project().clone()
                 })?;
+                dbg!(("@@@@after cleanup", &project_item_ids));
                 let should_save = project_item_ids
                     .iter()
                     .any(|id| saved_project_items_ids.insert(*id));

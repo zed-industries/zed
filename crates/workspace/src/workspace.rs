@@ -7484,7 +7484,7 @@ mod tests {
             .update(cx, |pane, cx| {
                 pane.close_inactive_items(
                     &CloseInactiveItems {
-                        save_intent: Some(SaveIntent::Close),
+                        save_intent: Some(SaveIntent::Save),
                         close_pinned: true,
                     },
                     cx,
@@ -7554,7 +7554,7 @@ mod tests {
         });
     }
 
-    // TODO kb this test is expected to fail but it does not
+    // TODO kb write the same test when one dirty item is not in the pane: should prompt to save
     #[gpui::test]
     async fn test_no_save_prompt_when_dirty_multibuffer_closed_with_all_its_dirty_items_present_in_the_pane(
         cx: &mut TestAppContext,
@@ -7578,6 +7578,12 @@ mod tests {
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
+        let clear_regular_buffer = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_label("3.txt")
+                .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
+        });
+
         let dirty_multibuffer_with_both = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
@@ -7586,6 +7592,7 @@ mod tests {
                 .with_project_items(&[
                     dirty_regular_buffer.read(cx).project_items[0].clone(),
                     dirty_regular_buffer_2.read(cx).project_items[0].clone(),
+                    clear_regular_buffer.read(cx).project_items[0].clone(),
                 ])
         });
         let multibuffer_with_both_files_id = dirty_multibuffer_with_both.item_id();
