@@ -136,7 +136,7 @@ pub trait RenderOnce: 'static {
     /// Render this component into an element tree. Note that this method
     /// takes ownership of self, as compared to [`Render::render()`] method
     /// which takes a mutable reference.
-    fn render(self, cx: &mut AppContext) -> impl IntoElement;
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement;
 }
 
 /// This is a helper trait to provide a uniform interface for constructing elements that
@@ -190,7 +190,7 @@ impl<C: RenderOnce> Element for Component<C> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut element = self.0.take().unwrap().render(cx).into_any_element();
+        let mut element = self.0.take().unwrap().render(window, cx).into_any_element();
         let layout_id = element.request_layout(window, cx);
         (layout_id, element)
     }

@@ -4,8 +4,8 @@ use anyhow::anyhow;
 use gpui::{
     black, div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
     AppContext, Asset, AssetLogger, AssetSource, Bounds, Hsla, ImageAssetLoader, ImageCacheError,
-    ImgResourceLoader, Length, Pixels, RenderImage, Resource, SharedString, WindowBounds,
-    WindowContext, WindowOptions, LOADING_DELAY,
+    ImgResourceLoader, Length, Pixels, RenderImage, Resource, SharedString, Window, WindowBounds,
+    WindowOptions, LOADING_DELAY,
 };
 use gpui3 as gpui;
 
@@ -96,7 +96,7 @@ fn fallback_element() -> impl IntoElement {
     )
 }
 
-fn render(_window: &mut gpui::Window, _cx: &mut AppContext) -> impl IntoElement {
+fn render(_window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
     div().flex().flex_col().size_full().justify_around().child(
         div().flex().flex_row().w_full().justify_around().child(
             div()
@@ -112,8 +112,8 @@ fn render(_window: &mut gpui::Window, _cx: &mut AppContext) -> impl IntoElement 
                     };
 
                     // Load within the 'loading delay', should not show loading fallback
-                    img(move |cx: &mut WindowContext| {
-                        cx.use_asset::<LoadImageWithParameters>(&image_source)
+                    img(move |window: &mut Window, cx: &mut AppContext| {
+                        window.use_asset::<LoadImageWithParameters>(&image_source, cx)
                     })
                     .id("image-1")
                     .border_1()
@@ -121,7 +121,7 @@ fn render(_window: &mut gpui::Window, _cx: &mut AppContext) -> impl IntoElement 
                     .with_fallback(|| fallback_element().into_any_element())
                     .border_color(red())
                     .with_loading(|| loading_element().into_any_element())
-                    .on_click(move |_, cx| {
+                    .on_click(move |_, _, cx| {
                         cx.remove_asset::<LoadImageWithParameters>(&image_source);
                     })
                 })
@@ -132,8 +132,8 @@ fn render(_window: &mut gpui::Window, _cx: &mut AppContext) -> impl IntoElement 
                         fail: false,
                     };
 
-                    img(move |cx: &mut WindowContext| {
-                        cx.use_asset::<LoadImageWithParameters>(&image_source)
+                    img(move |window: &mut Window, cx: &mut AppContext| {
+                        window.use_asset::<LoadImageWithParameters>(&image_source, cx)
                     })
                     .id("image-2")
                     .with_fallback(|| fallback_element().into_any_element())
@@ -141,7 +141,7 @@ fn render(_window: &mut gpui::Window, _cx: &mut AppContext) -> impl IntoElement 
                     .size_12()
                     .border_1()
                     .border_color(red())
-                    .on_click(move |_, cx| {
+                    .on_click(move |_, _, cx| {
                         cx.remove_asset::<LoadImageWithParameters>(&image_source);
                     })
                 })
@@ -153,8 +153,8 @@ fn render(_window: &mut gpui::Window, _cx: &mut AppContext) -> impl IntoElement 
                     };
 
                     // Fail to load after a long delay
-                    img(move |cx: &mut WindowContext| {
-                        cx.use_asset::<LoadImageWithParameters>(&image_source)
+                    img(move |window: &mut Window, cx: &mut AppContext| {
+                        window.use_asset::<LoadImageWithParameters>(&image_source, cx)
                     })
                     .id("image-3")
                     .with_fallback(|| fallback_element().into_any_element())
@@ -162,7 +162,7 @@ fn render(_window: &mut gpui::Window, _cx: &mut AppContext) -> impl IntoElement 
                     .size_12()
                     .border_1()
                     .border_color(red())
-                    .on_click(move |_, cx| {
+                    .on_click(move |_, _window, cx| {
                         cx.remove_asset::<LoadImageWithParameters>(&image_source);
                     })
                 })
@@ -178,7 +178,7 @@ fn render(_window: &mut gpui::Window, _cx: &mut AppContext) -> impl IntoElement 
                         .with_fallback(|| fallback_element().into_any_element())
                         .border_color(red())
                         .with_loading(|| loading_element().into_any_element())
-                        .on_click(move |_, cx| {
+                        .on_click(move |_, _window, cx| {
                             cx.remove_asset::<ImgResourceLoader>(&image_source.clone().into());
                         })
                 }),

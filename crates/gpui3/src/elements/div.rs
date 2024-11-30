@@ -1127,7 +1127,7 @@ pub(crate) type ScrollWheelListener =
 pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static>;
 
 pub(crate) type DragRenderer =
-    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut AppContext) -> AnyElement>;
+    Box<dyn 'static + Fn(&dyn Any, Point<Pixels>, &mut Window, &mut AppContext) -> AnyElement>;
 
 pub(crate) type DragListener =
     Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut AppContext) -> DragRenderer>;
@@ -1931,7 +1931,7 @@ impl Interactivity {
                                         cx,
                                     );
                                     cx.active_drag = Some(AnyDrag {
-                                        render: Box::new(|value, window, cx| {
+                                        render: Box::new(move |value, window, cx| {
                                             render_drag(value, cursor_offset, window, cx)
                                         }),
                                         value: drag_value,
@@ -2046,19 +2046,21 @@ impl Interactivity {
                             let task = cx.spawn({
                                 let active_tooltip = active_tooltip.clone();
                                 let build_tooltip = tooltip_builder.build.clone();
+                                let window_handle = window.window_handle();
                                 move |mut cx| async move {
                                     cx.background_executor().timer(TOOLTIP_DELAY).await;
-                                    cx.update(|cx| {
-                                        active_tooltip.borrow_mut().replace(ActiveTooltip {
-                                            tooltip: Some(AnyTooltip {
-                                                render: build_tooltip(cx),
-                                                mouse_position: window.mouse_position(),
-                                            }),
-                                            _task: None,
-                                        });
-                                        cx.refresh();
-                                    })
-                                    .ok();
+                                    window_handle
+                                        .update(&mut cx, |window, cx| {
+                                            active_tooltip.borrow_mut().replace(ActiveTooltip {
+                                                tooltip: Some(AnyTooltip {
+                                                    render: build_tooltip(window, cx),
+                                                    mouse_position: window.mouse_position(),
+                                                }),
+                                                _task: None,
+                                            });
+                                            cx.refresh();
+                                        })
+                                        .ok();
                                 }
                             });
                             active_tooltip.borrow_mut().replace(ActiveTooltip {

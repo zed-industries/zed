@@ -6,7 +6,10 @@ struct SubWindow {
     custom_titlebar: bool,
 }
 
-fn button(text: &str, on_click: impl Fn(&mut WindowContext) + 'static) -> impl IntoElement {
+fn button(
+    text: &str,
+    on_click: impl Fn(&mut Window, &mut AppContext) + 'static,
+) -> impl IntoElement {
     div()
         .id(SharedString::from(text.to_string()))
         .flex_none()
@@ -18,7 +21,7 @@ fn button(text: &str, on_click: impl Fn(&mut WindowContext) + 'static) -> impl I
         .rounded_md()
         .cursor_pointer()
         .child(text.to_string())
-        .on_click(move |_, cx| on_click(cx))
+        .on_click(move |_, window, cx| on_click(window, cx))
 }
 
 fn subwindow_renderer(subwindow: SubWindow) -> impl Fn(&mut Window, &mut AppContext) -> Div {
@@ -53,8 +56,8 @@ fn subwindow_renderer(subwindow: SubWindow) -> impl Fn(&mut Window, &mut AppCont
                     .p_8()
                     .gap_2()
                     .child("SubWindow")
-                    .child(button("Close", |cx| {
-                        cx.remove_window();
+                    .child(button("Close", |window, _cx| {
+                        window.remove_window();
                     })),
             )
     }
@@ -73,7 +76,7 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
         .justify_center()
         .items_center()
         .gap_2()
-        .child(button("Normal", move |cx| {
+        .child(button("Normal", move |_window, cx| {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(window_bounds),
@@ -85,7 +88,7 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
             )
             .unwrap();
         }))
-        .child(button("Popup", move |cx| {
+        .child(button("Popup", move |_window, cx| {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(window_bounds),
@@ -98,7 +101,7 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
             )
             .unwrap();
         }))
-        .child(button("Custom Titlebar", move |cx| {
+        .child(button("Custom Titlebar", move |_window, cx| {
             cx.open_window(
                 WindowOptions {
                     titlebar: None,
@@ -111,7 +114,7 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
             )
             .unwrap();
         }))
-        .child(button("Invisible", move |cx| {
+        .child(button("Invisible", move |_window, cx| {
             cx.open_window(
                 WindowOptions {
                     show: false,
@@ -124,7 +127,7 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
             )
             .unwrap();
         }))
-        .child(button("Unmovable", move |cx| {
+        .child(button("Unmovable", move |_window, cx| {
             cx.open_window(
                 WindowOptions {
                     is_movable: false,
@@ -138,7 +141,7 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
             )
             .unwrap();
         }))
-        .child(button("Hide Application", |cx| {
+        .child(button("Hide Application", |_window, cx| {
             cx.hide();
 
             // Restore the application after 3 seconds

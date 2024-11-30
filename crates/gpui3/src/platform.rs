@@ -1315,9 +1315,13 @@ impl Image {
     }
 
     /// Use the GPUI `use_asset` API to make this image renderable
-    pub fn use_render_image(self: Arc<Self>, window: &mut Window) -> Option<Arc<RenderImage>> {
+    pub fn use_render_image(
+        self: Arc<Self>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<Arc<RenderImage>> {
         ImageSource::Image(self)
-            .use_data(window)
+            .use_data(window, cx)
             .and_then(|result| result.ok())
     }
 

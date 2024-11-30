@@ -44,7 +44,14 @@ pub enum ImageSource {
     /// Cached image data
     Image(Arc<Image>),
     /// A custom loading function to use
-    Custom(Arc<dyn Fn(&mut AppContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
+    Custom(
+        Arc<
+            dyn Fn(
+                &mut Window,
+                &mut AppContext,
+            ) -> Option<Result<Arc<RenderImage>, ImageCacheError>>,
+        >,
+    ),
 }
 
 fn is_uri(uri: &str) -> bool {
@@ -113,13 +120,15 @@ impl From<Arc<Image>> for ImageSource {
     }
 }
 
-// impl<F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static>
-//     From<F> for ImageSource
-// {
-//     fn from(value: F) -> Self {
-//         Self::Custom(Arc::new(value))
-//     }
-// }
+impl<F> From<F> for ImageSource
+where
+    F: 'static
+        + Fn(&mut Window, &mut AppContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>>,
+{
+    fn from(value: F) -> Self {
+        Self::Custom(Arc::new(value))
+    }
+}
 
 /// The style of an image element.
 pub struct ImageStyle {
@@ -273,7 +282,7 @@ impl Element for Img {
                 |mut style, window, cx| {
                     let mut replacement_id = None;
 
-                    match self.source.use_data(window) {
+                    match self.source.use_data(window, cx) {
                         Some(Ok(data)) => {
                             if let Some(state) = &mut state {
                                 let frame_count = data.frame_count();
@@ -351,15 +360,18 @@ impl Element for Img {
                                         }
                                     }
                                 } else {
-                                    let parent_view_id = cx.parent_view_id();
-                                    let task = cx.spawn(|mut cx| async move {
-                                        cx.background_executor().timer(LOADING_DELAY).await;
-                                        cx.update(|cx| {
-                                            cx.notify(parent_view_id);
-                                        })
-                                        .ok();
-                                    });
-                                    state.started_loading = Some((Instant::now(), task));
+                                    // let parent_view_id = cx.parent_view_id();
+                                    // let task = cx.spawn(|mut cx| async move {
+                                    //     cx.background_executor().timer(LOADING_DELAY).await;
+                                    //     cx.update(|cx| {
+                                    //         cx.notify(parent_view_id);
+                                    //     })
+                                    //     .ok();
+                                    // });
+                                    state.started_loading = Some((
+                                        Instant::now(),
+                                        todo!("figure this out for image loading"),
+                                    ));
                                 }
                             }
                         }
@@ -418,7 +430,7 @@ impl Element for Img {
             |style, window, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, window.rem_size());
 
-                if let Some(Ok(data)) = source.use_data(window) {
+                if let Some(Ok(data)) = source.use_data(window, cx) {
                     let new_bounds = self
                         .style
                         .object_fit
@@ -468,12 +480,13 @@ impl ImageSource {
     pub(crate) fn use_data(
         &self,
         window: &mut Window,
+        cx: &mut AppContext,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
-            ImageSource::Resource(resource) => window.use_asset::<ImgResourceLoader>(&resource),
-            ImageSource::Custom(loading_fn) => loading_fn(cx),
+            ImageSource::Resource(resource) => window.use_asset::<ImgResourceLoader>(&resource, cx),
+            ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
-            ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data),
+            ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
         }
     }
 }

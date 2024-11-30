@@ -93,7 +93,9 @@ fn opacity_view(model: Model<OpacityModel>) -> impl Fn(&mut Window, &mut AppCont
             .child(
                 div()
                     .id("panel")
-                    .on_click(model.listener(|model, event, cx| model.change_opacity(event, cx)))
+                    .on_click(
+                        model.listener(|model, event, _window, cx| model.change_opacity(event, cx)),
+                    )
                     .absolute()
                     .top_8()
                     .left_8()

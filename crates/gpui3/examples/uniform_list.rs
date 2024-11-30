@@ -3,31 +3,32 @@ use gpui3 as gpui;
 
 struct UniformListExample {}
 
-impl Render for UniformListExample {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().size_full().bg(rgb(0xffffff)).child(
-            uniform_list(cx.view().clone(), "entries", 50, |_this, range, _cx| {
-                let mut items = Vec::new();
-                for ix in range {
-                    let item = ix + 1;
+// todo!
+// impl Render for UniformListExample {
+//     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+//         div().size_full().bg(rgb(0xffffff)).child(
+//             uniform_list(cx.view().clone(), "entries", 50, |_this, range, _cx| {
+//                 let mut items = Vec::new();
+//                 for ix in range {
+//                     let item = ix + 1;
 
-                    items.push(
-                        div()
-                            .id(ix)
-                            .px_2()
-                            .cursor_pointer()
-                            .on_click(move |_event, _cx| {
-                                println!("clicked Item {item:?}");
-                            })
-                            .child(format!("Item {item}")),
-                    );
-                }
-                items
-            })
-            .h_full(),
-        )
-    }
-}
+//                     items.push(
+//                         div()
+//                             .id(ix)
+//                             .px_2()
+//                             .cursor_pointer()
+//                             .on_click(move |_event, _cx| {
+//                                 println!("clicked Item {item:?}");
+//                             })
+//                             .child(format!("Item {item}")),
+//                     );
+//                 }
+//                 items
+//             })
+//             .h_full(),
+//         )
+//     }
+// }
 
 fn main() {
     todo!()

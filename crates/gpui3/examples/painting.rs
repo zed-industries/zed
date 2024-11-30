@@ -107,7 +107,7 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
                             .py_1()
                             .on_click({
                                 let model = model.clone();
-                                move |_, cx| {
+                                move |_, _, cx| {
                                 model.update(cx, |viewer, cx| viewer.clear(cx));
                             }}),
                     ),
@@ -117,12 +117,12 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
                     .size_full()
                     .child(
                         canvas(
-                            move |_, _| {},
+                            move |_,_, _| {},
                             {
-                                move |_, _, cx| {
+                                move |_,_, window, cx| {
                                 const STROKE_WIDTH: Pixels = px(2.0);
                                 for path in &default_lines {
-                                    cx.paint_path(path.clone(), gpui::black());
+                                    window.paint_path(path.clone(), gpui::black());
                                 }
                                 for points in &lines {
                                     let mut path = Path::new(points[0]);
@@ -140,7 +140,7 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
                                         last = p;
                                     }
 
-                                    cx.paint_path(path, gpui::black());
+                                    window.paint_path(path, gpui::black());
                                 }
                             }},
                         )
@@ -148,7 +148,7 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
                     )
                     .on_mouse_down(
                         gpui::MouseButton::Left,
-                        model.listener(|viewer, ev: &MouseDownEvent, cx| {
+                        model.listener(|viewer, ev: &MouseDownEvent, window, cx| {
                             viewer._painting = true;
                             viewer.start = ev.position;
                             let path = vec![ev.position];
@@ -157,7 +157,7 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
                         }),
                     )
                     .on_mouse_move({
-                        model.listener(|viewer, ev: &gpui::MouseMoveEvent, cx| {
+                        model.listener(|viewer, ev: &gpui::MouseMoveEvent, window, cx| {
                             if !viewer._painting {
                                 return;
                             }
@@ -183,7 +183,7 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
                     })
                     .on_mouse_up(
                         gpui::MouseButton::Left,
-                        model.listener(|viewer, _, cx| {
+                        model.listener(|viewer, _, _window, cx| {
                             viewer._painting = false;
                             cx.notify();
                         }),

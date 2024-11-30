@@ -542,7 +542,7 @@ pub struct Window {
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
     pending_input_observers: SubscriberSet<(), AnyObserver>,
-    prompt: Option<RenderablePromptHandle>,
+    // prompt: Option<RenderablePromptHandle>, todo!(fallback prompt rendering)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -822,7 +822,7 @@ impl Window {
             pending_input: None,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
-            prompt: None,
+            // prompt: None, todo!
         })
     }
     fn new_focus_listener(&self, value: AnyWindowFocusListener) -> (Subscription, impl FnOnce()) {
@@ -3464,6 +3464,36 @@ impl Window {
         // activate();
         // subscription
     }
+
+    /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
+    /// Your view will be re-drawn once the asset has finished loading.
+    ///
+    /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
+    /// time.
+    pub fn use_asset<A: Asset>(
+        &mut self,
+        source: &A::Source,
+        cx: &mut AppContext,
+    ) -> Option<A::Output> {
+        let (task, is_first) = cx.fetch_asset::<A>(source);
+        task.clone().now_or_never().or_else(|| {
+            todo!("notify the window correctly (can we use a model?)");
+            // if is_first {
+            //     let parent_id = self.parent_view_id();
+            //     self.spawn({
+            //         let task = task.clone();
+            //         |mut cx| async move {
+            //             task.await;
+
+            //             cx.on_next_frame(move |cx| cx.notify(parent_id));
+            //         }
+            //     })
+            //     .detach();
+            // }
+
+            None
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -4609,31 +4639,6 @@ impl ContentMask<Pixels> {
 //             "this method can only be called during prepaint"
 //         );
 //         self.window.requested_autoscroll.take()
-//     }
-
-//     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
-//     /// Your view will be re-drawn once the asset has finished loading.
-//     ///
-//     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
-//     /// time.
-//     pub fn use_asset<A: Asset>(&mut self, source: &A::Source) -> Option<A::Output> {
-//         let (task, is_first) = self.fetch_asset::<A>(source);
-//         task.clone().now_or_never().or_else(|| {
-//             if is_first {
-//                 let parent_id = self.parent_view_id();
-//                 self.spawn({
-//                     let task = task.clone();
-//                     |mut cx| async move {
-//                         task.await;
-
-//                         cx.on_next_frame(move |cx| cx.notify(parent_id));
-//                     }
-//                 })
-//                 .detach();
-//             }
-
-//             None
-//         })
 //     }
 //     /// Obtain the current element offset. This method should only be called during the
 //     /// prepaint phase of element drawing.

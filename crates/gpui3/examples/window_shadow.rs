@@ -27,22 +27,22 @@ fn render(window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
                 .bg(gpui::transparent_black())
                 .child(
                     canvas(
-                        |_bounds, cx| {
-                            cx.insert_hitbox(
+                        |_bounds, window, _cx| {
+                            window.insert_hitbox(
                                 Bounds::new(
                                     point(px(0.0), px(0.0)),
-                                    cx.window_bounds().get_bounds().size,
+                                    window.window_bounds().get_bounds().size,
                                 ),
                                 false,
                             )
                         },
-                        move |_bounds, hitbox, cx| {
-                            let mouse = cx.mouse_position();
-                            let size = cx.window_bounds().get_bounds().size;
+                        move |_bounds, hitbox, window, _cx| {
+                            let mouse = window.mouse_position();
+                            let size = window.window_bounds().get_bounds().size;
                             let Some(edge) = resize_edge(mouse, shadow_size, size) else {
                                 return;
                             };
-                            cx.set_cursor_style(
+                            window.set_cursor_style(
                                 match edge {
                                     ResizeEdge::Top | ResizeEdge::Bottom => {
                                         CursorStyle::ResizeUpDown
@@ -72,14 +72,14 @@ fn render(window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
                 .when(!tiling.bottom, |div| div.pb(shadow_size))
                 .when(!tiling.left, |div| div.pl(shadow_size))
                 .when(!tiling.right, |div| div.pr(shadow_size))
-                .on_mouse_move(|_e, cx| cx.refresh())
-                .on_mouse_down(MouseButton::Left, move |e, cx| {
-                    let size = cx.window_bounds().get_bounds().size;
+                .on_mouse_move(|_e, window, cx| window.refresh())
+                .on_mouse_down(MouseButton::Left, move |e, window, cx| {
+                    let size = window.window_bounds().get_bounds().size;
                     let pos = e.position;
 
                     match resize_edge(pos, shadow_size, size) {
-                        Some(edge) => cx.start_window_resize(edge),
-                        None => cx.start_window_move(),
+                        Some(edge) => window.start_window_resize(edge),
+                        None => window.start_window_move(),
                     };
                 }),
         })
@@ -113,7 +113,7 @@ fn render(window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
                             }])
                         }),
                 })
-                .on_mouse_move(|_e, cx| {
+                .on_mouse_move(|_e, window, cx| {
                     cx.stop_propagation();
                 })
                 .bg(gpui::rgb(0xCCCCFF))
@@ -154,12 +154,12 @@ fn render(window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
                                     .map(|div| match decorations {
                                         Decorations::Server => div,
                                         Decorations::Client { .. } => div
-                                            .on_mouse_down(MouseButton::Left, |_e, cx| {
-                                                cx.start_window_move();
+                                            .on_mouse_down(MouseButton::Left, |_e, window, cx| {
+                                                window.start_window_move();
                                             })
-                                            .on_click(|e, cx| {
+                                            .on_click(|e, window, cx| {
                                                 if e.down.button == MouseButton::Right {
-                                                    cx.show_window_menu(e.up.position);
+                                                    window.show_window_menu(e.up.position);
                                                 }
                                             })
                                             .text_color(black())
