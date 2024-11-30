@@ -460,9 +460,44 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Screen
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn video_frame_buffer_from_webrtc(_buffer: Box<dyn VideoBuffer>) -> Option<ScreenCaptureFrame> {
-    None
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<ScreenCaptureFrame> {
+    use std::alloc::{alloc, Layout};
+
+    use gpui::RenderImage;
+    use image::{Frame, RgbaImage};
+    use livekit::webrtc::prelude::VideoFormatType;
+    use smallvec::SmallVec;
+
+    let width = buffer.width();
+    let height = buffer.height();
+    let stride = width * 4;
+    let byte_len = (stride * height) as usize;
+    let bgra_frame_vec = unsafe {
+        // Motivation for this unsafe code is to avoid initializing the frame data, since to_argb
+        // will write all bytes anyway.
+        let start_ptr = alloc(Layout::array::<u8>(byte_len).unwrap());
+        let bgra_frame_slice = std::slice::from_raw_parts_mut(start_ptr, byte_len);
+        buffer.to_argb(
+            VideoFormatType::BGRA,
+            bgra_frame_slice,
+            stride,
+            width as i32,
+            height as i32,
+        );
+        Vec::from_raw_parts(start_ptr, byte_len, byte_len)
+    };
+
+    Some(ScreenCaptureFrame(Arc::new(RenderImage::new(
+        SmallVec::from_elem(
+            Frame::new(
+                RgbaImage::from_raw(width, height, bgra_frame_vec)
+                    .with_context(|| "Bug: not enough bytes allocated for image.")
+                    .unwrap(),
+            ),
+            1,
+        ),
+    ))))
 }
 
 #[cfg(target_os = "macos")]

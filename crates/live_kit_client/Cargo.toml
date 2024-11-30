@@ -40,6 +40,8 @@ parking_lot.workspace = true
 postage.workspace = true
 util.workspace = true
 http_client.workspace = true
+smallvec.workspace = true
+image.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 livekit.workspace = true
