@@ -537,11 +537,12 @@ impl Interactivity {
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
     /// The tooltip itself is also hoverable and won't disappear when the user moves the mouse into
     /// the tooltip. The imperative API equivalent to [`InteractiveElement::hoverable_tooltip`]
-    pub fn hoverable_tooltip<E>(
+    pub fn hoverable_tooltip<F, E>(
         &mut self,
-        render_tooltip: impl Fn(&mut Window, &mut AppContext) -> E + 'static,
+        build_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F,
     ) where
         Self: Sized,
+        F: 'static + Fn(&mut Window, &mut AppContext) -> E,
         E: IntoElement,
     {
         debug_assert!(
@@ -549,7 +550,10 @@ impl Interactivity {
             "calling tooltip more than once on the same element is not supported"
         );
         self.tooltip_builder = Some(TooltipBuilder {
-            build: Rc::new(move |window, cx| render_tooltip(window, cx).into_any_element()),
+            build: Rc::new(move |window, cx| {
+                let render_tooltip = build_tooltip(window, cx);
+                Rc::new(move |window, cx| render_tooltip(window, cx).into_any_element())
+            }),
             hoverable: true,
         });
     }
@@ -1058,30 +1062,32 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
     /// The fluent API equivalent to [`Interactivity::tooltip`]
-    fn tooltip<E>(
+    fn tooltip<F, E>(
         mut self,
-        render_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> E,
+        build_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F,
     ) -> Self
     where
         Self: Sized,
+        F: 'static + Fn(&mut Window, &mut AppContext) -> E,
         E: IntoElement,
     {
-        self.interactivity().tooltip(render_tooltip);
+        self.interactivity().tooltip(build_tooltip);
         self
     }
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
     /// The tooltip itself is also hoverable and won't disappear when the user moves the mouse into
     /// the tooltip. The fluent API equivalent to [`Interactivity::hoverable_tooltip`]
-    fn hoverable_tooltip<E>(
+    fn hoverable_tooltip<F, E>(
         mut self,
-        render_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> E,
+        build_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F,
     ) -> Self
     where
         Self: Sized,
+        F: 'static + Fn(&mut Window, &mut AppContext) -> E,
         E: IntoElement,
     {
-        self.interactivity().hoverable_tooltip(render_tooltip);
+        self.interactivity().hoverable_tooltip(build_tooltip);
         self
     }
 }
