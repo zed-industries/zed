@@ -705,14 +705,6 @@ List of `string` values
 - Setting: `always_show_close_button`
 - Default: `false`
 
-2. Activate the neighbour tab (prefers the right one, if present):
-
-```json
-{
-  "activate_on_close": "neighbour"
-}
-```
-
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
