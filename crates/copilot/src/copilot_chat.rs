@@ -207,7 +207,7 @@ fn copilot_chat_config_path() -> &'static PathBuf {
             home_dir().join(".config")
         }
         .join("github-copilot")
-        .join("hosts.json")
+        .join("apps.json")
     })
 }
 
@@ -318,9 +318,15 @@ async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Re
 fn extract_oauth_token(contents: String) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(&contents)
         .map(|v| {
-            v["github.com"]["oauth_token"]
-                .as_str()
-                .map(|v| v.to_string())
+            v.as_object().and_then(|obj| {
+                obj.iter().find_map(|(key, value)| {
+                    if key.starts_with("github.com:") {
+                        value["oauth_token"].as_str().map(|v| v.to_string())
+                    } else {
+                        None
+                    }
+                })
+            })
         })
         .ok()
         .flatten()
