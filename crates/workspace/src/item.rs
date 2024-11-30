@@ -42,6 +42,7 @@ pub struct ItemSettings {
     pub close_position: ClosePosition,
     pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
+    pub always_show_close_button: bool,
 }
 
 #[derive(Deserialize)]
@@ -85,6 +86,10 @@ pub struct ItemSettingsContent {
     ///
     /// Default: history
     pub activate_on_close: Option<ActivateOnClose>,
+    /// Whether to always show the close button on tabs.
+    ///
+    /// Default: false
+    always_show_close_button: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
