@@ -93,7 +93,7 @@ impl Element for Svg {
             hitbox.as_ref(),
             window,
             cx,
-            |style, window, _cx| {
+            |style, window, cx| {
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                     let transformation = self
                         .transformation
@@ -104,7 +104,7 @@ impl Element for Svg {
                         .unwrap_or_default();
 
                     window
-                        .paint_svg(bounds, path.clone(), transformation, color)
+                        .paint_svg(bounds, path.clone(), transformation, color, cx)
                         .log_err();
                 }
             },

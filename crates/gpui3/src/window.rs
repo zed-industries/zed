@@ -1217,7 +1217,7 @@ impl Window {
                 .retain(&(), |listener| listener(&event, self, cx));
         }
 
-        self.reset_cursor_style();
+        self.reset_cursor_style(cx);
         self.refreshing = false;
         self.draw_phase = DrawPhase::None;
         self.needs_present.set(true);
@@ -1281,113 +1281,112 @@ impl Window {
         // }
     }
 
-    fn prepaint_tooltip(&mut self) -> Option<AnyElement> {
-        todo!()
-        // let tooltip_request = self.next_frame.tooltip_requests.last().cloned()?;
-        // let tooltip_request = tooltip_request.unwrap();
-        // let mut element = tooltip_request.tooltip.view.clone().into_any();
-        // let mouse_position = tooltip_request.tooltip.mouse_position;
-        // let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self);
+    fn prepaint_tooltip(&mut self, cx: &mut AppContext) -> Option<AnyElement> {
+        let tooltip_request = self.next_frame.tooltip_requests.last().cloned()?;
+        let tooltip_request = tooltip_request.unwrap();
+        let mut element = (tooltip_request.tooltip.render)(self, cx);
+        let mouse_position = tooltip_request.tooltip.mouse_position;
+        let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self, cx);
 
-        // let mut tooltip_bounds = Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size);
-        // let window_bounds = Bounds {
-        //     origin: Point::default(),
-        //     size: self.viewport_size(),
-        // };
+        let mut tooltip_bounds = Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size);
+        let window_bounds = Bounds {
+            origin: Point::default(),
+            size: self.viewport_size(),
+        };
 
-        // if tooltip_bounds.right() > window_bounds.right() {
-        //     let new_x = mouse_position.x - tooltip_bounds.size.width - px(1.);
-        //     if new_x >= Pixels::ZERO {
-        //         tooltip_bounds.origin.x = new_x;
-        //     } else {
-        //         tooltip_bounds.origin.x = cmp::max(
-        //             Pixels::ZERO,
-        //             tooltip_bounds.origin.x - tooltip_bounds.right() - window_bounds.right(),
-        //         );
-        //     }
-        // }
+        if tooltip_bounds.right() > window_bounds.right() {
+            let new_x = mouse_position.x - tooltip_bounds.size.width - px(1.);
+            if new_x >= Pixels::ZERO {
+                tooltip_bounds.origin.x = new_x;
+            } else {
+                tooltip_bounds.origin.x = cmp::max(
+                    Pixels::ZERO,
+                    tooltip_bounds.origin.x - tooltip_bounds.right() - window_bounds.right(),
+                );
+            }
+        }
 
-        // if tooltip_bounds.bottom() > window_bounds.bottom() {
-        //     let new_y = mouse_position.y - tooltip_bounds.size.height - px(1.);
-        //     if new_y >= Pixels::ZERO {
-        //         tooltip_bounds.origin.y = new_y;
-        //     } else {
-        //         tooltip_bounds.origin.y = cmp::max(
-        //             Pixels::ZERO,
-        //             tooltip_bounds.origin.y - tooltip_bounds.bottom() - window_bounds.bottom(),
-        //         );
-        //     }
-        // }
+        if tooltip_bounds.bottom() > window_bounds.bottom() {
+            let new_y = mouse_position.y - tooltip_bounds.size.height - px(1.);
+            if new_y >= Pixels::ZERO {
+                tooltip_bounds.origin.y = new_y;
+            } else {
+                tooltip_bounds.origin.y = cmp::max(
+                    Pixels::ZERO,
+                    tooltip_bounds.origin.y - tooltip_bounds.bottom() - window_bounds.bottom(),
+                );
+            }
+        }
 
-        // self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
+        self.with_absolute_element_offset(tooltip_bounds.origin, |window| {
+            element.prepaint(window, cx)
+        });
 
-        // self.tooltip_bounds = Some(TooltipBounds {
-        //     id: tooltip_request.id,
-        //     bounds: tooltip_bounds,
-        // });
-        // Some(element)
+        self.tooltip_bounds = Some(TooltipBounds {
+            id: tooltip_request.id,
+            bounds: tooltip_bounds,
+        });
+        Some(element)
     }
 
-    fn prepaint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
-        todo!()
-        // assert_eq!(self.element_id_stack.len(), 0);
+    fn prepaint_deferred_draws(&mut self, deferred_draw_indices: &[usize], cx: &mut AppContext) {
+        assert_eq!(self.element_id_stack.len(), 0);
 
-        // let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
-        // for deferred_draw_ix in deferred_draw_indices {
-        //     let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-        //     self.element_id_stack
-        //         .clone_from(&deferred_draw.element_id_stack);
-        //     self.text_style_stack
-        //         .clone_from(&deferred_draw.text_style_stack);
-        //     self.next_frame
-        //         .dispatch_tree
-        //         .set_active_node(deferred_draw.parent_node);
+        let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
+        for deferred_draw_ix in deferred_draw_indices {
+            let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+            self.element_id_stack
+                .clone_from(&deferred_draw.element_id_stack);
+            self.text_style_stack
+                .clone_from(&deferred_draw.text_style_stack);
+            self.next_frame
+                .dispatch_tree
+                .set_active_node(deferred_draw.parent_node);
 
-        //     let prepaint_start = self.prepaint_index();
-        //     if let Some(element) = deferred_draw.element.as_mut() {
-        //         self.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
-        //             element.prepaint(cx)
-        //         });
-        //     } else {
-        //         self.reuse_prepaint(deferred_draw.prepaint_range.clone());
-        //     }
-        //     let prepaint_end = self.prepaint_index();
-        //     deferred_draw.prepaint_range = prepaint_start..prepaint_end;
-        // }
-        // assert_eq!(
-        //     self.next_frame.deferred_draws.len(),
-        //     0,
-        //     "cannot call defer_draw during deferred drawing"
-        // );
-        // self.next_frame.deferred_draws = deferred_draws;
-        // self.element_id_stack.clear();
-        // self.text_style_stack.clear();
+            let prepaint_start = self.prepaint_index();
+            if let Some(element) = deferred_draw.element.as_mut() {
+                self.with_absolute_element_offset(deferred_draw.absolute_offset, |window| {
+                    element.prepaint(window, cx)
+                });
+            } else {
+                self.reuse_prepaint(deferred_draw.prepaint_range.clone());
+            }
+            let prepaint_end = self.prepaint_index();
+            deferred_draw.prepaint_range = prepaint_start..prepaint_end;
+        }
+        assert_eq!(
+            self.next_frame.deferred_draws.len(),
+            0,
+            "cannot call defer_draw during deferred drawing"
+        );
+        self.next_frame.deferred_draws = deferred_draws;
+        self.element_id_stack.clear();
+        self.text_style_stack.clear();
     }
 
-    fn paint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
-        todo!()
-        // assert_eq!(self.element_id_stack.len(), 0);
+    fn paint_deferred_draws(&mut self, deferred_draw_indices: &[usize], cx: &mut AppContext) {
+        assert_eq!(self.element_id_stack.len(), 0);
 
-        // let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
-        // for deferred_draw_ix in deferred_draw_indices {
-        //     let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-        //     self.element_id_stack
-        //         .clone_from(&deferred_draw.element_id_stack);
-        //     self.next_frame
-        //         .dispatch_tree
-        //         .set_active_node(deferred_draw.parent_node);
+        let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
+        for deferred_draw_ix in deferred_draw_indices {
+            let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+            self.element_id_stack
+                .clone_from(&deferred_draw.element_id_stack);
+            self.next_frame
+                .dispatch_tree
+                .set_active_node(deferred_draw.parent_node);
 
-        //     let paint_start = self.paint_index();
-        //     if let Some(element) = deferred_draw.element.as_mut() {
-        //         element.paint(self);
-        //     } else {
-        //         self.reuse_paint(deferred_draw.paint_range.clone());
-        //     }
-        //     let paint_end = self.paint_index();
-        //     deferred_draw.paint_range = paint_start..paint_end;
-        // }
-        // self.next_frame.deferred_draws = deferred_draws;
-        // self.element_id_stack.clear();
+            let paint_start = self.paint_index();
+            if let Some(element) = deferred_draw.element.as_mut() {
+                element.paint(self, cx);
+            } else {
+                self.reuse_paint(deferred_draw.paint_range.clone());
+            }
+            let paint_end = self.paint_index();
+            deferred_draw.paint_range = paint_start..paint_end;
+        }
+        self.next_frame.deferred_draws = deferred_draws;
+        self.element_id_stack.clear();
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
@@ -2206,51 +2205,51 @@ impl Window {
         path: SharedString,
         transformation: TransformationMatrix,
         color: Hsla,
+        cx: &mut AppContext,
     ) -> Result<()> {
-        todo!()
-        // debug_assert_eq!(
-        //     self.draw_phase,
-        //     DrawPhase::Paint,
-        //     "this method can only be called during paint"
-        // );
+        debug_assert_eq!(
+            self.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
 
-        // let element_opacity = self.element_opacity();
-        // let scale_factor = self.scale_factor();
-        // let bounds = bounds.scale(scale_factor);
-        // // Render the SVG at twice the size to get a higher quality result.
-        // let params = RenderSvgParams {
-        //     path,
-        //     size: bounds
-        //         .size
-        //         .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
-        // };
+        let element_opacity = self.element_opacity();
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        // Render the SVG at twice the size to get a higher quality result.
+        let params = RenderSvgParams {
+            path,
+            size: bounds
+                .size
+                .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
+        };
 
-        // let Some(tile) =
-        //     self.sprite_atlas
-        //         .get_or_insert_with(&params.clone().into(), &mut || {
-        //             let Some(bytes) = self.svg_renderer.render(&params)? else {
-        //                 return Ok(None);
-        //             };
-        //             Ok(Some((params.size, Cow::Owned(bytes))))
-        //         })?
-        // else {
-        //     return Ok(());
-        // };
-        // let content_mask = self.content_mask().scale(scale_factor);
+        let Some(tile) =
+            self.sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let Some(bytes) = cx.svg_renderer.render(&params)? else {
+                        return Ok(None);
+                    };
+                    Ok(Some((params.size, Cow::Owned(bytes))))
+                })?
+        else {
+            return Ok(());
+        };
+        let content_mask = self.content_mask().scale(scale_factor);
 
-        // self.next_frame.scene.insert_primitive(MonochromeSprite {
-        //     order: 0,
-        //     pad: 0,
-        //     bounds: bounds
-        //         .map_origin(|origin| origin.floor())
-        //         .map_size(|size| size.ceil()),
-        //     content_mask,
-        //     color: color.opacity(element_opacity),
-        //     tile,
-        //     transformation,
-        // });
+        self.next_frame.scene.insert_primitive(MonochromeSprite {
+            order: 0,
+            pad: 0,
+            bounds: bounds
+                .map_origin(|origin| origin.floor())
+                .map_size(|size| size.ceil()),
+            content_mask,
+            color: color.opacity(element_opacity),
+            tile,
+            transformation,
+        });
 
-        // Ok(())
+        Ok(())
     }
 
     /// Paint an image into the scene for the next frame at the current z-index.
@@ -2407,17 +2406,21 @@ impl Window {
     /// After calling it, you can request the bounds of the given layout node id or any descendant.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
-    pub fn compute_layout(&mut self, layout_id: LayoutId, available_space: Size<AvailableSpace>) {
-        todo!()
-        // debug_assert_eq!(
-        //     self.draw_phase,
-        //     DrawPhase::Prepaint,
-        //     "this method can only be called during request_layout, or prepaint"
-        // );
+    pub fn compute_layout(
+        &mut self,
+        layout_id: LayoutId,
+        available_space: Size<AvailableSpace>,
+        cx: &mut AppContext,
+    ) {
+        debug_assert_eq!(
+            self.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during request_layout, or prepaint"
+        );
 
-        // let mut layout_engine = self.layout_engine.take().unwrap();
-        // layout_engine.compute_layout(layout_id, available_space, self);
-        // self.layout_engine = Some(layout_engine);
+        let mut layout_engine = self.layout_engine.take().unwrap();
+        layout_engine.compute_layout(layout_id, available_space, cx);
+        self.layout_engine = Some(layout_engine);
     }
 
     /// Obtain the bounds computed for the given LayoutId relative to the window. This method will usually be invoked by
@@ -2484,16 +2487,15 @@ impl Window {
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle) {
-        todo!()
-        // debug_assert_eq!(
-        //     self.draw_phase,
-        //     DrawPhase::Prepaint,
-        //     "this method can only be called during prepaint"
-        // );
-        // if focus_handle.is_focused(self) {
-        //     self.next_frame.focus = Some(focus_handle.id);
-        // }
-        // self.next_frame.dispatch_tree.set_focus_id(focus_handle.id);
+        debug_assert_eq!(
+            self.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during prepaint"
+        );
+        if focus_handle.is_focused(self) {
+            self.next_frame.focus = Some(focus_handle.id);
+        }
+        self.next_frame.dispatch_tree.set_focus_id(focus_handle.id);
     }
 
     /// Sets the view id for the current element, which will be used to manage view caching.
@@ -2523,20 +2525,28 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     ///
     /// [element_input_handler]: crate::ElementInputHandler
-    pub fn handle_input(&mut self, focus_handle: &FocusHandle, input_handler: impl InputHandler) {
-        todo!()
-        // debug_assert_eq!(
-        //     self.draw_phase,
-        //     DrawPhase::Paint,
-        //     "this method can only be called during paint"
-        // );
+    pub fn handle_input(
+        &mut self,
+        focus_handle: &FocusHandle,
+        input_handler: impl InputHandler,
+        cx: &mut AppContext,
+    ) {
+        debug_assert_eq!(
+            self.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
 
-        // if focus_handle.is_focused(self) {
-        //     let cx = self.to_async();
-        //     self.next_frame
-        //         .input_handlers
-        //         .push(Some(PlatformInputHandler::new(cx, Box::new(input_handler))));
-        // }
+        if focus_handle.is_focused(self) {
+            let window_handle = self.handle.clone();
+            self.next_frame
+                .input_handlers
+                .push(Some(PlatformInputHandler::new(
+                    window_handle,
+                    cx.to_async(),
+                    Box::new(input_handler),
+                )));
+        }
     }
 
     /// Register a mouse event listener on the window for the next frame. The type of event
@@ -2623,17 +2633,18 @@ impl Window {
         &mut self,
         handle: &FocusHandle,
         mut listener: impl FnMut(&mut Window, &mut AppContext) + 'static,
+        cx: &mut AppContext,
     ) -> Subscription {
-        todo!()
-        // let focus_id = handle.id;
-        // let (subscription, activate) = self.new_focus_listener(Box::new(move |event, cx| {
-        //     if event.is_focus_in(focus_id) {
-        //         listener(cx);
-        //     }
-        //     true
-        // }));
-        // self.app.defer(move |_| activate());
-        // subscription
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            self.new_focus_listener(Box::new(move |event, window, cx| {
+                if event.is_focus_in(focus_id) {
+                    listener(window, cx);
+                }
+                true
+            }));
+        cx.defer(move |_| activate());
+        subscription
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
@@ -2642,65 +2653,67 @@ impl Window {
         &mut self,
         handle: &FocusHandle,
         mut listener: impl FnMut(FocusOutEvent, &mut Window, &mut AppContext) + 'static,
+        cx: &mut AppContext,
     ) -> Subscription {
-        todo!()
-        // let focus_id = handle.id;
-        // let (subscription, activate) = self.new_focus_listener(Box::new(move |event, cx| {
-        //     if let Some(blurred_id) = event.previous_focus_path.last().copied() {
-        //         if event.is_focus_out(focus_id) {
-        //             let event = FocusOutEvent {
-        //                 blurred: WeakFocusHandle {
-        //                     id: blurred_id,
-        //                     handles: Arc::downgrade(&cx.window.focus_handles),
-        //                 },
-        //             };
-        //             listener(event, cx)
-        //         }
-        //     }
-        //     true
-        // }));
-        // self.app.defer(move |_| activate());
-        // subscription
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            self.new_focus_listener(Box::new(move |event, window, cx| {
+                if let Some(blurred_id) = event.previous_focus_path.last().copied() {
+                    if event.is_focus_out(focus_id) {
+                        let event = FocusOutEvent {
+                            blurred: WeakFocusHandle {
+                                id: blurred_id,
+                                handles: Arc::downgrade(&window.focus_handles),
+                            },
+                        };
+                        listener(event, window, cx)
+                    }
+                }
+                true
+            }));
+        cx.defer(move |_| activate());
+        subscription
     }
 
-    fn reset_cursor_style(&self) {
-        todo!()
-        // // Set the cursor only if we're the active window.
-        // if self.is_window_hovered() {
-        //     let style = self
-        //         .rendered_frame
-        //         .cursor_styles
-        //         .iter()
-        //         .rev()
-        //         .find(|request| request.hitbox_id.is_hovered(self))
-        //         .map(|request| request.style)
-        //         .unwrap_or(CursorStyle::Arrow);
-        //     self.platform.set_cursor_style(style);
-        // }
+    fn reset_cursor_style(&self, cx: &mut AppContext) {
+        // Set the cursor only if we're the active window.
+        if self.is_window_hovered() {
+            let style = self
+                .rendered_frame
+                .cursor_styles
+                .iter()
+                .rev()
+                .find(|request| request.hitbox_id.is_hovered(self))
+                .map(|request| request.style)
+                .unwrap_or(CursorStyle::Arrow);
+            cx.platform.set_cursor_style(style);
+        }
     }
 
     /// Dispatch a given keystroke as though the user had typed it.
     /// You can create a keystroke with Keystroke::parse("").
     pub fn dispatch_keystroke(&mut self, keystroke: Keystroke, cx: &mut AppContext) -> bool {
-        todo!()
-        // let keystroke = keystroke.with_simulated_ime();
-        // let result = self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
-        //     keystroke: keystroke.clone(),
-        //     is_held: false,
-        // }));
-        // if !result.propagate {
-        //     return true;
-        // }
+        let keystroke = keystroke.with_simulated_ime();
+        let result = self.dispatch_event(
+            PlatformInput::KeyDown(KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+            }),
+            cx,
+        );
+        if !result.propagate {
+            return true;
+        }
 
-        // if let Some(input) = keystroke.key_char {
-        //     if let Some(mut input_handler) = self.platform_window.take_input_handler() {
-        //         input_handler.dispatch_input(&input, self);
-        //         self.platform_window.set_input_handler(input_handler);
-        //         return true;
-        //     }
-        // }
+        if let Some(input) = keystroke.key_char {
+            if let Some(mut input_handler) = self.platform_window.take_input_handler() {
+                input_handler.dispatch_input(&input, cx);
+                self.platform_window.set_input_handler(input_handler);
+                return true;
+            }
+        }
 
-        // false
+        false
     }
 
     /// Represent this action as a key binding string, to display in the UI.
@@ -2746,280 +2759,283 @@ impl Window {
         event: PlatformInput,
         cx: &mut AppContext,
     ) -> DispatchEventResult {
-        todo!()
-        // self.last_input_timestamp.set(Instant::now());
-        // // Handlers may set this to false by calling `stop_propagation`.
-        // self.app.propagate_event = true;
-        // // Handlers may set this to true by calling `prevent_default`.
-        // self.default_prevented = false;
+        self.last_input_timestamp.set(Instant::now());
+        // Handlers may set this to false by calling `stop_propagation`.
+        cx.propagate_event = true;
+        // Handlers may set this to true by calling `prevent_default`.
+        self.default_prevented = false;
 
-        // let event = match event {
-        //     // Track the mouse position with our own state, since accessing the platform
-        //     // API for the mouse position can only occur on the main thread.
-        //     PlatformInput::MouseMove(mouse_move) => {
-        //         self.mouse_position = mouse_move.position;
-        //         self.modifiers = mouse_move.modifiers;
-        //         PlatformInput::MouseMove(mouse_move)
-        //     }
-        //     PlatformInput::MouseDown(mouse_down) => {
-        //         self.mouse_position = mouse_down.position;
-        //         self.modifiers = mouse_down.modifiers;
-        //         PlatformInput::MouseDown(mouse_down)
-        //     }
-        //     PlatformInput::MouseUp(mouse_up) => {
-        //         self.mouse_position = mouse_up.position;
-        //         self.modifiers = mouse_up.modifiers;
-        //         PlatformInput::MouseUp(mouse_up)
-        //     }
-        //     PlatformInput::MouseExited(mouse_exited) => {
-        //         self.modifiers = mouse_exited.modifiers;
-        //         PlatformInput::MouseExited(mouse_exited)
-        //     }
-        //     PlatformInput::ModifiersChanged(modifiers_changed) => {
-        //         self.modifiers = modifiers_changed.modifiers;
-        //         PlatformInput::ModifiersChanged(modifiers_changed)
-        //     }
-        //     PlatformInput::ScrollWheel(scroll_wheel) => {
-        //         self.mouse_position = scroll_wheel.position;
-        //         self.modifiers = scroll_wheel.modifiers;
-        //         PlatformInput::ScrollWheel(scroll_wheel)
-        //     }
-        //     // Translate dragging and dropping of external files from the operating system
-        //     // to internal drag and drop events.
-        //     PlatformInput::FileDrop(file_drop) => match file_drop {
-        //         FileDropEvent::Entered { position, paths } => {
-        //             self.mouse_position = position;
-        //             if self.active_drag.is_none() {
-        //                 self.active_drag = Some(AnyDrag {
-        //                     value: Box::new(paths.clone()),
-        //                     view: self.new_view(|_| paths).into(),
-        //                     cursor_offset: position,
-        //                 });
-        //             }
-        //             PlatformInput::MouseMove(MouseMoveEvent {
-        //                 position,
-        //                 pressed_button: Some(MouseButton::Left),
-        //                 modifiers: Modifiers::default(),
-        //             })
-        //         }
-        //         FileDropEvent::Pending { position } => {
-        //             self.mouse_position = position;
-        //             PlatformInput::MouseMove(MouseMoveEvent {
-        //                 position,
-        //                 pressed_button: Some(MouseButton::Left),
-        //                 modifiers: Modifiers::default(),
-        //             })
-        //         }
-        //         FileDropEvent::Submit { position } => {
-        //             self.activate(true);
-        //             self.mouse_position = position;
-        //             PlatformInput::MouseUp(MouseUpEvent {
-        //                 button: MouseButton::Left,
-        //                 position,
-        //                 modifiers: Modifiers::default(),
-        //                 click_count: 1,
-        //             })
-        //         }
-        //         FileDropEvent::Exited => {
-        //             self.active_drag.take();
-        //             PlatformInput::FileDrop(FileDropEvent::Exited)
-        //         }
-        //     },
-        //     PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
-        // };
+        let event = match event {
+            // Track the mouse position with our own state, since accessing the platform
+            // API for the mouse position can only occur on the main thread.
+            PlatformInput::MouseMove(mouse_move) => {
+                self.mouse_position = mouse_move.position;
+                self.modifiers = mouse_move.modifiers;
+                PlatformInput::MouseMove(mouse_move)
+            }
+            PlatformInput::MouseDown(mouse_down) => {
+                self.mouse_position = mouse_down.position;
+                self.modifiers = mouse_down.modifiers;
+                PlatformInput::MouseDown(mouse_down)
+            }
+            PlatformInput::MouseUp(mouse_up) => {
+                self.mouse_position = mouse_up.position;
+                self.modifiers = mouse_up.modifiers;
+                PlatformInput::MouseUp(mouse_up)
+            }
+            PlatformInput::MouseExited(mouse_exited) => {
+                self.modifiers = mouse_exited.modifiers;
+                PlatformInput::MouseExited(mouse_exited)
+            }
+            PlatformInput::ModifiersChanged(modifiers_changed) => {
+                self.modifiers = modifiers_changed.modifiers;
+                PlatformInput::ModifiersChanged(modifiers_changed)
+            }
+            PlatformInput::ScrollWheel(scroll_wheel) => {
+                self.mouse_position = scroll_wheel.position;
+                self.modifiers = scroll_wheel.modifiers;
+                PlatformInput::ScrollWheel(scroll_wheel)
+            }
+            // Translate dragging and dropping of external files from the operating system
+            // to internal drag and drop events.
+            PlatformInput::FileDrop(file_drop) => match file_drop {
+                FileDropEvent::Entered { position, paths } => {
+                    self.mouse_position = position;
+                    if cx.active_drag.is_none() {
+                        todo!();
+                        // cx.active_drag = Some(AnyDrag {
+                        //     value: Box::new(paths.clone()),
+                        //     view: self.new_view(|_| paths).into(),
+                        //     cursor_offset: position,
+                        // });
+                    }
+                    PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Modifiers::default(),
+                    })
+                }
+                FileDropEvent::Pending { position } => {
+                    self.mouse_position = position;
+                    PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Modifiers::default(),
+                    })
+                }
+                FileDropEvent::Submit { position } => {
+                    cx.activate(true);
+                    self.mouse_position = position;
+                    PlatformInput::MouseUp(MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                    })
+                }
+                FileDropEvent::Exited => {
+                    cx.active_drag.take();
+                    PlatformInput::FileDrop(FileDropEvent::Exited)
+                }
+            },
+            PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
+        };
 
-        // if let Some(any_mouse_event) = event.mouse_event() {
-        //     self.dispatch_mouse_event(any_mouse_event);
-        // } else if let Some(any_key_event) = event.keyboard_event() {
-        //     self.dispatch_key_event(any_key_event);
-        // }
+        if let Some(any_mouse_event) = event.mouse_event() {
+            self.dispatch_mouse_event(any_mouse_event, cx);
+        } else if let Some(any_key_event) = event.keyboard_event() {
+            self.dispatch_key_event(any_key_event, cx);
+        }
 
-        // DispatchEventResult {
-        //     propagate: self.app.propagate_event,
-        //     default_prevented: self.default_prevented,
-        // }
+        DispatchEventResult {
+            propagate: cx.propagate_event,
+            default_prevented: self.default_prevented,
+        }
     }
 
-    fn dispatch_mouse_event(&mut self, event: &dyn Any) {
-        todo!()
-        // let hit_test = self.rendered_frame.hit_test(self.mouse_position());
-        // if hit_test != self.mouse_hit_test {
-        //     self.mouse_hit_test = hit_test;
-        //     self.reset_cursor_style();
-        // }
+    fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut AppContext) {
+        let hit_test = self.rendered_frame.hit_test(self.mouse_position());
+        if hit_test != self.mouse_hit_test {
+            self.mouse_hit_test = hit_test;
+            self.reset_cursor_style(cx);
+        }
 
-        // let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
+        let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
 
-        // // Capture phase, events bubble from back to front. Handlers for this phase are used for
-        // // special purposes, such as detecting events outside of a given Bounds.
-        // for listener in &mut mouse_listeners {
-        //     let listener = listener.as_mut().unwrap();
-        //     listener(event, DispatchPhase::Capture, self);
-        //     if !self.app.propagate_event {
-        //         break;
-        //     }
-        // }
+        // Capture phase, events bubble from back to front. Handlers for this phase are used for
+        // special purposes, such as detecting events outside of a given Bounds.
+        for listener in &mut mouse_listeners {
+            let listener = listener.as_mut().unwrap();
+            listener(event, DispatchPhase::Capture, self, cx);
+            if !cx.propagate_event {
+                break;
+            }
+        }
 
-        // // Bubble phase, where most normal handlers do their work.
-        // if self.app.propagate_event {
-        //     for listener in mouse_listeners.iter_mut().rev() {
-        //         let listener = listener.as_mut().unwrap();
-        //         listener(event, DispatchPhase::Bubble, self);
-        //         if !self.app.propagate_event {
-        //             break;
-        //         }
-        //     }
-        // }
+        // Bubble phase, where most normal handlers do their work.
+        if cx.propagate_event {
+            for listener in mouse_listeners.iter_mut().rev() {
+                let listener = listener.as_mut().unwrap();
+                listener(event, DispatchPhase::Bubble, self, cx);
+                if !cx.propagate_event {
+                    break;
+                }
+            }
+        }
 
-        // self.rendered_frame.mouse_listeners = mouse_listeners;
+        self.rendered_frame.mouse_listeners = mouse_listeners;
 
-        // if self.has_active_drag() {
-        //     if event.is::<MouseMoveEvent>() {
-        //         // If this was a mouse move event, redraw the window so that the
-        //         // active drag can follow the mouse cursor.
-        //         self.refresh();
-        //     } else if event.is::<MouseUpEvent>() {
-        //         // If this was a mouse up event, cancel the active drag and redraw
-        //         // the window.
-        //         self.active_drag = None;
-        //         self.refresh();
-        //     }
-        // }
+        if cx.has_active_drag() {
+            if event.is::<MouseMoveEvent>() {
+                // If this was a mouse move event, redraw the window so that the
+                // active drag can follow the mouse cursor.
+                self.refresh();
+            } else if event.is::<MouseUpEvent>() {
+                // If this was a mouse up event, cancel the active drag and redraw
+                // the window.
+                cx.active_drag = None;
+                self.refresh();
+            }
+        }
     }
 
-    fn dispatch_key_event(&mut self, event: &dyn Any) {
-        todo!()
-        // if self.dirty.get() {
-        //     self.draw();
-        // }
+    fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut AppContext) {
+        if self.dirty.get() {
+            self.draw(cx);
+        }
 
-        // let node_id = self
-        //     .focus
-        //     .and_then(|focus_id| {
-        //         self.rendered_frame
-        //             .dispatch_tree
-        //             .focusable_node_id(focus_id)
-        //     })
-        //     .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
+        let node_id = self
+            .focus
+            .and_then(|focus_id| {
+                self.rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id)
+            })
+            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
 
-        // let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
-        // let mut keystroke: Option<Keystroke> = None;
+        let mut keystroke: Option<Keystroke> = None;
 
-        // if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
-        //     if event.modifiers.number_of_modifiers() == 0
-        //         && self.pending_modifier.modifiers.number_of_modifiers() == 1
-        //         && !self.pending_modifier.saw_keystroke
-        //     {
-        //         let key = match self.pending_modifier.modifiers {
-        //             modifiers if modifiers.shift => Some("shift"),
-        //             modifiers if modifiers.control => Some("control"),
-        //             modifiers if modifiers.alt => Some("alt"),
-        //             modifiers if modifiers.platform => Some("platform"),
-        //             modifiers if modifiers.function => Some("function"),
-        //             _ => None,
-        //         };
-        //         if let Some(key) = key {
-        //             keystroke = Some(Keystroke {
-        //                 key: key.to_string(),
-        //                 key_char: None,
-        //                 modifiers: Modifiers::default(),
-        //             });
-        //         }
-        //     }
+        if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            if event.modifiers.number_of_modifiers() == 0
+                && self.pending_modifier.modifiers.number_of_modifiers() == 1
+                && !self.pending_modifier.saw_keystroke
+            {
+                let key = match self.pending_modifier.modifiers {
+                    modifiers if modifiers.shift => Some("shift"),
+                    modifiers if modifiers.control => Some("control"),
+                    modifiers if modifiers.alt => Some("alt"),
+                    modifiers if modifiers.platform => Some("platform"),
+                    modifiers if modifiers.function => Some("function"),
+                    _ => None,
+                };
+                if let Some(key) = key {
+                    keystroke = Some(Keystroke {
+                        key: key.to_string(),
+                        key_char: None,
+                        modifiers: Modifiers::default(),
+                    });
+                }
+            }
 
-        //     if self.pending_modifier.modifiers.number_of_modifiers() == 0
-        //         && event.modifiers.number_of_modifiers() == 1
-        //     {
-        //         self.pending_modifier.saw_keystroke = false
-        //     }
-        //     self.pending_modifier.modifiers = event.modifiers
-        // } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-        //     self.pending_modifier.saw_keystroke = true;
-        //     keystroke = Some(key_down_event.keystroke.clone());
-        // }
+            if self.pending_modifier.modifiers.number_of_modifiers() == 0
+                && event.modifiers.number_of_modifiers() == 1
+            {
+                self.pending_modifier.saw_keystroke = false
+            }
+            self.pending_modifier.modifiers = event.modifiers
+        } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+            self.pending_modifier.saw_keystroke = true;
+            keystroke = Some(key_down_event.keystroke.clone());
+        }
 
-        // let Some(keystroke) = keystroke else {
-        //     self.finish_dispatch_key_event(event, dispatch_path);
-        //     return;
-        // };
+        let Some(keystroke) = keystroke else {
+            self.finish_dispatch_key_event(event, dispatch_path, cx);
+            return;
+        };
 
-        // let mut currently_pending = self.pending_input.take().unwrap_or_default();
-        // if currently_pending.focus.is_some() && currently_pending.focus != self.focus {
-        //     currently_pending = PendingInput::default();
-        // }
+        let mut currently_pending = self.pending_input.take().unwrap_or_default();
+        if currently_pending.focus.is_some() && currently_pending.focus != self.focus {
+            currently_pending = PendingInput::default();
+        }
 
-        // let match_result = self.rendered_frame.dispatch_tree.dispatch_key(
-        //     currently_pending.keystrokes,
-        //     keystroke,
-        //     &dispatch_path,
-        // );
-        // if !match_result.to_replay.is_empty() {
-        //     self.replay_pending_input(match_result.to_replay)
-        // }
+        let match_result = self.rendered_frame.dispatch_tree.dispatch_key(
+            currently_pending.keystrokes,
+            keystroke,
+            &dispatch_path,
+        );
+        if !match_result.to_replay.is_empty() {
+            self.replay_pending_input(match_result.to_replay)
+        }
 
-        // if !match_result.pending.is_empty() {
-        //     currently_pending.keystrokes = match_result.pending;
-        //     currently_pending.focus = self.focus;
-        //     currently_pending.timer = Some(self.spawn(|mut cx| async move {
-        //         cx.background_executor.timer(Duration::from_secs(1)).await;
-        //         cx.update(move |cx| {
-        //             let Some(currently_pending) = cx
-        //                 .pending_input
-        //                 .take()
-        //                 .filter(|pending| pending.focus == cx.focus)
-        //             else {
-        //                 return;
-        //             };
+        if !match_result.pending.is_empty() {
+            currently_pending.keystrokes = match_result.pending;
+            currently_pending.focus = self.focus;
+            currently_pending.timer = Some(self.spawn(
+                cx,
+                |window, mut cx: AsyncAppContext| async move {
+                    cx.background_executor.timer(Duration::from_secs(1)).await;
+                    window
+                        .update(&mut cx, move |window, _cx| {
+                            let Some(currently_pending) = window
+                                .pending_input
+                                .take()
+                                .filter(|pending| pending.focus == window.focus)
+                            else {
+                                return;
+                            };
 
-        //             let dispatch_path = cx.rendered_frame.dispatch_tree.dispatch_path(node_id);
+                            let dispatch_path =
+                                window.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
-        //             let to_replay = cx
-        //                 .rendered_frame
-        //                 .dispatch_tree
-        //                 .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+                            let to_replay = window
+                                .rendered_frame
+                                .dispatch_tree
+                                .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
-        //             cx.replay_pending_input(to_replay)
-        //         })
-        //         .log_err();
-        //     }));
-        //     self.pending_input = Some(currently_pending);
-        //     self.pending_input_changed();
-        //     self.propagate_event = false;
-        //     return;
-        // }
+                            window.replay_pending_input(to_replay)
+                        })
+                        .log_err();
+                },
+            ));
+            self.pending_input = Some(currently_pending);
+            self.pending_input_changed();
+            cx.propagate_event = false;
+            return;
+        }
 
-        // self.propagate_event = true;
-        // for binding in match_result.bindings {
-        //     self.dispatch_action_on_node(node_id, binding.action.as_ref());
-        //     if !self.propagate_event {
-        //         self.dispatch_keystroke_observers(event, Some(binding.action));
-        //         self.pending_input_changed();
-        //         return;
-        //     }
-        // }
+        cx.propagate_event = true;
+        for binding in match_result.bindings {
+            self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+            if !cx.propagate_event {
+                self.dispatch_keystroke_observers(event, Some(binding.action), cx);
+                self.pending_input_changed();
+                return;
+            }
+        }
 
-        // self.finish_dispatch_key_event(event, dispatch_path);
-        // self.pending_input_changed();
+        self.finish_dispatch_key_event(event, dispatch_path, cx);
+        self.pending_input_changed();
     }
 
     fn finish_dispatch_key_event(
         &mut self,
         event: &dyn Any,
         dispatch_path: SmallVec<[DispatchNodeId; 32]>,
+        cx: &mut AppContext,
     ) {
-        todo!()
-        // self.dispatch_key_down_up_event(event, &dispatch_path);
-        // if !self.propagate_event {
-        //     return;
-        // }
+        self.dispatch_key_down_up_event(event, &dispatch_path, cx);
+        if !cx.propagate_event {
+            return;
+        }
 
-        // self.dispatch_modifiers_changed_event(event, &dispatch_path);
-        // if !self.propagate_event {
-        //     return;
-        // }
+        self.dispatch_modifiers_changed_event(event, &dispatch_path, cx);
+        if !cx.propagate_event {
+            return;
+        }
 
-        // self.dispatch_keystroke_observers(event, None);
+        self.dispatch_keystroke_observers(event, None, cx);
     }
 
     fn pending_input_changed(&mut self) {
@@ -3033,6 +3049,7 @@ impl Window {
         &mut self,
         event: &dyn Any,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+        cx: &mut AppContext,
     ) {
         todo!()
         // // Capture phase
@@ -3064,6 +3081,7 @@ impl Window {
         &mut self,
         event: &dyn Any,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+        cx: &mut AppContext,
     ) {
         todo!()
         // let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() else {
@@ -3487,6 +3505,44 @@ impl Window {
 
             None
         })
+    }
+
+    pub(crate) fn dispatch_keystroke_observers(
+        &mut self,
+        event: &dyn Any,
+        action: Option<Box<dyn Action>>,
+        cx: &mut AppContext,
+    ) {
+        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
+            return;
+        };
+
+        cx.keystroke_observers.clone().retain(&(), move |callback| {
+            (callback)(
+                &KeystrokeEvent {
+                    keystroke: key_down_event.keystroke.clone(),
+                    action: action.as_ref().map(|action| action.boxed_clone()),
+                },
+                self,
+                cx,
+            )
+        });
+    }
+
+    /// Spawn the future returned by the given closure on the application thread pool.
+    /// The closure is provided a handle to the current window and an `AsyncAppContext` for
+    /// use within your future.
+    pub fn spawn<Fut, R>(
+        &self,
+        cx: &mut AppContext,
+        f: impl FnOnce(AnyWindowHandle, AsyncAppContext) -> Fut,
+    ) -> Task<R>
+    where
+        R: 'static,
+        Fut: Future<Output = R> + 'static,
+    {
+        let window_handle = self.handle.clone();
+        cx.spawn(|async_cx| f(window_handle, async_cx))
     }
 }
 

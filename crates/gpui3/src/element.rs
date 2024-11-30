@@ -416,7 +416,7 @@ impl<E: Element> Drawable<E> {
                 global_id,
                 request_layout,
             } => {
-                window.compute_layout(layout_id, available_space);
+                window.compute_layout(layout_id, available_space, cx);
                 self.phase = ElementDrawPhase::LayoutComputed {
                     layout_id,
                     global_id,
@@ -432,7 +432,7 @@ impl<E: Element> Drawable<E> {
                 request_layout,
             } => {
                 if available_space != prev_available_space {
-                    window.compute_layout(layout_id, available_space);
+                    window.compute_layout(layout_id, available_space, cx);
                 }
                 self.phase = ElementDrawPhase::LayoutComputed {
                     layout_id,
