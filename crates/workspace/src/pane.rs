@@ -1295,10 +1295,12 @@ impl Pane {
     ) -> Task<Result<()>> {
         // Find the items to close.
         let mut items_to_close = Vec::new();
+        let mut item_ids_to_close = HashSet::default();
         let mut dirty_items = Vec::new();
         for item in &self.items {
             if should_close(item.item_id()) {
                 items_to_close.push(item.boxed_clone());
+                item_ids_to_close.insert(item.item_id());
                 if item.is_dirty(cx) {
                     dirty_items.push(item.boxed_clone());
                 }
@@ -1339,82 +1341,50 @@ impl Pane {
                 }
             }
             let mut saved_project_items_ids = HashSet::default();
-            dbg!((
-                "???",
-                &saved_project_items_ids,
-                items_to_close
-                    .iter()
-                    .map(|item| item.item_id())
-                    .collect::<Vec<_>>()
-            ));
-            for item in items_to_close.clone() {
-                // Find the item's current index and its set of project item models. Avoid
+            for item_to_close in items_to_close {
+                // Find the item's current index and its set of dirty project item models. Avoid
                 // storing these in advance, in case they have changed since this task
                 // was started.
-                let (item_ix, mut project_item_ids) = pane.update(&mut cx, |pane, cx| {
-                    (pane.index_for_item(&*item), item.project_item_model_ids(cx))
-                })?;
-                let Some(item_ix) = item_ix else {
+                let mut dirty_project_item_ids = Vec::new();
+                let Some(item_ix) = pane.update(&mut cx, |pane, cx| {
+                    item_to_close.for_each_project_item(
+                        cx,
+                        &mut |project_item_id, project_item| {
+                            if project_item.is_dirty() {
+                                dirty_project_item_ids.push(project_item_id);
+                            }
+                        },
+                    );
+                    pane.index_for_item(&*item_to_close)
+                })?
+                else {
                     continue;
                 };
-
-                dbg!(("@@@@before cleanup", &project_item_ids));
 
                 // Check if this view has any project items that are not open anywhere else
                 // in the workspace, AND that the user has not already been prompted to save.
                 // If there are any such project entries, prompt the user to save this item.
                 let project = workspace.update(&mut cx, |workspace, cx| {
-                    for item in workspace.items(cx) {
-                        if !items_to_close
-                            .iter()
-                            .any(|item_to_close| item_to_close.item_id() == item.item_id())
-                        {
-                            let other_project_item_ids = item.project_item_model_ids(cx);
-                            dbg!(&other_project_item_ids);
-                            project_item_ids.retain(|id| !other_project_item_ids.contains(id));
+                    for open_item in workspace.items(cx) {
+                        let open_item_id = open_item.item_id();
+                        if !item_ids_to_close.contains(&open_item_id) {
+                            let other_project_item_ids = open_item.project_item_model_ids(cx);
+                            dirty_project_item_ids
+                                .retain(|id| !other_project_item_ids.contains(id));
                         }
                     }
                     workspace.project().clone()
                 })?;
-                dbg!(("@@@@after cleanup", &project_item_ids));
-                let should_save = project_item_ids
+                let should_save = dirty_project_item_ids
                     .iter()
                     .any(|id| saved_project_items_ids.insert(*id));
-
-                // TODO kb
-                // * all dirty buffers without a project path should be saved when they are closed (due to another file select prompt needed)
-                // * dirty multibuffers should only propose saving if there are some files inside it that are dirty and not open in the pane
-                // (can we even check that?)
-                // * dirty singletons should close without a prompt if there's a dirty multibuffer open with the same file (as it works now already)
-                // * when closing multiple buffers and mentioning their filenames, omit multibuffers that contain all the files that are dirty and nothing else
-                cx.update(|cx| {
-                    dbg!((
-                        item.tab_tooltip_text(cx).map(|t| t.to_string()),
-                        item.item_id(),
-                        item.is_dirty(cx),
-                        item.is_singleton(cx),
-                        item.project_path(cx),
-                        save_intent,
-                        should_save,
-                    ));
-                    if !item.is_singleton(cx) {
-                        let multibuffer_model_ids = item.project_item_model_ids(cx);
-                        dbg!(&multibuffer_model_ids);
-                        item.for_each_project_item(cx, &mut |id, item| {
-                            if multibuffer_model_ids.contains(dbg!(&id)) {
-                                dbg!(item.entry_id(cx), item.is_dirty());
-                            }
-                        });
-                    }
-                })
-                .unwrap();
 
                 if should_save
                     && !Self::save_item(
                         project.clone(),
                         &pane,
                         item_ix,
-                        &*item,
+                        &*item_to_close,
                         save_intent,
                         &mut cx,
                     )
@@ -1428,7 +1398,7 @@ impl Pane {
                     if let Some(item_ix) = pane
                         .items
                         .iter()
-                        .position(|i| i.item_id() == item.item_id())
+                        .position(|i| i.item_id() == item_to_close.item_id())
                     {
                         pane.remove_item(item_ix, false, true, cx);
                     }

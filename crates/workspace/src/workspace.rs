@@ -7530,19 +7530,16 @@ mod tests {
         );
         cx.simulate_prompt_answer(0);
         cx.background_executor.run_until_parked();
-        cx.simulate_new_path_selection(|_| Some(PathBuf::default()));
-        cx.background_executor.run_until_parked();
         close_multi_buffer_task
             .await
             .expect("Closing the multi buffer failed");
         pane.update(cx, |pane, cx| {
-            assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
             assert_eq!(
                 dirty_multi_buffer_with_both.read(cx).save_count,
-                0,
-                "Multi buffer itself should not be saved"
+                1,
+                "Multi buffer item should get be saved"
             );
-            assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 0);
+            // Test impl does not save inner items, so we do not assert them
             assert_eq!(
                 pane.items_len(),
                 0,
