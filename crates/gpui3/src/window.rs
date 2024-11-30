@@ -2966,7 +2966,7 @@ impl Window {
             &dispatch_path,
         );
         if !match_result.to_replay.is_empty() {
-            self.replay_pending_input(match_result.to_replay)
+            self.replay_pending_input(match_result.to_replay, cx)
         }
 
         if !match_result.pending.is_empty() {
@@ -2977,7 +2977,7 @@ impl Window {
                 |window, mut cx: AsyncAppContext| async move {
                     cx.background_executor.timer(Duration::from_secs(1)).await;
                     window
-                        .update(&mut cx, move |window, _cx| {
+                        .update(&mut cx, move |window, cx| {
                             let Some(currently_pending) = window
                                 .pending_input
                                 .take()
@@ -2994,13 +2994,13 @@ impl Window {
                                 .dispatch_tree
                                 .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
-                            window.replay_pending_input(to_replay)
+                            window.replay_pending_input(to_replay, cx)
                         })
                         .log_err();
                 },
             ));
             self.pending_input = Some(currently_pending);
-            self.pending_input_changed();
+            self.pending_input_changed(cx);
             cx.propagate_event = false;
             return;
         }
@@ -3010,13 +3010,13 @@ impl Window {
             self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
             if !cx.propagate_event {
                 self.dispatch_keystroke_observers(event, Some(binding.action), cx);
-                self.pending_input_changed();
+                self.pending_input_changed(cx);
                 return;
             }
         }
 
         self.finish_dispatch_key_event(event, dispatch_path, cx);
-        self.pending_input_changed();
+        self.pending_input_changed(cx);
     }
 
     fn finish_dispatch_key_event(
@@ -3038,11 +3038,10 @@ impl Window {
         self.dispatch_keystroke_observers(event, None, cx);
     }
 
-    fn pending_input_changed(&mut self) {
-        todo!()
-        // self.pending_input_observers
-        //     .clone()
-        //     .retain(&(), |callback| callback(self));
+    fn pending_input_changed(&mut self, cx: &mut AppContext) {
+        self.pending_input_observers
+            .clone()
+            .retain(&(), |callback| callback(self, cx));
     }
 
     fn dispatch_key_down_up_event(
@@ -3051,30 +3050,29 @@ impl Window {
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
         cx: &mut AppContext,
     ) {
-        todo!()
-        // // Capture phase
-        // for node_id in dispatch_path {
-        //     let node = self.rendered_frame.dispatch_tree.node(*node_id);
+        // Capture phase
+        for node_id in dispatch_path {
+            let node = self.rendered_frame.dispatch_tree.node(*node_id);
 
-        //     for key_listener in node.key_listeners.clone() {
-        //         key_listener(event, DispatchPhase::Capture, self);
-        //         if !self.propagate_event {
-        //             return;
-        //         }
-        //     }
-        // }
+            for key_listener in node.key_listeners.clone() {
+                key_listener(event, DispatchPhase::Capture, self, cx);
+                if !cx.propagate_event {
+                    return;
+                }
+            }
+        }
 
-        // // Bubble phase
-        // for node_id in dispatch_path.iter().rev() {
-        //     // Handle low level key events
-        //     let node = self.rendered_frame.dispatch_tree.node(*node_id);
-        //     for key_listener in node.key_listeners.clone() {
-        //         key_listener(event, DispatchPhase::Bubble, self);
-        //         if !self.propagate_event {
-        //             return;
-        //         }
-        //     }
-        // }
+        // Bubble phase
+        for node_id in dispatch_path.iter().rev() {
+            // Handle low level key events
+            let node = self.rendered_frame.dispatch_tree.node(*node_id);
+            for key_listener in node.key_listeners.clone() {
+                key_listener(event, DispatchPhase::Bubble, self, cx);
+                if !cx.propagate_event {
+                    return;
+                }
+            }
+        }
     }
 
     fn dispatch_modifiers_changed_event(
@@ -3083,19 +3081,18 @@ impl Window {
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
         cx: &mut AppContext,
     ) {
-        todo!()
-        // let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() else {
-        //     return;
-        // };
-        // for node_id in dispatch_path.iter().rev() {
-        //     let node = self.rendered_frame.dispatch_tree.node(*node_id);
-        //     for listener in node.modifiers_changed_listeners.clone() {
-        //         listener(event, self);
-        //         if !self.propagate_event {
-        //             return;
-        //         }
-        //     }
-        // }
+        let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() else {
+            return;
+        };
+        for node_id in dispatch_path.iter().rev() {
+            let node = self.rendered_frame.dispatch_tree.node(*node_id);
+            for listener in node.modifiers_changed_listeners.clone() {
+                listener(event, self, cx);
+                if !cx.propagate_event {
+                    return;
+                }
+            }
+        }
     }
 
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
@@ -3114,69 +3111,67 @@ impl Window {
             .map(|pending_input| pending_input.keystrokes.as_slice())
     }
 
-    fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>) {
-        todo!()
-        // let node_id = self
-        //     .focus
-        //     .and_then(|focus_id| {
-        //         self.rendered_frame
-        //             .dispatch_tree
-        //             .focusable_node_id(focus_id)
-        //     })
-        //     .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
+    fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>, cx: &mut AppContext) {
+        let node_id = self
+            .focus
+            .and_then(|focus_id| {
+                self.rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id)
+            })
+            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
 
-        // let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
-        // 'replay: for replay in replays {
-        //     let event = KeyDownEvent {
-        //         keystroke: replay.keystroke.clone(),
-        //         is_held: false,
-        //     };
+        'replay: for replay in replays {
+            let event = KeyDownEvent {
+                keystroke: replay.keystroke.clone(),
+                is_held: false,
+            };
 
-        //     self.propagate_event = true;
-        //     for binding in replay.bindings {
-        //         self.dispatch_action_on_node(node_id, binding.action.as_ref());
-        //         if !self.propagate_event {
-        //             self.dispatch_keystroke_observers(&event, Some(binding.action));
-        //             continue 'replay;
-        //         }
-        //     }
+            cx.propagate_event = true;
+            for binding in replay.bindings {
+                self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                if !cx.propagate_event {
+                    self.dispatch_keystroke_observers(&event, Some(binding.action), cx);
+                    continue 'replay;
+                }
+            }
 
-        //     self.dispatch_key_down_up_event(&event, &dispatch_path);
-        //     if !self.propagate_event {
-        //         continue 'replay;
-        //     }
-        //     if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
-        //         if let Some(mut input_handler) = self.platform_window.take_input_handler() {
-        //             input_handler.dispatch_input(&input, self);
-        //             self.platform_window.set_input_handler(input_handler)
-        //         }
-        //     }
-        // }
+            self.dispatch_key_down_up_event(&event, &dispatch_path, cx);
+            if !cx.propagate_event {
+                continue 'replay;
+            }
+            if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
+                if let Some(mut input_handler) = self.platform_window.take_input_handler() {
+                    input_handler.dispatch_input(&input, cx);
+                    self.platform_window.set_input_handler(input_handler)
+                }
+            }
+        }
     }
 
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>, cx: &mut AppContext) {
-        todo!()
-        // let focus_handle = self.focused();
+        let focus_handle = self.focused();
 
-        // let window = self.window.handle;
-        // self.app.defer(move |cx| {
-        //     window
-        //         .update(cx, |_, cx| {
-        //             let node_id = focus_handle
-        //                 .and_then(|handle| {
-        //                     cx.window
-        //                         .rendered_frame
-        //                         .dispatch_tree
-        //                         .focusable_node_id(handle.id)
-        //                 })
-        //                 .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
+        let window = self.handle;
+        cx.defer(move |cx| {
+            window
+                .update(cx, |window, cx| {
+                    let node_id = focus_handle
+                        .and_then(|handle| {
+                            window
+                                .rendered_frame
+                                .dispatch_tree
+                                .focusable_node_id(handle.id)
+                        })
+                        .unwrap_or_else(|| window.rendered_frame.dispatch_tree.root_node_id());
 
-        //             cx.dispatch_action_on_node(node_id, action.as_ref());
-        //         })
-        //         .log_err();
-        // })
+                    window.dispatch_action_on_node(node_id, action.as_ref(), cx);
+                })
+                .log_err();
+        })
     }
 
     fn dispatch_action_on_node(
@@ -3185,98 +3180,97 @@ impl Window {
         action: &dyn Action,
         cx: &mut AppContext,
     ) {
-        todo!()
-        // let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
-        // // Capture phase for global actions.
-        // self.propagate_event = true;
-        // if let Some(mut global_listeners) = self
-        //     .global_action_listeners
-        //     .remove(&action.as_any().type_id())
-        // {
-        //     for listener in &global_listeners {
-        //         listener(action.as_any(), DispatchPhase::Capture, self);
-        //         if !self.propagate_event {
-        //             break;
-        //         }
-        //     }
+        // Capture phase for global actions.
+        cx.propagate_event = true;
+        if let Some(mut global_listeners) = cx
+            .global_action_listeners
+            .remove(&action.as_any().type_id())
+        {
+            for listener in &global_listeners {
+                listener(action.as_any(), DispatchPhase::Capture, cx);
+                if !cx.propagate_event {
+                    break;
+                }
+            }
 
-        //     global_listeners.extend(
-        //         self.global_action_listeners
-        //             .remove(&action.as_any().type_id())
-        //             .unwrap_or_default(),
-        //     );
+            global_listeners.extend(
+                cx.global_action_listeners
+                    .remove(&action.as_any().type_id())
+                    .unwrap_or_default(),
+            );
 
-        //     self.global_action_listeners
-        //         .insert(action.as_any().type_id(), global_listeners);
-        // }
+            cx.global_action_listeners
+                .insert(action.as_any().type_id(), global_listeners);
+        }
 
-        // if !self.propagate_event {
-        //     return;
-        // }
+        if !cx.propagate_event {
+            return;
+        }
 
-        // // Capture phase for window actions.
-        // for node_id in &dispatch_path {
-        //     let node = self.rendered_frame.dispatch_tree.node(*node_id);
-        //     for DispatchActionListener {
-        //         action_type,
-        //         listener,
-        //     } in node.action_listeners.clone()
-        //     {
-        //         let any_action = action.as_any();
-        //         if action_type == any_action.type_id() {
-        //             listener(any_action, DispatchPhase::Capture, self);
+        // Capture phase for window actions.
+        for node_id in &dispatch_path {
+            let node = self.rendered_frame.dispatch_tree.node(*node_id);
+            for DispatchActionListener {
+                action_type,
+                listener,
+            } in node.action_listeners.clone()
+            {
+                let any_action = action.as_any();
+                if action_type == any_action.type_id() {
+                    listener(any_action, DispatchPhase::Capture, self, cx);
 
-        //             if !self.propagate_event {
-        //                 return;
-        //             }
-        //         }
-        //     }
-        // }
+                    if !cx.propagate_event {
+                        return;
+                    }
+                }
+            }
+        }
 
-        // // Bubble phase for window actions.
-        // for node_id in dispatch_path.iter().rev() {
-        //     let node = self.rendered_frame.dispatch_tree.node(*node_id);
-        //     for DispatchActionListener {
-        //         action_type,
-        //         listener,
-        //     } in node.action_listeners.clone()
-        //     {
-        //         let any_action = action.as_any();
-        //         if action_type == any_action.type_id() {
-        //             self.propagate_event = false; // Actions stop propagation by default during the bubble phase
-        //             listener(any_action, DispatchPhase::Bubble, self);
+        // Bubble phase for window actions.
+        for node_id in dispatch_path.iter().rev() {
+            let node = self.rendered_frame.dispatch_tree.node(*node_id);
+            for DispatchActionListener {
+                action_type,
+                listener,
+            } in node.action_listeners.clone()
+            {
+                let any_action = action.as_any();
+                if action_type == any_action.type_id() {
+                    cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
+                    listener(any_action, DispatchPhase::Bubble, self, cx);
 
-        //             if !self.propagate_event {
-        //                 return;
-        //             }
-        //         }
-        //     }
-        // }
+                    if !cx.propagate_event {
+                        return;
+                    }
+                }
+            }
+        }
 
-        // // Bubble phase for global actions.
-        // if let Some(mut global_listeners) = self
-        //     .global_action_listeners
-        //     .remove(&action.as_any().type_id())
-        // {
-        //     for listener in global_listeners.iter().rev() {
-        //         self.propagate_event = false; // Actions stop propagation by default during the bubble phase
+        // Bubble phase for global actions.
+        if let Some(mut global_listeners) = cx
+            .global_action_listeners
+            .remove(&action.as_any().type_id())
+        {
+            for listener in global_listeners.iter().rev() {
+                cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
-        //         listener(action.as_any(), DispatchPhase::Bubble, self);
-        //         if !self.propagate_event {
-        //             break;
-        //         }
-        //     }
+                listener(action.as_any(), DispatchPhase::Bubble, cx);
+                if !cx.propagate_event {
+                    break;
+                }
+            }
 
-        //     global_listeners.extend(
-        //         self.global_action_listeners
-        //             .remove(&action.as_any().type_id())
-        //             .unwrap_or_default(),
-        //     );
+            global_listeners.extend(
+                cx.global_action_listeners
+                    .remove(&action.as_any().type_id())
+                    .unwrap_or_default(),
+            );
 
-        //     self.global_action_listeners
-        //         .insert(action.as_any().type_id(), global_listeners);
-        // }
+            cx.global_action_listeners
+                .insert(action.as_any().type_id(), global_listeners);
+        }
     }
 
     /// Focus the current window and bring it to the foreground at the platform level.
