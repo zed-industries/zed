@@ -6560,7 +6560,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
- "git",
  "globset",
  "gpui",
  "http_client",
