@@ -6422,24 +6422,26 @@ mod tests {
         let item1 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+                .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
         let item2 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_conflict(true)
-                .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
+                .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
         let item3 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_conflict(true)
-                .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
+                .with_project_items(&[dirty_project_item(3, "3.txt", cx)])
         });
         let item4 = cx.new_view(|cx| {
-            TestItem::new(cx)
-                .with_dirty(true)
-                .with_project_items(&[TestProjectItem::new_untitled(cx)])
+            TestItem::new(cx).with_dirty(true).with_project_items(&[{
+                let project_item = TestProjectItem::new_untitled(cx);
+                project_item.update(cx, |project_item, _| project_item.is_dirty = true);
+                project_item
+            }])
         });
         let pane = workspace.update(cx, |workspace, cx| {
             workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
@@ -6531,7 +6533,7 @@ mod tests {
                 cx.new_view(|cx| {
                     TestItem::new(cx)
                         .with_dirty(true)
-                        .with_project_items(&[TestProjectItem::new(
+                        .with_project_items(&[dirty_project_item(
                             project_entry_id,
                             &format!("{project_entry_id}.txt"),
                             cx,
@@ -6713,6 +6715,9 @@ mod tests {
                 })
             });
             item.is_dirty = true;
+            for project_item in &mut item.project_items {
+                project_item.update(cx, |project_item, _| project_item.is_dirty = true);
+            }
         });
 
         pane.update(cx, |pane, cx| {
