@@ -8,7 +8,7 @@
                 object: [
                     (identifier) @_name
                     (member_expression object: (identifier) @_name)
-                ]*
+                ]
             )
         ]
         (#any-of? @_name "it" "test" "describe")

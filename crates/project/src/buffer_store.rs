@@ -1,7 +1,7 @@
 use crate::{
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    Item, ProjectPath,
+    ProjectItem as _, ProjectPath,
 };
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 use anyhow::{anyhow, Context as _, Result};

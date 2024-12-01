@@ -9313,6 +9313,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "command_palette_hooks",
  "db",
  "editor",
  "file_icons",
