@@ -1,14 +1,11 @@
 use crate::track::RemoteVideoTrack;
 use anyhow::Result;
 use futures::StreamExt as _;
-use gpui::{
-    img, Empty, EventEmitter, IntoElement, Render, ScreenCaptureFrame, Task, View, ViewContext,
-    VisualContext as _,
-};
+use gpui::{Empty, EventEmitter, IntoElement, Render, Task, View, ViewContext, VisualContext as _};
 
 pub struct RemoteVideoTrackView {
     track: RemoteVideoTrack,
-    frame: Option<ScreenCaptureFrame>,
+    frame: Option<crate::RemoteVideoFrame>,
     _maintain_frame: Task<Result<()>>,
 }
 
@@ -51,14 +48,12 @@ impl Render for RemoteVideoTrackView {
         #[cfg(target_os = "macos")]
         if let Some(frame) = &self.frame {
             use gpui::Styled as _;
-            return gpui::surface(frame.0.clone())
-                .size_full()
-                .into_any_element();
+            return gpui::surface(frame.clone()).size_full().into_any_element();
         }
 
         #[cfg(not(target_os = "macos"))]
         if let Some(frame) = &self.frame {
-            return img(frame.0.clone()).into_any_element();
+            return gpui::img(frame.clone()).into_any_element();
         }
 
         Empty.into_any_element()

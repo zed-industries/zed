@@ -22,6 +22,4 @@ pub(crate) use wrapper::*;
 
 pub(crate) use windows::Win32::Foundation::HWND;
 
-// TODO(mgsloan): This type won't make sense for frame capture. A `type VideoFrame` with this type
-// should be added to `live_kit_client`.
-pub(crate) type PlatformScreenCaptureFrame = std::sync::Arc<crate::RenderImage>;
+pub(crate) type PlatformScreenCaptureFrame = ();

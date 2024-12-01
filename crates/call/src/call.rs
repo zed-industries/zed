@@ -18,8 +18,6 @@ use room::Event;
 use settings::Settings;
 use std::sync::Arc;
 
-#[cfg(not(target_os = "windows"))]
-pub use live_kit_client::play_remote_video_track;
 pub use live_kit_client::{
     track::RemoteVideoTrack, RemoteVideoTrackView, RemoteVideoTrackViewEvent,
 };
