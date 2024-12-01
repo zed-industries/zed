@@ -154,6 +154,7 @@ actions!(
         SaveAs,
         SaveWithoutFormat,
         ToggleBottomDock,
+        ToggleBottomDockLayout,
         ToggleCenteredLayout,
         ToggleLeftDock,
         ToggleRightDock,
@@ -940,6 +941,13 @@ impl Workspace {
 
         let left_dock = Dock::new(DockPosition::Left, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, cx);
+        bottom_dock.update(cx, |dock, cx| {
+            let settings = WorkspaceSettings::get_global(cx);
+            dock.set_use_full_width(
+                matches!(settings.bottom_dock_layout, BottomDockLayout::Full),
+                cx,
+            );
+        });
         let right_dock = Dock::new(DockPosition::Right, cx);
         let left_dock_buttons = cx.new_view(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.new_view(|cx| PanelButtons::new(bottom_dock.clone(), cx));
@@ -2304,6 +2312,15 @@ impl Workspace {
         if focus_center {
             self.active_pane.update(cx, |pane, cx| pane.focus(cx))
         }
+
+        cx.notify();
+        self.serialize_workspace(cx);
+    }
+
+    pub fn toggle_bottom_dock_layout(&mut self, cx: &mut ViewContext<Self>) {
+        self.bottom_dock.update(cx, |dock, cx| {
+            dock.set_use_full_width(!dock.is_using_full_width(), cx);
+        });
 
         cx.notify();
         self.serialize_workspace(cx);
@@ -4441,6 +4458,11 @@ impl Workspace {
                     workspace.toggle_dock(DockPosition::Right, cx);
                 }),
             )
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ToggleBottomDockLayout, cx| {
+                    workspace.toggle_bottom_dock_layout(cx);
+                },
+            ))
             .on_action(
                 cx.listener(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
                     workspace.toggle_dock(DockPosition::Bottom, cx);
@@ -4886,9 +4908,8 @@ impl Render for Workspace {
                                     ))
                                 })
                                 .child({
-                                    let settings = WorkspaceSettings::get_global(cx);
-                                    match settings.bottom_dock_layout {
-                                        BottomDockLayout::Full => {
+                                    match self.bottom_dock.read(cx).is_using_full_width() {
+                                        true => {
                                             div()
                                                 .flex()
                                                 .flex_col()
@@ -4956,7 +4977,7 @@ impl Render for Workspace {
                                                     cx,
                                                 )))
                                         }
-                                        BottomDockLayout::Contained => {
+                                        false => {
                                             div()
                                                 .flex()
                                                 .flex_row()
