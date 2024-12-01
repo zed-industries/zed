@@ -133,6 +133,16 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Autoscroll on Clicks
+
+- Description: Whether to scroll when clicking near the edge of the visible text area.
+- Setting: `autoscroll_on_clicks`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Auto Update
 
 - Description: Whether or not to automatically check for updates.
@@ -2333,18 +2343,15 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Default:
 
 ```json
-{
-  "assistant": {
-    "enabled": true,
-    "button": true,
-    "dock": "right",
-    "default_width": 640,
-    "default_height": 320,
-    "provider": "openai",
-    "version": "1",
-    "show_hints": true
-  }
-}
+"assistant": {
+  "enabled": true,
+  "button": true,
+  "dock": "right",
+  "default_width": 640,
+  "default_height": 320,
+  "provider": "openai",
+  "version": "1",
+},
 ```
 
 ## Outline Panel

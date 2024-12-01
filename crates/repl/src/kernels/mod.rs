@@ -15,7 +15,8 @@ use project::{Project, WorktreeId};
 pub use remote_kernels::*;
 
 use anyhow::Result;
-use runtimelib::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
+use jupyter_protocol::JupyterKernelspec;
+use runtimelib::{ExecutionState, JupyterMessage, KernelInfoReply};
 use ui::{Icon, IconName, SharedString};
 
 pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;

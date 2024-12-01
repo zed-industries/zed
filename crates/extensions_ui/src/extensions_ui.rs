@@ -1,9 +1,6 @@
 mod components;
-mod extension_registration_hooks;
 mod extension_suggest;
 mod extension_version_selector;
-
-pub use extension_registration_hooks::ConcreteExtensionRegistrationHooks;
 
 use std::ops::DerefMut;
 use std::sync::OnceLock;

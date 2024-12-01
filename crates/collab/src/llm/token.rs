@@ -8,6 +8,7 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +17,10 @@ pub struct LlmTokenClaims {
     pub exp: u64,
     pub jti: String,
     pub user_id: u64,
+    #[serde(default)]
+    pub system_id: Option<String>,
+    #[serde(default)]
+    pub metrics_id: Option<Uuid>,
     pub github_user_login: String,
     pub is_staff: bool,
     pub has_llm_closed_beta_feature_flag: bool,
@@ -36,6 +41,7 @@ impl LlmTokenClaims {
         has_llm_closed_beta_feature_flag: bool,
         has_llm_subscription: bool,
         plan: rpc::proto::Plan,
+        system_id: Option<String>,
         config: &Config,
     ) -> Result<String> {
         let secret = config
@@ -49,6 +55,8 @@ impl LlmTokenClaims {
             exp: (now + LLM_TOKEN_LIFETIME).timestamp() as u64,
             jti: uuid::Uuid::new_v4().to_string(),
             user_id: user.id.to_proto(),
+            system_id,
+            metrics_id: Some(user.metrics_id),
             github_user_login: user.github_login.clone(),
             is_staff,
             has_llm_closed_beta_feature_flag,

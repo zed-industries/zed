@@ -1,20 +1,16 @@
-use crate::extension_lsp_adapter::ExtensionLspAdapter;
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionSettings, ExtensionStore,
     GrammarManifestEntry, SchemaVersion, RELOAD_DEBOUNCE_DURATION,
 };
-use anyhow::Result;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
-use extension::Extension;
+use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
-use gpui::{BackgroundExecutor, Context, SemanticVersion, SharedString, Task, TestAppContext};
+use gpui::{Context, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{
-    LanguageMatcher, LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage,
-};
+use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -30,91 +26,6 @@ use std::{
 };
 use theme::ThemeRegistry;
 use util::test::temp_tree;
-
-use crate::ExtensionRegistrationHooks;
-
-struct TestExtensionRegistrationHooks {
-    executor: BackgroundExecutor,
-    language_registry: Arc<LanguageRegistry>,
-    theme_registry: Arc<ThemeRegistry>,
-}
-
-impl ExtensionRegistrationHooks for TestExtensionRegistrationHooks {
-    fn list_theme_names(&self, path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
-        self.executor.spawn(async move {
-            let themes = theme::read_user_theme(&path, fs).await?;
-            Ok(themes.themes.into_iter().map(|theme| theme.name).collect())
-        })
-    }
-
-    fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn fs::Fs>) -> Task<Result<()>> {
-        let theme_registry = self.theme_registry.clone();
-        self.executor
-            .spawn(async move { theme_registry.load_user_theme(&theme_path, fs).await })
-    }
-
-    fn remove_user_themes(&self, themes: Vec<SharedString>) {
-        self.theme_registry.remove_user_themes(&themes);
-    }
-
-    fn register_language(
-        &self,
-        language: language::LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: language::LanguageMatcher,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
-    ) {
-        self.language_registry
-            .register_language(language, grammar, matcher, load)
-    }
-
-    fn remove_languages(
-        &self,
-        languages_to_remove: &[language::LanguageName],
-        grammars_to_remove: &[Arc<str>],
-    ) {
-        self.language_registry
-            .remove_languages(&languages_to_remove, &grammars_to_remove);
-    }
-
-    fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
-        self.language_registry.register_wasm_grammars(grammars)
-    }
-
-    fn register_lsp_adapter(
-        &self,
-        extension: Arc<dyn Extension>,
-        language_server_id: LanguageServerName,
-        language: LanguageName,
-    ) {
-        self.language_registry.register_lsp_adapter(
-            language.clone(),
-            Arc::new(ExtensionLspAdapter::new(
-                extension,
-                language_server_id,
-                language,
-            )),
-        );
-    }
-
-    fn update_lsp_status(
-        &self,
-        server_name: lsp::LanguageServerName,
-        status: LanguageServerBinaryStatus,
-    ) {
-        self.language_registry
-            .update_lsp_status(server_name, status);
-    }
-
-    fn remove_lsp_adapter(
-        &self,
-        language_name: &language::LanguageName,
-        server_name: &lsp::LanguageServerName,
-    ) {
-        self.language_registry
-            .remove_lsp_adapter(language_name, server_name);
-    }
-}
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -347,20 +258,18 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         .collect(),
     };
 
-    let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    let proxy = Arc::new(ExtensionHostProxy::new());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
-    let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
-        executor: cx.executor(),
-        language_registry: language_registry.clone(),
-        theme_registry: theme_registry.clone(),
-    });
+    theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
+    let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
 
     let store = cx.new_model(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
-            registration_hooks.clone(),
+            proxy.clone(),
             fs.clone(),
             http_client.clone(),
             http_client.clone(),
@@ -485,7 +394,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
-            registration_hooks,
+            proxy,
             fs.clone(),
             http_client.clone(),
             http_client.clone(),
@@ -568,13 +477,11 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
 
-    let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+    let proxy = Arc::new(ExtensionHostProxy::new());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
-    let registration_hooks = Arc::new(TestExtensionRegistrationHooks {
-        executor: cx.executor(),
-        language_registry: language_registry.clone(),
-        theme_registry: theme_registry.clone(),
-    });
+    theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
+    let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+    language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
 
     let mut status_updates = language_registry.language_server_binary_statuses();
@@ -668,7 +575,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         ExtensionStore::new(
             extensions_dir.clone(),
             Some(cache_dir),
-            registration_hooks,
+            proxy,
             fs.clone(),
             extension_client.clone(),
             builder_client,

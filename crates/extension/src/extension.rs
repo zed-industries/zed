@@ -1,4 +1,5 @@
 pub mod extension_builder;
+mod extension_host_proxy;
 mod extension_manifest;
 mod types;
 
@@ -9,12 +10,18 @@ use ::lsp::LanguageServerName;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use fs::normalize_path;
-use gpui::Task;
+use gpui::{AppContext, Task};
 use language::LanguageName;
 use semantic_version::SemanticVersion;
 
+pub use crate::extension_host_proxy::*;
 pub use crate::extension_manifest::*;
 pub use crate::types::*;
+
+/// Initializes the `extension` crate.
+pub fn init(cx: &mut AppContext) {
+    ExtensionHostProxy::default_global(cx);
+}
 
 #[async_trait]
 pub trait WorktreeDelegate: Send + Sync + 'static {

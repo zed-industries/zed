@@ -1,11 +1,11 @@
 pub mod wit;
 
-use crate::{ExtensionManifest, ExtensionRegistrationHooks};
+use crate::ExtensionManifest;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use extension::{
-    CodeLabel, Command, Completion, KeyValueStoreDelegate, ProjectDelegate, SlashCommand,
-    SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
+    CodeLabel, Command, Completion, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate,
+    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
@@ -40,7 +40,7 @@ pub struct WasmHost {
     release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
-    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
+    pub(crate) proxy: Arc<ExtensionHostProxy>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
     _main_thread_message_task: Task<()>,
@@ -330,7 +330,7 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
-        registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
+        proxy: Arc<ExtensionHostProxy>,
         work_dir: PathBuf,
         cx: &mut AppContext,
     ) -> Arc<Self> {
@@ -346,7 +346,7 @@ impl WasmHost {
             work_dir,
             http_client,
             node_runtime,
-            registration_hooks,
+            proxy,
             release_channel: ReleaseChannel::global(cx),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,

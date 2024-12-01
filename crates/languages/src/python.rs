@@ -79,6 +79,7 @@ impl LspAdapter for PythonLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let node = delegate.which("node".as_ref()).await?;
@@ -753,33 +754,29 @@ impl LspAdapter for PyLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        _: &dyn LspAdapterDelegate,
-        _: &AsyncAppContext,
+        delegate: &dyn LspAdapterDelegate,
+        toolchains: Arc<dyn LanguageToolchainStore>,
+        cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        // We don't support user-provided pylsp, as global packages are discouraged in Python ecosystem.
-        None
+        let venv = toolchains
+            .active_toolchain(
+                delegate.worktree_id(),
+                LanguageName::new("Python"),
+                &mut cx.clone(),
+            )
+            .await?;
+        let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
+        pylsp_path.exists().then(|| LanguageServerBinary {
+            path: venv.path.to_string().into(),
+            arguments: vec![pylsp_path.into()],
+            env: None,
+        })
     }
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Any + Send>> {
-        // let uri = "https://pypi.org/pypi/python-lsp-server/json";
-        // let mut root_manifest = delegate
-        //     .http_client()
-        //     .get(&uri, Default::default(), true)
-        //     .await?;
-        // let mut body = Vec::new();
-        // root_manifest.body_mut().read_to_end(&mut body).await?;
-        // let as_str = String::from_utf8(body)?;
-        // let json = serde_json::Value::from_str(&as_str)?;
-        // let latest_version = json
-        //     .get("info")
-        //     .and_then(|info| info.get("version"))
-        //     .and_then(|version| version.as_str().map(ToOwned::to_owned))
-        //     .ok_or_else(|| {
-        //         anyhow!("PyPI response did not contain version info for python-language-server")
-        //     })?;
         Ok(Box::new(()) as Box<_>)
     }
 

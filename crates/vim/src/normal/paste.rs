@@ -25,7 +25,7 @@ impl Vim {
     pub fn paste(&mut self, action: &Paste, cx: &mut ViewContext<Self>) {
         self.record_current_action(cx);
         self.store_visual_marks(cx);
-        let count = self.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
 
         self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);

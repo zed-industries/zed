@@ -1,5 +1,4 @@
 mod app_menus;
-pub mod assistant_hints;
 pub mod inline_completion_registry;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) mod linux_prompts;
@@ -30,7 +29,7 @@ use gpui::{
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
-use project::{DirectoryLister, Item};
+use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use recent_projects::open_ssh_project;
@@ -236,11 +235,11 @@ pub fn initialize_workspace(
                 .unwrap_or(true)
         });
 
+        let release_channel = ReleaseChannel::global(cx);
+        let assistant2_feature_flag = cx.wait_for_flag::<feature_flags::Assistant2FeatureFlag>();
+
         let prompt_builder = prompt_builder.clone();
         cx.spawn(|workspace_handle, mut cx| async move {
-            let assistant_panel =
-                assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
-
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
@@ -257,7 +256,6 @@ pub fn initialize_workspace(
                 project_panel,
                 outline_panel,
                 terminal_panel,
-                assistant_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
@@ -265,20 +263,46 @@ pub fn initialize_workspace(
                 project_panel,
                 outline_panel,
                 terminal_panel,
-                assistant_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-                workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(outline_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
+            })?;
+            let is_assistant2_enabled =
+                if cfg!(test) || release_channel != ReleaseChannel::Dev {
+                    false
+                } else {
+                    assistant2_feature_flag.await
+                }
+            ;
+
+            let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
+                let assistant2_panel =
+                    assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?;
+
+                (None, Some(assistant2_panel))
+            } else {
+                let assistant_panel =
+                    assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone()).await?;
+
+                (Some(assistant_panel), None)
+            };
+            workspace_handle.update(&mut cx, |workspace, cx| {
+                if let Some(assistant_panel) = assistant_panel {
+                    workspace.add_panel(assistant_panel, cx);
+                }
+
+                if let Some(assistant2_panel) = assistant2_panel {
+                    workspace.add_panel(assistant2_panel, cx);
+                }
             })
         })
         .detach();
@@ -3177,12 +3201,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"
-                {
-                    "base_keymap": "Atom"
-                }
-                "#
-                .into(),
+                &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
             .await
@@ -3192,16 +3211,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"
-                [
-                    {
-                        "bindings": {
-                            "backspace": "test1::A"
-                        }
-                    }
-                ]
-                "#
-                .into(),
+                &r#"[{"bindings": {"backspace": "test1::A"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -3244,16 +3254,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"
-                [
-                    {
-                        "bindings": {
-                            "backspace": "test1::B"
-                        }
-                    }
-                ]
-                "#
-                .into(),
+                &r#"[{"bindings": {"backspace": "test1::B"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -3273,12 +3274,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"
-                {
-                    "base_keymap": "JetBrains"
-                }
-                "#
-                .into(),
+                &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )
             .await
@@ -3305,24 +3301,20 @@ mod tests {
         // From the Atom keymap
         use workspace::ActivatePreviousPane;
         // From the JetBrains keymap
-        use pane::ActivatePrevItem;
+        use diagnostics::Deploy;
+
         workspace
             .update(cx, |workspace, _| {
-                workspace
-                    .register_action(|_, _: &A, _| {})
-                    .register_action(|_, _: &B, _| {});
+                workspace.register_action(|_, _: &A, _cx| {});
+                workspace.register_action(|_, _: &B, _cx| {});
+                workspace.register_action(|_, _: &Deploy, _cx| {});
             })
             .unwrap();
         app_state
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"
-                {
-                    "base_keymap": "Atom"
-                }
-                "#
-                .into(),
+                &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
             .await
@@ -3331,16 +3323,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"
-                [
-                    {
-                        "bindings": {
-                            "backspace": "test2::A"
-                        }
-                    }
-                ]
-                "#
-                .into(),
+                &r#"[{"bindings": {"backspace": "test2::A"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -3378,16 +3361,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"
-                [
-                    {
-                        "bindings": {
-                            "backspace": null
-                        }
-                    }
-                ]
-                "#
-                .into(),
+                &r#"[{"bindings": {"backspace": null}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -3407,12 +3381,7 @@ mod tests {
             .fs
             .save(
                 "/settings.json".as_ref(),
-                &r#"
-                {
-                    "base_keymap": "JetBrains"
-                }
-                "#
-                .into(),
+                &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )
             .await
@@ -3420,12 +3389,7 @@ mod tests {
 
         cx.background_executor.run_until_parked();
 
-        assert_key_bindings_for(
-            workspace.into(),
-            cx,
-            vec![("[", &ActivatePrevItem)],
-            line!(),
-        );
+        assert_key_bindings_for(workspace.into(), cx, vec![("6", &Deploy)], line!());
     }
 
     #[gpui::test]
