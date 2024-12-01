@@ -37,7 +37,7 @@ use workspace::{
     ui::IconName,
     ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane, DraggedTab,
     ItemId, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight,
-    SplitUp, SwapPaneInDirection, ToggleZoom, Workspace,
+    SplitUp, SwapPaneInDirection, ToggleBottomDockLayout, ToggleZoom, Workspace,
 };
 
 use anyhow::Result;
@@ -128,6 +128,7 @@ impl TerminalPanel {
 
     fn apply_tab_bar_buttons(&self, terminal_pane: &View<Pane>, cx: &mut ViewContext<Self>) {
         let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
+        let workspace = self.workspace.clone();
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let split_context = pane
@@ -196,6 +197,22 @@ impl TerminalPanel {
                                 }
                             }),
                     )
+                    .child({
+                        let layout = Workspace::is_bottom_dock_full_width(&workspace, cx);
+                        IconButton::new("toggle_extended", IconName::ExpandHorizontal)
+                            .icon_size(IconSize::Small)
+                            .selected(layout)
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.dispatch_action(workspace::ToggleBottomDockLayout.boxed_clone());
+                            }))
+                            .tooltip(move |cx| {
+                                Tooltip::for_action(
+                                    if layout { "Shrink Dock" } else { "Expand Dock" },
+                                    &ToggleBottomDockLayout,
+                                    cx,
+                                )
+                            })
+                    })
                     .child({
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)

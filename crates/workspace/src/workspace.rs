@@ -1260,6 +1260,18 @@ impl Workspace {
         &self.bottom_dock
     }
 
+    pub fn is_bottom_dock_full_width(workspace: &WeakView<Workspace>, cx: &WindowContext) -> bool {
+        if let Some(workspace) = workspace.upgrade() {
+            workspace
+                .read(cx)
+                .bottom_dock()
+                .read(cx)
+                .is_using_full_width()
+        } else {
+            false
+        }
+    }
+
     pub fn right_dock(&self) -> &View<Dock> {
         &self.right_dock
     }

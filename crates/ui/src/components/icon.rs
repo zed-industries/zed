@@ -170,6 +170,7 @@ pub enum IconName {
     EllipsisVertical,
     Envelope,
     Escape,
+    ExpandHorizontal,
     ExpandVertical,
     Exit,
     ExternalLink,
