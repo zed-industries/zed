@@ -14,6 +14,8 @@ pub fn fallback_prompt_renderer(
     actions: &[&str],
     focus_handle: FocusHandle,
     confirm: Rc<dyn Fn(usize, &mut Window)>,
+    _window: &mut Window,
+    _cx: &mut AppContext,
 ) -> Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement> {
     let message = message.to_string();
     let detail = detail.map(|s| s.to_string());
@@ -108,6 +110,8 @@ pub(crate) enum PromptBuilder {
                 &[&str],
                 FocusHandle,
                 Rc<dyn Fn(usize, &mut Window)>,
+                &mut Window,
+                &mut AppContext,
             ) -> Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
         >,
     ),
@@ -121,6 +125,8 @@ impl Deref for PromptBuilder {
         &[&str],
         FocusHandle,
         Rc<dyn Fn(usize, &mut Window)>,
+        &mut Window,
+        &mut AppContext,
     ) -> Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>;
 
     fn deref(&self) -> &Self::Target {

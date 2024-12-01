@@ -30,10 +30,11 @@ use util::ResultExt;
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyElement,
     AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase,
-    DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, IntoElement, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, Point, PromptBuilder, Render, Reservation, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    DisplayId, Entity, EventEmitter, FocusHandle, ForegroundExecutor, Global, IntoElement,
+    KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, Point, PromptBuilder, PromptLevel, Render, Reservation,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
+    WindowAppearance, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -1332,24 +1333,24 @@ impl AppContext {
         self.active_drag.is_some()
     }
 
-    // todo!(restore this functionality)
-    // /// Set the prompt renderer for GPUI. This will replace the default or platform specific
-    // /// prompts with this custom implementation.
-    // pub fn set_prompt_builder(
-    //     &mut self,
-    //     renderer: impl Fn(
-    //             PromptLevel,
-    //             &str,
-    //             Option<&str>,
-    //             &[&str],
-    //             PromptHandle,
-    //             &mut Window,
-    //             &mut AppContext,
-    //         ) -> RenderablePromptHandle
-    //         + 'static,
-    // ) {
-    //     self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
-    // }
+    /// Set the prompt renderer for GPUI. This will replace the default or platform specific
+    /// prompts with this custom implementation.
+    pub fn set_prompt_builder(
+        &mut self,
+        prompt_builder: impl Fn(
+                PromptLevel,
+                &str,
+                Option<&str>,
+                &[&str],
+                FocusHandle,
+                Rc<dyn Fn(usize, &mut Window)>,
+                &mut Window,
+                &mut AppContext,
+            ) -> Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>
+            + 'static,
+    ) {
+        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(prompt_builder)))
+    }
 
     /// Remove an asset from GPUI's cache
     pub fn remove_asset<A: Asset>(&mut self, source: &A::Source) {

@@ -3325,10 +3325,10 @@ impl Window {
                 .platform_window
                 .prompt(level, message, detail, answers)
                 .unwrap_or_else(|| {
-                    self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+                    self.build_custom_prompt(&prompt_builder, level, message, detail, answers, cx)
                 }),
             PromptBuilder::Custom(_) => {
-                self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+                self.build_custom_prompt(&prompt_builder, level, message, detail, answers, cx)
             }
         };
 
@@ -3344,6 +3344,7 @@ impl Window {
         message: &str,
         detail: Option<&str>,
         answers: &[&str],
+        cx: &mut AppContext,
     ) -> oneshot::Receiver<usize> {
         let previous_focus = self.focused();
 
@@ -3361,8 +3362,16 @@ impl Window {
         let focus_handle = self.focus_handle();
         self.focus(&focus_handle);
 
-        let render_prompt =
-            (prompt_builder)(level, message, detail, answers, focus_handle, confirm);
+        let render_prompt = (prompt_builder)(
+            level,
+            message,
+            detail,
+            answers,
+            focus_handle,
+            confirm,
+            self,
+            cx,
+        );
 
         self.prompt = Some(render_prompt);
 
