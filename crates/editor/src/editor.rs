@@ -510,42 +510,42 @@ impl ComputedCompletionEdit {
 
         let old_text = snapshot.text_for_range(start..end).collect::<String>();
 
-        // if old_text.is_empty() {
-        //     Some(Self::Insertion {
-        //         position: start,
-        //         text,
-        //         render_inlay_ids: Vec::new(),
-        //     })
-        // } else {
-        let new_text = edit.text.to_string();
-        let diff = similar::TextDiff::from_chars(&old_text, &new_text);
+        if old_text.is_empty() {
+            Some(Self::Insertion {
+                position: start,
+                text,
+                render_inlay_ids: Vec::new(),
+            })
+        } else {
+            let new_text = edit.text.to_string();
+            let diff = similar::TextDiff::from_chars(&old_text, &new_text);
 
-        let start_offset = start.to_offset(snapshot);
+            let start_offset = start.to_offset(snapshot);
 
-        let mut deletions = Vec::new();
-        let mut additions = Vec::new();
-        for op in diff.ops() {
-            let (change, old, new) = op.as_tag_tuple();
-            let old = cmp::min(old.start + start_offset, snapshot.len())
-                ..cmp::min(old.end + start_offset, snapshot.len());
-            match change {
-                similar::DiffTag::Equal => continue,
-                similar::DiffTag::Delete => deletions.push(old.to_anchors(snapshot)),
-                similar::DiffTag::Insert => additions.push(new),
-                similar::DiffTag::Replace => {
-                    deletions.push(old.to_anchors(snapshot));
-                    additions.push(new);
+            let mut deletions = Vec::new();
+            let mut additions = Vec::new();
+            for op in diff.ops() {
+                let (change, old, new) = op.as_tag_tuple();
+                let old = cmp::min(old.start + start_offset, snapshot.len())
+                    ..cmp::min(old.end + start_offset, snapshot.len());
+                match change {
+                    similar::DiffTag::Equal => continue,
+                    similar::DiffTag::Delete => deletions.push(old.to_anchors(snapshot)),
+                    similar::DiffTag::Insert => additions.push(new),
+                    similar::DiffTag::Replace => {
+                        deletions.push(old.to_anchors(snapshot));
+                        additions.push(new);
+                    }
                 }
             }
-        }
 
-        Some(Self::Diff {
-            text,
-            range: start..end,
-            deletions,
-            additions: Arc::new(additions),
-        })
-        // }
+            Some(Self::Diff {
+                text,
+                range: start..end,
+                deletions,
+                additions: Arc::new(additions),
+            })
+        }
     }
 
     pub fn position(&self) -> Anchor {
@@ -2910,7 +2910,8 @@ impl Editor {
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
-            self.discard_inline_completion(false, cx);
+            // TODO: Figure out how to make this work for old providers
+            // self.discard_inline_completion(false, cx);
             linked_editing_ranges::refresh_linked_ranges(self, cx);
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(cx);
@@ -5499,6 +5500,9 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
+        if self.move_to_active_inline_completion(cx) {
+            return;
+        }
         let Some(completion_edit) = self.take_active_inline_completion(false, cx) else {
             return;
         };
@@ -5526,6 +5530,11 @@ impl Editor {
         _: &AcceptPartialInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
+        //TODO: Is this the correct behavior
+        if self.move_to_active_inline_completion(cx) {
+            return;
+        }
+
         if self.selections.count() == 1 && self.has_active_inline_completion(cx) {
             let mut is_insertion = false;
             if let Some(state) = &self.active_inline_completion {
@@ -5581,6 +5590,35 @@ impl Editor {
         } else {
             false
         }
+    }
+
+    fn move_to_active_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(move_to) = self.accepting_active_inline_completion_needs_movement(cx) {
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select_ranges(vec![move_to..move_to])
+            });
+            true
+        } else {
+            false
+        }
+    }
+
+    //TODO: Naming
+    fn accepting_active_inline_completion_needs_movement(&self, cx: &AppContext) -> Option<Anchor> {
+        let completion = self.active_inline_completion.as_ref()?;
+
+        let cursor_position = self.selections.newest_anchor().head();
+        let active_edit_position = completion.active_edit().position();
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+
+        // TODO: Decide which approach we want to use to determine if we should move cursor to completion:
+        // - Check if cursor is on the same line as completion
+        // - Evaluate if cursor is within N rows of completion
+        if cursor_position.to_point(&snapshot).row == active_edit_position.to_point(&snapshot).row {
+            return None;
+        }
+        Some(active_edit_position)
     }
 
     fn take_active_inline_completion(

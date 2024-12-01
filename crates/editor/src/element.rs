@@ -2755,42 +2755,73 @@ impl EditorElement {
             .as_ref()?
             .active_edit();
 
-        let upper_left = edit.position().to_display_point(editor_snapshot);
+        let show_go_to_edit_hint = self
+            .editor
+            .read(cx)
+            .accepting_active_inline_completion_needs_movement(cx)
+            .is_some();
 
+        let upper_left = edit.position().to_display_point(editor_snapshot);
         let is_visible = visible_row_range.contains(&upper_left.row());
 
-        let (origin, mut element) = if !is_visible {
-            let is_above = visible_row_range.start > upper_left.row();
+        let (origin, mut element) = if show_go_to_edit_hint {
+            if is_visible {
+                let element = div()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_md()
+                    .px_1()
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(Icon::new(IconName::ArrowRight))
+                            .child(Label::new("tab")), // TODO: replace this with the actual keystroke
+                    )
+                    .into_any();
 
-            let mut element = div()
-                .bg(cx.theme().colors().editor_background)
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .rounded_md()
-                .px_1()
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(if is_above {
-                            IconName::ArrowUp
-                        } else {
-                            IconName::ArrowDown
-                        }))
-                        .child(Label::new("Tab to edit")), // TODO: replace this with the actual keystroke
+                let len = editor_snapshot.line_len(upper_left.row());
+                let popup_position = DisplayPoint::new(upper_left.row(), len);
+                let origin = self.editor.update(cx, |editor, cx| {
+                    editor.display_to_pixel_point(popup_position, editor_snapshot, cx)
+                })?;
+                (
+                    text_bounds.origin + origin + point(px(X_OFFSET), px(0.)),
+                    element,
                 )
-                .into_any();
-
-            let size = element.layout_as_root(AvailableSpace::min_size(), cx);
-
-            let offset_y = if is_above {
-                px(PADDING_Y)
             } else {
-                text_bounds.size.height - size.height - px(PADDING_Y)
-            };
+                let is_above = visible_row_range.start > upper_left.row();
 
-            let origin =
-                text_bounds.origin + point((text_bounds.size.width - size.width) / 2., offset_y);
-            (origin, element)
+                let mut element = div()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_md()
+                    .px_1()
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(Icon::new(if is_above {
+                                IconName::ArrowUp
+                            } else {
+                                IconName::ArrowDown
+                            }))
+                            .child(Label::new("tab to edit")), // TODO: replace this with the actual keystroke
+                    )
+                    .into_any();
+
+                let size = element.layout_as_root(AvailableSpace::min_size(), cx);
+
+                let offset_y = if is_above {
+                    px(PADDING_Y)
+                } else {
+                    text_bounds.size.height - size.height - px(PADDING_Y)
+                };
+
+                let origin = text_bounds.origin
+                    + point((text_bounds.size.width - size.width) / 2., offset_y);
+                (origin, element)
+            }
         } else if let Some(popover) = self
             .editor
             .read(cx)
