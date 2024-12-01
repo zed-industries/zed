@@ -1,4 +1,4 @@
-use crate::{point, seal::Sealed, IntoElement, Keystroke, Modifiers, Pixels, Point};
+use crate::{point, seal::Sealed, Keystroke, Modifiers, Pixels, Point};
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
 
@@ -464,8 +464,8 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, div, FocusHandle, InteractiveElement, IntoElement, KeyBinding, ModelContext,
-        ParentElement, Render, TestAppContext, Window,
+        self as gpui, div, FocusHandle, InteractiveElement, IntoElement, KeyBinding, Keystroke,
+        ModelContext, ParentElement, Render, TestAppContext, Window,
     };
 
     struct TestView {
@@ -505,7 +505,7 @@ mod test {
     #[gpui::test]
     fn test_on_events(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
-            cx.open_window(Default::default(), |window, cx| TestView {
+            cx.open_window(Default::default(), |window, _cx| TestView {
                 saw_key_down: false,
                 saw_action: false,
                 focus_handle: window.focus_handle(),
@@ -517,19 +517,21 @@ mod test {
             cx.bind_keys(vec![KeyBinding::new("ctrl-g", TestAction, Some("parent"))]);
         });
 
-        // window
-        //     .update(cx, |window, cx| window.focus(&test_view.focus_handle))
-        //     .unwrap();
+        window
+            .update(cx, |test_view, window, _cx| {
+                window.focus(&test_view.focus_handle)
+            })
+            .unwrap();
 
-        // cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
-        // cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
+        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
+        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
 
-        // window
-        //     .update(cx, |test_view, _| {
-        //         assert!(test_view.saw_key_down || test_view.saw_action);
-        //         assert!(test_view.saw_key_down);
-        //         assert!(test_view.saw_action);
-        //     })
-        //     .unwrap();
+        window
+            .update(cx, |test_view, _, _| {
+                assert!(test_view.saw_key_down || test_view.saw_action);
+                assert!(test_view.saw_key_down);
+                assert!(test_view.saw_action);
+            })
+            .unwrap();
     }
 }
