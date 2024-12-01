@@ -91,6 +91,7 @@ impl Render for QuickActionBar {
             inlay_hints_enabled,
             supports_inlay_hints,
             git_blame_inline_enabled,
+            show_git_blame_gutter,
             auto_signature_help_enabled,
         ) = {
             let editor = editor.read(cx);
@@ -98,6 +99,7 @@ impl Render for QuickActionBar {
             let inlay_hints_enabled = editor.inlay_hints_enabled();
             let supports_inlay_hints = editor.supports_inlay_hints(cx);
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
+            let show_git_blame_gutter = editor.show_git_blame_gutter();
             let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
 
             (
@@ -105,6 +107,7 @@ impl Render for QuickActionBar {
                 inlay_hints_enabled,
                 supports_inlay_hints,
                 git_blame_inline_enabled,
+                show_git_blame_gutter,
                 auto_signature_help_enabled,
             )
         };
@@ -236,26 +239,6 @@ impl Render for QuickActionBar {
                     }
 
                     menu = menu.toggleable_entry(
-                        "Inline Git Blame",
-                        git_blame_inline_enabled,
-                        IconPosition::Start,
-                        Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
-                        {
-                            let editor = editor.clone();
-                            move |cx| {
-                                editor
-                                    .update(cx, |editor, cx| {
-                                        editor.toggle_git_blame_inline(
-                                            &editor::actions::ToggleGitBlameInline,
-                                            cx,
-                                        )
-                                    })
-                                    .ok();
-                            }
-                        },
-                    );
-
-                    menu = menu.toggleable_entry(
                         "Selection Menu",
                         selection_menu_enabled,
                         IconPosition::Start,
@@ -289,6 +272,46 @@ impl Render for QuickActionBar {
                                             &editor::actions::ToggleAutoSignatureHelp,
                                             cx,
                                         );
+                                    })
+                                    .ok();
+                            }
+                        },
+                    );
+
+                    menu = menu.separator();
+
+                    menu = menu.toggleable_entry(
+                        "Inline Git Blame",
+                        git_blame_inline_enabled,
+                        IconPosition::Start,
+                        Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
+                        {
+                            let editor = editor.clone();
+                            move |cx| {
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor.toggle_git_blame_inline(
+                                            &editor::actions::ToggleGitBlameInline,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }
+                        },
+                    );
+
+                    menu = menu.toggleable_entry(
+                        "Column Git Blame",
+                        show_git_blame_gutter,
+                        IconPosition::Start,
+                        Some(editor::actions::ToggleGitBlame.boxed_clone()),
+                        {
+                            let editor = editor.clone();
+                            move |cx| {
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor
+                                            .toggle_git_blame(&editor::actions::ToggleGitBlame, cx)
                                     })
                                     .ok();
                             }

@@ -70,9 +70,9 @@
                 object: [
                     (identifier) @_name
                     (member_expression object: (identifier) @_name)
-                ]*
+                ]
             )
-        ]* @context
+        ] @context
         (#any-of? @_name "it" "test" "describe")
         arguments: (
             arguments . (string (string_fragment) @name)
