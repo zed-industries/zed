@@ -540,7 +540,7 @@ pub struct Window {
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
     pending_input_observers: SubscriberSet<(), AnyObserver>,
-    // prompt: Option<RenderablePromptHandle>, todo!(fallback prompt rendering)
+    prompt: Option<Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -820,7 +820,7 @@ impl Window {
             pending_input: None,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
-            // prompt: None, todo!
+            prompt: None,
         })
     }
     fn new_focus_listener(&self, value: AnyWindowFocusListener) -> (Subscription, impl FnOnce()) {
@@ -1244,19 +1244,16 @@ impl Window {
         sorted_deferred_draws.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
         self.prepaint_deferred_draws(&sorted_deferred_draws, cx);
 
-        // let mut prompt_element = None;
+        let mut prompt_element = None;
         let mut active_drag_element = None;
         let mut tooltip_element = None;
 
-        todo!();
-        // if let Some(prompt) = self.prompt.take() {
-        //     let mut element = prompt.view.any_view().into_any();
-        //     element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
-        //     prompt_element = Some(element);
-        //     todo!()
-        //     // self.prompt = Some(prompt);
-        // } else
-        if let Some(active_drag) = cx.active_drag.take() {
+        if let Some(mut prompt) = self.prompt.take() {
+            let mut element = prompt(self, cx);
+            element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
+            prompt_element = Some(element);
+            self.prompt = Some(prompt);
+        } else if let Some(mut active_drag) = cx.active_drag.take() {
             let mut element = (active_drag.render)(active_drag.value.as_mut(), self, cx);
             let offset = self.mouse_position() - active_drag.cursor_offset;
             element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
@@ -1274,11 +1271,9 @@ impl Window {
 
         self.paint_deferred_draws(&sorted_deferred_draws, cx);
 
-        todo!();
-        // if let Some(mut prompt_element) = prompt_element {
-        //     prompt_element.paint(self);
-        // } else
-        if let Some(mut drag_element) = active_drag_element {
+        if let Some(mut prompt_element) = prompt_element {
+            prompt_element.paint(self, cx);
+        } else if let Some(mut drag_element) = active_drag_element {
             drag_element.paint(self, cx);
         } else if let Some(mut tooltip_element) = tooltip_element {
             tooltip_element.paint(self, cx);
@@ -3314,28 +3309,28 @@ impl Window {
         message: &str,
         detail: Option<&str>,
         answers: &[&str],
+        cx: &mut AppContext,
     ) -> oneshot::Receiver<usize> {
-        todo!()
-        // let prompt_builder = self.app.prompt_builder.take();
-        // let Some(prompt_builder) = prompt_builder else {
-        //     unreachable!("Re-entrant window prompting is not supported by GPUI");
-        // };
+        let prompt_builder = cx.prompt_builder.take();
+        let Some(prompt_builder) = prompt_builder else {
+            unreachable!("Re-entrant window prompting is not supported by GPUI");
+        };
 
-        // let receiver = match &prompt_builder {
-        //     PromptBuilder::Default => self
-        //         .platform_window
-        //         .prompt(level, message, detail, answers)
-        //         .unwrap_or_else(|| {
-        //             self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
-        //         }),
-        //     PromptBuilder::Custom(_) => {
-        //         self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
-        //     }
-        // };
+        let receiver = match &prompt_builder {
+            PromptBuilder::Default => self
+                .platform_window
+                .prompt(level, message, detail, answers)
+                .unwrap_or_else(|| {
+                    self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+                }),
+            PromptBuilder::Custom(_) => {
+                self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+            }
+        };
 
-        // self.app.prompt_builder = Some(prompt_builder);
+        cx.prompt_builder = Some(prompt_builder);
 
-        // receiver
+        receiver
     }
 
     fn build_custom_prompt(
@@ -3346,12 +3341,28 @@ impl Window {
         detail: Option<&str>,
         answers: &[&str],
     ) -> oneshot::Receiver<usize> {
-        todo!()
-        // let (sender, receiver) = oneshot::channel();
-        // let handle = PromptHandle::new(sender);
-        // let handle = (prompt_builder)(level, message, detail, answers, handle, self);
-        // self.prompt = Some(handle);
-        // receiver
+        let previous_focus = self.focused();
+
+        let (sender, receiver) = oneshot::channel();
+        let sender = RefCell::new(Some(sender));
+        let confirm = Rc::new(move |ix, window: &mut Window| {
+            if let Some(s) = sender.borrow_mut().take() {
+                s.send(ix).ok();
+            }
+            window.prompt.take();
+            if let Some(previous_focus) = &previous_focus {
+                window.focus(previous_focus);
+            }
+        });
+        let focus_handle = self.focus_handle();
+        self.focus(&focus_handle);
+
+        let render_prompt =
+            (prompt_builder)(level, message, detail, answers, focus_handle, confirm);
+
+        self.prompt = Some(render_prompt);
+
+        receiver
     }
 
     /// Returns the current context stack.

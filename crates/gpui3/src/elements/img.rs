@@ -360,6 +360,7 @@ impl Element for Img {
                                         }
                                     }
                                 } else {
+                                    // todo!
                                     // let parent_view_id = cx.parent_view_id();
                                     // let task = cx.spawn(|mut cx| async move {
                                     //     cx.background_executor().timer(LOADING_DELAY).await;
