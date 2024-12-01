@@ -2264,7 +2264,7 @@ fn section_motion(
 #[cfg(test)]
 mod test {
 
-    use crate::test::NeovimBackedTestContext;
+    use crate::test::{NeovimBackedTestContext, VimTestContext};
     use indoc::indoc;
 
     #[gpui::test]
@@ -2828,5 +2828,52 @@ mod test {
               return
             }ˇ»
         "});
+    }
+
+    #[gpui::test]
+    async fn test_function_matching(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.assert_binding_normal(
+            "] m",
+            indoc! {"
+            ˇfn a() {
+              return
+            }
+
+            fn b() {
+              return
+            }
+        "},
+            indoc! {"
+            fn a() {
+              return
+            }
+
+            ˇfn b() {
+              return
+            }
+        "},
+        );
+        cx.assert_binding_normal(
+            "[ m",
+            indoc! {"
+            fn a() {
+                return
+            }
+
+            ˇfn b() {
+                return
+            }
+        "},
+            indoc! {"
+            ˇfn a() {
+                return
+            }
+
+            fn b() {
+                return
+            }
+        "},
+        );
     }
 }
