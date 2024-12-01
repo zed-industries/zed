@@ -8,10 +8,6 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 - Install [rustup](https://www.rust-lang.org/tools/install)
 
-  ```sh
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  ```
-
 - Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store, or from the [Apple Developer](https://developer.apple.com/download/all/) website. Note this requires a developer account.
 
 > Ensure you launch Xcode after installing, and install the macOS components, which is the default option.

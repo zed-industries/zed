@@ -8,10 +8,6 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 - Install [rustup](https://www.rust-lang.org/tools/install)
 
-  ```sh
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  ```
-
 - Install the necessary system libraries:
 
   ```sh
