@@ -2736,51 +2736,99 @@ impl EditorElement {
 
     fn layout_inline_completion_popover(
         &self,
-        content_origin: gpui::Point<Pixels>,
+        text_bounds: &Bounds<Pixels>,
         editor_snapshot: &EditorSnapshot,
-        start_row: DisplayRow,
+        visible_row_range: Range<DisplayRow>,
         line_layouts: &[LineWithInvisibles],
         line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
         text_style: &gpui::TextStyle,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         const X_OFFSET: f32 = 25.;
+        const PADDING_Y: f32 = 2.;
 
-        let popover = self
+        let edit = self
+            .editor
+            .read(cx)
+            .active_inline_completion
+            .as_ref()?
+            .active_edit();
+
+        let upper_left = edit.position().to_display_point(editor_snapshot);
+
+        let is_visible = visible_row_range.contains(&upper_left.row());
+
+        let (origin, mut element) = if !is_visible {
+            let is_above = visible_row_range.start > upper_left.row();
+
+            let mut element = div()
+                .bg(cx.theme().colors().editor_background)
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .rounded_md()
+                .px_1()
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(if is_above {
+                            IconName::ArrowUp
+                        } else {
+                            IconName::ArrowDown
+                        }))
+                        .child(Label::new("Tab to edit")), // TODO: replace this with the actual keystroke
+                )
+                .into_any();
+
+            let size = element.layout_as_root(AvailableSpace::min_size(), cx);
+
+            let offset_y = if is_above {
+                px(PADDING_Y)
+            } else {
+                text_bounds.size.height - size.height - px(PADDING_Y)
+            };
+
+            let origin =
+                text_bounds.origin + point((text_bounds.size.width - size.width) / 2., offset_y);
+            (origin, element)
+        } else if let Some(popover) = self
             .editor
             .read(cx)
             .active_inline_completion_popover
-            .as_ref()?;
+            .as_ref()
+        {
+            let row = &line_layouts[upper_left.row().minus(visible_row_range.start) as usize];
+            let origin = text_bounds.origin
+                + point(
+                    row.width + px(X_OFFSET) - scroll_pixel_position.x,
+                    upper_left.row().as_f32() * line_height - scroll_pixel_position.y,
+                );
 
-        let upper_left = popover.position.to_display_point(editor_snapshot);
-        let first_line = &line_layouts[upper_left.row().minus(start_row) as usize];
-        let origin = content_origin
-            + point(
-                first_line.width + px(X_OFFSET),
-                upper_left.row().as_f32() * line_height,
+            let text = gpui::StyledText::new(popover.text.to_string()).with_highlights(
+                text_style,
+                popover.additions.iter().map(|range| {
+                    (
+                        range.clone(),
+                        HighlightStyle {
+                            background_color: Some(cx.theme().status().created_background),
+                            ..Default::default()
+                        },
+                    )
+                }),
             );
 
-        let text = gpui::StyledText::new(popover.text.to_string()).with_highlights(
-            text_style,
-            popover.additions.iter().map(|range| {
-                (
-                    range.clone(),
-                    HighlightStyle {
-                        background_color: Some(cx.theme().status().created_background),
-                        ..Default::default()
-                    },
-                )
-            }),
-        );
-
-        let mut element = div()
-            .bg(cx.theme().colors().editor_background)
-            .p_1()
-            .border_1()
-            .border_color(cx.theme().colors().border)
-            .rounded_md()
-            .child(text)
-            .into_any();
+            let element = div()
+                .bg(cx.theme().colors().editor_background)
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .rounded_md()
+                .px_1()
+                .child(text)
+                .into_any();
+            (origin, element)
+        } else {
+            return None;
+        };
 
         element.prepaint_as_root(origin, AvailableSpace::min_size(), cx);
         Some(element)
@@ -5655,11 +5703,12 @@ impl Element for EditorElement {
                     }
 
                     let inline_completion_popover = self.layout_inline_completion_popover(
-                        content_origin,
+                        &text_hitbox.bounds,
                         &snapshot,
-                        start_row,
+                        start_row..end_row,
                         &line_layouts,
                         line_height,
+                        scroll_pixel_position,
                         &style.text,
                         cx,
                     );

@@ -473,6 +473,14 @@ impl CompletionState {
     }
 }
 
+struct CompletionEditDeletion;
+
+struct CompletionEditDiffOverlay {
+    position: Anchor,
+    text: Rope,
+    additions: Arc<Vec<Range<usize>>>,
+}
+
 enum ComputedCompletionEdit {
     Insertion {
         text: Rope,
@@ -489,14 +497,6 @@ enum ComputedCompletionEdit {
     },
 }
 
-struct CompletionEditDeletion;
-
-struct CompletionEditDiffOverlay {
-    position: Anchor,
-    text: Rope,
-    additions: Arc<Vec<Range<usize>>>,
-}
-
 impl ComputedCompletionEdit {
     fn from_edit(
         edit: &inline_completion::CompletionEdit,
@@ -510,42 +510,42 @@ impl ComputedCompletionEdit {
 
         let old_text = snapshot.text_for_range(start..end).collect::<String>();
 
-        if old_text.is_empty() {
-            Some(Self::Insertion {
-                position: start,
-                text,
-                render_inlay_ids: Vec::new(),
-            })
-        } else {
-            let new_text = edit.text.to_string();
-            let diff = similar::TextDiff::from_chars(&old_text, &new_text);
+        // if old_text.is_empty() {
+        //     Some(Self::Insertion {
+        //         position: start,
+        //         text,
+        //         render_inlay_ids: Vec::new(),
+        //     })
+        // } else {
+        let new_text = edit.text.to_string();
+        let diff = similar::TextDiff::from_chars(&old_text, &new_text);
 
-            let start_offset = start.to_offset(snapshot);
+        let start_offset = start.to_offset(snapshot);
 
-            let mut deletions = Vec::new();
-            let mut additions = Vec::new();
-            for op in diff.ops() {
-                let (change, old, new) = op.as_tag_tuple();
-                let old = cmp::min(old.start + start_offset, snapshot.len())
-                    ..cmp::min(old.end + start_offset, snapshot.len());
-                match change {
-                    similar::DiffTag::Equal => continue,
-                    similar::DiffTag::Delete => deletions.push(old.to_anchors(snapshot)),
-                    similar::DiffTag::Insert => additions.push(new),
-                    similar::DiffTag::Replace => {
-                        deletions.push(old.to_anchors(snapshot));
-                        additions.push(new);
-                    }
+        let mut deletions = Vec::new();
+        let mut additions = Vec::new();
+        for op in diff.ops() {
+            let (change, old, new) = op.as_tag_tuple();
+            let old = cmp::min(old.start + start_offset, snapshot.len())
+                ..cmp::min(old.end + start_offset, snapshot.len());
+            match change {
+                similar::DiffTag::Equal => continue,
+                similar::DiffTag::Delete => deletions.push(old.to_anchors(snapshot)),
+                similar::DiffTag::Insert => additions.push(new),
+                similar::DiffTag::Replace => {
+                    deletions.push(old.to_anchors(snapshot));
+                    additions.push(new);
                 }
             }
-
-            Some(Self::Diff {
-                text,
-                range: start..end,
-                deletions,
-                additions: Arc::new(additions),
-            })
         }
+
+        Some(Self::Diff {
+            text,
+            range: start..end,
+            deletions,
+            additions: Arc::new(additions),
+        })
+        // }
     }
 
     pub fn position(&self) -> Anchor {
