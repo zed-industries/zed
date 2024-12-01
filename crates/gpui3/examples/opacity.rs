@@ -71,7 +71,7 @@ impl OpacityModel {
     }
 }
 
-impl OpacityModel {
+impl Render for OpacityModel {
     fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -167,7 +167,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |_window, cx| (OpacityModel::new(cx), OpacityModel::render),
+                |_window, cx| OpacityModel::new(cx),
             )
             .unwrap();
         });

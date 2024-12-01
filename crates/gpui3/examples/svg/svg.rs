@@ -31,33 +31,41 @@ impl AssetSource for Assets {
     }
 }
 
-fn render(_: &mut (), _window: &mut gpui::Window, _cx: &mut ModelContext<()>) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_row()
-        .size_full()
-        .justify_center()
-        .items_center()
-        .gap_8()
-        .bg(rgb(0xffffff))
-        .child(
-            svg()
-                .path("svg/dragon.svg")
-                .size_8()
-                .text_color(rgb(0xff0000)),
-        )
-        .child(
-            svg()
-                .path("svg/dragon.svg")
-                .size_8()
-                .text_color(rgb(0x00ff00)),
-        )
-        .child(
-            svg()
-                .path("svg/dragon.svg")
-                .size_8()
-                .text_color(rgb(0x0000ff)),
-        )
+struct SvgExample;
+
+impl Render for SvgExample {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_row()
+            .size_full()
+            .justify_center()
+            .items_center()
+            .gap_8()
+            .bg(rgb(0xffffff))
+            .child(
+                svg()
+                    .path("svg/dragon.svg")
+                    .size_8()
+                    .text_color(rgb(0xff0000)),
+            )
+            .child(
+                svg()
+                    .path("svg/dragon.svg")
+                    .size_8()
+                    .text_color(rgb(0x00ff00)),
+            )
+            .child(
+                svg()
+                    .path("svg/dragon.svg")
+                    .size_8()
+                    .text_color(rgb(0x0000ff)),
+            )
+    }
 }
 
 fn main() {
@@ -72,7 +80,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |_, _| ((), render),
+                |_, _| SvgExample,
             )
             .unwrap();
         });

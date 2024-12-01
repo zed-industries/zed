@@ -67,9 +67,9 @@ struct ImageShowcase {
     asset_resource: SharedString,
 }
 
-impl ImageShowcase {
+impl Render for ImageShowcase {
     fn render(
-        showcase: &mut ImageShowcase,
+        &mut self,
         _window: &mut Window,
         _cx: &mut ModelContext<ImageShowcase>,
     ) -> impl IntoElement {
@@ -90,15 +90,15 @@ impl ImageShowcase {
                     .gap_8()
                     .child(ImageContainer::new(
                         "Image loaded from a local file",
-                        showcase.local_resource.clone(),
+                        self.local_resource.clone(),
                     ))
                     .child(ImageContainer::new(
                         "Image loaded from a remote resource",
-                        showcase.remote_resource.clone(),
+                        self.remote_resource.clone(),
                     ))
                     .child(ImageContainer::new(
                         "Image loaded from an asset",
-                        showcase.asset_resource.clone(),
+                        self.asset_resource.clone(),
                     )),
             )
             .child(
@@ -156,7 +156,7 @@ fn main() {
             };
 
             cx.open_window(window_options, |_, _| {
-                let state = ImageShowcase {
+                ImageShowcase {
                     // Relative path to your root project path
                     local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
                         .unwrap()
@@ -165,9 +165,7 @@ fn main() {
                     remote_resource: "https://picsum.photos/512/512".into(),
 
                     asset_resource: "image/color.svg".into(),
-                };
-
-                (state, ImageShowcase::render)
+                }
             })
             .unwrap();
         });

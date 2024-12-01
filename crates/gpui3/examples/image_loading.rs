@@ -96,94 +96,99 @@ fn fallback_element() -> impl IntoElement {
     )
 }
 
-fn render(_state: &mut (), _window: &mut Window, _cx: &mut ModelContext<()>) -> impl IntoElement {
-    div().flex().flex_col().size_full().justify_around().child(
-        div().flex().flex_row().w_full().justify_around().child(
-            div()
-                .flex()
-                .bg(gpui::white())
-                .size(Length::Definite(Pixels(300.0).into()))
-                .justify_center()
-                .items_center()
-                .child({
-                    let image_source = LoadImageParameters {
-                        timeout: LOADING_DELAY.saturating_sub(Duration::from_millis(25)),
-                        fail: false,
-                    };
+struct ImageLoadingExample;
 
-                    // Load within the 'loading delay', should not show loading fallback
-                    img(move |window: &mut Window, cx: &mut AppContext| {
-                        window.use_asset::<LoadImageWithParameters>(&image_source, cx)
-                    })
-                    .id("image-1")
-                    .border_1()
-                    .size_12()
-                    .with_fallback(|| fallback_element().into_any_element())
-                    .border_color(red())
-                    .with_loading(|| loading_element().into_any_element())
-                    .on_click(move |_, _, cx| {
-                        cx.remove_asset::<LoadImageWithParameters>(&image_source);
-                    })
-                })
-                .child({
-                    // Load after a long delay
-                    let image_source = LoadImageParameters {
-                        timeout: Duration::from_secs(5),
-                        fail: false,
-                    };
+impl Render for ImageLoadingExample {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+        div().flex().flex_col().size_full().justify_around().child(
+            div().flex().flex_row().w_full().justify_around().child(
+                div()
+                    .flex()
+                    .bg(gpui::white())
+                    .size(Length::Definite(Pixels(300.0).into()))
+                    .justify_center()
+                    .items_center()
+                    .child({
+                        let image_source = LoadImageParameters {
+                            timeout: LOADING_DELAY.saturating_sub(Duration::from_millis(25)),
+                            fail: false,
+                        };
 
-                    img(move |window: &mut Window, cx: &mut AppContext| {
-                        window.use_asset::<LoadImageWithParameters>(&image_source, cx)
-                    })
-                    .id("image-2")
-                    .with_fallback(|| fallback_element().into_any_element())
-                    .with_loading(|| loading_element().into_any_element())
-                    .size_12()
-                    .border_1()
-                    .border_color(red())
-                    .on_click(move |_, _, cx| {
-                        cx.remove_asset::<LoadImageWithParameters>(&image_source);
-                    })
-                })
-                .child({
-                    // Fail to load image after a long delay
-                    let image_source = LoadImageParameters {
-                        timeout: Duration::from_secs(5),
-                        fail: true,
-                    };
-
-                    // Fail to load after a long delay
-                    img(move |window: &mut Window, cx: &mut AppContext| {
-                        window.use_asset::<LoadImageWithParameters>(&image_source, cx)
-                    })
-                    .id("image-3")
-                    .with_fallback(|| fallback_element().into_any_element())
-                    .with_loading(|| loading_element().into_any_element())
-                    .size_12()
-                    .border_1()
-                    .border_color(red())
-                    .on_click(move |_, _window, cx| {
-                        cx.remove_asset::<LoadImageWithParameters>(&image_source);
-                    })
-                })
-                .child({
-                    // Ensure that the normal image loader doesn't spam logs
-                    let image_source =
-                        Path::new("this/file/really/shouldn't/exist/or/won't/be/an/image/I/hope")
-                            .to_path_buf();
-                    img(image_source.clone())
+                        // Load within the 'loading delay', should not show loading fallback
+                        img(move |window: &mut Window, cx: &mut AppContext| {
+                            window.use_asset::<LoadImageWithParameters>(&image_source, cx)
+                        })
                         .id("image-1")
                         .border_1()
                         .size_12()
                         .with_fallback(|| fallback_element().into_any_element())
                         .border_color(red())
                         .with_loading(|| loading_element().into_any_element())
-                        .on_click(move |_, _window, cx| {
-                            cx.remove_asset::<ImgResourceLoader>(&image_source.clone().into());
+                        .on_click(move |_, _, cx| {
+                            cx.remove_asset::<LoadImageWithParameters>(&image_source);
                         })
-                }),
-        ),
-    )
+                    })
+                    .child({
+                        // Load after a long delay
+                        let image_source = LoadImageParameters {
+                            timeout: Duration::from_secs(5),
+                            fail: false,
+                        };
+
+                        img(move |window: &mut Window, cx: &mut AppContext| {
+                            window.use_asset::<LoadImageWithParameters>(&image_source, cx)
+                        })
+                        .id("image-2")
+                        .with_fallback(|| fallback_element().into_any_element())
+                        .with_loading(|| loading_element().into_any_element())
+                        .size_12()
+                        .border_1()
+                        .border_color(red())
+                        .on_click(move |_, _, cx| {
+                            cx.remove_asset::<LoadImageWithParameters>(&image_source);
+                        })
+                    })
+                    .child({
+                        // Fail to load image after a long delay
+                        let image_source = LoadImageParameters {
+                            timeout: Duration::from_secs(5),
+                            fail: true,
+                        };
+
+                        // Fail to load after a long delay
+                        img(move |window: &mut Window, cx: &mut AppContext| {
+                            window.use_asset::<LoadImageWithParameters>(&image_source, cx)
+                        })
+                        .id("image-3")
+                        .with_fallback(|| fallback_element().into_any_element())
+                        .with_loading(|| loading_element().into_any_element())
+                        .size_12()
+                        .border_1()
+                        .border_color(red())
+                        .on_click(move |_, _window, cx| {
+                            cx.remove_asset::<LoadImageWithParameters>(&image_source);
+                        })
+                    })
+                    .child({
+                        // Ensure that the normal image loader doesn't spam logs
+                        let image_source = Path::new(
+                            "this/file/really/shouldn't/exist/or/won't/be/an/image/I/hope",
+                        )
+                        .to_path_buf();
+                        img(image_source.clone())
+                            .id("image-1")
+                            .border_1()
+                            .size_12()
+                            .with_fallback(|| fallback_element().into_any_element())
+                            .border_color(red())
+                            .with_loading(|| loading_element().into_any_element())
+                            .on_click(move |_, _window, cx| {
+                                cx.remove_asset::<ImgResourceLoader>(&image_source.clone().into());
+                            })
+                    }),
+            ),
+        )
+    }
 }
 
 fn main() {
@@ -200,6 +205,6 @@ fn main() {
                 ..Default::default()
             };
             cx.activate(false);
-            cx.open_window(options, |_, _| ((), render)).unwrap();
+            cx.open_window(options, |_, _| ImageLoadingExample).unwrap();
         });
 }

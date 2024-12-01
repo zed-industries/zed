@@ -1,7 +1,7 @@
 use crate::{
     AnyElement, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    Context, ForegroundExecutor, Global, Model, ModelContext, Reservation, Result, Task, Window,
-    WindowHandle,
+    Context, ForegroundExecutor, Global, Model, ModelContext, Render, Reservation, Result, Task,
+    Window, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use std::{future::Future, rc::Weak};
@@ -132,14 +132,13 @@ impl AsyncAppContext {
     }
 
     /// Open a window with the given options based on the root view returned by the given function.
-    pub fn open_window<T, F>(
+    pub fn open_window<T>(
         &self,
         options: crate::WindowOptions,
-        builder: impl 'static + Fn(&mut Window, &mut ModelContext<T>) -> (T, F),
+        builder: impl 'static + Fn(&mut Window, &mut ModelContext<T>) -> T,
     ) -> Result<WindowHandle<T>>
     where
-        T: 'static,
-        F: 'static + Fn(&mut T, &mut Window, &mut ModelContext<T>) -> AnyElement,
+        T: 'static + Render,
     {
         let app = self
             .app

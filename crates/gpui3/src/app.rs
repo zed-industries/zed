@@ -32,8 +32,8 @@ use crate::{
     AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase,
     DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, IntoElement, KeyBinding, Keymap,
     Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, Point, PromptBuilder, Reservation, SharedString, SubscriberSet, Subscription,
-    SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    PlatformDisplay, Point, PromptBuilder, Render, Reservation, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -540,15 +540,13 @@ impl AppContext {
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
     /// functionality.
-    pub fn open_window<T, F, E>(
+    pub fn open_window<T>(
         &mut self,
         options: crate::WindowOptions,
-        builder: impl FnOnce(&mut Window, &mut ModelContext<T>) -> (T, F),
+        builder: impl FnOnce(&mut Window, &mut ModelContext<T>) -> T,
     ) -> anyhow::Result<WindowHandle<T>>
     where
-        T: 'static,
-        F: 'static + Fn(&mut T, &mut Window, &mut ModelContext<T>) -> E,
-        E: IntoElement,
+        T: 'static + Render,
     {
         self.update(|cx| {
             let id = cx.windows.insert(None);
@@ -557,13 +555,13 @@ impl AppContext {
                 Ok(mut window) => {
                     window.state = Some(
                         cx.new_model(|cx| {
-                            let (state, render) = builder(&mut window, cx);
-                            window.render = Some(Box::new(move |state, window, cx| {
-                                let state = state.downcast().unwrap();
-                                let root = state.update(cx, |state, cx| render(state, window, cx));
-                                root.into_any_element()
+                            window.render = Some(Box::new(move |any_state, window, cx| {
+                                let state: Model<T> = any_state.downcast().unwrap();
+                                state.update(cx, |state, cx: &mut ModelContext<T>| {
+                                    Render::render(state, window, cx).into_any_element()
+                                })
                             }));
-                            state
+                            builder(&mut window, cx)
                         })
                         .into(),
                     );

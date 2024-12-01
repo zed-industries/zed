@@ -33,7 +33,7 @@
 
 use crate::{
     util::FluentBuilder, AppContext, ArenaBox, AvailableSpace, Bounds, DispatchNodeId, ElementId,
-    FocusHandle, LayoutId, Pixels, Point, Size, Style, Window, ELEMENT_ARENA,
+    FocusHandle, LayoutId, ModelContext, Pixels, Point, Size, Style, Window, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -114,12 +114,11 @@ pub trait IntoElement: Sized {
 
 impl<T: IntoElement> FluentBuilder for T {}
 
-// /// An object that can be drawn to the screen. This is the trait that distinguishes `Views` from
-// /// models. Views are drawn to the screen and care about the current window's state, models are not and do not.
-// pub trait Render: 'static + Sized {
-//     /// Render this view into an element tree.
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement;
-// }
+/// An object that can be drawn to the screen.
+pub trait Render: 'static + Sized {
+    /// Render this view into an element tree.
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement;
+}
 
 // impl Render for Empty {
 //     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {

@@ -29,36 +29,42 @@ const ARROW_CIRCLE_SVG: &str = concat!(
     "/examples/image/arrow_circle.svg"
 );
 
-fn render(_state: &mut (), _window: &mut Window, _cx: &mut ModelContext<()>) -> impl IntoElement {
-    div().flex().flex_col().size_full().justify_around().child(
-        div().flex().flex_row().w_full().justify_around().child(
-            div()
-                .flex()
-                .bg(rgb(0x2e7d32))
-                .size(Length::Definite(Pixels(300.0).into()))
-                .justify_center()
-                .items_center()
-                .shadow_lg()
-                .text_xl()
-                .text_color(black())
-                .child("hello")
-                .child(
-                    svg()
-                        .size_8()
-                        .path(ARROW_CIRCLE_SVG)
-                        .text_color(black())
-                        .with_animation(
-                            "image_circle",
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(bounce(ease_in_out)),
-                            |svg, delta| {
-                                svg.with_transformation(Transformation::rotate(percentage(delta)))
-                            },
-                        ),
-                ),
-        ),
-    )
+struct AnimationExample;
+
+impl Render for AnimationExample {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+        div().flex().flex_col().size_full().justify_around().child(
+            div().flex().flex_row().w_full().justify_around().child(
+                div()
+                    .flex()
+                    .bg(rgb(0x2e7d32))
+                    .size(Length::Definite(Pixels(300.0).into()))
+                    .justify_center()
+                    .items_center()
+                    .shadow_lg()
+                    .text_xl()
+                    .text_color(black())
+                    .child("hello")
+                    .child(
+                        svg()
+                            .size_8()
+                            .path(ARROW_CIRCLE_SVG)
+                            .text_color(black())
+                            .with_animation(
+                                "image_circle",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(bounce(ease_in_out)),
+                                |svg, delta| {
+                                    svg.with_transformation(Transformation::rotate(percentage(
+                                        delta,
+                                    )))
+                                },
+                            ),
+                    ),
+            ),
+        )
+    }
 }
 
 fn main() {
@@ -74,6 +80,6 @@ fn main() {
                 ..Default::default()
             };
             cx.activate(false);
-            cx.open_window(options, |_, _| ((), render)).unwrap();
+            cx.open_window(options, |_, _| AnimationExample).unwrap();
         });
 }

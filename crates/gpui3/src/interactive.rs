@@ -464,8 +464,8 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, div, AppContext, Context, FocusHandle, InteractiveElement, IntoElement,
-        KeyBinding, ModelContext, ParentElement, TestAppContext, Window,
+        self as gpui, div, FocusHandle, InteractiveElement, IntoElement, KeyBinding, ModelContext,
+        ParentElement, Render, TestAppContext, Window,
     };
 
     struct TestView {
@@ -476,8 +476,12 @@ mod test {
 
     actions!(test, [TestAction]);
 
-    impl TestView {
-        fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    impl Render for TestView {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            cx: &mut ModelContext<Self>,
+        ) -> impl IntoElement {
             div().id("testview").child(
                 div()
                     .key_context("parent")
@@ -501,15 +505,10 @@ mod test {
     #[gpui::test]
     fn test_on_events(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
-            cx.open_window(Default::default(), |window, cx| {
-                (
-                    TestView {
-                        saw_key_down: false,
-                        saw_action: false,
-                        focus_handle: window.focus_handle(),
-                    },
-                    TestView::render,
-                )
+            cx.open_window(Default::default(), |window, cx| TestView {
+                saw_key_down: false,
+                saw_action: false,
+                focus_handle: window.focus_handle(),
             })
             .unwrap()
         });

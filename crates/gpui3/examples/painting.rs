@@ -75,7 +75,9 @@ impl PaintingViewer {
         self.lines.clear();
         cx.notify();
     }
+}
 
+impl Render for PaintingViewer {
     fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let default_lines = self.default_lines.clone();
         let lines = self.lines.clone();
@@ -196,7 +198,7 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            |_, _| (PaintingViewer::new(), PaintingViewer::render),
+            |_, _| PaintingViewer::new(),
         )
         .unwrap();
         cx.activate(true);

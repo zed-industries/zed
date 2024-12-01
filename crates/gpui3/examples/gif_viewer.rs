@@ -1,5 +1,20 @@
-use gpui::{div, img, prelude::*, App, AppContext, WindowOptions};
-use gpui3 as gpui;
+use gpui::{div, img, prelude::*, App, AppContext, ModelContext, Window, WindowOptions};
+use gpui3::{self as gpui};
+
+struct GifViewerExample {
+    gif_path: std::path::PathBuf,
+}
+
+impl Render for GifViewerExample {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+        div().size_full().child(
+            img(self.gif_path.clone())
+                .size_full()
+                .object_fit(gpui::ObjectFit::Contain)
+                .id("gif"),
+        )
+    }
+}
 
 fn main() {
     env_logger::init();
@@ -19,16 +34,7 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            |_, _| {
-                ((), move |_state, _window, _cx| {
-                    div().size_full().child(
-                        img(gif_path.clone())
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Contain)
-                            .id("gif"),
-                    )
-                })
-            },
+            |_, _| GifViewerExample { gif_path },
         )
         .unwrap();
         cx.activate(true);

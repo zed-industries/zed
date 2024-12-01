@@ -24,7 +24,7 @@ fn button(
         .on_click(move |_, window, cx| on_click(window, cx))
 }
 
-impl SubWindow {
+impl Render for SubWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -63,125 +63,100 @@ impl SubWindow {
     }
 }
 
-fn render_window_demo(
-    _: &mut (),
-    _window: &mut Window,
-    cx: &mut ModelContext<()>,
-) -> impl IntoElement {
-    let window_bounds =
-        WindowBounds::Windowed(Bounds::centered(None, size(px(300.0), px(300.0)), cx));
+struct WindowDemo;
 
-    div()
-        .p_4()
-        .flex()
-        .flex_wrap()
-        .bg(rgb(0xffffff))
-        .size_full()
-        .justify_center()
-        .items_center()
-        .gap_2()
-        .child(button("Normal", move |_window, cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(window_bounds),
-                    ..Default::default()
-                },
-                |_, _| {
-                    (
-                        SubWindow {
-                            custom_titlebar: false,
-                        },
-                        SubWindow::render,
-                    )
-                },
-            )
-            .unwrap();
-        }))
-        .child(button("Popup", move |_window, cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(window_bounds),
-                    kind: WindowKind::PopUp,
-                    ..Default::default()
-                },
-                |_, _| {
-                    (
-                        SubWindow {
-                            custom_titlebar: false,
-                        },
-                        SubWindow::render,
-                    )
-                },
-            )
-            .unwrap();
-        }))
-        .child(button("Custom Titlebar", move |_window, cx| {
-            cx.open_window(
-                WindowOptions {
-                    titlebar: None,
-                    window_bounds: Some(window_bounds),
-                    ..Default::default()
-                },
-                |_, _| {
-                    (
-                        SubWindow {
-                            custom_titlebar: true,
-                        },
-                        SubWindow::render,
-                    )
-                },
-            )
-            .unwrap();
-        }))
-        .child(button("Invisible", move |_window, cx| {
-            cx.open_window(
-                WindowOptions {
-                    show: false,
-                    window_bounds: Some(window_bounds),
-                    ..Default::default()
-                },
-                |_, _| {
-                    (
-                        SubWindow {
-                            custom_titlebar: false,
-                        },
-                        SubWindow::render,
-                    )
-                },
-            )
-            .unwrap();
-        }))
-        .child(button("Unmovable", move |_window, cx| {
-            cx.open_window(
-                WindowOptions {
-                    is_movable: false,
-                    titlebar: None,
-                    window_bounds: Some(window_bounds),
-                    ..Default::default()
-                },
-                |_, _| {
-                    (
-                        SubWindow {
-                            custom_titlebar: false,
-                        },
-                        SubWindow::render,
-                    )
-                },
-            )
-            .unwrap();
-        }))
-        .child(button("Hide Application", |_window, cx| {
-            cx.hide();
+impl Render for WindowDemo {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        let window_bounds =
+            WindowBounds::Windowed(Bounds::centered(None, size(px(300.0), px(300.0)), cx));
 
-            // Restore the application after 3 seconds
-            cx.spawn(|cx| async move {
-                Timer::after(std::time::Duration::from_secs(3)).await;
-                cx.update(|cx| {
-                    cx.activate(false);
+        div()
+            .p_4()
+            .flex()
+            .flex_wrap()
+            .bg(rgb(0xffffff))
+            .size_full()
+            .justify_center()
+            .items_center()
+            .gap_2()
+            .child(button("Normal", move |_window, cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |_, _| SubWindow {
+                        custom_titlebar: false,
+                    },
+                )
+                .unwrap();
+            }))
+            .child(button("Popup", move |_window, cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        kind: WindowKind::PopUp,
+                        ..Default::default()
+                    },
+                    |_, _| SubWindow {
+                        custom_titlebar: false,
+                    },
+                )
+                .unwrap();
+            }))
+            .child(button("Custom Titlebar", move |_window, cx| {
+                cx.open_window(
+                    WindowOptions {
+                        titlebar: None,
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |_, _| SubWindow {
+                        custom_titlebar: true,
+                    },
+                )
+                .unwrap();
+            }))
+            .child(button("Invisible", move |_window, cx| {
+                cx.open_window(
+                    WindowOptions {
+                        show: false,
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |_, _| SubWindow {
+                        custom_titlebar: false,
+                    },
+                )
+                .unwrap();
+            }))
+            .child(button("Unmovable", move |_window, cx| {
+                cx.open_window(
+                    WindowOptions {
+                        is_movable: false,
+                        titlebar: None,
+                        window_bounds: Some(window_bounds),
+                        ..Default::default()
+                    },
+                    |_, _| SubWindow {
+                        custom_titlebar: false,
+                    },
+                )
+                .unwrap();
+            }))
+            .child(button("Hide Application", |_window, cx| {
+                cx.hide();
+
+                // Restore the application after 3 seconds
+                cx.spawn(|cx| async move {
+                    Timer::after(std::time::Duration::from_secs(3)).await;
+                    cx.update(|cx| {
+                        cx.activate(false);
+                    })
                 })
-            })
-            .detach();
-        }))
+                .detach();
+            }))
+    }
 }
 
 fn main() {
@@ -192,7 +167,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, _| ((), render_window_demo),
+            |_, _| WindowDemo,
         )
         .unwrap();
     });
