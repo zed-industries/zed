@@ -1,6 +1,7 @@
 use crate::Project;
 use anyhow::Context as _;
 use collections::HashMap;
+use futures::FutureExt;
 use gpui::{AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, WeakModel};
 use itertools::Itertools;
 use language::LanguageName;
