@@ -25,5 +25,7 @@ fn main() {
             },
         )
         .unwrap();
+
+        cx.activate(true);
     });
 }
