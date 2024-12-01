@@ -427,14 +427,6 @@ fn start_output_stream(
     (receive_task, thread)
 }
 
-#[cfg(target_os = "windows")]
-pub fn play_remote_video_track(
-    track: &track::RemoteVideoTrack,
-) -> impl Stream<Item = ScreenCaptureFrame> {
-    futures::stream::empty()
-}
-
-#[cfg(not(target_os = "windows"))]
 pub fn play_remote_video_track(
     track: &track::RemoteVideoTrack,
 ) -> impl Stream<Item = ScreenCaptureFrame> {
@@ -462,12 +454,11 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Screen
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<ScreenCaptureFrame> {
-    use std::alloc::{alloc, Layout};
-
     use gpui::RenderImage;
     use image::{Frame, RgbaImage};
     use livekit::webrtc::prelude::VideoFormatType;
     use smallvec::SmallVec;
+    use std::alloc::{alloc, Layout};
 
     let width = buffer.width();
     let height = buffer.height();

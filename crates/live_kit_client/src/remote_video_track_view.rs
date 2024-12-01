@@ -1,14 +1,10 @@
-use std::sync::Arc;
-
 use crate::track::RemoteVideoTrack;
 use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{
-    img, Empty, EventEmitter, IntoElement, Render, RenderImage, ScreenCaptureFrame, Task, View,
-    ViewContext, VisualContext as _,
+    img, Empty, EventEmitter, IntoElement, Render, ScreenCaptureFrame, Task, View, ViewContext,
+    VisualContext as _,
 };
-use image::Frame;
-use smallvec::SmallVec;
 
 pub struct RemoteVideoTrackView {
     track: RemoteVideoTrack,
