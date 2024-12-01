@@ -75,14 +75,14 @@ impl Render for WindowShadowExample {
                     .when(!tiling.bottom, |div| div.pb(shadow_size))
                     .when(!tiling.left, |div| div.pl(shadow_size))
                     .when(!tiling.right, |div| div.pr(shadow_size))
-                    .on_mouse_move(|_e, window, cx| window.refresh())
-                    .on_mouse_down(MouseButton::Left, move |e, window, cx| {
+                    .on_mouse_move(|_e, window, _cx| window.refresh())
+                    .on_mouse_down(MouseButton::Left, move |e, window, _cx| {
                         let size = window.window_bounds().get_bounds().size;
                         let pos = e.position;
 
                         match resize_edge(pos, shadow_size, size) {
-                            Some(edge) => window.start_window_resize(edge),
-                            None => window.start_window_move(),
+                            Some(edge) => window.start_resize(edge),
+                            None => window.start_move(),
                         };
                     }),
             })
@@ -116,7 +116,7 @@ impl Render for WindowShadowExample {
                                 }])
                             }),
                     })
-                    .on_mouse_move(|_e, window, cx| {
+                    .on_mouse_move(|_e, _window, cx| {
                         cx.stop_propagation();
                     })
                     .bg(gpui::rgb(0xCCCCFF))
@@ -159,13 +159,13 @@ impl Render for WindowShadowExample {
                                             Decorations::Client { .. } => div
                                                 .on_mouse_down(
                                                     MouseButton::Left,
-                                                    |_e, window, cx| {
-                                                        window.start_window_move();
+                                                    |_e, window, _cx| {
+                                                        window.start_move();
                                                     },
                                                 )
-                                                .on_click(|e, window, cx| {
+                                                .on_click(|e, window, _cx| {
                                                     if e.down.button == MouseButton::Right {
-                                                        window.show_window_menu(e.up.position);
+                                                        window.show_menu(e.up.position);
                                                     }
                                                 })
                                                 .text_color(black())

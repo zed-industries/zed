@@ -395,14 +395,14 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     // Linux specific methods
     fn request_decorations(&self, _decorations: WindowDecorations) {}
-    fn show_window_menu(&self, _position: Point<Pixels>) {}
-    fn start_window_move(&self) {}
-    fn start_window_resize(&self, _edge: ResizeEdge) {}
-    fn window_decorations(&self) -> Decorations {
+    fn show_menu(&self, _position: Point<Pixels>) {}
+    fn start_move(&self) {}
+    fn start_resize(&self, _edge: ResizeEdge) {}
+    fn decorations(&self) -> Decorations {
         Decorations::Server
     }
     fn set_app_id(&mut self, _app_id: &str) {}
-    fn window_controls(&self) -> WindowControls {
+    fn controls(&self) -> WindowControls {
         WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
@@ -661,6 +661,7 @@ pub(crate) struct PlatformInputHandler {
     ),
     allow(dead_code)
 )]
+
 impl PlatformInputHandler {
     pub fn new(
         window: AnyWindowHandle,
@@ -675,15 +676,20 @@ impl PlatformInputHandler {
     }
 
     fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
-        self.cx
-            .update(|cx| self.handler.selected_text_range(ignore_disabled_input, cx))
+        self.window
+            .update(&mut self.cx, |window, cx| {
+                self.handler
+                    .selected_text_range(ignore_disabled_input, window, cx)
+            })
             .ok()
             .flatten()
     }
 
     fn marked_text_range(&mut self) -> Option<Range<usize>> {
-        self.cx
-            .update(|cx| self.handler.marked_text_range(cx))
+        self.window
+            .update(&mut self.cx, |window, cx| {
+                self.handler.marked_text_range(window, cx)
+            })
             .ok()
             .flatten()
     }
@@ -694,17 +700,20 @@ impl PlatformInputHandler {
         range_utf16: Range<usize>,
         adjusted: &mut Option<Range<usize>>,
     ) -> Option<String> {
-        self.cx
-            .update(|cx| self.handler.text_for_range(range_utf16, adjusted, cx))
+        self.window
+            .update(&mut self.cx, |window, cx| {
+                self.handler
+                    .text_for_range(range_utf16, adjusted, window, cx)
+            })
             .ok()
             .flatten()
     }
 
     fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
-        self.cx
-            .update(|cx| {
+        self.window
+            .update(&mut self.cx, |window, cx| {
                 self.handler
-                    .replace_text_in_range(replacement_range, text, cx);
+                    .replace_text_in_range(replacement_range, text, window, cx);
             })
             .ok();
     }
@@ -715,12 +724,13 @@ impl PlatformInputHandler {
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
     ) {
-        self.cx
-            .update(|cx| {
+        self.window
+            .update(&mut self.cx, |window, cx| {
                 self.handler.replace_and_mark_text_in_range(
                     range_utf16,
                     new_text,
                     new_selected_range,
+                    window,
                     cx,
                 )
             })
@@ -728,12 +738,18 @@ impl PlatformInputHandler {
     }
 
     fn unmark_text(&mut self) {
-        self.cx.update(|cx| self.handler.unmark_text(cx)).ok();
+        self.window
+            .update(&mut self.cx, |window, cx| {
+                self.handler.unmark_text(window, cx)
+            })
+            .ok();
     }
 
     fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
-        self.cx
-            .update(|cx| self.handler.bounds_for_range(range_utf16, cx))
+        self.window
+            .update(&mut self.cx, |window, cx| {
+                self.handler.bounds_for_range(range_utf16, window, cx)
+            })
             .ok()
             .flatten()
     }
@@ -743,18 +759,23 @@ impl PlatformInputHandler {
         self.handler.apple_press_and_hold_enabled()
     }
 
-    pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut AppContext) {
-        self.handler.replace_text_in_range(None, input, cx);
+    pub(crate) fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut AppContext) {
+        self.handler.replace_text_in_range(None, input, window, cx);
     }
 
-    pub fn selected_bounds(&mut self, cx: &mut AppContext) -> Option<Bounds<Pixels>> {
-        let selection = self.handler.selected_text_range(true, cx)?;
+    pub fn selected_bounds(
+        &mut self,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<Bounds<Pixels>> {
+        let selection = self.handler.selected_text_range(true, window, cx)?;
         self.handler.bounds_for_range(
             if selection.reversed {
                 selection.range.start..selection.range.start
             } else {
                 selection.range.end..selection.range.end
             },
+            window,
             cx,
         )
     }
@@ -784,6 +805,7 @@ pub trait InputHandler: 'static {
     fn selected_text_range(
         &mut self,
         ignore_disabled_input: bool,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<UTF16Selection>;
 
@@ -791,7 +813,11 @@ pub trait InputHandler: 'static {
     /// Corresponds to [markedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438250-markedrange)
     ///
     /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
-    fn marked_text_range(&mut self, cx: &mut AppContext) -> Option<Range<usize>>;
+    fn marked_text_range(
+        &mut self,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<Range<usize>>;
 
     /// Get the text for the given document range in UTF-16 characters
     /// Corresponds to [attributedSubstring(forProposedRange: actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438238-attributedsubstring)
@@ -801,6 +827,7 @@ pub trait InputHandler: 'static {
         &mut self,
         range_utf16: Range<usize>,
         adjusted_range: &mut Option<Range<usize>>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<String>;
 
@@ -812,6 +839,7 @@ pub trait InputHandler: 'static {
         &mut self,
         replacement_range: Option<Range<usize>>,
         text: &str,
+        window: &mut Window,
         cx: &mut AppContext,
     );
 
@@ -826,12 +854,13 @@ pub trait InputHandler: 'static {
         range_utf16: Option<Range<usize>>,
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
+        window: &mut Window,
         cx: &mut AppContext,
     );
 
     /// Remove the IME 'composing' state from the document
     /// Corresponds to [unmarkText()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438239-unmarktext)
-    fn unmark_text(&mut self, cx: &mut AppContext);
+    fn unmark_text(&mut self, window: &mut Window, cx: &mut AppContext);
 
     /// Get the bounds of the given document range in screen coordinates
     /// Corresponds to [firstRect(forCharacterRange:actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438240-firstrect)
@@ -840,6 +869,7 @@ pub trait InputHandler: 'static {
     fn bounds_for_range(
         &mut self,
         range_utf16: Range<usize>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Bounds<Pixels>>;
 

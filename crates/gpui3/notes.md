@@ -1,5 +1,4 @@
-- Window state - Go from a window to a model representing the window somehow
-- Uniform list
+- Subscription on state change
 - Test context
 - Image loading
 - Request animation frame

@@ -295,6 +295,12 @@ impl PartialEq<WeakFocusHandle> for FocusHandle {
 /// Emitted by implementers of [`ManagedView`] to indicate the view should be dismissed, such as when a view is presented as a modal.
 pub struct DismissEvent;
 
+/// For any focusable type, implement this trait to provide its FocusHandle.
+pub trait Focusable {
+    /// Returns the focus handle associated with this view.
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+}
+
 type FrameCallback = Box<dyn FnOnce(&mut Window, &mut AppContext)>;
 
 pub(crate) type AnyMouseListener =
@@ -913,8 +919,8 @@ impl Window {
     }
 
     /// Start a window resize operation (Wayland)
-    pub fn start_window_resize(&self, edge: ResizeEdge) {
-        self.platform_window.start_window_resize(edge);
+    pub fn start_resize(&self, edge: ResizeEdge) {
+        self.platform_window.start_resize(edge);
     }
 
     /// Return the `WindowBounds` to indicate that how a window should be opened
@@ -981,18 +987,18 @@ impl Window {
     }
 
     /// Returns whether this window is focused by the operating system (receiving key events).
-    pub fn is_window_active(&self) -> bool {
+    pub fn is_active(&self) -> bool {
         self.active.get()
     }
 
     /// Returns whether this window is considered to be the window
     /// that currently owns the mouse cursor.
-    /// On mac, this is equivalent to `is_window_active`.
-    pub fn is_window_hovered(&self) -> bool {
+    /// On mac, this is equivalent to `is_active`.
+    pub fn is_hovered(&self) -> bool {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             self.hovered.get()
         } else {
-            self.is_window_active()
+            self.is_active()
         }
     }
 
@@ -1002,15 +1008,15 @@ impl Window {
     }
 
     /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
-    pub fn show_window_menu(&self, position: Point<Pixels>) {
-        self.platform_window.show_window_menu(position)
+    pub fn show_menu(&self, position: Point<Pixels>) {
+        self.platform_window.show_menu(position)
     }
 
     /// Tells the compositor to take control of window movement (Wayland and X11)
     ///
     /// Events may not be received during a move operation.
-    pub fn start_window_move(&self) {
-        self.platform_window.start_window_move()
+    pub fn start_move(&self) {
+        self.platform_window.start_move()
     }
 
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
@@ -1020,16 +1026,16 @@ impl Window {
 
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
     pub fn window_decorations(&self) -> Decorations {
-        self.platform_window.window_decorations()
+        self.platform_window.decorations()
     }
 
     /// Returns which window controls are currently visible (Wayland)
     pub fn window_controls(&self) -> WindowControls {
-        self.platform_window.window_controls()
+        self.platform_window.controls()
     }
 
     /// Updates the window's title at the platform level.
-    pub fn set_window_title(&mut self, title: &str) {
+    pub fn set_title(&mut self, title: &str) {
         self.platform_window.set_title(title);
     }
 
@@ -1045,7 +1051,7 @@ impl Window {
     }
 
     /// Mark the window as dirty at the platform level.
-    pub fn set_window_edited(&mut self, edited: bool) {
+    pub fn set_edited(&mut self, edited: bool) {
         self.platform_window.set_edited(edited);
     }
 
@@ -1186,15 +1192,13 @@ impl Window {
 
         self.draw_phase = DrawPhase::Focus;
         let previous_focus_path = self.rendered_frame.focus_path();
-        let previous_window_active = self.rendered_frame.window_active;
+        let previous_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
-        let current_window_active = self.rendered_frame.window_active;
+        let current_active = self.rendered_frame.window_active;
 
-        if previous_focus_path != current_focus_path
-            || previous_window_active != current_window_active
-        {
+        if previous_focus_path != current_focus_path || previous_active != current_active {
             if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
                 self.focus_lost_listeners
                     .clone()
@@ -1202,12 +1206,12 @@ impl Window {
             }
 
             let event = WindowFocusEvent {
-                previous_focus_path: if previous_window_active {
+                previous_focus_path: if previous_active {
                     previous_focus_path
                 } else {
                     Default::default()
                 },
-                current_focus_path: if current_window_active {
+                current_focus_path: if current_active {
                     current_focus_path
                 } else {
                     Default::default()
@@ -2680,7 +2684,7 @@ impl Window {
 
     fn reset_cursor_style(&self, cx: &mut AppContext) {
         // Set the cursor only if we're the active window.
-        if self.is_window_hovered() {
+        if self.is_hovered() {
             let style = self
                 .rendered_frame
                 .cursor_styles
@@ -2710,7 +2714,7 @@ impl Window {
 
         if let Some(input) = keystroke.key_char {
             if let Some(mut input_handler) = self.platform_window.take_input_handler() {
-                input_handler.dispatch_input(&input, cx);
+                input_handler.dispatch_input(&input, self, cx);
                 self.platform_window.set_input_handler(input_handler);
                 return true;
             }
@@ -3146,7 +3150,7 @@ impl Window {
             }
             if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
                 if let Some(mut input_handler) = self.platform_window.take_input_handler() {
-                    input_handler.dispatch_input(&input, cx);
+                    input_handler.dispatch_input(&input, self, cx);
                     self.platform_window.set_input_handler(input_handler)
                 }
             }
@@ -3294,7 +3298,7 @@ impl Window {
     pub fn invalidate_character_coordinates(&self) {
         self.on_next_frame(|window, cx| {
             if let Some(mut input_handler) = window.platform_window.take_input_handler() {
-                if let Some(bounds) = input_handler.selected_bounds(cx) {
+                if let Some(bounds) = input_handler.selected_bounds(window, cx) {
                     window
                         .platform_window
                         .update_ime_position(bounds.scale(window.scale_factor()));
@@ -3449,7 +3453,7 @@ impl Window {
 
     /// Register a callback that can interrupt the closing of the current window based the returned boolean.
     /// If the callback returns false, the window won't be closed.
-    pub fn on_window_should_close(
+    pub fn on_should_close(
         &self,
         cx: &AppContext,
         f: impl Fn(&mut Window, &mut AppContext) -> bool + 'static,
@@ -3738,7 +3742,7 @@ impl<T: 'static> WindowHandle<T> {
     /// Will return `None` if the window is closed or currently
     /// borrowed.
     pub fn is_active(&self, cx: &mut AppContext) -> Option<bool> {
-        cx.update_window(self.any_handle, |window, _cx| window.is_window_active())
+        cx.update_window(self.any_handle, |window, _cx| window.is_active())
             .ok()
     }
 }

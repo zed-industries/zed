@@ -1,10 +1,10 @@
 use crate::{
     Action, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, DrawPhase, Drawable,
-    Element, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, IntoElement, Keystroke,
-    Model, ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Result, Size, Task, TestDispatcher,
-    TestPlatform, TestWindow, TextSystem, Window,
+    Element, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
+    ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
+    TestPlatform, TestWindow, TextSystem, Window, WindowBounds, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -174,24 +174,22 @@ impl TestAppContext {
     /// todo!(Change the interface to take a render fn)
     /// Adds a new window. The Window will always be backed by a `TestWindow` which
     /// can be retrieved with `self.test_window(handle)`
-    pub fn add_window<F, E>(&mut self, render: F) -> AnyWindowHandle
-    where
-        F: Fn(&mut Window, &mut AppContext) -> E,
-        E: IntoElement,
-    {
-        todo!()
-        // let mut cx = self.app.borrow_mut();
+    pub fn add_window<T: 'static + Render>(
+        &mut self,
+        builder: impl FnOnce(&mut Window, &mut ModelContext<T>) -> T,
+    ) -> WindowHandle<T> {
+        let mut cx = self.app.borrow_mut();
 
-        // // Some tests rely on the window size matching the bounds of the test display
-        // let bounds = Bounds::maximized(None, &mut cx);
-        // cx.open_window(
-        //     WindowOptions {
-        //         window_bounds: Some(WindowBounds::Windowed(bounds)),
-        //         ..Default::default()
-        //     },
-        //     |cx| cx.new_view(build_window),
-        // )
-        // .unwrap()
+        // Some tests rely on the window size matching the bounds of the test display
+        let bounds = Bounds::maximized(None, &mut cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            builder,
+        )
+        .unwrap()
     }
 
     /// Adds a new window with no content.
@@ -776,7 +774,7 @@ impl VisualTestContext {
 
     /// debug_bounds returns the bounds of the element with the given selector.
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
-        self.update(|window, cx| window.rendered_frame.debug_bounds.get(selector).copied())
+        self.update(|window, _cx| window.rendered_frame.debug_bounds.get(selector).copied())
     }
 
     /// Draw an element to the window. Useful for simulating events or actions

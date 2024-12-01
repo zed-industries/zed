@@ -33,7 +33,7 @@
 
 use crate::{
     util::FluentBuilder, AppContext, ArenaBox, AvailableSpace, Bounds, DispatchNodeId, ElementId,
-    FocusHandle, LayoutId, ModelContext, Pixels, Point, Size, Style, Window, ELEMENT_ARENA,
+    FocusHandle, LayoutId, Model, ModelContext, Pixels, Point, Size, Style, Window, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -120,11 +120,63 @@ pub trait Render: 'static + Sized {
     fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement;
 }
 
-// impl Render for Empty {
-//     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-//         Empty
-//     }
-// }
+impl Render for Empty {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
+impl<T: Render> Element for Model<T> {
+    type RequestLayoutState = AnyElement;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        Some(ElementId::View(self.entity_id()))
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let mut element = self.update(cx, |model, cx| model.render(window, cx).into_any_element());
+        let layout_id = element.request_layout(window, cx);
+        (layout_id, element)
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _: Bounds<Pixels>,
+        element: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
+        window.set_view_id(self.entity_id());
+        element.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _: Bounds<Pixels>,
+        element: &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
+        element.paint(window, cx);
+    }
+}
+
+impl<T: Render> IntoElement for Model<T> {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
 
 /// You can derive [`IntoElement`] on any type that implements this trait.
 /// It is used to construct reusable `components` out of plain data. Think of

@@ -1,7 +1,7 @@
 use crate::{
-    AnyElement, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    Context, ForegroundExecutor, Global, Model, ModelContext, Render, Reservation, Result, Task,
-    Window, WindowHandle,
+    AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext, Context,
+    ForegroundExecutor, Global, Model, ModelContext, Render, Reservation, Result, Task, Window,
+    WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use std::{future::Future, rc::Weak};
