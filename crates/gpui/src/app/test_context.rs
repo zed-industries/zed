@@ -138,7 +138,7 @@ impl TestAppContext {
     /// public so the macro can call it.
     pub fn quit(&self) {
         self.on_quit.borrow_mut().drain(..).for_each(|f| f());
-        self.app.borrow_mut().shutdown();
+        AppContext::shutdown(&self.app);
     }
 
     /// Register cleanup to run when the test ends.

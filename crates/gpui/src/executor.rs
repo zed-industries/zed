@@ -299,6 +299,17 @@ impl BackgroundExecutor {
         self.block_internal(true, future, Some(duration))
     }
 
+    /// Block the current thread until the given future resolves
+    /// or `duration` has elapsed.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn block_to_shutdown<R>(
+        &self,
+        duration: Duration,
+        future: impl Future<Output = R>,
+    ) -> Result<R, impl Future<Output = R>> {
+        self.block_internal(false, future, Some(duration))
+    }
+
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
     pub async fn scoped<'scope, F>(&self, scheduler: F)

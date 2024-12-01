@@ -26,7 +26,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 use worktree::Worktree;
 
 pub struct HeadlessProject {
@@ -581,13 +581,14 @@ impl HeadlessProject {
         _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
         cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        cx.spawn(|cx| async move {
-            cx.update(|cx| {
+        cx.spawn(|cx| {
+            async move {
                 // TODO: This is a hack, because in a headless project, shutdown isn't executed
                 // when calling quit, but it should be.
-                cx.shutdown();
-                cx.quit();
-            })
+                AsyncAppContext::shutdown(&cx)?;
+                cx.update(|cx| cx.quit())
+            }
+            .log_err()
         })
         .detach();
 

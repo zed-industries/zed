@@ -7319,6 +7319,22 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_lsp_shutdown(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    drop(cx);
+}
+
+#[gpui::test]
 async fn test_concurrent_format_requests(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
