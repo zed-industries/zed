@@ -42,6 +42,7 @@ pub struct ItemSettings {
     pub close_position: ClosePosition,
     pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
+    pub show_diagnostics: ShowDiagnostics,
 }
 
 #[derive(Deserialize)]
@@ -57,6 +58,15 @@ pub enum ClosePosition {
     Left,
     #[default]
     Right,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowDiagnostics {
+    Off,
+    Errors,
+    #[default]
+    All,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -85,6 +95,11 @@ pub struct ItemSettingsContent {
     ///
     /// Default: history
     pub activate_on_close: Option<ActivateOnClose>,
+    /// Which files containing diagnostic errors/warnings to mark in the tabs.
+    /// This setting can take the following three values:
+    ///
+    /// Default: all
+    show_diagnostics: Option<ShowDiagnostics>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
