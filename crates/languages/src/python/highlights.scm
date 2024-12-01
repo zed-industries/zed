@@ -1,17 +1,19 @@
+; Identifier naming conventions; these "soft conventions" should stay at the top of the file as they're often overridden
+
+; CamelCase for classes
+((identifier) @type.class
+  (#match? @type.class "^_*[A-Z][A-Za-z0-9_]*$"))
+
+; ALL_CAPS for constants:
+((identifier) @constant
+  (#match? @constant "^_*[A-Z][A-Z0-9_]*$"))
+
 (attribute attribute: (identifier) @property)
 (type (identifier) @type)
 (generic_type (identifier) @type)
 
 ; Type alias
 (type_alias_statement "type" @keyword)
-
-; Identifier naming conventions
-
-((identifier) @type.class
- (#match? @type.class "^[A-Z]"))
-
-((identifier) @constant
- (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
 ; TypeVar with constraints in type parameters
 (type
@@ -47,15 +49,18 @@
 
 (call
   function: (identifier) @type.class.call
-  (#match? @type.class.call "^[A-Z][A-Z0-9_]*[a-z]"))
+  (#match? @type.class.call "^_*[A-Z][A-Za-z0-9_]*$"))
 
-; Builtin functions
+; Builtins
 
 ((call
   function: (identifier) @function.builtin)
  (#match?
    @function.builtin
    "^(abs|all|any|ascii|bin|bool|breakpoint|bytearray|bytes|callable|chr|classmethod|compile|complex|delattr|dict|dir|divmod|enumerate|eval|exec|filter|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|id|input|int|isinstance|issubclass|iter|len|list|locals|map|max|memoryview|min|next|object|oct|open|ord|pow|print|property|range|repr|reversed|round|set|setattr|slice|sorted|staticmethod|str|sum|super|tuple|type|vars|zip|__import__)$"))
+
+((identifier) @type.builtin
+    (#match? @type.builtin "^(int|float|complex|bool|list|tuple|range|str|bytes|bytearray|memoryview|set|frozenset|dict)$"))
 
 ; Literals
 
@@ -185,6 +190,7 @@
   "elif"
   "else"
   "except"
+  "except*"
   "exec"
   "finally"
   "for"
