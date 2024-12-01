@@ -3,6 +3,7 @@ use anyhow::Context as _;
 use collections::HashMap;
 use gpui::{AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, WeakModel};
 use itertools::Itertools;
+use language::LanguageName;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
@@ -128,6 +129,7 @@ impl Project {
         } else {
             None
         };
+
         let python_venv_directory = path
             .as_ref()
             .and_then(|path| self.python_venv_directory(path, settings, cx));
@@ -277,6 +279,20 @@ impl Project {
         settings: &TerminalSettings,
         cx: &AppContext,
     ) -> Option<PathBuf> {
+        if let Some((worktree, _)) = self.find_worktree(abs_path, cx) {
+            let toolchain = self
+                .active_toolchain(worktree.read(cx).id(), LanguageName::new("Python"), cx)
+                .now_or_never()
+                .unwrap();
+
+            if let Some(toolchain) = toolchain {
+                let mut path = PathBuf::from(String::from(toolchain.path));
+                path.pop();
+                path.pop();
+                return Some(path);
+            }
+        }
+
         let venv_settings = settings.detect_venv.as_option()?;
         if let Some(path) = self.find_venv_in_worktree(abs_path, &venv_settings, cx) {
             return Some(path);
