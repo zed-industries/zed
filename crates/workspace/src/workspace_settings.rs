@@ -46,12 +46,13 @@ pub struct ActivePanelModifiers {
     pub inactive_opacity: Option<f32>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BottomDockLayout {
     /// Bottom dock takes up the full width of the window
     Full,
     /// Bottom dock is contained between the left and right docks
+    #[default]
     Contained,
 }
 
