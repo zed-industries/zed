@@ -1,7 +1,7 @@
 use gpui::*;
 use gpui3 as gpui;
 
-fn render(_window: &mut gpui::Window, _cx: &mut AppContext) -> impl IntoElement {
+fn render(_: &mut (), _window: &mut gpui::Window, _cx: &mut ModelContext<()>) -> impl IntoElement {
     let text = "The longest word 你好世界这段是中文，こんにちはこの段落は日本語です in any of the major English language dictionaries is pneumonoultramicroscopicsilicovolcanoconiosis, a word that refers to a lung disease contracted from the inhalation of very fine silica particles, specifically from a volcano; medically, it is the same as silicosis.";
     div()
         .id("page")
@@ -80,7 +80,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            render,
+            |_, _| ((), render),
         )
         .unwrap();
     });

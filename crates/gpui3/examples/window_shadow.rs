@@ -10,7 +10,7 @@ Things to do:
 3. We need to implement the techniques in here in Zed
 */
 
-fn render(window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+fn render(_: &mut (), window: &mut Window, _cx: &mut ModelContext<()>) -> impl IntoElement {
     let decorations = window.window_decorations();
     let rounding = px(10.0);
     let shadow_size = px(10.0);
@@ -204,13 +204,13 @@ fn main() {
                 window_decorations: Some(WindowDecorations::Client),
                 ..Default::default()
             },
-            |window, cx| {
+            |window, _cx| {
                 window
                     .observe_appearance(|_, cx| {
                         cx.refresh();
                     })
                     .detach();
-                render(window, cx)
+                ((), render)
             },
         )
         .unwrap();

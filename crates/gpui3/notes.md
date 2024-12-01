@@ -1,3 +1,5 @@
-Be additive first.
-
-What am I adding? To render a window, you can take a`
+- Window state - Go from a window to a model representing the window somehow
+- Uniform list
+- Test context
+- Image loading
+- Request animation frame

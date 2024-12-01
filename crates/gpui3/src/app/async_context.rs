@@ -1,6 +1,7 @@
 use crate::{
     AnyElement, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
     Context, ForegroundExecutor, Global, Model, ModelContext, Reservation, Result, Task, Window,
+    WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use std::{future::Future, rc::Weak};
@@ -131,17 +132,21 @@ impl AsyncAppContext {
     }
 
     /// Open a window with the given options based on the root view returned by the given function.
-    pub fn open_window(
+    pub fn open_window<T, F>(
         &self,
         options: crate::WindowOptions,
-        render: impl 'static + Fn(&mut Window, &mut AppContext) -> AnyElement,
-    ) -> Result<AnyWindowHandle> {
+        builder: impl 'static + Fn(&mut Window, &mut ModelContext<T>) -> (T, F),
+    ) -> Result<WindowHandle<T>>
+    where
+        T: 'static,
+        F: 'static + Fn(&mut T, &mut Window, &mut ModelContext<T>) -> AnyElement,
+    {
         let app = self
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.borrow_mut();
-        lock.open_window(options, render)
+        lock.open_window(options, builder)
     }
 
     /// Schedule a future to be polled in the background.

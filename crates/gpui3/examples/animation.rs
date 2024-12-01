@@ -29,7 +29,7 @@ const ARROW_CIRCLE_SVG: &str = concat!(
     "/examples/image/arrow_circle.svg"
 );
 
-fn render(_window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+fn render(_state: &mut (), _window: &mut Window, _cx: &mut ModelContext<()>) -> impl IntoElement {
     div().flex().flex_col().size_full().justify_around().child(
         div().flex().flex_row().w_full().justify_around().child(
             div()
@@ -74,6 +74,6 @@ fn main() {
                 ..Default::default()
             };
             cx.activate(false);
-            cx.open_window(options, render).unwrap();
+            cx.open_window(options, |_, _| ((), render)).unwrap();
         });
 }

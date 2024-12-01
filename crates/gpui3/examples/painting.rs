@@ -1,8 +1,8 @@
 use gpui::{
-    canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, Model, MouseDownEvent, Path,
+    canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, MouseDownEvent, Path,
     Pixels, Point, WindowOptions,
 };
-use gpui3::{self as gpui, Div, ModelContext};
+use gpui3::{self as gpui, ModelContext, Window};
 struct PaintingViewer {
     default_lines: Vec<Path<Pixels>>,
     lines: Vec<Vec<Point<Pixels>>>,
@@ -75,12 +75,10 @@ impl PaintingViewer {
         self.lines.clear();
         cx.notify();
     }
-}
 
-fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppContext) -> Div {
-    move |_window, _cx| {
-        let default_lines = model.read(_cx).default_lines.clone();
-        let lines = model.read(_cx).lines.clone();
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        let default_lines = self.default_lines.clone();
+        let lines = self.lines.clone();
         div()
             .font_family(".SystemUIFont")
             .bg(gpui::white())
@@ -105,11 +103,11 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
                             .flex()
                             .px_3()
                             .py_1()
-                            .on_click({
-                                let model = model.clone();
-                                move |_, _, cx| {
-                                model.update(cx, |viewer, cx| viewer.clear(cx));
-                            }}),
+                            .on_click(
+                                cx.listener(|viewer, _, _, cx| {
+                                    viewer.clear(cx);
+                                })
+                            ),
                     ),
             )
             .child(
@@ -118,8 +116,7 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
                     .child(
                         canvas(
                             move |_,_, _| {},
-                            {
-                                move |_,_, window, cx| {
+                            move |_,_, window, _cx| {
                                 const STROKE_WIDTH: Pixels = px(2.0);
                                 for path in &default_lines {
                                     window.paint_path(path.clone(), gpui::black());
@@ -142,13 +139,13 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
 
                                     window.paint_path(path, gpui::black());
                                 }
-                            }},
+                            },
                         )
                         .size_full(),
                     )
                     .on_mouse_down(
                         gpui::MouseButton::Left,
-                        model.listener(|viewer, ev: &MouseDownEvent, window, cx| {
+                        cx.listener(|viewer, ev: &MouseDownEvent, _window, cx| {
                             viewer._painting = true;
                             viewer.start = ev.position;
                             let path = vec![ev.position];
@@ -157,7 +154,7 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
                         }),
                     )
                     .on_mouse_move({
-                        model.listener(|viewer, ev: &gpui::MouseMoveEvent, window, cx| {
+                        cx.listener(|viewer, ev: &gpui::MouseMoveEvent, _window, cx| {
                             if !viewer._painting {
                                 return;
                             }
@@ -183,7 +180,7 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
                     })
                     .on_mouse_up(
                         gpui::MouseButton::Left,
-                        model.listener(|viewer, _, _window, cx| {
+                        cx.listener(|viewer, _, _window, cx| {
                             viewer._painting = false;
                             cx.notify();
                         }),
@@ -194,13 +191,12 @@ fn view(model: Model<PaintingViewer>) -> impl Fn(&mut gpui::Window, &mut AppCont
 
 fn main() {
     App::new().run(|cx: &mut AppContext| {
-        let model = cx.new_model(|_| PaintingViewer::new());
         cx.open_window(
             WindowOptions {
                 focus: true,
                 ..Default::default()
             },
-            view(model),
+            |_, _| (PaintingViewer::new(), PaintingViewer::render),
         )
         .unwrap();
         cx.activate(true);

@@ -1,4 +1,4 @@
-use crate::{point, seal::Sealed, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point};
+use crate::{point, seal::Sealed, IntoElement, Keystroke, Modifiers, Pixels, Point};
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
 
@@ -464,8 +464,8 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, div, FocusHandle, InteractiveElement, IntoElement, ParentElement,
-        TestAppContext,
+        self as gpui, div, AppContext, Context, FocusHandle, InteractiveElement, IntoElement,
+        KeyBinding, ModelContext, ParentElement, TestAppContext, Window,
     };
 
     struct TestView {
@@ -476,50 +476,50 @@ mod test {
 
     actions!(test, [TestAction]);
 
-    // impl Render for TestView {
-    //     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-    //         div().id("testview").child(
-    //             div()
-    //                 .key_context("parent")
-    //                 .on_key_down(cx.listener(|this, _, cx| {
-    //                     cx.stop_propagation();
-    //                     this.saw_key_down = true
-    //                 }))
-    //                 .on_action(
-    //                     cx.listener(|this: &mut TestView, _: &TestAction, _| {
-    //                         this.saw_action = true
-    //                     }),
-    //                 )
-    //                 .child(
-    //                     div()
-    //                         .key_context("nested")
-    //                         .track_focus(&self.focus_handle)
-    //                         .into_element(),
-    //                 ),
-    //         )
-    //     }
-    // }
+    impl TestView {
+        fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+            div().id("testview").child(
+                div()
+                    .key_context("parent")
+                    .on_key_down(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.saw_key_down = true
+                    }))
+                    .on_action(cx.listener(|this: &mut TestView, _: &TestAction, _, _| {
+                        this.saw_action = true
+                    }))
+                    .child(
+                        div()
+                            .key_context("nested")
+                            .track_focus(&self.focus_handle)
+                            .into_element(),
+                    ),
+            )
+        }
+    }
 
     #[gpui::test]
     fn test_on_events(cx: &mut TestAppContext) {
-        todo!()
-        // let window = cx.update(|cx| {
-        //     cx.open_window(Default::default(), |_window, cx| {
-        //         cx.new_view(|cx| TestView {
-        //             saw_key_down: false,
-        //             saw_action: false,
-        //             focus_handle: cx.focus_handle(),
-        //         })
-        //     })
-        //     .unwrap()
-        // });
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |window, cx| {
+                (
+                    TestView {
+                        saw_key_down: false,
+                        saw_action: false,
+                        focus_handle: window.focus_handle(),
+                    },
+                    TestView::render,
+                )
+            })
+            .unwrap()
+        });
 
-        // cx.update(|cx| {
-        //     cx.bind_keys(vec![KeyBinding::new("ctrl-g", TestAction, Some("parent"))]);
-        // });
+        cx.update(|cx| {
+            cx.bind_keys(vec![KeyBinding::new("ctrl-g", TestAction, Some("parent"))]);
+        });
 
         // window
-        //     .update(cx, |test_view, cx| cx.focus(&test_view.focus_handle))
+        //     .update(cx, |window, cx| window.focus(&test_view.focus_handle))
         //     .unwrap();
 
         // cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());

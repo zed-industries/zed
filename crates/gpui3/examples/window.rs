@@ -24,15 +24,15 @@ fn button(
         .on_click(move |_, window, cx| on_click(window, cx))
 }
 
-fn subwindow_renderer(subwindow: SubWindow) -> impl Fn(&mut Window, &mut AppContext) -> Div {
-    move |_window, _cx| {
+impl SubWindow {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
             .bg(rgb(0xffffff))
             .size_full()
             .gap_2()
-            .when(subwindow.custom_titlebar.clone(), |cx| {
+            .when(self.custom_titlebar.clone(), |cx| {
                 cx.child(
                     div()
                         .flex()
@@ -63,7 +63,11 @@ fn subwindow_renderer(subwindow: SubWindow) -> impl Fn(&mut Window, &mut AppCont
     }
 }
 
-fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+fn render_window_demo(
+    _: &mut (),
+    _window: &mut Window,
+    cx: &mut ModelContext<()>,
+) -> impl IntoElement {
     let window_bounds =
         WindowBounds::Windowed(Bounds::centered(None, size(px(300.0), px(300.0)), cx));
 
@@ -82,9 +86,14 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
                     window_bounds: Some(window_bounds),
                     ..Default::default()
                 },
-                subwindow_renderer(SubWindow {
-                    custom_titlebar: false,
-                }),
+                |_, _| {
+                    (
+                        SubWindow {
+                            custom_titlebar: false,
+                        },
+                        SubWindow::render,
+                    )
+                },
             )
             .unwrap();
         }))
@@ -95,9 +104,14 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
                     kind: WindowKind::PopUp,
                     ..Default::default()
                 },
-                subwindow_renderer(SubWindow {
-                    custom_titlebar: false,
-                }),
+                |_, _| {
+                    (
+                        SubWindow {
+                            custom_titlebar: false,
+                        },
+                        SubWindow::render,
+                    )
+                },
             )
             .unwrap();
         }))
@@ -108,9 +122,14 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
                     window_bounds: Some(window_bounds),
                     ..Default::default()
                 },
-                subwindow_renderer(SubWindow {
-                    custom_titlebar: true,
-                }),
+                |_, _| {
+                    (
+                        SubWindow {
+                            custom_titlebar: true,
+                        },
+                        SubWindow::render,
+                    )
+                },
             )
             .unwrap();
         }))
@@ -121,9 +140,14 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
                     window_bounds: Some(window_bounds),
                     ..Default::default()
                 },
-                subwindow_renderer(SubWindow {
-                    custom_titlebar: false,
-                }),
+                |_, _| {
+                    (
+                        SubWindow {
+                            custom_titlebar: false,
+                        },
+                        SubWindow::render,
+                    )
+                },
             )
             .unwrap();
         }))
@@ -135,9 +159,14 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
                     window_bounds: Some(window_bounds),
                     ..Default::default()
                 },
-                subwindow_renderer(SubWindow {
-                    custom_titlebar: false,
-                }),
+                |_, _| {
+                    (
+                        SubWindow {
+                            custom_titlebar: false,
+                        },
+                        SubWindow::render,
+                    )
+                },
             )
             .unwrap();
         }))
@@ -145,7 +174,7 @@ fn render_window_demo(_window: &mut Window, cx: &mut AppContext) -> impl IntoEle
             cx.hide();
 
             // Restore the application after 3 seconds
-            cx.spawn(|mut cx| async move {
+            cx.spawn(|cx| async move {
                 Timer::after(std::time::Duration::from_secs(3)).await;
                 cx.update(|cx| {
                     cx.activate(false);
@@ -163,7 +192,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            render_window_demo,
+            |_, _| ((), render_window_demo),
         )
         .unwrap();
     });

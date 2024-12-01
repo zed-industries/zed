@@ -31,7 +31,7 @@ impl AssetSource for Assets {
     }
 }
 
-fn render(_window: &mut gpui::Window, _cx: &mut AppContext) -> impl IntoElement {
+fn render(_: &mut (), _window: &mut gpui::Window, _cx: &mut ModelContext<()>) -> impl IntoElement {
     div()
         .flex()
         .flex_row()
@@ -72,7 +72,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                render,
+                |_, _| ((), render),
             )
             .unwrap();
         });

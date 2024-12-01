@@ -33,7 +33,7 @@ use crate::{
     DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, IntoElement, KeyBinding, Keymap,
     Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, Point, PromptBuilder, Reservation, SharedString, SubscriberSet, Subscription,
-    SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowId,
+    SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -540,23 +540,34 @@ impl AppContext {
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
     /// functionality.
-    pub fn open_window<F, E>(
+    pub fn open_window<T, F, E>(
         &mut self,
         options: crate::WindowOptions,
-        render: F,
-    ) -> anyhow::Result<AnyWindowHandle>
+        builder: impl FnOnce(&mut Window, &mut ModelContext<T>) -> (T, F),
+    ) -> anyhow::Result<WindowHandle<T>>
     where
-        F: 'static + Fn(&mut Window, &mut AppContext) -> E,
+        T: 'static,
+        F: 'static + Fn(&mut T, &mut Window, &mut ModelContext<T>) -> E,
         E: IntoElement,
     {
         self.update(|cx| {
             let id = cx.windows.insert(None);
-            let handle = AnyWindowHandle::new(id);
+            let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
-                    window.render.replace(Box::new(move |window, cx| {
-                        render(window, cx).into_any_element()
-                    }));
+                    window.state = Some(
+                        cx.new_model(|cx| {
+                            let (state, render) = builder(&mut window, cx);
+                            window.render = Some(Box::new(move |state, window, cx| {
+                                let state = state.downcast().unwrap();
+                                let root = state.update(cx, |state, cx| render(state, window, cx));
+                                root.into_any_element()
+                            }));
+                            state
+                        })
+                        .into(),
+                    );
+
                     window.appearance_changed(cx);
                     cx.window_handles.insert(id, window.handle);
                     cx.windows.get_mut(id).unwrap().replace(window);

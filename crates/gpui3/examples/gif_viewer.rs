@@ -19,13 +19,15 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            move |_window, _cx| {
-                div().size_full().child(
-                    img(gif_path.clone())
-                        .size_full()
-                        .object_fit(gpui::ObjectFit::Contain)
-                        .id("gif"),
-                )
+            |_, _| {
+                ((), move |_state, _window, _cx| {
+                    div().size_full().child(
+                        img(gif_path.clone())
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Contain)
+                            .id("gif"),
+                    )
+                })
             },
         )
         .unwrap();

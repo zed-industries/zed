@@ -71,9 +71,8 @@ impl OpacityModel {
     }
 }
 
-fn opacity_view(model: Model<OpacityModel>) -> impl Fn(&mut Window, &mut AppContext) -> Div {
-    move |_window, cx| {
-        let opacity_example = model.read(cx);
+impl OpacityModel {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_row()
@@ -94,14 +93,14 @@ fn opacity_view(model: Model<OpacityModel>) -> impl Fn(&mut Window, &mut AppCont
                 div()
                     .id("panel")
                     .on_click(
-                        model.listener(|model, event, _window, cx| model.change_opacity(event, cx)),
+                        cx.listener(|model, event, _window, cx| model.change_opacity(event, cx)),
                     )
                     .absolute()
                     .top_8()
                     .left_8()
                     .right_8()
                     .bottom_8()
-                    .opacity(opacity_example.opacity)
+                    .opacity(self.opacity)
                     .flex()
                     .justify_center()
                     .items_center()
@@ -140,7 +139,7 @@ fn opacity_view(model: Model<OpacityModel>) -> impl Fn(&mut Window, &mut AppCont
                                     .text_decoration_2()
                                     .text_decoration_wavy()
                                     .text_decoration_color(gpui::red())
-                                    .child(format!("opacity: {:.1}", opacity_example.opacity)),
+                                    .child(format!("opacity: {:.1}", self.opacity)),
                             )
                             .child(
                                 svg()
@@ -163,13 +162,12 @@ fn main() {
         })
         .run(|cx: &mut AppContext| {
             let bounds = Bounds::centered(None, size(px(500.0), px(500.0)), cx);
-            let model = cx.new_model(OpacityModel::new);
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                opacity_view(model),
+                |_window, cx| (OpacityModel::new(cx), OpacityModel::render),
             )
             .unwrap();
         });

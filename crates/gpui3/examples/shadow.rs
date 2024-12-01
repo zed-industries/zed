@@ -9,14 +9,16 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_window, _cx| {
-                div()
-                    .flex()
-                    .bg(rgb(0xffffff))
-                    .size_full()
-                    .justify_center()
-                    .items_center()
-                    .child(div().size_8().shadow_sm())
+            |_, _| {
+                ((), |_, _window, _cx| {
+                    div()
+                        .flex()
+                        .bg(rgb(0xffffff))
+                        .size_full()
+                        .justify_center()
+                        .items_center()
+                        .child(div().size_8().shadow_sm())
+                })
             },
         )
         .unwrap();

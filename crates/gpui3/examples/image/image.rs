@@ -67,8 +67,12 @@ struct ImageShowcase {
     asset_resource: SharedString,
 }
 
-fn image_showcase_view(showcase: ImageShowcase) -> impl Fn(&mut Window, &mut AppContext) -> Div {
-    move |_window: &mut Window, _cx: &mut AppContext| {
+impl ImageShowcase {
+    fn render(
+        showcase: &mut ImageShowcase,
+        _window: &mut Window,
+        _cx: &mut ModelContext<ImageShowcase>,
+    ) -> impl IntoElement {
         div()
             .size_full()
             .flex()
@@ -151,9 +155,8 @@ fn main() {
                 ..Default::default()
             };
 
-            cx.open_window(
-                window_options,
-                image_showcase_view(ImageShowcase {
+            cx.open_window(window_options, |_, _| {
+                let state = ImageShowcase {
                     // Relative path to your root project path
                     local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
                         .unwrap()
@@ -162,8 +165,10 @@ fn main() {
                     remote_resource: "https://picsum.photos/512/512".into(),
 
                     asset_resource: "image/color.svg".into(),
-                }),
-            )
+                };
+
+                (state, ImageShowcase::render)
+            })
             .unwrap();
         });
 }

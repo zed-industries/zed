@@ -1,17 +1,18 @@
 use crate::{
-    point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
-    AppContext, Arena, Asset, AsyncAppContext, AvailableSpace, Bounds, BoxShadow, Context, Corners,
-    CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree,
-    DisplayId, Edges, Empty, EntityId, FileDropEvent, FontId, GPUSpecs, GlobalElementId, GlyphId,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay,
-    ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyModel,
+    AnyTooltip, AppContext, Arena, Asset, AsyncAppContext, AvailableSpace, Bounds, BoxShadow,
+    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Empty, EntityId, FileDropEvent, Flatten,
+    FontId, GPUSpecs, GlobalElementId, GlyphId, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
+    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model,
+    ModelContext, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
+    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet,
+    Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
@@ -502,7 +503,8 @@ pub struct Window {
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
-    pub(crate) render: Option<Box<dyn Fn(&mut Self, &mut AppContext) -> AnyElement>>,
+    pub(crate) state: Option<AnyModel>,
+    pub(crate) render: Option<Box<dyn Fn(AnyModel, &mut Self, &mut AppContext) -> AnyElement>>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -782,6 +784,7 @@ impl Window {
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
+            state: None,
             render: None,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
@@ -1233,8 +1236,9 @@ impl Window {
         self.tooltip_bounds.take();
 
         // Layout all root elements.
+        let mut state = self.state.clone().unwrap();
         let mut render = self.render.take().unwrap();
-        let mut root_element = render(self, cx);
+        let mut root_element = render(state, self, cx);
         self.render = Some(render);
 
         root_element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
@@ -3610,16 +3614,131 @@ impl From<u64> for WindowId {
 /// A handle to a window with a specific root view type.
 /// Note that this does not keep the window alive on its own.
 #[derive(Deref, DerefMut)]
-pub struct WindowHandle<V> {
+pub struct WindowHandle<T> {
     #[deref]
     #[deref_mut]
     pub(crate) any_handle: AnyWindowHandle,
-    state_type: PhantomData<V>,
+    state_type: PhantomData<T>,
 }
 
-impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
-    fn from(val: WindowHandle<V>) -> Self {
-        val.any_handle
+impl<T: 'static> From<WindowHandle<T>> for AnyWindowHandle {
+    fn from(typed_handle: WindowHandle<T>) -> Self {
+        typed_handle.any_handle
+    }
+}
+
+impl<T: 'static> WindowHandle<T> {
+    /// Creates a new handle from a window ID.
+    /// This does not check if the root type of the window is `V`.
+    pub fn new(id: WindowId) -> Self {
+        WindowHandle {
+            any_handle: AnyWindowHandle {
+                id,
+                state_type: TypeId::of::<T>(),
+            },
+            state_type: PhantomData,
+        }
+    }
+
+    /// Get the root view out of this window.
+    ///
+    /// This will fail if the window is closed or if the root view's type does not match `V`.
+    pub fn root<C>(&self, cx: &mut C) -> Result<Model<T>>
+    where
+        C: Context,
+    {
+        todo!()
+        // Flatten::flatten(cx.update_window(self.any_handle, |root_view, _| {
+        //     root_view
+        //         .downcast::<T>()
+        //         .map_err(|_| anyhow!("the type of the window's root view has changed"))
+        // }))
+    }
+
+    /// Updates the root view of this window.
+    ///
+    /// This will fail if the window has been closed or if the root view's type does not match
+    pub fn update<C, R>(
+        &self,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &mut Window, &mut ModelContext<T>) -> R,
+    ) -> Result<R>
+    where
+        C: Context,
+    {
+        self.any_handle.update(cx, |window, cx| {
+            let state = window.state.clone().unwrap().downcast().unwrap();
+            state.update(cx, |state, cx| update(state, window, cx))
+        })
+    }
+
+    /// Read the state out of this window.
+    ///
+    /// This will fail if the window is closed or if the root view's type does not match `T`.
+    pub fn read<'a>(&self, cx: &'a AppContext) -> Result<&'a T> {
+        Ok(cx
+            .windows
+            .get(self.id)
+            .and_then(|window| {
+                window
+                    .as_ref()
+                    .and_then(|window| window.state.clone())
+                    .map(|state| state.downcast::<T>())
+            })
+            .ok_or_else(|| anyhow!("window not found"))?
+            .map_err(|_| anyhow!("the type of the window's root view has changed"))?
+            .read(cx))
+    }
+
+    /// Read the root view out of this window, with a callback
+    ///
+    /// This will fail if the window is closed or if the root view's type does not match `V`.
+    pub fn read_with<C, R>(
+        &self,
+        cx: &C,
+        read: impl FnOnce(&T, &Window, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        C: Context,
+    {
+        self.any_handle.read(cx, |window, cx| {
+            window
+                .state
+                .clone()
+                .unwrap()
+                .downcast()
+                .unwrap()
+                .read_with(cx, |state, cx| read(state, window, cx))
+        })
+    }
+
+    /// Read the root view pointer off of this window.
+    ///
+    /// This will fail if the window is closed or if the root view's type does not match `V`.
+    pub fn state<C>(&self, cx: &C) -> Result<Model<T>>
+    where
+        C: Context,
+    {
+        self.any_handle.read(cx, |window, _cx| {
+            window.state.clone().unwrap().downcast().unwrap()
+        })
+    }
+
+    /// Check if this window is 'active'.
+    ///
+    /// Will return `None` if the window is closed or currently
+    /// borrowed.
+    pub fn is_active(&self, cx: &mut AppContext) -> Option<bool> {
+        cx.update_window(self.any_handle, |window, _cx| window.is_window_active())
+            .ok()
+    }
+}
+
+impl<T> Copy for WindowHandle<T> {}
+
+impl<T> Clone for WindowHandle<T> {
+    fn clone(&self) -> Self {
+        *self
     }
 }
 
@@ -3660,7 +3779,7 @@ impl AnyWindowHandle {
         }
     }
 
-    /// Updates the state of the root view of this window.
+    /// Update this window.
     ///
     /// This will fail if the window has been closed.
     pub fn update<C, R>(
@@ -3674,13 +3793,12 @@ impl AnyWindowHandle {
         cx.update_window(self, update)
     }
 
-    /// Read the state of the root view of this window.
+    /// Read this window.
     ///
     /// This will fail if the window has been closed.
-    pub fn read<T, C, R>(self, cx: &C, read: impl FnOnce(&Window, &AppContext) -> R) -> Result<R>
+    pub fn read<C, R>(self, cx: &C, read: impl FnOnce(&Window, &AppContext) -> R) -> Result<R>
     where
         C: Context,
-        T: 'static,
     {
         cx.read_window(self, read)
     }

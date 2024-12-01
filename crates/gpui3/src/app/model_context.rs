@@ -202,6 +202,32 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         let this = self.weak_model();
         self.app.spawn(|cx| f(this, cx))
     }
+
+    /// Creates a listener function that updates the model that owns this context when an event is received.
+    ///
+    /// This method takes a callback function that will be called with the model, the event, and a mutable
+    /// reference to the `AppContext`. It returns a new function that can be used as an event listener.
+    ///
+    /// # Arguments
+    ///
+    /// * `callback` - A closure that takes a mutable reference to the model (`&mut T`), a reference to the event (`&E`),
+    ///   and a mutable reference to the `AppContext`.
+    ///
+    /// # Returns
+    ///
+    /// A new function that can be used as an event listener. This function takes a reference to the event (`&E`)
+    /// and a mutable reference to the `AppContext`.
+    pub fn listener<E>(
+        &self,
+        callback: impl Fn(&mut T, &E, &mut Window, &mut ModelContext<T>) + 'static,
+    ) -> impl Fn(&E, &mut Window, &mut AppContext) {
+        let model = self.handle();
+        move |event: &E, window: &mut Window, cx: &mut AppContext| {
+            model.update(cx, |model, cx| {
+                callback(model, event, window, cx);
+            });
+        }
+    }
 }
 
 impl<'a, T> ModelContext<'a, T> {

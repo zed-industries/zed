@@ -12,16 +12,18 @@ fn main() {
             name: "set_menus".into(),
             items: vec![MenuItem::action("Quit", Quit)],
         }]);
-        cx.open_window(WindowOptions::default(), |_window, _cx| {
-            div()
-                .flex()
-                .bg(rgb(0x2e7d32))
-                .size_full()
-                .justify_center()
-                .items_center()
-                .text_xl()
-                .text_color(rgb(0xffffff))
-                .child("Set Menus Example")
+        cx.open_window(WindowOptions::default(), |_, _| {
+            ((), |_, _, _| {
+                div()
+                    .flex()
+                    .bg(rgb(0x2e7d32))
+                    .size_full()
+                    .justify_center()
+                    .items_center()
+                    .text_xl()
+                    .text_color(rgb(0xffffff))
+                    .child("Set Menus Example")
+            })
         })
         .unwrap();
     });

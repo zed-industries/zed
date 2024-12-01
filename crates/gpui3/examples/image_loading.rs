@@ -7,7 +7,7 @@ use gpui::{
     ImgResourceLoader, Length, Pixels, RenderImage, Resource, SharedString, Window, WindowBounds,
     WindowOptions, LOADING_DELAY,
 };
-use gpui3 as gpui;
+use gpui3::{self as gpui, ModelContext};
 
 struct Assets {}
 
@@ -96,7 +96,7 @@ fn fallback_element() -> impl IntoElement {
     )
 }
 
-fn render(_window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+fn render(_state: &mut (), _window: &mut Window, _cx: &mut ModelContext<()>) -> impl IntoElement {
     div().flex().flex_col().size_full().justify_around().child(
         div().flex().flex_row().w_full().justify_around().child(
             div()
@@ -200,6 +200,6 @@ fn main() {
                 ..Default::default()
             };
             cx.activate(false);
-            cx.open_window(options, render).unwrap();
+            cx.open_window(options, |_, _| ((), render)).unwrap();
         });
 }
