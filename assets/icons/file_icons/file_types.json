@@ -34,6 +34,7 @@
     "dat": "storage",
     "db": "storage",
     "dbf": "storage",
+    "diff": "diff",
     "dll": "storage",
     "doc": "document",
     "docx": "document",
@@ -234,6 +235,9 @@
     },
     "default": {
       "icon": "icons/file_icons/file.svg"
+    },
+    "diff": {
+      "icon": "icons/file_icons/diff.svg"
     },
     "docker": {
       "icon": "icons/file_icons/docker.svg"
