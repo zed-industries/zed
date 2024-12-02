@@ -932,20 +932,6 @@ checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
 name = "async-tls"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfeefd0ca297cbbb3bd34fd6b228401c2a5177038257afd751bc29f0a2da4795"
-dependencies = [
- "futures-core",
- "futures-io",
- "rustls 0.20.9",
- "rustls-pemfile 1.0.4",
- "webpki",
- "webpki-roots 0.22.6",
-]
-
-[[package]]
-name = "async-tls"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2ae3c9eba89d472a0e4fe1dea433df78fbbe63d2b764addaf2ba3a6bde89a5e"
@@ -970,27 +956,12 @@ dependencies = [
 
 [[package]]
 name = "async-tungstenite"
-version = "0.22.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce01ac37fdc85f10a43c43bc582cbd566720357011578a935761075f898baf58"
-dependencies = [
- "async-std",
- "async-tls 0.12.0",
- "futures-io",
- "futures-util",
- "log",
- "pin-project-lite",
- "tungstenite 0.19.0",
-]
-
-[[package]]
-name = "async-tungstenite"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90e661b6cb0a6eb34d02c520b052daa3aa9ac0cc02495c9d066bbce13ead132b"
 dependencies = [
  "async-std",
- "async-tls 0.13.0",
+ "async-tls",
  "futures-io",
  "futures-util",
  "log",
@@ -1160,7 +1131,7 @@ dependencies = [
  "fastrand 2.2.0",
  "hex",
  "http 0.2.12",
- "ring 0.17.8",
+ "ring",
  "time",
  "tokio",
  "tracing",
@@ -1350,7 +1321,7 @@ dependencies = [
  "once_cell",
  "p256",
  "percent-encoding",
- "ring 0.17.8",
+ "ring",
  "sha2",
  "subtle",
  "time",
@@ -2507,7 +2478,7 @@ dependencies = [
  "anyhow",
  "async-native-tls",
  "async-recursion 0.3.2",
- "async-tungstenite 0.28.0",
+ "async-tungstenite",
  "chrono",
  "clock",
  "cocoa 0.26.0",
@@ -2639,7 +2610,7 @@ dependencies = [
  "assistant_tool",
  "async-stripe",
  "async-trait",
- "async-tungstenite 0.28.0",
+ "async-tungstenite",
  "audio",
  "aws-config",
  "aws-sdk-kinesis",
@@ -4540,7 +4511,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "nanorand",
- "spin 0.9.8",
+ "spin",
 ]
 
 [[package]]
@@ -6453,7 +6424,7 @@ dependencies = [
  "base64 0.21.7",
  "js-sys",
  "pem",
- "ring 0.17.8",
+ "ring",
  "serde",
  "serde_json",
  "simple_asn1",
@@ -6461,47 +6432,31 @@ dependencies = [
 
 [[package]]
 name = "jupyter-protocol"
-version = "0.3.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d4d496ac890e14efc12c5289818b3c39e3026a7bb02d5576b011e1a062d4bcc"
+checksum = "503458f8125fd9047ed0a9d95d7a93adc5eaf8bce48757c6d401e09f71ad3407"
 dependencies = [
  "anyhow",
  "async-trait",
  "bytes 1.8.0",
  "chrono",
  "futures 0.3.31",
- "jupyter-serde",
- "rand 0.8.5",
  "serde",
  "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "jupyter-serde"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32aa595c3912167b7eafcaa822b767ad1fa9605a18127fc9ac741241b796410e"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
  "uuid",
 ]
 
 [[package]]
 name = "jupyter-websocket-client"
-version = "0.5.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5850894210a3f033ff730d6f956b0335db38573ce7bb61c6abbf69dcbe284ba7"
+checksum = "58d9afa5bc6eeafb78f710a2efc585f69099f8b6a99dc7eb826581e3773a6e31"
 dependencies = [
  "anyhow",
  "async-trait",
- "async-tungstenite 0.22.2",
+ "async-tungstenite",
  "futures 0.3.31",
  "jupyter-protocol",
- "jupyter-serde",
  "serde",
  "serde_json",
  "url",
@@ -6817,7 +6772,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
- "spin 0.9.8",
+ "spin",
 ]
 
 [[package]]
@@ -7539,13 +7494,13 @@ dependencies = [
 
 [[package]]
 name = "nbformat"
-version = "0.7.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa6827a3881aa100bb2241cd2633b3c79474dbc93704f1f2cf5cc85064cda4be"
+checksum = "19835ad46507d80d9671e10a1c7c335655f4f3033aeb066fe025f14e070c2e66"
 dependencies = [
  "anyhow",
  "chrono",
- "jupyter-serde",
+ "jupyter-protocol",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -9571,7 +9526,7 @@ dependencies = [
  "bytes 1.8.0",
  "getrandom 0.2.15",
  "rand 0.8.5",
- "ring 0.17.8",
+ "ring",
  "rustc-hash 2.0.0",
  "rustls 0.23.16",
  "rustls-pki-types",
@@ -10216,21 +10171,6 @@ dependencies = [
 
 [[package]]
 name = "ring"
-version = "0.16.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3053cf52e236a3ed746dfc745aa9cacf1b791d846bdaf412f60a8d7d6e17c8fc"
-dependencies = [
- "cc",
- "libc",
- "once_cell",
- "spin 0.5.2",
- "untrusted 0.7.1",
- "web-sys",
- "winapi",
-]
-
-[[package]]
-name = "ring"
 version = "0.17.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c17fa4cb658e3583423e915b9f3acc01cceaee1860e33d59ebae66adc3a2dc0d"
@@ -10239,8 +10179,8 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.15",
  "libc",
- "spin 0.9.8",
- "untrusted 0.9.0",
+ "spin",
+ "untrusted",
  "windows-sys 0.52.0",
 ]
 
@@ -10333,7 +10273,7 @@ name = "rpc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-tungstenite 0.28.0",
+ "async-tungstenite",
  "base64 0.22.1",
  "chrono",
  "collections",
@@ -10375,9 +10315,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "0.22.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3a8ab675beb5cf25c28f9c6ddb8f47bcf73b43872797e6ab6157865f44d1e19"
+checksum = "445ff0ee3d5c832cdd27efadd004a741423db1f91bd1de593a14b21211ea084c"
 dependencies = [
  "anyhow",
  "async-dispatcher",
@@ -10390,8 +10330,7 @@ dependencies = [
  "futures 0.3.31",
  "glob",
  "jupyter-protocol",
- "jupyter-serde",
- "ring 0.17.8",
+ "ring",
  "serde",
  "serde_json",
  "shellexpand 3.1.0",
@@ -10520,24 +10459,12 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.20.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b80e3dec595989ea8510028f30c408a4630db12c9cbb8de34203b89d6577e99"
-dependencies = [
- "log",
- "ring 0.16.20",
- "sct",
- "webpki",
-]
-
-[[package]]
-name = "rustls"
 version = "0.21.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f56a14d1f48b391359b22f731fd4bd7e43c97f3c50eee276f3aa09c94784d3e"
 dependencies = [
  "log",
- "ring 0.17.8",
+ "ring",
  "rustls-webpki 0.101.7",
  "sct",
 ]
@@ -10549,7 +10476,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eee87ff5d9b36712a58574e12e9f0ea80f915a5b0ac518d322b24a465617925e"
 dependencies = [
  "once_cell",
- "ring 0.17.8",
+ "ring",
  "rustls-pki-types",
  "rustls-webpki 0.102.8",
  "subtle",
@@ -10614,8 +10541,8 @@ version = "0.101.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
- "ring 0.17.8",
- "untrusted 0.9.0",
+ "ring",
+ "untrusted",
 ]
 
 [[package]]
@@ -10624,9 +10551,9 @@ version = "0.102.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
 dependencies = [
- "ring 0.17.8",
+ "ring",
  "rustls-pki-types",
- "untrusted 0.9.0",
+ "untrusted",
 ]
 
 [[package]]
@@ -10740,8 +10667,8 @@ version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da046153aa2352493d6cb7da4b6e5c0c057d8a1d0a9aa8560baffdd945acd414"
 dependencies = [
- "ring 0.17.8",
- "untrusted 0.9.0",
+ "ring",
+ "untrusted",
 ]
 
 [[package]]
@@ -11502,12 +11429,6 @@ checksum = "bae30cc7bfe3656d60ee99bf6836f472b0c53dddcbf335e253329abb16e535a2"
 dependencies = [
  "smallvec",
 ]
-
-[[package]]
-name = "spin"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "spin"
@@ -13391,25 +13312,6 @@ checksum = "2c591d83f69777866b9126b24c6dd9a18351f177e49d625920d19f989fd31cf8"
 
 [[package]]
 name = "tungstenite"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15fba1a6d6bb030745759a9a2a588bfe8490fc8b4751a277db3a0be1c9ebbf67"
-dependencies = [
- "byteorder",
- "bytes 1.8.0",
- "data-encoding",
- "http 0.2.12",
- "httparse",
- "log",
- "rand 0.8.5",
- "sha1",
- "thiserror 1.0.69",
- "url",
- "utf-8",
-]
-
-[[package]]
-name = "tungstenite"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e3dac10fd62eaf6617d3a904ae222845979aec67c615d1c842b4002c7666fb9"
@@ -13618,12 +13520,6 @@ name = "unindent"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1766d682d402817b5ac4490b3c3002d91dfa0d22812f341609f97b08757359c"
-
-[[package]]
-name = "untrusted"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"
@@ -14535,8 +14431,8 @@ version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed63aea5ce73d0ff405984102c42de94fc55a6b75765d621c65262469b3c9b53"
 dependencies = [
- "ring 0.17.8",
- "untrusted 0.9.0",
+ "ring",
+ "untrusted",
 ]
 
 [[package]]
