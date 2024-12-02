@@ -34,6 +34,7 @@ use serde_json::{self, json};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{self, AtomicBool};
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
+use test::editor_lsp_test_context::rust_lang;
 use unindent::Unindent;
 use util::{
     assert_set_eq,
@@ -5458,7 +5459,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
+async fn test_autoindent(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let language = Arc::new(
@@ -5518,6 +5519,89 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
             ]
         );
     });
+}
+
+#[gpui::test]
+async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    {
+        let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
+        cx.set_state(indoc! {"
+            impl A {
+
+                fn b() {}
+
+            «fn c() {
+
+            }ˇ»
+            }
+        "});
+
+        cx.update_editor(|editor, cx| {
+            editor.autoindent(&Default::default(), cx);
+        });
+
+        cx.assert_editor_state(indoc! {"
+            impl A {
+
+                fn b() {}
+
+                «fn c() {
+
+                }ˇ»
+            }
+        "});
+    }
+
+    {
+        let mut cx = EditorTestContext::new_multibuffer(
+            cx,
+            [indoc! { "
+                impl A {
+                «
+                // a
+                fn b(){}
+                »
+                «
+                    }
+                    fn c(){}
+                »
+            "}],
+        );
+
+        let buffer = cx.update_editor(|editor, cx| {
+            let buffer = editor.buffer().update(cx, |buffer, _| {
+                buffer.all_buffers().iter().next().unwrap().clone()
+            });
+            buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+            buffer
+        });
+
+        cx.run_until_parked();
+        cx.update_editor(|editor, cx| {
+            editor.select_all(&Default::default(), cx);
+            editor.autoindent(&Default::default(), cx)
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            pretty_assertions::assert_eq!(
+                buffer.read(cx).text(),
+                indoc! { "
+                    impl A {
+
+                        // a
+                        fn b(){}
+
+
+                    }
+                    fn c(){}
+
+                " }
+            )
+        });
+    }
 }
 
 #[gpui::test]
@@ -13931,20 +14015,6 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
     });
 
     update_test_language_settings(cx, f);
-}
-
-pub(crate) fn rust_lang() -> Arc<Language> {
-    Arc::new(Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    ))
 }
 
 #[track_caller]

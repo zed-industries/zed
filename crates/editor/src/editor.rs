@@ -6297,6 +6297,25 @@ impl Editor {
         });
     }
 
+    pub fn autoindent(&mut self, _: &AutoIndent, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+        let selections = self
+            .selections
+            .all::<usize>(cx)
+            .into_iter()
+            .map(|s| s.range());
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.autoindent_ranges(selections, cx);
+            });
+            let selections = this.selections.all::<usize>(cx);
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+        });
+    }
+
     pub fn delete_line(&mut self, _: &DeleteLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);

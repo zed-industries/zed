@@ -9,9 +9,10 @@ use ui::ViewContext;
 pub(crate) enum IndentDirection {
     In,
     Out,
+    Auto,
 }
 
-actions!(vim, [Indent, Outdent,]);
+actions!(vim, [Indent, Outdent, AutoIndent]);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &Indent, cx| {
@@ -49,6 +50,24 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             vim.switch_mode(Mode::Normal, true, cx)
         }
     });
+
+    Vim::action(editor, cx, |vim, _: &AutoIndent, cx| {
+        vim.record_current_action(cx);
+        let count = Vim::take_count(cx).unwrap_or(1);
+        vim.store_visual_marks(cx);
+        vim.update_editor(cx, |vim, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                let original_positions = vim.save_selection_starts(editor, cx);
+                for _ in 0..count {
+                    editor.autoindent(&Default::default(), cx);
+                }
+                vim.restore_selection_cursors(editor, cx, original_positions);
+            });
+        });
+        if vim.mode.is_visual() {
+            vim.switch_mode(Mode::Normal, true, cx)
+        }
+    });
 }
 
 impl Vim {
@@ -71,10 +90,10 @@ impl Vim {
                         motion.expand_selection(map, selection, times, false, &text_layout_details);
                     });
                 });
-                if dir == IndentDirection::In {
-                    editor.indent(&Default::default(), cx);
-                } else {
-                    editor.outdent(&Default::default(), cx);
+                match dir {
+                    IndentDirection::In => editor.indent(&Default::default(), cx),
+                    IndentDirection::Out => editor.outdent(&Default::default(), cx),
+                    IndentDirection::Auto => editor.autoindent(&Default::default(), cx),
                 }
                 editor.change_selections(None, cx, |s| {
                     s.move_with(|map, selection| {
@@ -104,10 +123,10 @@ impl Vim {
                         object.expand_selection(map, selection, around);
                     });
                 });
-                if dir == IndentDirection::In {
-                    editor.indent(&Default::default(), cx);
-                } else {
-                    editor.outdent(&Default::default(), cx);
+                match dir {
+                    IndentDirection::In => editor.indent(&Default::default(), cx),
+                    IndentDirection::Out => editor.outdent(&Default::default(), cx),
+                    IndentDirection::Auto => editor.autoindent(&Default::default(), cx),
                 }
                 editor.change_selections(None, cx, |s| {
                     s.move_with(|map, selection| {
@@ -122,7 +141,11 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
-    use crate::test::NeovimBackedTestContext;
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
+    use indoc::indoc;
 
     #[gpui::test]
     async fn test_indent_gv(cx: &mut gpui::TestAppContext) {
@@ -134,5 +157,47 @@ mod test {
         cx.shared_state()
             .await
             .assert_eq("«    hello\n ˇ»   world\n");
+    }
+
+    #[gpui::test]
+    async fn test_autoindent_op(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc!(
+                "
+            fn a() {
+                b();
+                c();
+
+                    d();
+                    ˇe();
+                    f();
+
+                g();
+            }
+        "
+            ),
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("= a p");
+        cx.assert_state(
+            indoc!(
+                "
+                fn a() {
+                    b();
+                    c();
+
+                    d();
+                    ˇe();
+                    f();
+
+                    g();
+                }
+            "
+            ),
+            Mode::Normal,
+        );
     }
 }
