@@ -263,7 +263,7 @@ impl TextLayout {
         text: SharedString,
         runs: Option<Vec<TextRun>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        _cx: &mut AppContext,
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());

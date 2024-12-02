@@ -2,8 +2,8 @@ use crate::{
     point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyModel,
     AnyTooltip, AppContext, Arena, Asset, AsyncAppContext, AvailableSpace, Bounds, BoxShadow,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
-    DispatchNodeId, DispatchTree, DisplayId, Edges, Empty, EntityId, FileDropEvent, Flatten,
-    FontId, GPUSpecs, GlobalElementId, GlyphId, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Empty, EntityId, FileDropEvent, FontId,
+    GPUSpecs, GlobalElementId, GlyphId, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
     KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model,
     ModelContext, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
@@ -3651,21 +3651,6 @@ impl<T: 'static> WindowHandle<T> {
             },
             state_type: PhantomData,
         }
-    }
-
-    /// Get the root view out of this window.
-    ///
-    /// This will fail if the window is closed or if the root view's type does not match `V`.
-    pub fn root<C>(&self, cx: &mut C) -> Result<Model<T>>
-    where
-        C: Context,
-    {
-        todo!()
-        // Flatten::flatten(cx.update_window(self.any_handle, |root_view, _| {
-        //     root_view
-        //         .downcast::<T>()
-        //         .map_err(|_| anyhow!("the type of the window's root view has changed"))
-        // }))
     }
 
     /// Updates the root view of this window.

@@ -1642,10 +1642,10 @@ impl Interactivity {
                                                 window,
                                                 cx,
                                             );
-                                            self.paint_scroll_listener(hitbox, &style, window, cx);
+                                            self.paint_scroll_listener(hitbox, &style, window);
                                         }
 
-                                        self.paint_keyboard_listeners(window, cx);
+                                        self.paint_keyboard_listeners(window);
                                         f(&style, window, cx);
 
                                         if hitbox.is_some() {
@@ -1789,7 +1789,7 @@ impl Interactivity {
         // This behavior can be suppressed by using `cx.prevent_default()`.
         if let Some(focus_handle) = self.tracked_focus_handle.clone() {
             let hitbox = hitbox.clone();
-            window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
+            window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
                 if phase == DispatchPhase::Bubble
                     && hitbox.is_hovered(window)
                     && !window.default_prevented()
@@ -2106,7 +2106,7 @@ impl Interactivity {
                 .get_or_insert_with(Default::default)
                 .clone();
             if active_state.borrow().is_clicked() {
-                window.on_mouse_event(move |_: &MouseUpEvent, phase, window, cx| {
+                window.on_mouse_event(move |_: &MouseUpEvent, phase, _window, cx| {
                     if phase == DispatchPhase::Capture {
                         *active_state.borrow_mut() = ElementClickedState::default();
                         cx.refresh();
@@ -2136,7 +2136,7 @@ impl Interactivity {
         }
     }
 
-    fn paint_keyboard_listeners(&mut self, window: &mut Window, cx: &mut AppContext) {
+    fn paint_keyboard_listeners(&mut self, window: &mut Window) {
         let key_down_listeners = mem::take(&mut self.key_down_listeners);
         let key_up_listeners = mem::take(&mut self.key_up_listeners);
         let modifiers_changed_listeners = mem::take(&mut self.modifiers_changed_listeners);
@@ -2185,13 +2185,7 @@ impl Interactivity {
         }
     }
 
-    fn paint_scroll_listener(
-        &self,
-        hitbox: &Hitbox,
-        style: &Style,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn paint_scroll_listener(&self, hitbox: &Hitbox, style: &Style, window: &mut Window) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
