@@ -1,8 +1,9 @@
+use editor::Editor;
 use git::repository::GitFileStatus;
 use gpui::*;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
-use ui::{prelude::*, Checkbox, ElevationIndex, IconButtonShape};
+use ui::{prelude::*, Checkbox, DividerColor, ElevationIndex, IconButtonShape};
 use ui::{Disclosure, Divider};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::item::TabContentParams;
@@ -100,6 +101,7 @@ pub struct GitPanelState {
     show_list: bool,
     selected_index: usize,
     needs_update: bool,
+    commit_message: Option<SharedString>,
 }
 
 impl GitPanelState {
@@ -126,6 +128,7 @@ impl GitPanelState {
             file_order,
             file_tree,
             lines_changed,
+            commit_message: None,
             show_list: true,
             selected_index: 0,
             needs_update: true,
@@ -690,9 +693,6 @@ impl RenderOnce for StagingHeaderItem {
                         .size(ButtonSize::Compact)
                         .label_size(LabelSize::Small)
                         .layer(ui::ElevationIndex::ModalSurface)
-                        .icon(IconName::Check)
-                        .icon_position(IconPosition::Start)
-                        .icon_color(Color::Muted)
                         .disabled(self.no_changes)
                         .on_click(move |_, cx| cx.dispatch_action(Box::new(StageAll))),
                     )
@@ -703,9 +703,6 @@ impl RenderOnce for StagingHeaderItem {
                             "Unstage All",
                         )
                         .layer(ui::ElevationIndex::ModalSurface)
-                        .icon(IconName::Check)
-                        .icon_position(IconPosition::Start)
-                        .icon_color(Color::Muted)
                         .disabled(self.no_changes)
                         .on_click(move |_, cx| cx.dispatch_action(Box::new(UnstageAll))),
                     )
@@ -755,7 +752,6 @@ fn update_list(model: Model<GitPanelState>, cx: &mut WindowContext) -> ListState
     let state = model.read(cx);
     let items = state.generate_git_list_items();
     let total_items = items.len();
-    let unified_list = state.show_list;
 
     ListState::new(
         total_items,
@@ -827,6 +823,7 @@ pub struct GitPanel {
     list_state: ListState,
     scroll_handle: UniformListScrollHandle,
     width: Option<Pixels>,
+    commit_composer: View<Editor>,
 }
 
 impl GitPanel {
@@ -835,6 +832,19 @@ impl GitPanel {
         let new_state = GitPanelState::new(changed_files);
         let model = cx.new_model(|_cx| new_state);
         let scroll_handle = UniformListScrollHandle::new();
+        let editor = cx.new_view(|cx| {
+            let text_style_refinement: TextStyleRefinement = TextStyleRefinement {
+                font_size: Some(px(14.).into()),
+                ..Default::default()
+            };
+
+            let mut editor = Editor::multi_line(cx);
+            editor.set_placeholder_text("Add a commit message", cx);
+            editor.set_show_gutter(false, cx);
+            editor.set_current_line_highlight(None);
+            editor.set_text_style_refinement(text_style_refinement);
+            editor
+        });
 
         Self {
             id: id.into(),
@@ -843,7 +853,17 @@ impl GitPanel {
             list_state: update_list(model, cx),
             scroll_handle,
             width: Some(px(400.).into()),
+            commit_composer: editor,
         }
+    }
+
+    fn update_composer(&mut self, cx: &mut ViewContext<Self>) -> &mut Self {
+        let commit_message = self.state.read(cx).commit_message.clone();
+
+        self.commit_composer.update(cx, |editor, cx| {
+            editor.set_text(commit_message.unwrap_or_default(), cx);
+        });
+        self
     }
 
     fn update_list_if_needed(&mut self, cx: &mut ViewContext<Self>) {
@@ -1008,6 +1028,71 @@ impl GitPanel {
             })
             .collect()
     }
+
+    fn render_commit_composer(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+        let model = self.state.clone();
+        let state = self.state.read(cx);
+        let staged_count = state.staged_count();
+        let staged_files = state
+            .files
+            .values()
+            .filter(|f| f.staged)
+            .map(|f| f.file_path.clone())
+            .collect::<Vec<_>>();
+
+        let staged_files = staged_files.join("\n");
+
+        let commit_message = state.commit_message.clone();
+
+        let commit_button_disabled = staged_count == 0 || commit_message.is_none();
+
+        let commit_button = Button::new("commit-button", "Commit")
+            .style(ButtonStyle::Filled)
+            .size(ButtonSize::Compact)
+            .disabled(commit_button_disabled)
+            .on_click(move |_, cx| {
+                let staged_files = staged_files.clone();
+                let commit_message = commit_message.clone();
+                model.update(cx, |state, cx| {
+                    state.commit_message = None;
+                    state.files.retain(|_, file| !file.staged);
+                    state.file_order.retain(|id| !state.files[id].staged);
+                    state.update_lines_changed();
+                    state.file_tree = FileTree::new(&state.files);
+                    state.needs_update = true;
+                    cx.notify();
+                });
+            });
+
+        v_flex()
+            .relative()
+            .w_full()
+            .h(px(140.))
+            .overflow_hidden()
+            .m_2()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_sm()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .w_full()
+                    .h_full()
+                    .mx_3()
+                    .my_2_5()
+                    .child(self.commit_composer.clone()),
+            )
+            .child(
+                h_flex()
+                    .absolute()
+                    .bottom_2()
+                    .right_2()
+                    .child(commit_button),
+            )
+            .into_any_element()
+    }
 }
 
 impl Render for GitPanel {
@@ -1020,6 +1105,7 @@ impl Render for GitPanel {
         let scroll_handle = self.scroll_handle.clone();
 
         v_flex()
+            .font_buffer(cx)
             .py_1()
             .id(self.id.clone())
             .key_context("vcs_status")
@@ -1047,7 +1133,7 @@ impl Render for GitPanel {
                 h_flex()
                     .items_center()
                     .h(px(8.))
-                    .child(Divider::horizontal_dashed()),
+                    .child(Divider::horizontal_dashed().color(DividerColor::Border)),
             )
             .child(
                 uniform_list(view, "git-panel-list", items_count, Self::render_items)
@@ -1057,6 +1143,8 @@ impl Render for GitPanel {
                     .size_full()
                     .into_any_element(),
             )
+            .child(div().flex_1())
+            .child(self.render_commit_composer(cx))
     }
 }
 
