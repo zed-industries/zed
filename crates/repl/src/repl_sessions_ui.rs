@@ -3,7 +3,7 @@ use gpui::{
     actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
     Subscription, View,
 };
-use project::Item as _;
+use project::ProjectItem as _;
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;

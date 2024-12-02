@@ -391,12 +391,12 @@ impl Global for ProjectItemOpeners {}
 pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
     let builders = cx.default_global::<ProjectItemOpeners>();
     builders.push(|project, project_path, cx| {
-        let project_item = <I::Item as project::Item>::try_open(project, project_path, cx)?;
+        let project_item = <I::Item as project::ProjectItem>::try_open(project, project_path, cx)?;
         let project = project.clone();
         Some(cx.spawn(|cx| async move {
             let project_item = project_item.await?;
             let project_entry_id: Option<ProjectEntryId> =
-                project_item.read_with(&cx, project::Item::entry_id)?;
+                project_item.read_with(&cx, project::ProjectItem::entry_id)?;
             let build_workspace_item = Box::new(|cx: &mut ViewContext<Pane>| {
                 Box::new(cx.new_view(|cx| I::for_project_item(project, project_item, cx)))
                     as Box<dyn ItemHandle>
@@ -2721,7 +2721,7 @@ impl Workspace {
     where
         T: ProjectItem,
     {
-        use project::Item as _;
+        use project::ProjectItem as _;
         let project_item = project_item.read(cx);
         let entry_id = project_item.entry_id(cx);
         let project_path = project_item.project_path(cx);
@@ -6422,24 +6422,26 @@ mod tests {
         let item1 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+                .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
         let item2 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_conflict(true)
-                .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
+                .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
         let item3 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_conflict(true)
-                .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
+                .with_project_items(&[dirty_project_item(3, "3.txt", cx)])
         });
         let item4 = cx.new_view(|cx| {
-            TestItem::new(cx)
-                .with_dirty(true)
-                .with_project_items(&[TestProjectItem::new_untitled(cx)])
+            TestItem::new(cx).with_dirty(true).with_project_items(&[{
+                let project_item = TestProjectItem::new_untitled(cx);
+                project_item.update(cx, |project_item, _| project_item.is_dirty = true);
+                project_item
+            }])
         });
         let pane = workspace.update(cx, |workspace, cx| {
             workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
@@ -6531,7 +6533,7 @@ mod tests {
                 cx.new_view(|cx| {
                     TestItem::new(cx)
                         .with_dirty(true)
-                        .with_project_items(&[TestProjectItem::new(
+                        .with_project_items(&[dirty_project_item(
                             project_entry_id,
                             &format!("{project_entry_id}.txt"),
                             cx,
@@ -6713,6 +6715,9 @@ mod tests {
                 })
             });
             item.is_dirty = true;
+            for project_item in &mut item.project_items {
+                project_item.update(cx, |project_item, _| project_item.is_dirty = true);
+            }
         });
 
         pane.update(cx, |pane, cx| {
@@ -7411,6 +7416,434 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_no_save_prompt_when_multi_buffer_dirty_items_closed(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        let dirty_regular_buffer = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("1.txt")
+                .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
+        });
+        let dirty_regular_buffer_2 = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("2.txt")
+                .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
+        });
+        let dirty_multi_buffer_with_both = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_singleton(false)
+                .with_label("Fake Project Search")
+                .with_project_items(&[
+                    dirty_regular_buffer.read(cx).project_items[0].clone(),
+                    dirty_regular_buffer_2.read(cx).project_items[0].clone(),
+                ])
+        });
+        let multi_buffer_with_both_files_id = dirty_multi_buffer_with_both.item_id();
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(dirty_regular_buffer.clone()),
+                None,
+                false,
+                false,
+                cx,
+            );
+            workspace.add_item(
+                pane.clone(),
+                Box::new(dirty_regular_buffer_2.clone()),
+                None,
+                false,
+                false,
+                cx,
+            );
+            workspace.add_item(
+                pane.clone(),
+                Box::new(dirty_multi_buffer_with_both.clone()),
+                None,
+                false,
+                false,
+                cx,
+            );
+        });
+
+        pane.update(cx, |pane, cx| {
+            pane.activate_item(2, true, true, cx);
+            assert_eq!(
+                pane.active_item().unwrap().item_id(),
+                multi_buffer_with_both_files_id,
+                "Should select the multi buffer in the pane"
+            );
+        });
+        let close_all_but_multi_buffer_task = pane
+            .update(cx, |pane, cx| {
+                pane.close_inactive_items(
+                    &CloseInactiveItems {
+                        save_intent: Some(SaveIntent::Save),
+                        close_pinned: true,
+                    },
+                    cx,
+                )
+            })
+            .expect("should have inactive files to close");
+        cx.background_executor.run_until_parked();
+        assert!(
+            !cx.has_pending_prompt(),
+            "Multi buffer still has the unsaved buffer inside, so no save prompt should be shown"
+        );
+        close_all_but_multi_buffer_task
+            .await
+            .expect("Closing all buffers but the multi buffer failed");
+        pane.update(cx, |pane, cx| {
+            assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
+            assert_eq!(dirty_multi_buffer_with_both.read(cx).save_count, 0);
+            assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 0);
+            assert_eq!(pane.items_len(), 1);
+            assert_eq!(
+                pane.active_item().unwrap().item_id(),
+                multi_buffer_with_both_files_id,
+                "Should have only the multi buffer left in the pane"
+            );
+            assert!(
+                dirty_multi_buffer_with_both.read(cx).is_dirty,
+                "The multi buffer containing the unsaved buffer should still be dirty"
+            );
+        });
+
+        let close_multi_buffer_task = pane
+            .update(cx, |pane, cx| {
+                pane.close_active_item(
+                    &CloseActiveItem {
+                        save_intent: Some(SaveIntent::Close),
+                    },
+                    cx,
+                )
+            })
+            .expect("should have the multi buffer to close");
+        cx.background_executor.run_until_parked();
+        assert!(
+            cx.has_pending_prompt(),
+            "Dirty multi buffer should prompt a save dialog"
+        );
+        cx.simulate_prompt_answer(0);
+        cx.background_executor.run_until_parked();
+        close_multi_buffer_task
+            .await
+            .expect("Closing the multi buffer failed");
+        pane.update(cx, |pane, cx| {
+            assert_eq!(
+                dirty_multi_buffer_with_both.read(cx).save_count,
+                1,
+                "Multi buffer item should get be saved"
+            );
+            // Test impl does not save inner items, so we do not assert them
+            assert_eq!(
+                pane.items_len(),
+                0,
+                "No more items should be left in the pane"
+            );
+            assert!(pane.active_item().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_no_save_prompt_when_dirty_singleton_buffer_closed_with_a_multi_buffer_containing_it_present_in_the_pane(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        let dirty_regular_buffer = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("1.txt")
+                .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
+        });
+        let dirty_regular_buffer_2 = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("2.txt")
+                .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
+        });
+        let clear_regular_buffer = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_label("3.txt")
+                .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
+        });
+
+        let dirty_multi_buffer_with_both = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_singleton(false)
+                .with_label("Fake Project Search")
+                .with_project_items(&[
+                    dirty_regular_buffer.read(cx).project_items[0].clone(),
+                    dirty_regular_buffer_2.read(cx).project_items[0].clone(),
+                    clear_regular_buffer.read(cx).project_items[0].clone(),
+                ])
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(dirty_regular_buffer.clone()),
+                None,
+                false,
+                false,
+                cx,
+            );
+            workspace.add_item(
+                pane.clone(),
+                Box::new(dirty_multi_buffer_with_both.clone()),
+                None,
+                false,
+                false,
+                cx,
+            );
+        });
+
+        pane.update(cx, |pane, cx| {
+            pane.activate_item(0, true, true, cx);
+            assert_eq!(
+                pane.active_item().unwrap().item_id(),
+                dirty_regular_buffer.item_id(),
+                "Should select the dirty singleton buffer in the pane"
+            );
+        });
+        let close_singleton_buffer_task = pane
+            .update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            })
+            .expect("should have active singleton buffer to close");
+        cx.background_executor.run_until_parked();
+        assert!(
+            !cx.has_pending_prompt(),
+            "Multi buffer is still in the pane and has the unsaved buffer inside, so no save prompt should be shown"
+        );
+
+        close_singleton_buffer_task
+            .await
+            .expect("Should not fail closing the singleton buffer");
+        pane.update(cx, |pane, cx| {
+            assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
+            assert_eq!(
+                dirty_multi_buffer_with_both.read(cx).save_count,
+                0,
+                "Multi buffer itself should not be saved"
+            );
+            assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 0);
+            assert_eq!(
+                pane.items_len(),
+                1,
+                "A dirty multi buffer should be present in the pane"
+            );
+            assert_eq!(
+                pane.active_item().unwrap().item_id(),
+                dirty_multi_buffer_with_both.item_id(),
+                "Should activate the only remaining item in the pane"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_save_prompt_when_dirty_multi_buffer_closed_with_some_of_its_dirty_items_not_present_in_the_pane(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        let dirty_regular_buffer = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("1.txt")
+                .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
+        });
+        let dirty_regular_buffer_2 = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("2.txt")
+                .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
+        });
+        let clear_regular_buffer = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_label("3.txt")
+                .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
+        });
+
+        let dirty_multi_buffer_with_both = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_singleton(false)
+                .with_label("Fake Project Search")
+                .with_project_items(&[
+                    dirty_regular_buffer.read(cx).project_items[0].clone(),
+                    dirty_regular_buffer_2.read(cx).project_items[0].clone(),
+                    clear_regular_buffer.read(cx).project_items[0].clone(),
+                ])
+        });
+        let multi_buffer_with_both_files_id = dirty_multi_buffer_with_both.item_id();
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(dirty_regular_buffer.clone()),
+                None,
+                false,
+                false,
+                cx,
+            );
+            workspace.add_item(
+                pane.clone(),
+                Box::new(dirty_multi_buffer_with_both.clone()),
+                None,
+                false,
+                false,
+                cx,
+            );
+        });
+
+        pane.update(cx, |pane, cx| {
+            pane.activate_item(1, true, true, cx);
+            assert_eq!(
+                pane.active_item().unwrap().item_id(),
+                multi_buffer_with_both_files_id,
+                "Should select the multi buffer in the pane"
+            );
+        });
+        let _close_multi_buffer_task = pane
+            .update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            })
+            .expect("should have active multi buffer to close");
+        cx.background_executor.run_until_parked();
+        assert!(
+            cx.has_pending_prompt(),
+            "With one dirty item from the multi buffer not being in the pane, a save prompt should be shown"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_save_prompt_when_dirty_multi_buffer_closed_with_all_of_its_dirty_items_present_in_the_pane(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        let dirty_regular_buffer = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("1.txt")
+                .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
+        });
+        let dirty_regular_buffer_2 = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("2.txt")
+                .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
+        });
+        let clear_regular_buffer = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_label("3.txt")
+                .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
+        });
+
+        let dirty_multi_buffer = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_singleton(false)
+                .with_label("Fake Project Search")
+                .with_project_items(&[
+                    dirty_regular_buffer.read(cx).project_items[0].clone(),
+                    dirty_regular_buffer_2.read(cx).project_items[0].clone(),
+                    clear_regular_buffer.read(cx).project_items[0].clone(),
+                ])
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(dirty_regular_buffer.clone()),
+                None,
+                false,
+                false,
+                cx,
+            );
+            workspace.add_item(
+                pane.clone(),
+                Box::new(dirty_regular_buffer_2.clone()),
+                None,
+                false,
+                false,
+                cx,
+            );
+            workspace.add_item(
+                pane.clone(),
+                Box::new(dirty_multi_buffer.clone()),
+                None,
+                false,
+                false,
+                cx,
+            );
+        });
+
+        pane.update(cx, |pane, cx| {
+            pane.activate_item(2, true, true, cx);
+            assert_eq!(
+                pane.active_item().unwrap().item_id(),
+                dirty_multi_buffer.item_id(),
+                "Should select the multi buffer in the pane"
+            );
+        });
+        let close_multi_buffer_task = pane
+            .update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            })
+            .expect("should have active multi buffer to close");
+        cx.background_executor.run_until_parked();
+        assert!(
+            !cx.has_pending_prompt(),
+            "All dirty items from the multi buffer are in the pane still, no save prompts should be shown"
+        );
+        close_multi_buffer_task
+            .await
+            .expect("Closing multi buffer failed");
+        pane.update(cx, |pane, cx| {
+            assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
+            assert_eq!(dirty_multi_buffer.read(cx).save_count, 0);
+            assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 0);
+            assert_eq!(
+                pane.items()
+                    .map(|item| item.item_id())
+                    .sorted()
+                    .collect::<Vec<_>>(),
+                vec![
+                    dirty_regular_buffer.item_id(),
+                    dirty_regular_buffer_2.item_id(),
+                ],
+                "Should have no multi buffer left in the pane"
+            );
+            assert!(dirty_regular_buffer.read(cx).is_dirty);
+            assert!(dirty_regular_buffer_2.read(cx).is_dirty);
+        });
+    }
+
     mod register_project_item_tests {
         use ui::Context as _;
 
@@ -7423,7 +7856,7 @@ mod tests {
         // Model
         struct TestPngItem {}
 
-        impl project::Item for TestPngItem {
+        impl project::ProjectItem for TestPngItem {
             fn try_open(
                 _project: &Model<Project>,
                 path: &ProjectPath,
@@ -7442,6 +7875,10 @@ mod tests {
 
             fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
                 None
+            }
+
+            fn is_dirty(&self) -> bool {
+                false
             }
         }
 
@@ -7485,7 +7922,7 @@ mod tests {
         // Model
         struct TestIpynbItem {}
 
-        impl project::Item for TestIpynbItem {
+        impl project::ProjectItem for TestIpynbItem {
             fn try_open(
                 _project: &Model<Project>,
                 path: &ProjectPath,
@@ -7504,6 +7941,10 @@ mod tests {
 
             fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
                 None
+            }
+
+            fn is_dirty(&self) -> bool {
+                false
             }
         }
 
@@ -7701,5 +8142,13 @@ mod tests {
             crate::init_settings(cx);
             Project::init_settings(cx);
         });
+    }
+
+    fn dirty_project_item(id: u64, path: &str, cx: &mut AppContext) -> Model<TestProjectItem> {
+        let item = TestProjectItem::new(id, path, cx);
+        item.update(cx, |item, _| {
+            item.is_dirty = true;
+        });
+        item
     }
 }

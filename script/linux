@@ -67,6 +67,7 @@ yum=$(command -v yum || true)
 if [[ -n $dnf ]] || [[ -n $yum ]]; then
   pkg_cmd="${dnf:-${yum}}"
   deps=(
+    musl-gcc
     gcc
     clang
     cmake
