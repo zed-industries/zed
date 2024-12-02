@@ -114,6 +114,7 @@ jobs:
           script/generate-licenses /tmp/zed_licenses_output
 
       - name: Check for new vulnerable dependencies
+        if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@3b139cfc5fae8b618d3eae3675e383bb1769c019 # v4
         with:
           license-check: false
