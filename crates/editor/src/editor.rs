@@ -1690,7 +1690,9 @@ impl CodeActionsMenu {
                                     }),
                                 )
                                 // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
-                                .child(SharedString::from(action.lsp_action.title.clone()))
+                                .child(SharedString::from(
+                                    action.lsp_action.title.replace("\n", ""),
+                                ))
                             })
                             .when_some(action.as_task(), |this, task| {
                                 this.on_mouse_down(
@@ -1707,7 +1709,7 @@ impl CodeActionsMenu {
                                         }
                                     }),
                                 )
-                                .child(SharedString::from(task.resolved_label.clone()))
+                                .child(SharedString::from(task.resolved_label.replace("\n", "")))
                             })
                     })
                     .collect()
