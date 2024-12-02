@@ -14,7 +14,7 @@ use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use settings::Settings;
-use std::{path::Path, sync::Arc};
+use std::{ops::Not as _, path::Path, sync::Arc};
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -105,7 +105,13 @@ impl LanguageSelectorDelegate {
             .language_names()
             .into_iter()
             .enumerate()
-            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name))
+            .filter_map(|(candidate_id, name)| {
+                language_registry
+                    .available_language_for_name(&name)?
+                    .hidden()
+                    .not()
+                    .then(|| StringMatchCandidate::new(candidate_id, name))
+            })
             .collect::<Vec<_>>();
 
         Self {
@@ -142,7 +148,7 @@ impl LanguageSelectorDelegate {
             let language_name = LanguageName::new(mat.string.as_str());
             match self
                 .language_registry
-                .available_language_for_name(&language_name)
+                .available_language_for_name(&language_name.0)
             {
                 Some(available_language) => {
                     let icon = self.language_icon(available_language.matcher(), cx);
