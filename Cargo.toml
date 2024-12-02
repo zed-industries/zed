@@ -393,7 +393,7 @@ jupyter-protocol = { version = "0.3.0" }
 jupyter-websocket-client = { version = "0.5.0" }
 libc = "0.2"
 linkify = "0.10.0"
-livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="3b8485e45e26178d119daa30926c3ffbf4b85cad", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
+livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="799f10133d93ba2a88642cd480d01ec4da53408c", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
