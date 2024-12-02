@@ -333,7 +333,7 @@ alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "91
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
-ashpd = "0.10.0"
+ashpd = { version = "0.10", default-features = false, features = ["async-std"]}
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"

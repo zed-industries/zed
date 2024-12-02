@@ -32,7 +32,7 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{prelude::*, text_for_action, IconButtonShape, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -704,7 +704,7 @@ impl PromptEditor {
                 cx,
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
+            editor.set_placeholder_text(Self::placeholder_text(cx), cx);
             editor
         });
 
@@ -735,6 +735,14 @@ impl PromptEditor {
         this.count_tokens(cx);
         this.subscribe_to_editor(cx);
         this
+    }
+
+    fn placeholder_text(cx: &WindowContext) -> String {
+        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+            .map(|keybinding| format!(" • {keybinding} for context"))
+            .unwrap_or_default();
+
+        format!("Generate…{context_keybinding} • ↓↑ for history")
     }
 
     fn subscribe_to_editor(&mut self, cx: &mut ViewContext<Self>) {
