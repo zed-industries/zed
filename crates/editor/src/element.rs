@@ -2748,6 +2748,11 @@ impl EditorElement {
         const X_OFFSET: f32 = 25.;
         const PADDING_Y: f32 = 2.;
 
+        let accept_completion_keystroke = cx.keystroke_text_for_action_in(
+            &crate::AcceptInlineCompletion,
+            &self.editor.read(cx).focus_handle,
+        );
+
         let edit = self
             .editor
             .read(cx)
@@ -2764,20 +2769,20 @@ impl EditorElement {
         let upper_left = edit.position().to_display_point(editor_snapshot);
         let is_visible = visible_row_range.contains(&upper_left.row());
 
+        let container_element = div()
+            .bg(cx.theme().colors().editor_background)
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_md()
+            .px_1();
+
         let (origin, mut element) = if show_go_to_edit_hint {
             if is_visible {
-                let element = div()
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_md()
-                    .px_1()
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(Icon::new(IconName::ArrowRight))
-                            .child(Label::new("tab")), // TODO: replace this with the actual keystroke
-                    )
+                let element = container_element
+                    .child(Label::new(format!(
+                        "{} jump to edit",
+                        accept_completion_keystroke
+                    )))
                     .into_any();
 
                 let len = editor_snapshot.line_len(upper_left.row());
@@ -2792,21 +2797,19 @@ impl EditorElement {
             } else {
                 let is_above = visible_row_range.start > upper_left.row();
 
-                let mut element = div()
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_md()
-                    .px_1()
+                let mut element = container_element
                     .child(
                         h_flex()
                             .gap_1()
+                            .child(Label::new(format!(
+                                "{} jump to edit",
+                                accept_completion_keystroke
+                            )))
                             .child(Icon::new(if is_above {
                                 IconName::ArrowUp
                             } else {
                                 IconName::ArrowDown
-                            }))
-                            .child(Label::new("tab to edit")), // TODO: replace this with the actual keystroke
+                            })),
                     )
                     .into_any();
 
@@ -2846,14 +2849,7 @@ impl EditorElement {
                 }),
             );
 
-            let element = div()
-                .bg(cx.theme().colors().editor_background)
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .rounded_md()
-                .px_1()
-                .child(text)
-                .into_any();
+            let element = container_element.child(text).into_any();
             (origin, element)
         } else {
             return None;
