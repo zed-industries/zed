@@ -559,6 +559,8 @@
     "close_position": "right",
     // Whether to show the file icon for a tab.
     "file_icons": false,
+    // Whether to always show the close button on tabs.
+    "always_show_close_button": false,
     // What to do after closing the current tab.
     //
     // 1. Activate the tab that was open previously (default)
