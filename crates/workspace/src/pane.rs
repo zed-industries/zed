@@ -755,7 +755,7 @@ impl Pane {
     }
 
     pub(crate) fn set_pinned_count(&mut self, count: usize) {
-        self.pinned_tab_count = count;
+        self.pinned_tab_count = count.min(self.items.len());
     }
 
     pub(crate) fn pinned_count(&self) -> usize {
@@ -1890,7 +1890,7 @@ impl Pane {
     fn unpin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
         maybe!({
             let pane = cx.view().clone();
-            self.pinned_tab_count = self.pinned_tab_count.checked_sub(1).unwrap();
+            self.pinned_tab_count = self.pinned_tab_count.checked_sub(1)?;
             let destination_index = self.pinned_tab_count;
 
             let id = self.item_for_index(ix)?.item_id();
