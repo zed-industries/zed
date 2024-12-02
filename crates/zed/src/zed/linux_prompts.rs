@@ -33,11 +33,11 @@ pub fn fallback_prompt_renderer(
             actions: actions.iter().map(ToString::to_string).collect(),
             focus: cx.focus_handle(),
             active_action_id: 0,
-            detail: detail.map(|d| {
+            detail: detail.filter(|text| !text.is_empty()).map(|text| {
                 cx.new_view(|cx| {
                     let mut editor = Editor::auto_height(3, cx);
                     editor.set_input_enabled(false);
-                    editor.set_text(d, cx);
+                    editor.set_text(text, cx);
                     editor.set_cursor_shape(CursorShape::Transparent, cx);
                     editor
                 })
