@@ -2,6 +2,8 @@ mod models;
 
 use anyhow::{anyhow, Context, Result};
 use aws_sdk_bedrockruntime::config::SharedHttpClient;
+use futures::stream;
+use futures::StreamExt;
 use http_client::HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -16,6 +18,7 @@ use bedrock::types::ConverseOutput as Response;
 pub use bedrock::types::ConverseStreamOutput as BedrockStreamingResponse;
 pub use bedrock::types::Message as BedrockMessage;
 pub use bedrock::types::ResponseStream as BedrockResponseStream;
+use futures::stream::BoxStream;
 use strum::Display;
 //TODO: Re-export the Bedrock stuff
 // https://doc.rust-lang.org/rustdoc/write-documentation/re-exports.html
@@ -42,7 +45,7 @@ pub async fn complete(
 pub async fn stream_completion(
     client: &bedrock::Client,
     request: Request,
-) -> Result<Option<BedrockStreamingResponse>, BedrockError> {
+) -> Result<BoxStream<'static, Result<Option<BedrockStreamingResponse>, BedrockError>>, BedrockError> {
     let response = bedrock::Client::converse_stream(client)
         .model_id(request.model)
         .set_messages(request.messages.into())
@@ -50,15 +53,23 @@ pub async fn stream_completion(
         .await;
 
     match response {
-        Ok(mut output) => match output.stream.recv().await {
-            Ok(resp) => match resp {
-                None => Ok(None),
-                Some(output) => Ok(Some(output)),
-            },
-            Err(e) => Err(BedrockError::ClientError(anyhow!(
-                "Failed to receive response from Bedrock"
-            ))),
-        },
+        Ok(mut output) => {
+            let stream = stream::unfold(output.stream, |mut stream| async move {
+                match stream.recv().await {
+                    Ok(Some(output)) => Some((Ok(Some(output)), stream)),
+                    Ok(None) => Some((Ok(None), stream)),
+                    Err(e) => Some((
+                        Err(BedrockError::ClientError(anyhow!(
+                            "Failed to receive response from Bedrock"
+                        ))),
+                        stream,
+                    )),
+                }
+            })
+            .boxed();
+
+            Ok(stream)
+        }
         Err(e) => Err(BedrockError::ClientError(anyhow!(e))),
     }
 }
