@@ -127,6 +127,7 @@
     "ogg": "audio",
     "opus": "audio",
     "otf": "font",
+    "pcss": "css",
     "pdb": "storage",
     "pdf": "document",
     "php": "php",
