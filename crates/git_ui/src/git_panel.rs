@@ -139,14 +139,7 @@ impl GitPanelState {
         items.push(GitListItem::Header(false));
 
         // Unstaged files
-        for (id, file) in &self.files {
-            if !file.staged {
-                items.push(GitListItem::File {
-                    id: id.clone(),
-                    indent_level: 0,
-                });
-            }
-        }
+        self.add_files_to_list(&mut items, false, &self.file_tree.root, 0);
 
         items.push(GitListItem::Divider);
 
@@ -154,16 +147,63 @@ impl GitPanelState {
         items.push(GitListItem::Header(true));
 
         // Staged files
-        for (id, file) in &self.files {
-            if file.staged {
-                items.push(GitListItem::File {
-                    id: id.clone(),
-                    indent_level: 0,
-                });
-            }
-        }
+        self.add_files_to_list(&mut items, true, &self.file_tree.root, 0);
 
         items
+    }
+
+    fn add_files_to_list(
+        &self,
+        items: &mut Vec<GitListItem>,
+        is_staged: bool,
+        node: &BTreeMap<String, FileTreeNode>,
+        indent_level: usize,
+    ) {
+        for (path, node) in node {
+            match node {
+                FileTreeNode::File(id) => {
+                    if let Some(file) = self.files.get(id) {
+                        if file.staged == is_staged {
+                            items.push(GitListItem::File {
+                                id: id.clone(),
+                                indent_level,
+                            });
+                        }
+                    }
+                }
+                FileTreeNode::Directory(children) => {
+                    let has_files = self.directory_has_files(children, is_staged);
+                    if has_files {
+                        items.push(GitListItem::Directory {
+                            path: path.clone(),
+                            indent_level,
+                            is_expanded: true, // You might want to track this state separately
+                        });
+                        self.add_files_to_list(items, is_staged, children, indent_level + 1);
+                    }
+                }
+            }
+        }
+    }
+
+    fn directory_has_files(&self, node: &BTreeMap<String, FileTreeNode>, is_staged: bool) -> bool {
+        for node in node.values() {
+            match node {
+                FileTreeNode::File(id) => {
+                    if let Some(file) = self.files.get(id) {
+                        if file.staged == is_staged {
+                            return true;
+                        }
+                    }
+                }
+                FileTreeNode::Directory(children) => {
+                    if self.directory_has_files(children, is_staged) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn count_files_in_directory(&self, path: &str) -> usize {
@@ -695,7 +735,8 @@ impl RenderOnce for StagingHeaderItem {
                 }
             })
             .h(px(28.))
-            .py(px(12.))
+            .pl(px(12.))
+            .pr_2()
             .child(
                 h_flex()
                     .gap_2()
@@ -775,8 +816,10 @@ fn directory_item(
 }
 
 fn update_list(model: Model<GitPanelState>, cx: &mut WindowContext) -> ListState {
-    let items = model.read(cx).generate_git_list_items();
+    let state = model.read(cx);
+    let items = state.generate_git_list_items();
     let total_items = items.len();
+    let unified_list = state.show_list;
 
     ListState::new(
         total_items,
@@ -965,6 +1008,9 @@ impl GitPanel {
         let state = self.state.read(cx);
         let items = state.generate_git_list_items();
         let model = self.state.clone();
+
+        let unified_list = state.show_list;
+
         range
             .map(|ix| {
                 match &items[ix] {
