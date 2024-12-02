@@ -1701,7 +1701,10 @@ extern "C" fn first_rect_for_character_range(
         let lock = state.lock();
         let mut frame = NSWindow::frame(lock.native_window);
         let content_layout_rect: CGRect = msg_send![lock.native_window, contentLayoutRect];
-        frame.origin.y -= frame.size.height - content_layout_rect.size.height;
+        let style_mask: NSWindowStyleMask = msg_send![lock.native_window, styleMask];
+        if !style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask) {
+            frame.origin.y -= frame.size.height - content_layout_rect.size.height;
+        }
         frame
     };
     with_input_handler(this, |input_handler| {
