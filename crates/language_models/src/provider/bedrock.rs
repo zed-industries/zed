@@ -270,8 +270,9 @@ impl BedrockModel {
         Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
         async move {
-            let request = bedrock::stream_completion(&self.runtime_client, request);
-            request.await.context("failed to perform stream completion")
+            let response = bedrock::stream_completion(&self.runtime_client, request);
+
+            let unwrappedResponse: ConverseStreamOutput = response.await;
         }
         .boxed()
     }
