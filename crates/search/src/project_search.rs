@@ -34,8 +34,8 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    h_flex, prelude::*, v_flex, Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label,
-    LabelCommon, LabelSize, Selectable, Tooltip,
+    h_flex, prelude::*, utils::SearchInputWidth, v_flex, Icon, IconButton, IconButtonShape,
+    IconName, KeyBinding, Label, LabelCommon, LabelSize, Selectable, Tooltip,
 };
 use util::paths::PathMatcher;
 use workspace::{
@@ -333,20 +333,20 @@ impl Render for ProjectSearchView {
             let model = self.model.read(cx);
             let has_no_results = model.no_results.unwrap_or(false);
             let is_search_underway = model.pending_search.is_some();
-            let major_text = if is_search_underway {
-                "Searching..."
+
+            let heading_text = if is_search_underway {
+                "Searching…"
             } else if has_no_results {
-                "No results"
+                "No Results"
             } else {
-                "Search all files"
+                "Search All Files"
             };
 
-            let major_text = div()
+            let heading_text = div()
                 .justify_center()
-                .max_w_96()
-                .child(Label::new(major_text).size(LabelSize::Large));
+                .child(Label::new(heading_text).size(LabelSize::Large));
 
-            let minor_text: Option<AnyElement> = if let Some(no_results) = model.no_results {
+            let page_content: Option<AnyElement> = if let Some(no_results) = model.no_results {
                 if model.pending_search.is_none() && no_results {
                     Some(
                         Label::new("No results found in this project for the provided query")
@@ -359,20 +359,24 @@ impl Render for ProjectSearchView {
             } else {
                 Some(self.landing_text_minor(cx).into_any_element())
             };
-            let minor_text = minor_text.map(|text| div().items_center().max_w_96().child(text));
+
+            let page_content = page_content.map(|text| div().child(text));
+
             v_flex()
-                .flex_1()
                 .size_full()
+                .items_center()
                 .justify_center()
+                .overflow_hidden()
                 .bg(cx.theme().colors().editor_background)
                 .track_focus(&self.focus_handle(cx))
                 .child(
-                    h_flex()
-                        .size_full()
-                        .justify_center()
-                        .child(h_flex().flex_1())
-                        .child(v_flex().gap_1().child(major_text).children(minor_text))
-                        .child(h_flex().flex_1()),
+                    v_flex()
+                        .id("project-search-landing-page")
+                        .overflow_y_scroll()
+                        .max_w_80()
+                        .gap_1()
+                        .child(heading_text)
+                        .children(page_content),
                 )
         }
     }
@@ -445,7 +449,7 @@ impl Item for ProjectSearchView {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
         self.results_editor.for_each_project_item(cx, f)
     }
@@ -669,7 +673,7 @@ impl ProjectSearchView {
 
         let query_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
-            editor.set_placeholder_text("Search all files...", cx);
+            editor.set_placeholder_text("Search all files…", cx);
             editor.set_text(query_text, cx);
             editor
         });
@@ -692,7 +696,7 @@ impl ProjectSearchView {
         );
         let replacement_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
-            editor.set_placeholder_text("Replace in project...", cx);
+            editor.set_placeholder_text("Replace in project…", cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, cx);
             }
@@ -1586,9 +1590,12 @@ impl Render for ProjectSearchBar {
         let search = search.read(cx);
         let focus_handle = search.focus_handle(cx);
 
+        let container_width = cx.viewport_size().width;
+        let input_width = SearchInputWidth::calc_width(container_width);
+
         let input_base_styles = || {
             h_flex()
-                .w_full()
+                .w(input_width)
                 .h_8()
                 .px_2()
                 .py_1()
@@ -1701,6 +1708,10 @@ impl Render for ProjectSearchBar {
             .unwrap_or_else(|| "0/0".to_string());
 
         let matches_column = h_flex()
+            .pl_2()
+            .ml_2()
+            .border_l_1()
+            .border_color(cx.theme().colors().border_variant)
             .child(
                 IconButton::new("project-search-prev-match", IconName::ChevronLeft)
                     .shape(IconButtonShape::Square)
@@ -1751,13 +1762,13 @@ impl Render for ProjectSearchBar {
                 div()
                     .id("matches")
                     .ml_1()
-                    .child(
-                        Label::new(match_text).color(if search.active_match_index.is_some() {
+                    .child(Label::new(match_text).size(LabelSize::Small).color(
+                        if search.active_match_index.is_some() {
                             Color::Default
                         } else {
                             Color::Disabled
-                        }),
-                    )
+                        },
+                    ))
                     .when(limit_reached, |el| {
                         el.tooltip(|cx| {
                             Tooltip::text("Search limits reached.\nTry narrowing your search.", cx)
@@ -1767,9 +1778,9 @@ impl Render for ProjectSearchBar {
 
         let search_line = h_flex()
             .w_full()
-            .gap_1p5()
+            .gap_2()
             .child(query_column)
-            .child(h_flex().min_w_40().child(mode_column).child(matches_column));
+            .child(h_flex().min_w_64().child(mode_column).child(matches_column));
 
         let replace_line = search.replace_enabled.then(|| {
             let replace_column =
@@ -1779,7 +1790,7 @@ impl Render for ProjectSearchBar {
 
             let replace_actions =
                 h_flex()
-                    .min_w_40()
+                    .min_w_64()
                     .gap_1()
                     .when(search.replace_enabled, |this| {
                         this.child(
@@ -1830,7 +1841,7 @@ impl Render for ProjectSearchBar {
 
             h_flex()
                 .w_full()
-                .gap_1p5()
+                .gap_2()
                 .child(replace_column)
                 .child(replace_actions)
         });
@@ -1838,7 +1849,7 @@ impl Render for ProjectSearchBar {
         let filter_line = search.filters_enabled.then(|| {
             h_flex()
                 .w_full()
-                .gap_1p5()
+                .gap_2()
                 .child(
                     input_base_styles()
                         .on_action(
@@ -1861,12 +1872,11 @@ impl Render for ProjectSearchBar {
                 )
                 .child(
                     h_flex()
-                        .min_w_40()
+                        .min_w_64()
                         .gap_1()
                         .child(
                             IconButton::new("project-search-opened-only", IconName::FileSearch)
                                 .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
                                 .selected(self.is_opened_only_enabled(cx))
                                 .tooltip(|cx| Tooltip::text("Only Search Open Files", cx))
                                 .on_click(cx.listener(|this, _, cx| {

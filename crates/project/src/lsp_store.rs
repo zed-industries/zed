@@ -10,7 +10,7 @@ use crate::{
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
-    CodeAction, Completion, CoreCompletion, Hover, InlayHint, Item as _, ProjectPath,
+    CodeAction, Completion, CoreCompletion, Hover, InlayHint, ProjectItem as _, ProjectPath,
     ProjectTransaction, ResolveState, Symbol, ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -2919,6 +2919,21 @@ impl LspStore {
             })
     }
 
+    pub fn diagnostics_for_buffer(
+        &self,
+        path: &ProjectPath,
+    ) -> Option<
+        &[(
+            LanguageServerId,
+            Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+        )],
+    > {
+        self.diagnostics
+            .get(&path.worktree_id)?
+            .get(&path.path)
+            .map(|diagnostics| diagnostics.as_slice())
+    }
+
     pub fn started_language_servers(&self) -> Vec<(WorktreeId, LanguageServerName)> {
         self.language_server_ids.keys().cloned().collect()
     }
@@ -5562,7 +5577,7 @@ impl LspStore {
 
         let worktree = worktree_handle.read(cx);
         let worktree_id = worktree.id();
-        let worktree_path = worktree.abs_path();
+        let root_path = worktree.abs_path();
         let key = (worktree_id, adapter.name.clone());
 
         if self.language_server_ids.contains_key(&key) {
@@ -5584,7 +5599,6 @@ impl LspStore {
             as Arc<dyn LspAdapterDelegate>;
 
         let server_id = self.languages.next_language_server_id();
-        let root_path = worktree_path.clone();
         log::info!(
             "attempting to start language server {:?}, path: {root_path:?}, id: {server_id}",
             adapter.name.0
@@ -5659,8 +5673,6 @@ impl LspStore {
                             .initialization_options(&(delegate))
                             .await?;
 
-                        Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
-
                         match (&mut initialization_options, override_options) {
                             (Some(initialization_options), Some(override_options)) => {
                                 merge_json_value_into(override_options, initialization_options);
@@ -5669,8 +5681,18 @@ impl LspStore {
                             _ => {}
                         }
 
+                        let initialization_params = cx.update(|cx| {
+                            let mut params = language_server.default_initialize_params(cx);
+                            params.initialization_options = initialization_options;
+                            adapter.adapter.prepare_initialize_params(params)
+                        })??;
+
+                        Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
+
                         let language_server = cx
-                            .update(|cx| language_server.initialize(initialization_options, cx))?
+                            .update(|cx| {
+                                language_server.initialize(Some(initialization_params), cx)
+                            })?
                             .await
                             .inspect_err(|_| {
                                 if let Some(this) = this.upgrade() {

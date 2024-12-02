@@ -42,6 +42,7 @@ pub struct WindowsWindowState {
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
     pub system_key_handled: bool,
+    pub hovered: bool,
 
     pub renderer: BladeRenderer,
 
@@ -95,6 +96,7 @@ impl WindowsWindowState {
         let callbacks = Callbacks::default();
         let input_handler = None;
         let system_key_handled = false;
+        let hovered = false;
         let click_state = ClickState::new();
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
@@ -110,6 +112,7 @@ impl WindowsWindowState {
             callbacks,
             input_handler,
             system_key_handled,
+            hovered,
             renderer,
             click_state,
             system_settings,
@@ -326,6 +329,7 @@ pub(crate) struct Callbacks {
     pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     pub(crate) input: Option<Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>>,
     pub(crate) active_status_change: Option<Box<dyn FnMut(bool)>>,
+    pub(crate) hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     pub(crate) moved: Option<Box<dyn FnMut()>>,
     pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
@@ -635,9 +639,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.hwnd == unsafe { GetActiveWindow() }
     }
 
-    // is_hovered is unused on Windows. See WindowContext::is_window_hovered.
     fn is_hovered(&self) -> bool {
-        false
+        self.0.state.borrow().hovered
     }
 
     fn set_title(&mut self, title: &str) {
@@ -728,7 +731,9 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().callbacks.active_status_change = Some(callback);
     }
 
-    fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+    }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.state.borrow_mut().callbacks.resize = Some(callback);

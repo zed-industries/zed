@@ -342,9 +342,9 @@ dependencies = [
 
 [[package]]
 name = "ashpd"
-version = "0.9.2"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d43c03d9e36dd40cab48435be0b09646da362c278223ca535493877b2c1dee9"
+checksum = "e9c39d707614dbcc6bed00015539f488d8e3fe3e66ed60961efc0c90f4b380b3"
 dependencies = [
  "async-fs 2.1.2",
  "async-net 2.0.0",
@@ -355,7 +355,7 @@ dependencies = [
  "serde",
  "serde_repr",
  "url",
- "zbus",
+ "zbus 5.1.1",
 ]
 
 [[package]]
@@ -383,7 +383,7 @@ dependencies = [
  "clock",
  "collections",
  "command_palette_hooks",
- "context_servers",
+ "context_server",
  "ctor",
  "db",
  "editor",
@@ -455,16 +455,23 @@ name = "assistant2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_tool",
+ "collections",
  "command_palette_hooks",
  "editor",
  "feature_flags",
+ "futures 0.3.31",
  "gpui",
  "language_model",
  "language_model_selector",
  "proto",
+ "serde",
+ "serde_json",
  "settings",
+ "smol",
  "theme",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -498,6 +505,20 @@ dependencies = [
  "derive_more",
  "gpui",
  "parking_lot",
+ "serde",
+ "serde_json",
+ "workspace",
+]
+
+[[package]]
+name = "assistant_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant_tool",
+ "chrono",
+ "gpui",
+ "schemars",
  "serde",
  "serde_json",
  "workspace",
@@ -1954,9 +1975,9 @@ dependencies = [
 
 [[package]]
 name = "bytemuck"
-version = "1.19.0"
+version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8334215b81e418a0a7bdb8ef0849474f40bb10c8b71f1c4ed315cff49f32494d"
+checksum = "8b37c88a63ffd85d15b406896cc343916d7cf57838a847b3a6f2ca5d39a5695a"
 dependencies = [
  "bytemuck_derive",
 ]
@@ -2610,6 +2631,7 @@ dependencies = [
  "anthropic",
  "anyhow",
  "assistant",
+ "assistant_tool",
  "async-stripe",
  "async-trait",
  "async-tungstenite 0.28.0",
@@ -2628,7 +2650,7 @@ dependencies = [
  "clock",
  "collab_ui",
  "collections",
- "context_servers",
+ "context_server",
  "ctor",
  "dashmap 6.1.0",
  "derive_more",
@@ -2871,12 +2893,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
-name = "context_servers"
+name = "context_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_tool",
  "collections",
  "command_palette_hooks",
+ "context_server_settings",
  "extension",
  "futures 0.3.31",
  "gpui",
@@ -2884,13 +2908,27 @@ dependencies = [
  "parking_lot",
  "postage",
  "project",
- "schemars",
  "serde",
  "serde_json",
  "settings",
  "smol",
+ "ui",
  "url",
  "util",
+ "workspace",
+]
+
+[[package]]
+name = "context_server_settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "gpui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
 ]
 
 [[package]]
@@ -3715,6 +3753,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dunce"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
+
+[[package]]
 name = "dwrote"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3858,9 +3902,9 @@ dependencies = [
 
 [[package]]
 name = "embed-resource"
-version = "2.5.1"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b68b6f9f63a0b6a38bc447d4ce84e2b388f3ec95c99c641c8ff0dd3ef89a6379"
+checksum = "4762ce03154ba57ebaeee60cc631901ceae4f18219cbb874e464347471594742"
 dependencies = [
  "cc",
  "memchr",
@@ -4206,7 +4250,7 @@ dependencies = [
  "async-trait",
  "client",
  "collections",
- "context_servers",
+ "context_server_settings",
  "ctor",
  "env_logger 0.11.5",
  "extension",
@@ -6241,9 +6285,9 @@ dependencies = [
 
 [[package]]
 name = "ipc-channel"
-version = "0.18.3"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f4c80f2df4fc64fb7fc2cff69fc034af26e6e6617ea9f1313131af464b9ca0"
+checksum = "6fb8251fb7bcd9ccd3725ed8deae9fe7db8e586495c9eb5b0c52e6233e5e75ea"
 dependencies = [
  "bincode",
  "crossbeam-channel",
@@ -7944,9 +7988,9 @@ dependencies = [
  "serde",
  "sha2",
  "subtle",
- "zbus",
+ "zbus 4.4.0",
  "zeroize",
- "zvariant",
+ "zvariant 4.2.0",
 ]
 
 [[package]]
@@ -9177,9 +9221,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.89"
+version = "1.0.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f139b0662de085916d1fb67d2b4169d1addddda1919e696f3252b740b629986e"
+checksum = "37d3544b3f2748c54e147655edb5025752e2303145b5aefb3c3ea2c78b973bb0"
 dependencies = [
  "unicode-ident",
 ]
@@ -9269,6 +9313,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "command_palette_hooks",
  "db",
  "editor",
  "file_icons",
@@ -10243,13 +10288,12 @@ dependencies = [
 
 [[package]]
 name = "rodio"
-version = "0.19.0"
+version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6006a627c1a38d37f3d3a85c6575418cfe34a5392d60a686d0071e1c8d427acb"
+checksum = "e7ceb6607dd738c99bc8cb28eff249b7cd5c8ec88b9db96c0608c1480d140fb1"
 dependencies = [
  "cpal",
  "hound",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -12380,6 +12424,7 @@ name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-recursion 1.1.1",
  "breadcrumbs",
  "client",
  "collections",
@@ -13125,9 +13170,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-c"
-version = "0.23.1"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8b3fb515e498e258799a31d78e6603767cd6892770d9e2290ec00af5c3ad80b"
+checksum = "db56fadd8c3c6bc880dffcf1177c9d1c54a71a5207716db8660189082e63b587"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -13650,6 +13695,7 @@ dependencies = [
  "async-fs 1.6.0",
  "collections",
  "dirs 4.0.0",
+ "dunce",
  "futures 0.3.31",
  "futures-lite 1.13.0",
  "git2",
@@ -13794,6 +13840,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "theme",
  "tokio",
  "ui",
  "util",
@@ -15544,9 +15591,45 @@ dependencies = [
  "uds_windows",
  "windows-sys 0.52.0",
  "xdg-home",
- "zbus_macros",
- "zbus_names",
- "zvariant",
+ "zbus_macros 4.4.0",
+ "zbus_names 3.0.0",
+ "zvariant 4.2.0",
+]
+
+[[package]]
+name = "zbus"
+version = "5.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1162094dc63b1629fcc44150bcceeaa80798cd28bcbe7fa987b65a034c258608"
+dependencies = [
+ "async-broadcast",
+ "async-executor",
+ "async-fs 2.1.2",
+ "async-io 2.4.0",
+ "async-lock 3.4.0",
+ "async-process 2.3.0",
+ "async-recursion 1.1.1",
+ "async-task",
+ "async-trait",
+ "blocking",
+ "enumflags2",
+ "event-listener 5.3.1",
+ "futures-core",
+ "futures-util",
+ "hex",
+ "nix",
+ "ordered-stream",
+ "serde",
+ "serde_repr",
+ "static_assertions",
+ "tracing",
+ "uds_windows",
+ "windows-sys 0.59.0",
+ "winnow 0.6.20",
+ "xdg-home",
+ "zbus_macros 5.1.1",
+ "zbus_names 4.1.0",
+ "zvariant 5.1.0",
 ]
 
 [[package]]
@@ -15559,7 +15642,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
- "zvariant_utils",
+ "zvariant_utils 2.1.0",
+]
+
+[[package]]
+name = "zbus_macros"
+version = "5.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cd2dcdce3e2727f7d74b7e33b5a89539b3cc31049562137faf7ae4eb86cd16d"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+ "zbus_names 4.1.0",
+ "zvariant 5.1.0",
+ "zvariant_utils 3.0.2",
 ]
 
 [[package]]
@@ -15570,12 +15668,24 @@ checksum = "4b9b1fef7d021261cc16cba64c351d291b715febe0fa10dc3a443ac5a5022e6c"
 dependencies = [
  "serde",
  "static_assertions",
- "zvariant",
+ "zvariant 4.2.0",
+]
+
+[[package]]
+name = "zbus_names"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "856b7a38811f71846fd47856ceee8bccaec8399ff53fb370247e66081ace647b"
+dependencies = [
+ "serde",
+ "static_assertions",
+ "winnow 0.6.20",
+ "zvariant 5.1.0",
 ]
 
 [[package]]
 name = "zed"
-version = "0.164.0"
+version = "0.165.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -15583,6 +15693,7 @@ dependencies = [
  "assets",
  "assistant",
  "assistant2",
+ "assistant_tools",
  "async-watch",
  "audio",
  "auto_update",
@@ -16064,8 +16175,23 @@ dependencies = [
  "enumflags2",
  "serde",
  "static_assertions",
+ "zvariant_derive 4.2.0",
+]
+
+[[package]]
+name = "zvariant"
+version = "5.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1200ee6ac32f1e5a312e455a949a4794855515d34f9909f4a3e082d14e1a56f"
+dependencies = [
+ "endi",
+ "enumflags2",
+ "serde",
+ "static_assertions",
  "url",
- "zvariant_derive",
+ "winnow 0.6.20",
+ "zvariant_derive 5.1.0",
+ "zvariant_utils 3.0.2",
 ]
 
 [[package]]
@@ -16078,7 +16204,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
- "zvariant_utils",
+ "zvariant_utils 2.1.0",
+]
+
+[[package]]
+name = "zvariant_derive"
+version = "5.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "687e3b97fae6c9104fbbd36c73d27d149abf04fb874e2efbd84838763daa8916"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+ "zvariant_utils 3.0.2",
 ]
 
 [[package]]
@@ -16090,4 +16229,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
+]
+
+[[package]]
+name = "zvariant_utils"
+version = "3.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20d1d011a38f12360e5fcccceeff5e2c42a8eb7f27f0dcba97a0862ede05c9c6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde",
+ "static_assertions",
+ "syn 2.0.87",
+ "winnow 0.6.20",
 ]

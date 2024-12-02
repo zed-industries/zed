@@ -8,8 +8,8 @@ use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
-    point, size, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, MouseButton, Pixels,
-    Point, StyleRefinement, View, ViewContext,
+    point, size, Along, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, MouseButton,
+    Pixels, Point, StyleRefinement, View, ViewContext,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -27,11 +27,11 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 /// Single-pane group is a regular pane.
 #[derive(Clone)]
 pub struct PaneGroup {
-    pub(crate) root: Member,
+    pub root: Member,
 }
 
 impl PaneGroup {
-    pub(crate) fn with_root(root: Member) -> Self {
+    pub fn with_root(root: Member) -> Self {
         Self { root }
     }
 
@@ -90,6 +90,30 @@ impl PaneGroup {
         }
     }
 
+    pub fn resize(
+        &mut self,
+        pane: &View<Pane>,
+        direction: Axis,
+        amount: Pixels,
+        bounds: &Bounds<Pixels>,
+    ) {
+        match &mut self.root {
+            Member::Pane(_) => {}
+            Member::Axis(axis) => {
+                let _ = axis.resize(pane, direction, amount, bounds);
+            }
+        };
+    }
+
+    pub fn reset_pane_sizes(&mut self) {
+        match &mut self.root {
+            Member::Pane(_) => {}
+            Member::Axis(axis) => {
+                let _ = axis.reset_pane_sizes();
+            }
+        };
+    }
+
     pub fn swap(&mut self, from: &View<Pane>, to: &View<Pane>) {
         match &mut self.root {
             Member::Pane(_) => {}
@@ -98,7 +122,7 @@ impl PaneGroup {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn render(
+    pub fn render(
         &self,
         project: &Model<Project>,
         follower_states: &HashMap<PeerId, FollowerState>,
@@ -120,19 +144,51 @@ impl PaneGroup {
         )
     }
 
-    pub(crate) fn panes(&self) -> Vec<&View<Pane>> {
+    pub fn panes(&self) -> Vec<&View<Pane>> {
         let mut panes = Vec::new();
         self.root.collect_panes(&mut panes);
         panes
     }
 
-    pub(crate) fn first_pane(&self) -> View<Pane> {
+    pub fn first_pane(&self) -> View<Pane> {
         self.root.first_pane()
+    }
+
+    pub fn find_pane_in_direction(
+        &mut self,
+        active_pane: &View<Pane>,
+        direction: SplitDirection,
+        cx: &WindowContext,
+    ) -> Option<&View<Pane>> {
+        let bounding_box = self.bounding_box_for_pane(active_pane)?;
+        let cursor = active_pane.read(cx).pixel_position_of_cursor(cx);
+        let center = match cursor {
+            Some(cursor) if bounding_box.contains(&cursor) => cursor,
+            _ => bounding_box.center(),
+        };
+
+        let distance_to_next = crate::HANDLE_HITBOX_SIZE;
+
+        let target = match direction {
+            SplitDirection::Left => {
+                Point::new(bounding_box.left() - distance_to_next.into(), center.y)
+            }
+            SplitDirection::Right => {
+                Point::new(bounding_box.right() + distance_to_next.into(), center.y)
+            }
+            SplitDirection::Up => {
+                Point::new(center.x, bounding_box.top() - distance_to_next.into())
+            }
+            SplitDirection::Down => {
+                Point::new(center.x, bounding_box.bottom() + distance_to_next.into())
+            }
+        };
+        self.pane_at_pixel_position(target)
     }
 }
 
-#[derive(Clone)]
-pub(crate) enum Member {
+#[derive(Debug, Clone)]
+pub enum Member {
     Axis(PaneAxis),
     Pane(View<Pane>),
 }
@@ -335,8 +391,8 @@ impl Member {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct PaneAxis {
+#[derive(Debug, Clone)]
+pub struct PaneAxis {
     pub axis: Axis,
     pub members: Vec<Member>,
     pub flexes: Arc<Mutex<Vec<f32>>>,
@@ -443,6 +499,125 @@ impl PaneAxis {
         } else {
             Err(anyhow!("Pane not found"))
         }
+    }
+
+    fn reset_pane_sizes(&self) {
+        *self.flexes.lock() = vec![1.; self.members.len()];
+        for member in self.members.iter() {
+            if let Member::Axis(axis) = member {
+                axis.reset_pane_sizes();
+            }
+        }
+    }
+
+    fn resize(
+        &mut self,
+        pane: &View<Pane>,
+        axis: Axis,
+        amount: Pixels,
+        bounds: &Bounds<Pixels>,
+    ) -> Option<bool> {
+        let container_size = self
+            .bounding_boxes
+            .lock()
+            .iter()
+            .filter_map(|e| *e)
+            .reduce(|acc, e| acc.union(&e))
+            .unwrap_or(*bounds)
+            .size;
+
+        let found_pane = self
+            .members
+            .iter()
+            .any(|member| matches!(member, Member::Pane(p) if p == pane));
+
+        if found_pane && self.axis != axis {
+            return Some(false); // pane found but this is not the correct axis direction
+        }
+        let mut found_axis_index: Option<usize> = None;
+        if !found_pane {
+            for (i, pa) in self.members.iter_mut().enumerate() {
+                if let Member::Axis(pa) = pa {
+                    if let Some(done) = pa.resize(pane, axis, amount, bounds) {
+                        if done {
+                            return Some(true); // pane found and operations already done
+                        } else if self.axis != axis {
+                            return Some(false); // pane found but this is not the correct axis direction
+                        } else {
+                            found_axis_index = Some(i); // pane found and this is correct direction
+                        }
+                    }
+                }
+            }
+            found_axis_index?; // no pane found
+        }
+
+        let min_size = match axis {
+            Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
+            Axis::Vertical => px(VERTICAL_MIN_SIZE),
+        };
+        let mut flexes = self.flexes.lock();
+
+        let ix = if found_pane {
+            self.members.iter().position(|m| {
+                if let Member::Pane(p) = m {
+                    p == pane
+                } else {
+                    false
+                }
+            })
+        } else {
+            found_axis_index
+        };
+
+        if ix.is_none() {
+            return Some(true);
+        }
+
+        let ix = ix.unwrap_or(0);
+
+        let size = move |ix, flexes: &[f32]| {
+            container_size.along(axis) * (flexes[ix] / flexes.len() as f32)
+        };
+
+        // Don't allow resizing to less than the minimum size, if elements are already too small
+        if min_size - px(1.) > size(ix, flexes.as_slice()) {
+            return Some(true);
+        }
+
+        let flex_changes = |pixel_dx, target_ix, next: isize, flexes: &[f32]| {
+            let flex_change = flexes.len() as f32 * pixel_dx / container_size.along(axis);
+            let current_target_flex = flexes[target_ix] + flex_change;
+            let next_target_flex = flexes[(target_ix as isize + next) as usize] - flex_change;
+            (current_target_flex, next_target_flex)
+        };
+
+        let apply_changes =
+            |current_ix: usize, proposed_current_pixel_change: Pixels, flexes: &mut [f32]| {
+                let next_target_size = Pixels::max(
+                    size(current_ix + 1, flexes) - proposed_current_pixel_change,
+                    min_size,
+                );
+                let current_target_size = Pixels::max(
+                    size(current_ix, flexes) + size(current_ix + 1, flexes) - next_target_size,
+                    min_size,
+                );
+
+                let current_pixel_change = current_target_size - size(current_ix, flexes);
+
+                let (current_target_flex, next_target_flex) =
+                    flex_changes(current_pixel_change, current_ix, 1, flexes);
+
+                flexes[current_ix] = current_target_flex;
+                flexes[current_ix + 1] = next_target_flex;
+            };
+
+        if ix + 1 == flexes.len() {
+            apply_changes(ix - 1, -1.0 * amount, flexes.as_mut_slice());
+        } else {
+            apply_changes(ix, amount, flexes.as_mut_slice());
+        }
+        Some(true)
     }
 
     fn swap(&mut self, from: &View<Pane>, to: &View<Pane>) {
@@ -625,8 +800,15 @@ impl SplitDirection {
     }
 }
 
-mod element {
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub enum ResizeIntent {
+    Lengthen,
+    Shorten,
+    Widen,
+    Narrow,
+}
 
+mod element {
     use std::mem;
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 

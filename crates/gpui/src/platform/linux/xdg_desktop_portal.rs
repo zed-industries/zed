@@ -42,11 +42,13 @@ impl XDPEventSource {
                 {
                     sender.send(Event::CursorTheme(initial_theme))?;
                 }
+
+                // If u32 is used here, it throws invalid type error
                 if let Ok(initial_size) = settings
-                    .read::<u32>("org.gnome.desktop.interface", "cursor-size")
+                    .read::<i32>("org.gnome.desktop.interface", "cursor-size")
                     .await
                 {
-                    sender.send(Event::CursorSize(initial_size))?;
+                    sender.send(Event::CursorSize(initial_size as u32))?;
                 }
 
                 if let Ok(mut cursor_theme_changed) = settings
@@ -69,7 +71,7 @@ impl XDPEventSource {
                 }
 
                 if let Ok(mut cursor_size_changed) = settings
-                    .receive_setting_changed_with_args::<u32>(
+                    .receive_setting_changed_with_args::<i32>(
                         "org.gnome.desktop.interface",
                         "cursor-size",
                     )
@@ -80,7 +82,7 @@ impl XDPEventSource {
                         .spawn(async move {
                             while let Some(size) = cursor_size_changed.next().await {
                                 let size = size?;
-                                sender.send(Event::CursorSize(size))?;
+                                sender.send(Event::CursorSize(size as u32))?;
                             }
                             anyhow::Ok(())
                         })
