@@ -456,6 +456,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_tool",
+ "client",
  "collections",
  "command_palette_hooks",
  "context_server",
@@ -465,6 +466,7 @@ dependencies = [
  "gpui",
  "language_model",
  "language_model_selector",
+ "language_models",
  "log",
  "project",
  "proto",
