@@ -452,18 +452,16 @@ impl Fs for RealFs {
 
     #[cfg(target_os = "windows")]
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+        use util::paths::SanitizedPath;
         use windows::{
             core::HSTRING,
             Storage::{StorageDeleteOption, StorageFile},
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let path = path.canonicalize()?.to_string_lossy().to_string();
-        let path_str = path.trim_start_matches("\\\\?\\");
-        if path_str.is_empty() {
-            anyhow::bail!("File path is empty!");
-        }
-        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_str))?.get()?;
+        let path = SanitizedPath::from(path.canonicalize()?);
+        let path_string = path.to_string();
+        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
         file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
         Ok(())
     }
@@ -480,19 +478,17 @@ impl Fs for RealFs {
 
     #[cfg(target_os = "windows")]
     async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+        use util::paths::SanitizedPath;
         use windows::{
             core::HSTRING,
             Storage::{StorageDeleteOption, StorageFolder},
         };
 
-        let path = path.canonicalize()?.to_string_lossy().to_string();
-        let path_str = path.trim_start_matches("\\\\?\\");
-        if path_str.is_empty() {
-            anyhow::bail!("Folder path is empty!");
-        }
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_str))?.get()?;
+        let path = SanitizedPath::from(path.canonicalize()?);
+        let path_string = path.to_string();
+        let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.get()?;
         folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
         Ok(())
     }

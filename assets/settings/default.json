@@ -300,6 +300,8 @@
   "scroll_beyond_last_line": "one_page",
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
+  // Whether to scroll when clicking near the edge of the visible text area.
+  "autoscroll_on_clicks": false,
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
@@ -490,9 +492,6 @@
     "version": "2",
     // Whether the assistant is enabled.
     "enabled": true,
-    // Whether to show inline hints showing the keybindings to use the inline assistant and the
-    // assistant panel.
-    "show_hints": true,
     // Whether to show the assistant panel button in the status bar.
     "button": true,
     // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.

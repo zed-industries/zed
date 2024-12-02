@@ -1,6 +1,5 @@
 use crate::slash_command::file_command::codeblock_fence_for_path;
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -23,6 +22,7 @@ use crate::{
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
+use assistant_tool::ToolWorkingSet;
 use client::{proto, zed_urls, Client, Status};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use editor::{
@@ -416,7 +416,6 @@ impl AssistantPanel {
                 ControlFlow::Break(())
             });
 
-            pane.set_can_split(false, cx);
             pane.set_can_navigate(true, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
@@ -1316,7 +1315,7 @@ impl AssistantPanel {
 
     fn restart_context_servers(
         workspace: &mut Workspace,
-        _action: &context_servers::Restart,
+        _action: &context_server::Restart,
         cx: &mut ViewContext<Workspace>,
     ) {
         let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
@@ -1925,7 +1924,7 @@ impl ContextEditor {
                                     Content::ToolUse {
                                         range: tool_use.source_range.clone(),
                                         tool_use: LanguageModelToolUse {
-                                            id: tool_use.id.to_string(),
+                                            id: tool_use.id.clone(),
                                             name: tool_use.name.clone(),
                                             input: tool_use.input.clone(),
                                         },

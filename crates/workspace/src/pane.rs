@@ -291,7 +291,7 @@ pub struct Pane {
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
     custom_drop_handle:
         Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
-    can_split: bool,
+    can_split_predicate: Option<Arc<dyn Fn(&mut Self, &dyn Any, &mut ViewContext<Self>) -> bool>>,
     should_display_tab_bar: Rc<dyn Fn(&ViewContext<Pane>) -> bool>,
     render_tab_bar_buttons:
         Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> (Option<AnyElement>, Option<AnyElement>)>,
@@ -303,7 +303,7 @@ pub struct Pane {
     double_click_dispatch_action: Box<dyn Action>,
     save_modals_spawned: HashSet<EntityId>,
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
-    split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
 }
 
@@ -411,7 +411,7 @@ impl Pane {
             project,
             can_drop_predicate,
             custom_drop_handle: None,
-            can_split: true,
+            can_split_predicate: None,
             should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
                 if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
@@ -623,9 +623,13 @@ impl Pane {
         self.should_display_tab_bar = Rc::new(should_display_tab_bar);
     }
 
-    pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
-        self.can_split = can_split;
-        cx.notify();
+    pub fn set_can_split(
+        &mut self,
+        can_split_predicate: Option<
+            Arc<dyn Fn(&mut Self, &dyn Any, &mut ViewContext<Self>) -> bool + 'static>,
+        >,
+    ) {
+        self.can_split_predicate = can_split_predicate;
     }
 
     pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ViewContext<Self>) {
@@ -1291,10 +1295,12 @@ impl Pane {
     ) -> Task<Result<()>> {
         // Find the items to close.
         let mut items_to_close = Vec::new();
+        let mut item_ids_to_close = HashSet::default();
         let mut dirty_items = Vec::new();
         for item in &self.items {
             if should_close(item.item_id()) {
                 items_to_close.push(item.boxed_clone());
+                item_ids_to_close.insert(item.item_id());
                 if item.is_dirty(cx) {
                     dirty_items.push(item.boxed_clone());
                 }
@@ -1335,16 +1341,23 @@ impl Pane {
                 }
             }
             let mut saved_project_items_ids = HashSet::default();
-            for item in items_to_close.clone() {
-                // Find the item's current index and its set of project item models. Avoid
+            for item_to_close in items_to_close {
+                // Find the item's current index and its set of dirty project item models. Avoid
                 // storing these in advance, in case they have changed since this task
                 // was started.
-                let (item_ix, mut project_item_ids) = pane.update(&mut cx, |pane, cx| {
-                    (pane.index_for_item(&*item), item.project_item_model_ids(cx))
-                })?;
-                let item_ix = if let Some(ix) = item_ix {
-                    ix
-                } else {
+                let mut dirty_project_item_ids = Vec::new();
+                let Some(item_ix) = pane.update(&mut cx, |pane, cx| {
+                    item_to_close.for_each_project_item(
+                        cx,
+                        &mut |project_item_id, project_item| {
+                            if project_item.is_dirty() {
+                                dirty_project_item_ids.push(project_item_id);
+                            }
+                        },
+                    );
+                    pane.index_for_item(&*item_to_close)
+                })?
+                else {
                     continue;
                 };
 
@@ -1352,27 +1365,34 @@ impl Pane {
                 // in the workspace, AND that the user has not already been prompted to save.
                 // If there are any such project entries, prompt the user to save this item.
                 let project = workspace.update(&mut cx, |workspace, cx| {
-                    for item in workspace.items(cx) {
-                        if !items_to_close
-                            .iter()
-                            .any(|item_to_close| item_to_close.item_id() == item.item_id())
-                        {
-                            let other_project_item_ids = item.project_item_model_ids(cx);
-                            project_item_ids.retain(|id| !other_project_item_ids.contains(id));
+                    for open_item in workspace.items(cx) {
+                        let open_item_id = open_item.item_id();
+                        if !item_ids_to_close.contains(&open_item_id) {
+                            let other_project_item_ids = open_item.project_item_model_ids(cx);
+                            dirty_project_item_ids
+                                .retain(|id| !other_project_item_ids.contains(id));
                         }
                     }
                     workspace.project().clone()
                 })?;
-                let should_save = project_item_ids
+                let should_save = dirty_project_item_ids
                     .iter()
-                    .any(|id| saved_project_items_ids.insert(*id));
+                    .any(|id| saved_project_items_ids.insert(*id))
+                    // Always propose to save singleton files without any project paths: those cannot be saved via multibuffer, as require a file path selection modal.
+                    || cx
+                        .update(|cx| {
+                            item_to_close.is_dirty(cx)
+                                && item_to_close.is_singleton(cx)
+                                && item_to_close.project_path(cx).is_none()
+                        })
+                        .unwrap_or(false);
 
                 if should_save
                     && !Self::save_item(
                         project.clone(),
                         &pane,
                         item_ix,
-                        &*item,
+                        &*item_to_close,
                         save_intent,
                         &mut cx,
                     )
@@ -1386,7 +1406,7 @@ impl Pane {
                     if let Some(item_ix) = pane
                         .items
                         .iter()
-                        .position(|i| i.item_id() == item.item_id())
+                        .position(|i| i.item_id() == item_to_close.item_id())
                     {
                         pane.remove_item(item_ix, false, true, cx);
                     }
@@ -2071,8 +2091,10 @@ impl Pane {
 
         let is_pinned = self.is_tab_pinned(ix);
         let pane = cx.view().downgrade();
+        let menu_context = item.focus_handle(cx);
         right_click_menu(ix).trigger(tab).menu(move |cx| {
             let pane = pane.clone();
+            let menu_context = menu_context.clone();
             ContextMenu::build(cx, move |mut menu, cx| {
                 if let Some(pane) = pane.upgrade() {
                     menu = menu
@@ -2251,7 +2273,7 @@ impl Pane {
                     }
                 }
 
-                menu
+                menu.context(menu_context)
             })
         })
     }
@@ -2384,8 +2406,18 @@ impl Pane {
         self.zoomed
     }
 
-    fn handle_drag_move<T>(&mut self, event: &DragMoveEvent<T>, cx: &mut ViewContext<Self>) {
-        if !self.can_split {
+    fn handle_drag_move<T: 'static>(
+        &mut self,
+        event: &DragMoveEvent<T>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let can_split_predicate = self.can_split_predicate.take();
+        let can_split = match &can_split_predicate {
+            Some(can_split_predicate) => can_split_predicate(self, event.dragged_item(), cx),
+            None => false,
+        };
+        self.can_split_predicate = can_split_predicate;
+        if !can_split {
             return;
         }
 
@@ -2678,6 +2710,10 @@ impl Pane {
                 }
             })
             .collect()
+    }
+
+    pub fn drag_split_direction(&self) -> Option<SplitDirection> {
+        self.drag_split_direction
     }
 }
 
@@ -3705,9 +3741,18 @@ mod tests {
 
         assert_item_labels(&pane, [], cx);
 
-        add_labeled_item(&pane, "A", true, cx);
-        add_labeled_item(&pane, "B", true, cx);
-        add_labeled_item(&pane, "C", true, cx);
+        add_labeled_item(&pane, "A", true, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new(1, "A.txt", cx))
+        });
+        add_labeled_item(&pane, "B", true, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new(2, "B.txt", cx))
+        });
+        add_labeled_item(&pane, "C", true, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new(3, "C.txt", cx))
+        });
         assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
 
         let save = pane
@@ -3726,6 +3771,30 @@ mod tests {
         cx.simulate_prompt_answer(2);
         save.await.unwrap();
         assert_item_labels(&pane, [], cx);
+
+        add_labeled_item(&pane, "A", true, cx);
+        add_labeled_item(&pane, "B", true, cx);
+        add_labeled_item(&pane, "C", true, cx);
+        assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
+        let save = pane
+            .update(cx, |pane, cx| {
+                pane.close_all_items(
+                    &CloseAllItems {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer(2);
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer(2);
+        cx.executor().run_until_parked();
+        save.await.unwrap();
+        assert_item_labels(&pane, ["A*^", "B^", "C^"], cx);
     }
 
     #[gpui::test]
@@ -3813,14 +3882,14 @@ mod tests {
     }
 
     // Assert the item label, with the active item label suffixed with a '*'
+    #[track_caller]
     fn assert_item_labels<const COUNT: usize>(
         pane: &View<Pane>,
         expected_states: [&str; COUNT],
         cx: &mut VisualTestContext,
     ) {
-        pane.update(cx, |pane, cx| {
-            let actual_states = pane
-                .items
+        let actual_states = pane.update(cx, |pane, cx| {
+            pane.items
                 .iter()
                 .enumerate()
                 .map(|(ix, item)| {
@@ -3839,12 +3908,11 @@ mod tests {
                     }
                     state
                 })
-                .collect::<Vec<_>>();
-
-            assert_eq!(
-                actual_states, expected_states,
-                "pane items do not match expectation"
-            );
-        })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            actual_states, expected_states,
+            "pane items do not match expectation"
+        );
     }
 }

@@ -1,5 +1,5 @@
 use std::cmp;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -92,6 +92,46 @@ impl<T: AsRef<Path>> PathExt for T {
         }
 
         self.as_ref().file_name()?.to_str()?.split('.').last()
+    }
+}
+
+/// Due to the issue of UNC paths on Windows, which can cause bugs in various parts of Zed, introducing this `SanitizedPath`
+/// leverages Rust's type system to ensure that all paths entering Zed are always "sanitized" by removing the `\\\\?\\` prefix.
+/// On non-Windows operating systems, this struct is effectively a no-op.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SanitizedPath(Arc<Path>);
+
+impl SanitizedPath {
+    pub fn starts_with(&self, prefix: &SanitizedPath) -> bool {
+        self.0.starts_with(&prefix.0)
+    }
+
+    pub fn as_path(&self) -> &Arc<Path> {
+        &self.0
+    }
+
+    pub fn to_string(&self) -> String {
+        self.0.to_string_lossy().to_string()
+    }
+}
+
+impl From<SanitizedPath> for Arc<Path> {
+    fn from(sanitized_path: SanitizedPath) -> Self {
+        sanitized_path.0
+    }
+}
+
+impl<T: AsRef<Path>> From<T> for SanitizedPath {
+    #[cfg(not(target_os = "windows"))]
+    fn from(path: T) -> Self {
+        let path = path.as_ref();
+        SanitizedPath(path.into())
+    }
+
+    #[cfg(target_os = "windows")]
+    fn from(path: T) -> Self {
+        let path = path.as_ref();
+        SanitizedPath(dunce::simplified(path).into())
     }
 }
 
@@ -803,6 +843,24 @@ mod tests {
         assert!(
             path_matcher.is_match(path),
             "Path matcher should match {path:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_sanitized_path() {
+        let path = Path::new("C:\\Users\\someone\\test_file.rs");
+        let sanitized_path = SanitizedPath::from(path);
+        assert_eq!(
+            sanitized_path.to_string(),
+            "C:\\Users\\someone\\test_file.rs"
+        );
+
+        let path = Path::new("\\\\?\\C:\\Users\\someone\\test_file.rs");
+        let sanitized_path = SanitizedPath::from(path);
+        assert_eq!(
+            sanitized_path.to_string(),
+            "C:\\Users\\someone\\test_file.rs"
         );
     }
 }

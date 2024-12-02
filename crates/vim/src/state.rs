@@ -150,6 +150,11 @@ pub struct VimGlobals {
     pub dot_recording: bool,
     pub dot_replaying: bool,
 
+    /// pre_count is the number before an operator is specified (3 in 3d2d)
+    pub pre_count: Option<usize>,
+    /// post_count is the number after an operator is specified (2 in 3d2d)
+    pub post_count: Option<usize>,
+
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
     pub recorded_count: Option<usize>,

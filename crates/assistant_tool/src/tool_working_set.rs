@@ -1,8 +1,10 @@
-use assistant_tool::{Tool, ToolRegistry};
+use std::sync::Arc;
+
 use collections::HashMap;
 use gpui::AppContext;
 use parking_lot::Mutex;
-use std::sync::Arc;
+
+use crate::{Tool, ToolRegistry};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ToolId(usize);

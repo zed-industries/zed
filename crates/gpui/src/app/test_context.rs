@@ -538,12 +538,15 @@ impl<T: 'static> Model<T> {
 
 impl<V: 'static> View<V> {
     /// Returns a future that resolves when the view is next updated.
-    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+    pub fn next_notification(
+        &self,
+        advance_clock_by: Duration,
+        cx: &TestAppContext,
+    ) -> impl Future<Output = ()> {
         use postage::prelude::{Sink as _, Stream as _};
 
         let (mut tx, mut rx) = postage::mpsc::channel(1);
-        let mut cx = cx.app.app.borrow_mut();
-        let subscription = cx.observe(self, move |_, _| {
+        let subscription = cx.app.app.borrow_mut().observe(self, move |_, _| {
             tx.try_send(()).ok();
         });
 
@@ -552,6 +555,8 @@ impl<V: 'static> View<V> {
         } else {
             Duration::from_secs(1)
         };
+
+        cx.executor().advance_clock(advance_clock_by);
 
         async move {
             let notification = crate::util::timeout(duration, rx.recv())
