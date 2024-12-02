@@ -2,7 +2,7 @@ use crate::{
     project_settings::GitAuthorDisplaySetting,
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    Item, ProjectItem as _,ProjectPath, ProjectSettings,
+    ProjectItem as _, ProjectPath, ProjectSettings,
 };
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 use anyhow::{anyhow, Context as _, Result};
