@@ -9,9 +9,7 @@ pub use http::{self, Method, Request, Response, StatusCode, Uri};
 use std::fmt;
 
 use aws_smithy_runtime_api::client::http::{HttpConnector, HttpConnectorFuture};
-use aws_smithy_runtime_api::client::orchestrator::{
-    HttpRequest as AwsRequest, HttpResponse as AwsResponse,
-};
+use aws_smithy_runtime_api::client::orchestrator::{HttpRequest as AwsRequest, HttpRequest, HttpResponse as AwsResponse};
 use futures::future::BoxFuture;
 use http::request::Builder;
 
@@ -333,20 +331,27 @@ impl HttpClient for BlockedHttpClient {
     }
 }
 
-impl Debug for HttpClientWithUrl {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        todo!()
-    }
+#[derive(Debug)]
+pub struct AwsHttpClient {
+    []
+    client: HttpClientWithProxy
 }
 
-impl HttpConnector for HttpClientWithUrl {
-    fn call(&self, request: HttpRequest) -> HttpConnectorFuture {
+impl HttpConnector for AwsHttpClient {
+    fn call(&self, request: AwsRequest) -> HttpConnectorFuture {
+        let request = convert_aws_request(request).unwrap();
+
         let response = self.client.send(request);
+
+        let response = response.map(|response| {
+            response.map(|response| convert_to_aws_response(response).unwrap())
+        });
+
     }
 }
 
 // Helper to convert AWS SDK request to your HttpClient request
-fn convert_aws_request(aws_request: AwsRequest) -> Result<http::Request<AsyncBody>, anyhow::Error> {
+fn convert_aws_request(aws_request: AwsRequest) -> Result<Request<AsyncBody>, anyhow::Error> {
     let owned_request = match aws_request.try_clone() {
         Some(req) => req,
         None => {
@@ -374,12 +379,12 @@ fn convert_aws_request(aws_request: AwsRequest) -> Result<http::Request<AsyncBod
 
 // Helper to convert your response to AWS SDK response
 fn convert_to_aws_response(
-    response: http::Response<AsyncBody>,
+    response: Response<AsyncBody>,
 ) -> Result<AwsResponse, anyhow::Error> {
     let (parts, body) = response.into_parts();
 
     let mut aws_response =
-        AwsResponse::new(AwsStatusCode::from(response.status()), response.body());
+        AwsResponse::new(AwsStatusCode::from(parts.status), body);
 
     // Copy headers
     for (name, value) in parts.headers {
