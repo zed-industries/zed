@@ -24,6 +24,7 @@ http_client.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
+parking_lot.workspace = true
 semantic_version.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -114,7 +114,7 @@ impl Cell {
                 id,
                 metadata,
                 source,
-                attachments: _,
+                ..
             } => {
                 let source = source.join("");
 

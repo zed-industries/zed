@@ -6,11 +6,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 ## Dependencies
 
-- Install [Rust](https://www.rust-lang.org/tools/install). If it's already installed, make sure it's up-to-date:
-
-  ```sh
-  rustup update
-  ```
+- Install [rustup](https://www.rust-lang.org/tools/install)
 
 - Install the necessary system libraries:
 

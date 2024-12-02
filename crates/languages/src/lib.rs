@@ -62,6 +62,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
+                config.hidden,
                 Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),
@@ -83,6 +84,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
+                config.hidden,
                 Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),
@@ -104,6 +106,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
+                config.hidden,
                 Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),
@@ -125,6 +128,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
+                config.hidden,
                 Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),

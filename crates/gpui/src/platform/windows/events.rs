@@ -7,6 +7,7 @@ use windows::Win32::{
     Graphics::Gdi::*,
     System::SystemServices::*,
     UI::{
+        Controls::*,
         HiDpi::*,
         Input::{Ime::*, KeyboardAndMouse::*},
         WindowsAndMessaging::*,
@@ -43,7 +44,8 @@ pub(crate) fn handle_msg(
         WM_PAINT => handle_paint_msg(handle, state_ptr),
         WM_CLOSE => handle_close_msg(state_ptr),
         WM_DESTROY => handle_destroy_msg(handle, state_ptr),
-        WM_MOUSEMOVE => handle_mouse_move_msg(lparam, wparam, state_ptr),
+        WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
+        WM_MOUSELEAVE => handle_mouse_leave_msg(state_ptr),
         WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state_ptr),
         WM_NCLBUTTONDOWN => {
             handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
@@ -234,10 +236,32 @@ fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
 }
 
 fn handle_mouse_move_msg(
+    handle: HWND,
     lparam: LPARAM,
     wparam: WPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+    if !lock.hovered {
+        lock.hovered = true;
+        unsafe {
+            TrackMouseEvent(&mut TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE,
+                hwndTrack: handle,
+                dwHoverTime: HOVER_DEFAULT,
+            })
+            .log_err()
+        };
+        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+            drop(lock);
+            callback(true);
+            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+        }
+    } else {
+        drop(lock);
+    }
+
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
@@ -270,6 +294,18 @@ fn handle_mouse_move_msg(
         return result;
     }
     Some(1)
+}
+
+fn handle_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+    lock.hovered = false;
+    if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+        drop(lock);
+        callback(false);
+        state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+    }
+
+    Some(0)
 }
 
 fn handle_syskeydown_msg(

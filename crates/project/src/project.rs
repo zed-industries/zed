@@ -52,8 +52,8 @@ use language::{
     Transaction, Unclipped,
 };
 use lsp::{
-    CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
-    LanguageServerName, MessageActionItem,
+    CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer,
+    LanguageServerId, LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -111,7 +111,7 @@ const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
 
-pub trait Item {
+pub trait ProjectItem {
     fn try_open(
         project: &Model<Project>,
         path: &ProjectPath,
@@ -121,6 +121,7 @@ pub trait Item {
         Self: Sized;
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
+    fn is_dirty(&self) -> bool;
 }
 
 #[derive(Clone)]
@@ -2843,12 +2844,13 @@ impl Project {
         &mut self,
         buffer_handle: &Model<Buffer>,
         range: Range<T>,
+        kinds: Option<Vec<CodeActionKind>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.code_actions(buffer_handle, range, cx)
+            lsp_store.code_actions(buffer_handle, range, kinds, cx)
         })
     }
 
@@ -4353,7 +4355,7 @@ impl ResolvedPath {
     }
 }
 
-impl Item for Buffer {
+impl ProjectItem for Buffer {
     fn try_open(
         project: &Model<Project>,
         path: &ProjectPath,
@@ -4371,6 +4373,10 @@ impl Item for Buffer {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.is_dirty()
     }
 }
 

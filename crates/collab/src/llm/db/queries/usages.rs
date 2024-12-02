@@ -9,7 +9,7 @@ use strum::IntoEnumIterator as _;
 
 use super::*;
 
-#[derive(Debug, PartialEq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default, serde::Serialize)]
 pub struct TokenUsage {
     pub input: usize,
     pub input_cache_creation: usize,
@@ -23,7 +23,7 @@ impl TokenUsage {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, serde::Serialize)]
 pub struct Usage {
     pub requests_this_minute: usize,
     pub tokens_this_minute: usize,

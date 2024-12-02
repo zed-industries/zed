@@ -1578,7 +1578,7 @@ pub struct AnyDrag {
     pub view: AnyView,
 
     /// The value of the dragged item, to be dropped
-    pub value: Box<dyn Any>,
+    pub value: Arc<dyn Any>,
 
     /// This is used to render the dragged item in the same place
     /// on the original element that the drag was initiated
