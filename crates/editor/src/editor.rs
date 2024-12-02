@@ -475,24 +475,16 @@ impl CompletionState {
 
 struct CompletionEditDeletion;
 
-struct CompletionEditDiffOverlay {
-    position: Anchor,
-    text: Rope,
-    additions: Arc<Vec<Range<usize>>>,
-}
-
 enum ComputedCompletionEdit {
     Insertion {
         text: Rope,
         position: multi_buffer::Anchor,
-
         render_inlay_ids: Vec<InlayId>,
     },
     Diff {
         text: Rope,
         range: Range<multi_buffer::Anchor>,
-
-        additions: Arc<Vec<Range<usize>>>,
+        additions: Vec<Range<usize>>,
         deletions: Vec<Range<multi_buffer::Anchor>>,
     },
 }
@@ -542,8 +534,8 @@ impl ComputedCompletionEdit {
             Some(Self::Diff {
                 text,
                 range: start..end,
+                additions,
                 deletions,
-                additions: Arc::new(additions),
             })
         }
     }
@@ -732,7 +724,6 @@ pub struct Editor {
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
     code_action_providers: Vec<Arc<dyn CodeActionProvider>>,
     active_inline_completion: Option<CompletionState>,
-    active_inline_completion_popover: Option<CompletionEditDiffOverlay>,
     // enable_inline_completions is a switch that Vim can use to disable
     // inline completions based on its mode.
     enable_inline_completions: bool,
@@ -2260,7 +2251,6 @@ impl Editor {
             hovered_link_state: Default::default(),
             inline_completion_provider: None,
             active_inline_completion: None,
-            active_inline_completion_popover: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             expanded_hunks: ExpandedHunks::default(),
             gutter_hovered: false,
@@ -5530,7 +5520,6 @@ impl Editor {
         _: &AcceptPartialInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        //TODO: Is this the correct behavior
         if self.move_to_active_inline_completion(cx) {
             return;
         }
@@ -5593,9 +5582,9 @@ impl Editor {
     }
 
     fn move_to_active_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(move_to) = self.accepting_active_inline_completion_needs_movement(cx) {
+        if let Some(target) = self.cursor_needs_repositioning_for_inline_completion(cx) {
             self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.select_ranges(vec![move_to..move_to])
+                s.select_ranges(vec![target..target])
             });
             true
         } else {
@@ -5603,8 +5592,7 @@ impl Editor {
         }
     }
 
-    //TODO: Naming
-    fn accepting_active_inline_completion_needs_movement(&self, cx: &AppContext) -> Option<Anchor> {
+    fn cursor_needs_repositioning_for_inline_completion(&self, cx: &AppContext) -> Option<Anchor> {
         let completion = self.active_inline_completion.as_ref()?;
 
         let cursor_position = self.selections.newest_anchor().head();
@@ -5646,7 +5634,6 @@ impl Editor {
             }
             ComputedCompletionEdit::Diff { .. } => {
                 self.clear_highlights::<CompletionEditDeletion>(cx);
-                self.active_inline_completion_popover = None;
             }
         }
         self.active_inline_completion = state;
@@ -5709,12 +5696,7 @@ impl Editor {
                         cx.notify();
                         return;
                     }
-                    ComputedCompletionEdit::Diff {
-                        range,
-                        text,
-                        deletions,
-                        additions,
-                    } => {
+                    ComputedCompletionEdit::Diff { deletions, .. } => {
                         self.display_map.update(cx, {
                             let deletions = deletions.clone();
                             move |map, cx| {
@@ -5729,11 +5711,6 @@ impl Editor {
                                     },
                                 )
                             }
-                        });
-                        self.active_inline_completion_popover = Some(CompletionEditDiffOverlay {
-                            position: range.start,
-                            text: text.clone(),
-                            additions: additions.clone(),
                         });
 
                         cx.notify();

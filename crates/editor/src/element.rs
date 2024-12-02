@@ -16,13 +16,13 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, ChunkReplacement, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint,
-    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
-    EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp, OpenExcerpts,
-    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    BlockId, ChunkReplacement, CodeActionsMenu, ComputedCompletionEdit, CursorShape, CustomBlockId,
+    DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions,
+    HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp,
+    OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
+    ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED,
+    MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -2758,7 +2758,7 @@ impl EditorElement {
         let show_go_to_edit_hint = self
             .editor
             .read(cx)
-            .accepting_active_inline_completion_needs_movement(cx)
+            .cursor_needs_repositioning_for_inline_completion(cx)
             .is_some();
 
         let upper_left = edit.position().to_display_point(editor_snapshot);
@@ -2822,11 +2822,9 @@ impl EditorElement {
                     + point((text_bounds.size.width - size.width) / 2., offset_y);
                 (origin, element)
             }
-        } else if let Some(popover) = self
-            .editor
-            .read(cx)
-            .active_inline_completion_popover
-            .as_ref()
+        } else if let ComputedCompletionEdit::Diff {
+            text, additions, ..
+        } = edit
         {
             let row = &line_layouts[upper_left.row().minus(visible_row_range.start) as usize];
             let origin = text_bounds.origin
@@ -2835,9 +2833,9 @@ impl EditorElement {
                     upper_left.row().as_f32() * line_height - scroll_pixel_position.y,
                 );
 
-            let text = gpui::StyledText::new(popover.text.to_string()).with_highlights(
+            let text = gpui::StyledText::new(text.to_string()).with_highlights(
                 text_style,
-                popover.additions.iter().map(|range| {
+                additions.iter().map(|range| {
                     (
                         range.clone(),
                         HighlightStyle {
