@@ -637,23 +637,23 @@ impl ExtensionsPage {
         cx: &mut WindowContext,
     ) -> View<ContextMenu> {
         let context_menu = ContextMenu::build(cx, |context_menu, cx| {
-            let extension_id_str = extension_id.to_string();
-
             context_menu
                 .entry(
                     "Install Another Version...",
                     None,
-                    cx.handler_for(this, move |this, cx| {
-                        this.show_extension_version_list(extension_id.clone(), cx)
+                    cx.handler_for(this, {
+                        let extension_id = extension_id.clone();
+                        move |this, cx| this.show_extension_version_list(extension_id.clone(), cx)
                     }),
                 )
-                .entry(
-                    "Copy Extension ID",
-                    None,
-                    cx.handler_for(this, move |_this, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(extension_id_str.clone()));
-                    }),
-                )
+                .entry("Copy Extension ID", None, {
+                    let extension_id = extension_id.clone();
+                    move |cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(
+                            extension_id.to_string(),
+                        ));
+                    }
+                })
         });
 
         context_menu
