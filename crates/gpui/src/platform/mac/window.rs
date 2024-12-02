@@ -1387,6 +1387,14 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         };
 
         match &event {
+            PlatformInput::MouseDown(_) => {
+                drop(lock);
+                unsafe {
+                    let input_context: id = msg_send![this, inputContext];
+                    msg_send![input_context, handleEvent: native_event]
+                }
+                lock = window_state.as_ref().lock();
+            }
             PlatformInput::MouseMove(
                 event @ MouseMoveEvent {
                     pressed_button: Some(_),
