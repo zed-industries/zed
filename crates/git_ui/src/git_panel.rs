@@ -90,6 +90,7 @@ impl RenderOnce for GitStatusListItem {
 
         h_flex()
             .id(self.id.clone())
+            .items_center()
             .justify_between()
             .w_full()
             .when(!self.is_selected, |this| {
@@ -101,11 +102,11 @@ impl RenderOnce for GitStatusListItem {
             })
             .group("")
             .rounded_sm()
-            .px_3()
-            .py_1p5()
+            .pl(px(12.))
+            .h(px(24.))
             .child(
                 h_flex()
-                    .gap_2()
+                    .gap(px(8.))
                     .child(self.checkbox)
                     .child(Icon::new(icon_name).size(IconSize::Small).color(color))
                     .child(Label::new(file_path).size(LabelSize::Small))
@@ -717,12 +718,12 @@ impl Render for GitPanel {
                     .flex_1()
                     .overflow_hidden()
                     .bg(ElevationIndex::Surface.bg(cx))
-                    .child(list(self.list_state.clone()).size_full())
-                    .child(Divider::horizontal_dashed())
                     .child(PanelGitProjectOverview::new(
                         "project-overview",
                         self.status.clone(),
                     ))
+                    .child(Divider::horizontal_dashed())
+                    .child(list(self.list_state.clone()).size_full())
                     .child(div()),
             )
     }
