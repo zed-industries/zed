@@ -637,24 +637,21 @@ impl ExtensionsPage {
         cx: &mut WindowContext,
     ) -> View<ContextMenu> {
         let context_menu = ContextMenu::build(cx, |context_menu, cx| {
-            let extension_id_for_version_list = Arc::clone(&extension_id);
-            let extension_id_for_copy = Arc::clone(&extension_id);
+            let extension_id_str = extension_id.to_string();
 
             context_menu
                 .entry(
                     "Install Another Version...",
                     None,
                     cx.handler_for(this, move |this, cx| {
-                        this.show_extension_version_list(extension_id_for_version_list.clone(), cx)
+                        this.show_extension_version_list(extension_id.clone(), cx)
                     }),
                 )
                 .entry(
                     "Copy Extension ID",
                     None,
                     cx.handler_for(this, move |_this, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(
-                            extension_id_for_copy.clone().to_string(),
-                        ));
+                        cx.write_to_clipboard(ClipboardItem::new_string(extension_id_str.clone()));
                     }),
                 )
         });
