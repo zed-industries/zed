@@ -1,7 +1,7 @@
 use crate::{
     Action, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, DrawPhase, Drawable,
-    Element, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
+    Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
     ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
     TestPlatform, TestWindow, TextSystem, Window, WindowBounds, WindowHandle, WindowOptions,
@@ -171,7 +171,6 @@ impl TestAppContext {
         f(&cx)
     }
 
-    /// todo!(Change the interface to take a render fn)
     /// Adds a new window. The Window will always be backed by a `TestWindow` which
     /// can be retrieved with `self.test_window(handle)`
     pub fn add_window<T: 'static + Render>(
@@ -194,52 +193,50 @@ impl TestAppContext {
 
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
-        todo!()
-        // let mut cx = self.app.borrow_mut();
-        // let bounds = Bounds::maximized(None, &mut cx);
-        // let window = cx
-        //     .open_window(
-        //         WindowOptions {
-        //             window_bounds: Some(WindowBounds::Windowed(bounds)),
-        //             ..Default::default()
-        //         },
-        //         |_window, _cx| Empty.into_any(),
-        //     )
-        //     .unwrap();
-        // drop(cx);
-        // let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
-        // cx.run_until_parked();
-        // cx
+        let mut cx = self.app.borrow_mut();
+        let bounds = Bounds::maximized(None, &mut cx);
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |_window, _cx| Empty,
+            )
+            .unwrap();
+        drop(cx);
+        let cx = VisualTestContext::from_window(window.into(), self).as_mut();
+        cx.run_until_parked();
+        cx
     }
 
-    // /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
-    // /// as a `WindowContext` for the rest of the test. Typically you would shadow this context with
-    // /// the returned one. `let (view, cx) = cx.add_window_view(...);`
-    // pub fn add_window_view<F, V>(&mut self, build_root_view: F) -> (View<V>, &mut VisualTestContext)
-    // where
-    //     F: FnOnce(&mut ViewContext<V>) -> V,
-    //     V: 'static + Render,
-    // {
-    //     todo!()
-    //     // let mut cx = self.app.borrow_mut();
-    //     // let bounds = Bounds::maximized(None, &mut cx);
-    //     // let window = cx
-    //     //     .open_window(
-    //     //         WindowOptions {
-    //     //             window_bounds: Some(WindowBounds::Windowed(bounds)),
-    //     //             ..Default::default()
-    //     //         },
-    //     //         |cx| cx.new_view(build_root_view),
-    //     //     )
-    //     //     .unwrap();
-    //     // drop(cx);
-    //     // let view = window.root_view(self).unwrap();
-    //     // let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
-    //     // cx.run_until_parked();
+    /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
+    /// as a `WindowContext` for the rest of the test. Typically you would shadow this context with
+    /// the returned one. `let (view, cx) = cx.add_window_view(...);`
+    pub fn add_window_view<T, F>(&mut self, builder: F) -> (Model<T>, &mut VisualTestContext)
+    where
+        T: 'static + Render,
+        F: FnOnce(&mut Window, &mut ModelContext<T>) -> T,
+    {
+        let mut cx = self.app.borrow_mut();
+        let bounds = Bounds::maximized(None, &mut cx);
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                builder,
+            )
+            .unwrap();
+        drop(cx);
+        let state = window.state(self).unwrap();
+        let cx = VisualTestContext::from_window(window.into(), self).as_mut();
+        cx.run_until_parked();
 
-    //     // // it might be nice to try and cleanup these at the end of each test.
-    //     // (view, cx)
-    // }
+        // it might be nice to try and cleanup these at the end of each test.
+        (state, cx)
+    }
 
     /// returns the TextSystem
     pub fn text_system(&self) -> &Arc<TextSystem> {
@@ -822,31 +819,31 @@ impl VisualTestContext {
     /// Simulates the user closing the window.
     /// Returns true if the window was closed.
     pub fn simulate_close(&mut self) -> bool {
-        todo!()
-        // let handler = self
-        //     .cx
-        //     .update_window(self.window, |_, cx| {
-        //         cx.window
-        //             .platform_window
-        //             .as_test()
-        //             .unwrap()
-        //             .0
-        //             .lock()
-        //             .should_close_handler
-        //             .take()
-        //     })
-        //     .unwrap();
-        // if let Some(mut handler) = handler {
-        //     let should_close = handler();
-        //     self.cx
-        //         .update_window(self.window, |_, cx| {
-        //             cx.window.platform_window.on_should_close(handler);
-        //         })
-        //         .unwrap();
-        //     should_close
-        // } else {
-        //     false
-        // }
+        let handler = self
+            .window
+            .update(&mut self.cx, |window, _cx| {
+                window
+                    .platform_window
+                    .as_test()
+                    .unwrap()
+                    .0
+                    .lock()
+                    .should_close_handler
+                    .take()
+            })
+            .unwrap();
+
+        if let Some(mut handler) = handler {
+            let should_close = handler();
+            self.window
+                .update(&mut self.cx, |window, _cx| {
+                    window.platform_window.on_should_close(handler);
+                })
+                .unwrap();
+            should_close
+        } else {
+            false
+        }
     }
 
     /// Get an &mut VisualTestContext (which is mostly what you need to pass to other methods).

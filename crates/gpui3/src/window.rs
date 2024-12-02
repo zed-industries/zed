@@ -510,7 +510,7 @@ pub struct Window {
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) state: Option<AnyModel>,
-    pub(crate) render: Option<Box<dyn Fn(AnyModel, &mut Self, &mut AppContext) -> AnyElement>>,
+    pub(crate) render: Option<Box<dyn Fn(AnyModel) -> AnyElement>>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -941,9 +941,10 @@ impl Window {
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
     pub fn request_animation_frame(&self) {
-        todo!()
-        // let parent_id = self.parent_view_id();
-        // self.on_next_frame(move |_, cx| cx.notify(parent_id));
+        let parent_id = self.parent_view_id();
+        self.on_next_frame(move |_, cx| {
+            cx.notify(parent_id);
+        });
     }
 
     fn bounds_changed(&mut self, cx: &mut AppContext) {
@@ -1241,9 +1242,7 @@ impl Window {
 
         // Layout all root elements.
         let mut state = self.state.clone().unwrap();
-        let mut render = self.render.take().unwrap();
-        let mut root_element = render(state, self, cx);
-        self.render = Some(render);
+        let mut root_element = self.render.as_ref().unwrap()(state);
 
         root_element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
 
@@ -3517,19 +3516,21 @@ impl Window {
     ) -> Option<A::Output> {
         let (task, is_first) = cx.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
-            todo!("notify the window correctly (can we use a model?)");
-            // if is_first {
-            //     let parent_id = self.parent_view_id();
-            //     self.spawn({
-            //         let task = task.clone();
-            //         |mut cx| async move {
-            //             task.await;
-
-            //             cx.on_next_frame(move |cx| cx.notify(parent_id));
-            //         }
-            //     })
-            //     .detach();
-            // }
+            if is_first {
+                let parent_id = self.parent_view_id();
+                self.spawn(cx, {
+                    let task = task.clone();
+                    |window, mut cx| async move {
+                        task.await;
+                        window
+                            .update(&mut cx, move |window, _cx| {
+                                window.on_next_frame(move |_window, cx| cx.notify(parent_id))
+                            })
+                            .ok();
+                    }
+                })
+                .detach();
+            }
 
             None
         })

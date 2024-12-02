@@ -415,6 +415,18 @@ impl AppContext {
         result
     }
 
+    /// Notifies observers of the entity with the given ID.
+    pub fn notify(&mut self, entity_id: Option<EntityId>) {
+        if let Some(entity_id) = entity_id {
+            if self.pending_notifications.insert(entity_id) {
+                self.pending_effects
+                    .push_back(Effect::Notify { emitter: entity_id });
+            }
+        } else {
+            self.refresh();
+        }
+    }
+
     /// Arrange a callback to be invoked when the given model or view calls `notify` on its respective context.
     pub fn observe<W, E>(
         &mut self,
@@ -556,11 +568,8 @@ impl AppContext {
                 Ok(mut window) => {
                     window.state = Some(
                         cx.new_model(|cx| {
-                            window.render = Some(Box::new(move |any_state, window, cx| {
-                                let state: Model<T> = any_state.downcast().unwrap();
-                                state.update(cx, |state, cx: &mut ModelContext<T>| {
-                                    Render::render(state, window, cx).into_any_element()
-                                })
+                            window.render = Some(Box::new(move |any_state| {
+                                any_state.downcast::<T>().unwrap().into_any_element()
                             }));
                             builder(&mut window, cx)
                         })

@@ -360,19 +360,15 @@ impl Element for Img {
                                         }
                                     }
                                 } else {
-                                    // todo!
-                                    // let parent_view_id = cx.parent_view_id();
-                                    // let task = cx.spawn(|mut cx| async move {
-                                    //     cx.background_executor().timer(LOADING_DELAY).await;
-                                    //     cx.update(|cx| {
-                                    //         cx.notify(parent_view_id);
-                                    //     })
-                                    //     .ok();
-                                    // });
-                                    state.started_loading = Some((
-                                        Instant::now(),
-                                        todo!("figure this out for image loading"),
-                                    ));
+                                    let parent_view_id = window.parent_view_id();
+                                    let task = cx.spawn(|mut cx| async move {
+                                        cx.background_executor().timer(LOADING_DELAY).await;
+                                        cx.update(|cx| {
+                                            cx.notify(parent_view_id);
+                                        })
+                                        .ok();
+                                    });
+                                    state.started_loading = Some((Instant::now(), task));
                                 }
                             }
                         }
