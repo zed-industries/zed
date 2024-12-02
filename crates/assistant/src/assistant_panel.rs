@@ -450,6 +450,7 @@ impl AssistantPanel {
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
                         IconButton::new("new-chat", IconName::Plus)
+                            .icon_size(IconSize::Small)
                             .on_click(
                                 cx.listener(|_, _, cx| {
                                     cx.dispatch_action(NewContext.boxed_clone())
