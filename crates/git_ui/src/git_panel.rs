@@ -391,7 +391,7 @@ impl RenderOnce for ChangedFileItem {
             })
             .group("")
             .rounded_sm()
-            .pl(px(12. + (self.indent_level as f32 * 16.)))
+            .pl(px(12. + (self.indent_level as f32 * 12.)))
             .h(px(24.))
             .child(
                 h_flex()
@@ -607,8 +607,8 @@ impl RenderOnce for ProjectOverviewItem {
             .id(self.id.clone())
             .w_full()
             .bg(cx.theme().colors().elevated_surface_background)
-            .px_2()
-            .py_2p5()
+            .pl(px(12.))
+            .h(px(28.))
             .gap_2()
             .child(
                 h_flex()
@@ -988,7 +988,11 @@ impl GitPanel {
                         )
                         .into_any_element()
                     }
-                    GitListItem::Divider => Divider::horizontal().into_any_element(),
+                    GitListItem::Divider => h_flex()
+                        .h(px(24.))
+                        .items_center()
+                        .child(Divider::horizontal().into_any_element())
+                        .into_any_element(),
                     GitListItem::Directory {
                         path,
                         indent_level,
@@ -1034,6 +1038,7 @@ impl Render for GitPanel {
         let scroll_handle = self.scroll_handle.clone();
 
         v_flex()
+            .py_1()
             .id(self.id.clone())
             .key_context("vcs_status")
             .track_focus(&self.focus_handle)
@@ -1064,6 +1069,8 @@ impl Render for GitPanel {
             )
             .child(
                 uniform_list(view, "git-panel-list", items_count, Self::render_items)
+                    .py_1()
+                    .gap(px(2.))
                     .track_scroll(scroll_handle)
                     .size_full()
                     .into_any_element(),
