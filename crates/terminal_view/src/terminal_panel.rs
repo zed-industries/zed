@@ -131,8 +131,8 @@ impl TerminalPanel {
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let split_context = pane
-                    .items()
-                    .find_map(|item| item.downcast::<TerminalView>())
+                    .active_item()
+                    .and_then(|item| item.downcast::<TerminalView>())
                     .map(|terminal_view| terminal_view.read(cx).focus_handle.clone());
                 if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
                     return (None, None);
