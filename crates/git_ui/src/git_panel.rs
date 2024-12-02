@@ -33,66 +33,47 @@ actions!(
 
 #[derive(Debug, Clone)]
 enum FileTreeNode {
-    File(PanelChangedFile),
+    File(PanelChangedFile, usize),
     Directory(BTreeMap<String, FileTreeNode>),
 }
 
-fn build_file_tree(files: &[PanelChangedFile]) -> BTreeMap<String, FileTreeNode> {
+fn build_file_tree(files: Vec<PanelChangedFile>) -> BTreeMap<String, FileTreeNode> {
     let mut root = BTreeMap::new();
 
     for file in files {
-        let path_parts: Vec<&str> = file.file_path.split('/').collect();
-        insert_into_tree(&mut root, &path_parts, file);
+        let path: Vec<&str> = file.file_path.split('/').collect();
+        let path_parts: Vec<SharedString> = path.iter().map(|s| s.to_string().into()).collect();
+        insert_into_tree(&mut root, &path_parts, &file, 0);
     }
-
-    // Flatten single-child directories
-    flatten_single_child_dirs(&mut root);
 
     root
 }
 
 fn insert_into_tree(
     node: &mut BTreeMap<String, FileTreeNode>,
-    path_parts: &[&str],
+    path_parts: &[SharedString],
     file: &PanelChangedFile,
+    indent_level: usize,
 ) {
     if path_parts.is_empty() {
         return;
     }
 
-    let current = path_parts[0];
+    let current: &SharedString = &path_parts[0];
     if path_parts.len() == 1 {
-        node.insert(current.to_string(), FileTreeNode::File(file.clone()));
+        let mut file_clone = file.clone();
+        file_clone.file_path = current.clone();
+        node.insert(
+            current.to_string(),
+            FileTreeNode::File(file_clone, indent_level),
+        );
     } else {
         let entry = node
             .entry(current.to_string())
             .or_insert_with(|| FileTreeNode::Directory(BTreeMap::new()));
         if let FileTreeNode::Directory(ref mut child_map) = entry {
-            insert_into_tree(child_map, &path_parts[1..], file);
+            insert_into_tree(child_map, &path_parts[1..], file, indent_level + 1);
         }
-    }
-}
-
-fn flatten_single_child_dirs(node: &mut BTreeMap<String, FileTreeNode>) {
-    let mut to_flatten = Vec::new();
-
-    for (key, value) in node.iter_mut() {
-        if let FileTreeNode::Directory(ref mut child_map) = value {
-            flatten_single_child_dirs(child_map);
-            if child_map.len() == 1 {
-                let (child_key, child_value) = child_map.iter().next().unwrap();
-                to_flatten.push((
-                    key.clone(),
-                    format!("{}/{}", key, child_key),
-                    child_value.clone(),
-                ));
-            }
-        }
-    }
-
-    for (old_key, new_key, new_value) in to_flatten {
-        node.remove(&old_key);
-        node.insert(new_key, new_value);
     }
 }
 
@@ -452,11 +433,7 @@ impl RenderOnce for PanelGitStagingControls {
             ("Unstaged", status.unstaged_count())
         };
 
-        let is_expanded = if self.is_staged {
-            status.staged_expanded
-        } else {
-            status.unstaged_expanded
-        };
+        let is_expanded = true;
 
         let label: SharedString = format!("{} Changes: {}", staging_type, count).into();
 
@@ -465,11 +442,7 @@ impl RenderOnce for PanelGitStagingControls {
             .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
             .on_click(move |_, cx| {
                 self.project_status.update(cx, |status, cx| {
-                    if self.is_staged {
-                        status.staged_expanded = !status.staged_expanded;
-                    } else {
-                        status.unstaged_expanded = !status.unstaged_expanded;
-                    }
+                    status.show_list = !status.show_list;
                     cx.notify();
                 })
             })
@@ -541,61 +514,41 @@ impl RenderOnce for PanelGitStagingControls {
 }
 
 pub struct PanelGitProjectStatus {
-    unstaged_files: Vec<PanelChangedFile>,
-    staged_files: Vec<PanelChangedFile>,
-    unstaged_tree: BTreeMap<String, FileTreeNode>,
-    staged_tree: BTreeMap<String, FileTreeNode>,
+    files: Vec<PanelChangedFile>,
+    file_tree: BTreeMap<String, FileTreeNode>,
     lines_changed: GitLines,
-    staged_expanded: bool,
-    unstaged_expanded: bool,
     show_list: bool,
     selected_index: usize,
 }
 
 impl PanelGitProjectStatus {
     fn new(changed_files: Vec<PanelChangedFile>) -> Self {
-        let (unstaged_files, staged_files): (Vec<_>, Vec<_>) =
-            changed_files.into_iter().partition(|f| !f.staged);
-
-        let unstaged_tree = build_file_tree(&unstaged_files);
-        let staged_tree = build_file_tree(&staged_files);
+        let file_tree = build_file_tree(changed_files.clone());
 
         let lines_changed = GitLines {
-            added: unstaged_files
-                .iter()
-                .chain(staged_files.iter())
-                .map(|f| f.lines_added)
-                .sum(),
-            removed: unstaged_files
-                .iter()
-                .chain(staged_files.iter())
-                .map(|f| f.lines_removed)
-                .sum(),
+            added: changed_files.iter().map(|f| f.lines_added).sum(),
+            removed: changed_files.iter().map(|f| f.lines_removed).sum(),
         };
 
         Self {
-            unstaged_files,
-            staged_files,
-            unstaged_tree,
-            staged_tree,
+            files: changed_files,
+            file_tree,
             lines_changed,
-            staged_expanded: true,
-            unstaged_expanded: true,
             show_list: false,
             selected_index: 0,
         }
     }
 
     fn changed_file_count(&self) -> usize {
-        self.unstaged_files.len() + self.staged_files.len()
+        self.files.len()
     }
 
     fn unstaged_count(&self) -> usize {
-        self.unstaged_files.len()
+        self.files.iter().filter(|f| !f.staged).count()
     }
 
     fn staged_count(&self) -> usize {
-        self.staged_files.len()
+        self.files.iter().filter(|f| f.staged).count()
     }
 
     fn total_item_count(&self) -> usize {
@@ -603,84 +556,67 @@ impl PanelGitProjectStatus {
     }
 
     fn no_unstaged(&self) -> bool {
-        self.unstaged_files.is_empty()
+        self.unstaged_count() == 0
     }
 
     fn all_unstaged(&self) -> bool {
-        self.staged_files.is_empty()
+        self.staged_count() == 0
     }
 
     fn no_staged(&self) -> bool {
-        self.staged_files.is_empty()
+        self.staged_count() == 0
     }
 
     fn all_staged(&self) -> bool {
-        self.unstaged_files.is_empty()
+        self.unstaged_count() == 0
     }
 
     fn update_lines_changed(&mut self) {
         self.lines_changed = GitLines {
-            added: self
-                .unstaged_files
-                .iter()
-                .chain(self.staged_files.iter())
-                .map(|f| f.lines_added)
-                .sum(),
-            removed: self
-                .unstaged_files
-                .iter()
-                .chain(self.staged_files.iter())
-                .map(|f| f.lines_removed)
-                .sum(),
+            added: self.files.iter().map(|f| f.lines_added).sum(),
+            removed: self.files.iter().map(|f| f.lines_removed).sum(),
         };
     }
 
     fn discard_all(&mut self) {
-        self.unstaged_files.clear();
-        self.staged_files.clear();
+        self.files.clear();
         self.update_lines_changed();
+        self.file_tree = build_file_tree(self.files.clone());
     }
 
     fn stage_all(&mut self) {
-        self.staged_files.extend(self.unstaged_files.drain(..));
-        self.update_lines_changed();
+        for file in &mut self.files {
+            file.staged = true;
+        }
+        self.file_tree = build_file_tree(self.files.clone());
     }
 
     fn unstage_all(&mut self) {
-        self.unstaged_files.extend(self.staged_files.drain(..));
-        self.update_lines_changed();
+        for file in &mut self.files {
+            file.staged = false;
+        }
+        self.file_tree = build_file_tree(self.files.clone());
     }
 
     fn discard_selected(&mut self) {
-        let total_len = self.unstaged_files.len() + self.staged_files.len();
-        if self.selected_index > 0 && self.selected_index <= total_len {
-            if self.selected_index <= self.unstaged_files.len() {
-                self.unstaged_files.remove(self.selected_index - 1);
-            } else {
-                self.staged_files
-                    .remove(self.selected_index - 1 - self.unstaged_files.len());
-            }
+        if self.selected_index > 0 && self.selected_index <= self.files.len() {
+            self.files.remove(self.selected_index - 1);
             self.update_lines_changed();
+            self.file_tree = build_file_tree(self.files.clone());
         }
     }
 
     fn stage_selected(&mut self) {
-        if self.selected_index > 0 && self.selected_index <= self.unstaged_files.len() {
-            let file = self.unstaged_files.remove(self.selected_index - 1);
-            self.staged_files.push(file);
-            self.update_lines_changed();
+        if self.selected_index > 0 && self.selected_index <= self.files.len() {
+            self.files[self.selected_index - 1].staged = true;
+            self.file_tree = build_file_tree(self.files.clone());
         }
     }
 
     fn unstage_selected(&mut self) {
-        let unstaged_len = self.unstaged_files.len();
-        if self.selected_index > unstaged_len && self.selected_index <= self.total_item_count() - 2
-        {
-            let file = self
-                .staged_files
-                .remove(self.selected_index - 1 - unstaged_len);
-            self.unstaged_files.push(file);
-            self.update_lines_changed();
+        if self.selected_index > 0 && self.selected_index <= self.files.len() {
+            self.files[self.selected_index - 1].staged = false;
+            self.file_tree = build_file_tree(self.files.clone());
         }
     }
 }
@@ -719,44 +655,49 @@ fn render_dir_item(
 
 fn render_file_tree(
     tree: &BTreeMap<String, FileTreeNode>,
-    parent_path: &str,
-    is_staged: bool,
-    indent_level: usize,
+    is_selected: bool,
+
+    show_staged: bool,
+    show_unstaged: bool,
 ) -> Vec<AnyElement> {
     let mut elements = Vec::new();
 
     for (name, node) in tree {
-        let full_path = if parent_path.is_empty() {
-            name.to_string()
-        } else {
-            format!("{}/{}", parent_path, name)
-        };
-
         match node {
-            FileTreeNode::File(file) => {
-                elements.push(render_status_item(0, file, is_staged, indent_level));
+            FileTreeNode::File(file, indent_level) => {
+                if (show_staged && file.staged) || (show_unstaged && !file.staged) {
+                    elements.push(render_status_item(0, file, is_selected, *indent_level));
+                }
             }
             FileTreeNode::Directory(children) => {
                 if !children.is_empty() {
                     let dir_files: Vec<PanelChangedFile> = children
                         .values()
                         .filter_map(|node| match node {
-                            FileTreeNode::File(file) => Some(file.clone()),
+                            FileTreeNode::File(file, _) => {
+                                if (show_staged && file.staged) || (show_unstaged && !file.staged) {
+                                    Some(file.clone())
+                                } else {
+                                    None
+                                }
+                            }
                             _ => None,
                         })
                         .collect();
 
-                    elements.push(render_dir_item(
-                        &full_path,
-                        &dir_files,
-                        is_staged,
-                        indent_level,
-                    ));
+                    if !dir_files.is_empty() {
+                        elements.push(render_dir_item(
+                            name,
+                            &dir_files,
+                            is_selected,
+                            0, // Root level
+                        ));
 
-                    // Recursively render children
-                    let child_elements =
-                        render_file_tree(children, &full_path, is_staged, indent_level + 1);
-                    elements.extend(child_elements);
+                        // Recursively render children
+                        let child_elements =
+                            render_file_tree(children, is_selected, show_staged, show_unstaged);
+                        elements.extend(child_elements);
+                    }
                 }
             }
         }
@@ -784,20 +725,12 @@ fn new_list_state(total_item_count: usize, model_clone: Model<PanelGitProjectSta
             } else if ix == 1 {
                 v_flex()
                     .w_full()
-                    .children(render_file_tree(&status.unstaged_tree, "", false, 0))
-                    .into_any_element()
-            } else if ix == status.total_item_count() - 2 {
-                PanelGitStagingControls::new(
-                    "staged-controls",
-                    model_clone.clone(),
-                    true,
-                    is_selected,
-                )
-                .into_any_element()
-            } else if ix == status.total_item_count() - 1 {
-                v_flex()
-                    .w_full()
-                    .children(render_file_tree(&status.staged_tree, "", true, 0))
+                    .children(render_file_tree(
+                        &status.file_tree,
+                        is_selected,
+                        false,
+                        true,
+                    ))
                     .into_any_element()
             } else {
                 div().into_any_element() // Empty element for other indices
