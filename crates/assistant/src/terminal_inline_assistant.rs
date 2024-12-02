@@ -1,6 +1,7 @@
+use crate::assistant_settings::AssistantSettings;
 use crate::{
-    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
-    ModelSelector, RequestType, DEFAULT_CONTEXT_LINES,
+    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent, RequestType,
+    DEFAULT_CONTEXT_LINES,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -19,8 +20,9 @@ use language::Buffer;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
+use language_model_selector::LanguageModelSelector;
 use language_models::report_assistant_event;
-use settings::Settings;
+use settings::{update_settings_file, Settings};
 use std::{
     cmp,
     sync::Arc,
@@ -612,8 +614,17 @@ impl Render for PromptEditor {
                     .w_12()
                     .justify_center()
                     .gap_2()
-                    .child(ModelSelector::new(
-                        self.fs.clone(),
+                    .child(LanguageModelSelector::new(
+                        {
+                            let fs = self.fs.clone();
+                            move |model, cx| {
+                                update_settings_file::<AssistantSettings>(
+                                    fs.clone(),
+                                    cx,
+                                    move |settings, _| settings.set_model(model.clone()),
+                                );
+                            }
+                        },
                         IconButton::new("context", IconName::SettingsAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)

@@ -21,6 +21,7 @@ use async_watch as watch;
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::HashMap;
+use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
@@ -51,7 +52,7 @@ use std::{
     path::{Path, PathBuf},
     str,
     sync::{Arc, LazyLock},
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
     vec,
 };
 use sum_tree::TreeMap;
@@ -108,7 +109,7 @@ pub struct Buffer {
     file: Option<Arc<dyn File>>,
     /// The mtime of the file when this buffer was last loaded from
     /// or saved to disk.
-    saved_mtime: Option<SystemTime>,
+    saved_mtime: Option<MTime>,
     /// The version vector when this buffer was last loaded from
     /// or saved to disk.
     saved_version: clock::Global,
@@ -406,22 +407,19 @@ pub trait File: Send + Sync {
 /// modified. In the case where the file is not stored, it can be either `New` or `Deleted`. In the
 /// UI these two states are distinguished. For example, the buffer tab does not display a deletion
 /// indicator for new files.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum DiskState {
     /// File created in Zed that has not been saved.
     New,
     /// File present on the filesystem.
-    Present {
-        /// Last known mtime (modification time).
-        mtime: SystemTime,
-    },
+    Present { mtime: MTime },
     /// Deleted file that was previously present.
     Deleted,
 }
 
 impl DiskState {
     /// Returns the file's last known modification time on disk.
-    pub fn mtime(self) -> Option<SystemTime> {
+    pub fn mtime(self) -> Option<MTime> {
         match self {
             DiskState::New => None,
             DiskState::Present { mtime } => Some(mtime),
@@ -976,7 +974,7 @@ impl Buffer {
     }
 
     /// The mtime of the buffer's file when the buffer was last saved or reloaded from disk.
-    pub fn saved_mtime(&self) -> Option<SystemTime> {
+    pub fn saved_mtime(&self) -> Option<MTime> {
         self.saved_mtime
     }
 
@@ -1011,7 +1009,7 @@ impl Buffer {
     pub fn did_save(
         &mut self,
         version: clock::Global,
-        mtime: Option<SystemTime>,
+        mtime: Option<MTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
@@ -1077,7 +1075,7 @@ impl Buffer {
         &mut self,
         version: clock::Global,
         line_ending: LineEnding,
-        mtime: Option<SystemTime>,
+        mtime: Option<MTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
@@ -1777,7 +1775,9 @@ impl Buffer {
         match file.disk_state() {
             DiskState::New => false,
             DiskState::Present { mtime } => match self.saved_mtime {
-                Some(saved_mtime) => mtime > saved_mtime && self.has_unsaved_edits(),
+                Some(saved_mtime) => {
+                    mtime.bad_is_greater_than(saved_mtime) && self.has_unsaved_edits()
+                }
                 None => true,
             },
             DiskState::Deleted => true,

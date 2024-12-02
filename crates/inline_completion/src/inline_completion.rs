@@ -1,7 +1,8 @@
+use std::ops::Range;
+
 use gpui::{AppContext, Model, ModelContext};
 use language::Buffer;
-use std::ops::Range;
-use text::{Anchor, Rope};
+use text::Rope;
 
 // TODO: Find a better home for `Direction`.
 //
@@ -13,15 +14,13 @@ pub enum Direction {
     Next,
 }
 
-pub enum InlayProposal {
-    Hint(Anchor, project::InlayHint),
-    Suggestion(Anchor, Rope),
+pub struct CompletionProposal {
+    pub edits: Vec<CompletionEdit>,
 }
 
-pub struct CompletionProposal {
-    pub inlays: Vec<InlayProposal>,
+pub struct CompletionEdit {
     pub text: Rope,
-    pub delete_range: Option<Range<Anchor>>,
+    pub range: Range<language::Anchor>,
 }
 
 pub trait InlineCompletionProvider: 'static + Sized {

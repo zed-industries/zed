@@ -693,20 +693,15 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         _cx: &'a AppContext,
     ) -> Option<inline_completion::CompletionProposal> {
         let completion = self.current_completion.as_ref()?;
-        let inlays = completion
-            .edits
-            .iter()
-            .map(|(old_range, new_text)| {
-                inline_completion::InlayProposal::Suggestion(
-                    old_range.end,
-                    language::Rope::from(new_text.as_str()),
-                )
-            })
-            .collect::<Vec<_>>();
         Some(inline_completion::CompletionProposal {
-            inlays,
-            delete_range: Some(completion.edits[0].0.clone()),
-            text: Rope::from(completion.edits[0].1.as_str()),
+            edits: completion
+                .edits
+                .iter()
+                .map(|(old_range, new_text)| inline_completion::CompletionEdit {
+                    range: old_range.clone(),
+                    text: new_text.as_str().into(),
+                })
+                .collect(),
         })
     }
 }

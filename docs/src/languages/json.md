@@ -30,8 +30,47 @@ To workaround this behavior you can add the following to your `.prettierrc`
 }
 ```
 
+## JSON Language Server
+
+Zed automatically out of the box supports JSON Schema validation of `package.json` and `tsconfig.json` files, but `json-language-server` can use JSON Schema definitions in project files, from the [JSON Schema Store](https://www.schemastore.org/json/) or other publicly available URLs for JSON validation.
+
+### Inline Schema Specification
+
+To specify a schema inline with your JSON files, add a `$schema` top level key linking to your json schema file.
+
+For example to for a `.luarc.json` for use with [lua-language-server](https://github.com/LuaLS/lua-language-server/):
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json",
+  "runtime.version": "Lua 5.4"
+}
+```
+
+### Schema Specification via Settings
+
+You can alternatively associate JSON Schemas with file paths by via Zed LSP settings.
+
+To
+
+```json
+"lsp": {
+"json-language-server": {
+  "settings": {
+    "json": {
+      "schemas": [
+        {
+          "fileMatch": ["*/*.luarc.json"],
+          "url": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json"
+        }
+      ]
+    }
+  }
+}
+```
+
+You can also pass any of the [supported settings](https://github.com/Microsoft/vscode/blob/main/extensions/json-language-features/server/README.md#settings) to json-language-server by specifying them in your Zed settings.json:
+
 <!--
-TBD: JSONC Example for how to use `file_types`
 TBD: Add formatter (prettier) settings (autoformat, tab_size, etc)
-TBD: Document JSON Schema features of Zed
 -->

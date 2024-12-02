@@ -67,6 +67,7 @@ impl super::LspAdapter for GoLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
@@ -139,7 +140,8 @@ impl super::LspAdapter for GoLspAdapter {
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
 
-        let install_output = util::command::new_smol_command("go")
+        let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
+        let install_output = util::command::new_smol_command(go)
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
             .args(["install", "golang.org/x/tools/gopls@latest"])

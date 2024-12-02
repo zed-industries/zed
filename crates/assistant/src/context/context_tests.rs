@@ -1,6 +1,5 @@
 use super::{AssistantEdit, MessageCacheMetadata};
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
     Context, ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId,
@@ -11,6 +10,7 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,
     SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
 };
+use assistant_tool::ToolWorkingSet;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{

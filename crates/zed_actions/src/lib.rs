@@ -44,6 +44,37 @@ actions!(
     ]
 );
 
+pub mod branches {
+    use gpui::actions;
+
+    actions!(branches, [OpenRecent]);
+}
+
+pub mod command_palette {
+    use gpui::actions;
+
+    actions!(command_palette, [Toggle]);
+}
+
+pub mod feedback {
+    use gpui::actions;
+
+    actions!(feedback, [GiveFeedback]);
+}
+
+pub mod theme_selector {
+    use gpui::impl_actions;
+    use serde::Deserialize;
+
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+    pub struct Toggle {
+        /// A list of theme names to filter the theme selector down to.
+        pub themes_filter: Option<Vec<String>>,
+    }
+
+    impl_actions!(theme_selector, [Toggle]);
+}
+
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct InlineAssist {
     pub prompt: Option<String>,

@@ -42,6 +42,7 @@ emojis.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
+fs.workspace = true
 git.workspace = true
 gpui.workspace = true
 http_client.workspace = true

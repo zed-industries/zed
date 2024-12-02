@@ -2,7 +2,7 @@ use crate::{Completion, Copilot};
 use anyhow::Result;
 use client::telemetry::Telemetry;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
-use inline_completion::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
+use inline_completion::{CompletionEdit, CompletionProposal, Direction, InlineCompletionProvider};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
     Buffer, OffsetRangeExt, ToOffset,
@@ -267,13 +267,12 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             if completion_text.trim().is_empty() {
                 None
             } else {
+                let position = cursor_position.bias_right(buffer);
                 Some(CompletionProposal {
-                    inlays: vec![InlayProposal::Suggestion(
-                        cursor_position.bias_right(buffer),
-                        completion_text.into(),
-                    )],
-                    text: completion_text.into(),
-                    delete_range: None,
+                    edits: vec![CompletionEdit {
+                        text: completion_text.into(),
+                        range: position..position,
+                    }],
                 })
             }
         } else {
