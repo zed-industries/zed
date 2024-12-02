@@ -682,7 +682,7 @@ fn render_file_tree(
 
     for (name, node) in tree {
         let full_path = if parent_path.is_empty() {
-            name.clone()
+            name.to_string()
         } else {
             format!("{}/{}", parent_path, name)
         };
@@ -697,7 +697,15 @@ fn render_file_tree(
                     let dir_files: Vec<PanelChangedFile> = children
                         .values()
                         .filter_map(|node| match node {
-                            FileTreeNode::File(file) => Some(file.clone()),
+                            FileTreeNode::File(file) => Some(PanelChangedFile {
+                                file_path: file
+                                    .file_path
+                                    .strip_prefix(&format!("{}/", full_path))
+                                    .unwrap_or(&file.file_path)
+                                    .to_string()
+                                    .into(),
+                                ..file.clone()
+                            }),
                             _ => None,
                         })
                         .collect();
@@ -705,7 +713,13 @@ fn render_file_tree(
                     elements.push(render_dir_item(&full_path, &dir_files, is_staged));
 
                     // Recursively render children
-                    elements.extend(render_file_tree(children, &full_path, is_staged));
+                    let child_elements = render_file_tree(children, &full_path, is_staged);
+                    elements.push(
+                        v_flex()
+                            .pl(px(16.))
+                            .children(child_elements)
+                            .into_any_element(),
+                    );
                 }
             }
         }
