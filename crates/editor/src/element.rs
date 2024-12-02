@@ -6092,6 +6092,10 @@ impl CursorLayout {
                     + gpui::Point::new(Pixels::ZERO, self.line_height - px(2.0)),
                 size: size(self.block_width, px(2.0)),
             },
+            CursorShape::Transparent => Bounds {
+                origin: self.origin + origin,
+                size: size(Pixels::ZERO, Pixels::ZERO),
+            },
         }
     }
 

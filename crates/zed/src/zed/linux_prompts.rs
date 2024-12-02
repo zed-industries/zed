@@ -1,13 +1,15 @@
+use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     div, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
     IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Render,
-    RenderablePromptHandle, Styled, ViewContext, VisualContext, WindowContext,
+    RenderablePromptHandle, Styled, TextStyle, View, ViewContext, VisualContext, WindowContext,
 };
+use language::CursorShape;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    h_flex, v_flex, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder, LabelSize,
-    TintColor,
+    h_flex, relative, v_flex, ActiveTheme, ButtonCommon, ButtonStyle, Clickable, ElevationIndex,
+    FluentBuilder, LabelSize, TintColor,
 };
 use workspace::ui::StyledExt;
 
@@ -28,10 +30,18 @@ pub fn fallback_prompt_renderer(
         |cx| FallbackPromptRenderer {
             _level: level,
             message: message.to_string(),
-            detail: detail.map(ToString::to_string),
             actions: actions.iter().map(ToString::to_string).collect(),
             focus: cx.focus_handle(),
             active_action_id: 0,
+            detail: detail.map(|d| {
+                cx.new_view(|cx| {
+                    let mut editor = Editor::auto_height(3, cx);
+                    editor.set_input_enabled(false);
+                    editor.set_text(d, cx);
+                    editor.set_cursor_shape(CursorShape::Transparent, cx);
+                    editor
+                })
+            }),
         }
     });
 
@@ -42,10 +52,10 @@ pub fn fallback_prompt_renderer(
 pub struct FallbackPromptRenderer {
     _level: PromptLevel,
     message: String,
-    detail: Option<String>,
     actions: Vec<String>,
     focus: FocusHandle,
     active_action_id: usize,
+    detail: Option<View<Editor>>,
 }
 
 impl FallbackPromptRenderer {
@@ -82,6 +92,28 @@ impl FallbackPromptRenderer {
         self.active_action_id = (self.active_action_id + 1) % self.actions.len();
         cx.notify();
     }
+
+    fn render_detail(&self, detail: &View<Editor>, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: ui::Color::Muted.color(cx),
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
+            font_weight: settings.ui_font.weight,
+            font_size: ui::rems(0.75).into(),
+            line_height: relative(1.3),
+            ..Default::default()
+        };
+        EditorElement::new(
+            detail,
+            EditorStyle {
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
 }
 
 impl Render for FallbackPromptRenderer {
@@ -111,13 +143,9 @@ impl Render for FallbackPromptRenderer {
                     .child(self.message.clone())
                     .text_color(ui::Color::Default.color(cx)),
             )
-            .children(self.detail.clone().map(|detail| {
-                div()
-                    .w_full()
-                    .text_xs()
-                    .text_color(ui::Color::Muted.color(cx))
-                    .child(detail)
-            }))
+            .when_some(self.detail.as_ref(), |el, detail| {
+                el.child(self.render_detail(detail, cx))
+            })
             .child(h_flex().justify_end().gap_2().children(
                 self.actions.iter().enumerate().rev().map(|(ix, action)| {
                     ui::Button::new(ix, action.clone())
