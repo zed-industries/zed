@@ -5,12 +5,13 @@ use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
-use gpui::{AppContext, EventEmitter, ModelContext, Task};
+use gpui::{AppContext, EventEmitter, ModelContext, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolResult, LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
     StopReason,
 };
+use language_models::provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError};
 use serde::{Deserialize, Serialize};
 use util::post_inc;
 
@@ -212,12 +213,23 @@ impl Thread {
             thread
                 .update(&mut cx, |_thread, cx| {
                     let error_message = if let Some(error) = result.as_ref().err() {
-                        let error_message = error
-                            .chain()
-                            .map(|err| err.to_string())
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        Some(error_message)
+                        if error.is::<PaymentRequiredError>() {
+                            cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
+                            Some(error.to_string())
+                        } else if error.is::<MaxMonthlySpendReachedError>() {
+                            cx.emit(ThreadEvent::ShowError(ThreadError::MaxMonthlySpendReached));
+                            Some(error.to_string())
+                        } else {
+                            let error_message = error
+                                .chain()
+                                .map(|err| err.to_string())
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            cx.emit(ThreadEvent::ShowError(ThreadError::Message(
+                                SharedString::from(error_message.clone()),
+                            )));
+                            Some(error_message)
+                        }
                     } else {
                         None
                     };
@@ -306,7 +318,15 @@ impl Thread {
 }
 
 #[derive(Debug, Clone)]
+pub enum ThreadError {
+    PaymentRequired,
+    MaxMonthlySpendReached,
+    Message(SharedString),
+}
+
+#[derive(Debug, Clone)]
 pub enum ThreadEvent {
+    ShowError(ThreadError),
     StreamedCompletion,
     UsePendingTools,
     ToolFinished {
