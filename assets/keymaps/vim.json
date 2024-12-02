@@ -41,6 +41,8 @@
       "] M": "vim::NextMethodEnd",
       "[ m": "vim::PreviousMethodStart",
       "[ M": "vim::PreviousMethodEnd",
+      "] t": "vim::NextClassStart",
+      "[ t": "vim::PreviousClassStart",
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",

@@ -7,7 +7,7 @@ use editor::{
     Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext};
-use language::{CharKind, Point, Selection, SelectionGoal};
+use language::{CharKind, Point, Selection, SelectionGoal, TextObject};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 use std::ops::Range;
@@ -107,6 +107,10 @@ pub enum Motion {
     NextMethodEnd,
     PreviousMethodStart,
     PreviousMethodEnd,
+    NextClassStart,
+    NextClassEnd,
+    PreviousClassStart,
+    PreviousClassEnd,
 
     // we don't have a good way to run a search synchronously, so
     // we handle search motions by running the search async and then
@@ -264,6 +268,10 @@ actions!(
         NextMethodEnd,
         PreviousMethodStart,
         PreviousMethodEnd,
+        NextClassStart,
+        NextClassEnd,
+        PreviousClassStart,
+        PreviousClassEnd,
     ]
 );
 
@@ -461,6 +469,18 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, &NextMethodEnd, cx| {
         vim.motion(Motion::NextMethodEnd, cx)
     });
+    Vim::action(editor, cx, |vim, &PreviousClassStart, cx| {
+        vim.motion(Motion::PreviousClassStart, cx)
+    });
+    Vim::action(editor, cx, |vim, &NextClassStart, cx| {
+        vim.motion(Motion::NextClassStart, cx)
+    });
+    Vim::action(editor, cx, |vim, &PreviousClassEnd, cx| {
+        vim.motion(Motion::PreviousClassEnd, cx)
+    });
+    Vim::action(editor, cx, |vim, &NextClassEnd, cx| {
+        vim.motion(Motion::NextClassEnd, cx)
+    });
 }
 
 impl Vim {
@@ -551,6 +571,10 @@ impl Motion {
             | NextMethodEnd
             | PreviousMethodStart
             | PreviousMethodEnd
+            | NextClassStart
+            | NextClassEnd
+            | PreviousClassStart
+            | PreviousClassEnd
             | Jump { line: true, .. } => true,
             EndOfLine { .. }
             | Matching
@@ -626,6 +650,10 @@ impl Motion {
             | NextMethodEnd
             | PreviousMethodStart
             | PreviousMethodEnd
+            | NextClassStart
+            | NextClassEnd
+            | PreviousClassStart
+            | PreviousClassEnd
             | Jump { .. } => false,
         }
     }
@@ -677,6 +705,10 @@ impl Motion {
             | NextMethodEnd
             | PreviousMethodStart
             | PreviousMethodEnd
+            | NextClassStart
+            | NextClassEnd
+            | PreviousClassStart
+            | PreviousClassEnd
             | ZedSearchResult { .. } => false,
             RepeatFind { last_find: motion } | RepeatFindReversed { last_find: motion } => {
                 motion.inclusive()
@@ -902,19 +934,91 @@ impl Motion {
             ),
 
             NextMethodStart => (
-                method_motion(map, point, times, Direction::Next, true),
+                text_object_motion(
+                    map,
+                    point,
+                    times,
+                    TextObject::AroundFunction,
+                    Direction::Next,
+                    true,
+                ),
                 SelectionGoal::None,
             ),
             NextMethodEnd => (
-                method_motion(map, point, times, Direction::Next, false),
+                text_object_motion(
+                    map,
+                    point,
+                    times,
+                    TextObject::AroundFunction,
+                    Direction::Next,
+                    false,
+                ),
                 SelectionGoal::None,
             ),
             PreviousMethodStart => (
-                method_motion(map, point, times, Direction::Prev, true),
+                text_object_motion(
+                    map,
+                    point,
+                    times,
+                    TextObject::AroundFunction,
+                    Direction::Prev,
+                    true,
+                ),
                 SelectionGoal::None,
             ),
             PreviousMethodEnd => (
-                method_motion(map, point, times, Direction::Prev, false),
+                text_object_motion(
+                    map,
+                    point,
+                    times,
+                    TextObject::AroundFunction,
+                    Direction::Prev,
+                    false,
+                ),
+                SelectionGoal::None,
+            ),
+            NextClassStart => (
+                text_object_motion(
+                    map,
+                    point,
+                    times,
+                    TextObject::AroundClass,
+                    Direction::Next,
+                    true,
+                ),
+                SelectionGoal::None,
+            ),
+            NextClassEnd => (
+                text_object_motion(
+                    map,
+                    point,
+                    times,
+                    TextObject::AroundClass,
+                    Direction::Next,
+                    false,
+                ),
+                SelectionGoal::None,
+            ),
+            PreviousClassStart => (
+                text_object_motion(
+                    map,
+                    point,
+                    times,
+                    TextObject::AroundClass,
+                    Direction::Prev,
+                    true,
+                ),
+                SelectionGoal::None,
+            ),
+            PreviousClassEnd => (
+                text_object_motion(
+                    map,
+                    point,
+                    times,
+                    TextObject::AroundClass,
+                    Direction::Prev,
+                    false,
+                ),
                 SelectionGoal::None,
             ),
         };
@@ -2093,57 +2197,6 @@ fn window_bottom(
     }
 }
 
-fn method_motion(
-    map: &DisplaySnapshot,
-    mut display_point: DisplayPoint,
-    times: usize,
-    direction: Direction,
-    is_start: bool,
-) -> DisplayPoint {
-    let Some((_, _, buffer)) = map.buffer_snapshot.as_singleton() else {
-        return display_point;
-    };
-
-    for _ in 0..times {
-        let point = map.display_point_to_point(display_point, Bias::Left);
-        let offset = point.to_offset(&map.buffer_snapshot);
-        let range = if direction == Direction::Prev {
-            0..offset
-        } else {
-            offset..buffer.len()
-        };
-
-        let possibilities = buffer
-            .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(4))
-            .filter_map(|(range, object)| {
-                if !matches!(object, language::TextObject::AroundFunction) {
-                    return None;
-                }
-
-                let relevant = if is_start { range.start } else { range.end };
-                if direction == Direction::Prev && relevant < offset {
-                    Some(relevant)
-                } else if direction == Direction::Next && relevant > offset {
-                    Some(relevant)
-                } else {
-                    None
-                }
-            });
-
-        let dest = if direction == Direction::Prev {
-            possibilities.max().unwrap_or(offset)
-        } else {
-            possibilities.min().unwrap_or(offset)
-        };
-        let new_point = map.clip_point(dest.to_display_point(&map), Bias::Left);
-        if new_point == display_point {
-            break;
-        }
-        display_point = new_point;
-    }
-    display_point
-}
-
 fn section_motion(
     map: &DisplaySnapshot,
     mut display_point: DisplayPoint,
@@ -2258,6 +2311,58 @@ fn section_motion(
         display_point = next_point;
     }
 
+    display_point
+}
+
+fn text_object_motion(
+    map: &DisplaySnapshot,
+    mut display_point: DisplayPoint,
+    times: usize,
+    text_object: TextObject,
+    direction: Direction,
+    is_start: bool,
+) -> DisplayPoint {
+    let Some((_, _, buffer)) = map.buffer_snapshot.as_singleton() else {
+        return display_point;
+    };
+
+    for _ in 0..times {
+        let point = map.display_point_to_point(display_point, Bias::Left);
+        let offset = point.to_offset(&map.buffer_snapshot);
+        let range = if direction == Direction::Prev {
+            0..offset
+        } else {
+            offset..buffer.len()
+        };
+
+        let possibilities = buffer
+            .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(4))
+            .filter_map(|(range, object)| {
+                if object != text_object {
+                    return None;
+                }
+
+                let relevant = if is_start { range.start } else { range.end };
+                if direction == Direction::Prev && relevant < offset {
+                    Some(relevant)
+                } else if direction == Direction::Next && relevant > offset {
+                    Some(relevant)
+                } else {
+                    None
+                }
+            });
+
+        let dest = if direction == Direction::Prev {
+            possibilities.max().unwrap_or(offset)
+        } else {
+            possibilities.min().unwrap_or(offset)
+        };
+        let new_point = map.clip_point(dest.to_display_point(&map), Bias::Left);
+        if new_point == display_point {
+            break;
+        }
+        display_point = new_point;
+    }
     display_point
 }
 
@@ -2831,6 +2936,31 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_section_matching(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+            ˇfn a() {
+              return
+            }
+
+            fn b() {
+              return
+            }
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("] ]").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            fn a() {
+              return
+            ˇ}
+
+            fn b() {
+              return
+            }
+            "});
+    }
+
+    #[gpui::test]
     async fn test_function_matching(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.assert_binding_normal(
@@ -2872,6 +3002,56 @@ mod test {
 
             fn b() {
                 return
+            }
+        "},
+        );
+    }
+
+    #[gpui::test]
+    async fn test_class_matching(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.assert_binding_normal(
+            "3 ] t",
+            indoc! {"
+            ˇenum A {
+
+            }
+
+            enum B {
+
+            }
+
+            impl A {
+                fn new() -> Self {
+                    Self { }
+                }
+            }
+
+            impl B {
+                fn new() -> Self {
+                    Self { }
+                }
+            }
+        "},
+            indoc! {"
+            enum Test {
+
+            }
+
+            enum TestTwo {
+
+            }
+
+            impl TestTwo {
+                fn new() -> Self {
+                    Self { }
+                }
+            }
+
+            ˇimpl Test {
+                fn new() -> Self {
+                    Self { }
+                }
             }
         "},
         );
