@@ -566,15 +566,10 @@ impl AppContext {
             let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
-                    window.state = Some(
-                        cx.new_model(|cx| {
-                            window.render = Some(Box::new(move |any_state| {
-                                any_state.downcast::<T>().unwrap().into_any_element()
-                            }));
-                            builder(&mut window, cx)
-                        })
-                        .into(),
-                    );
+                    window.state = Some(cx.new_model(|cx| builder(&mut window, cx)).into());
+                    window.render = Some(Box::new(move |any_state| {
+                        any_state.downcast::<T>().unwrap().into_any_element()
+                    }));
 
                     window.appearance_changed(cx);
                     cx.window_handles.insert(id, window.handle);
