@@ -139,80 +139,38 @@ impl GitPanelState {
         items.push(GitListItem::Header(false));
 
         // Unstaged files
-        self.add_files_to_list(&mut items, false, &self.file_tree.root, 0);
-
-        items.push(GitListItem::Divider);
+        self.add_files_to_list(&mut items, false);
 
         // Staged header
         items.push(GitListItem::Header(true));
 
         // Staged files
-        self.add_files_to_list(&mut items, true, &self.file_tree.root, 0);
+        self.add_files_to_list(&mut items, true);
 
         items
     }
 
-    fn add_files_to_list(
-        &self,
-        items: &mut Vec<GitListItem>,
-        is_staged: bool,
-        node: &BTreeMap<String, FileTreeNode>,
-        indent_level: usize,
-    ) {
-        for (path, node) in node {
-            match node {
-                FileTreeNode::File(id) => {
-                    if let Some(file) = self.files.get(id) {
-                        if file.staged == is_staged {
-                            items.push(GitListItem::File {
-                                id: id.clone(),
-                                indent_level,
-                            });
-                        }
-                    }
-                }
-                FileTreeNode::Directory(children) => {
-                    let has_files = self.directory_has_files(children, is_staged);
-                    if has_files {
-                        items.push(GitListItem::Directory {
-                            path: path.clone(),
-                            indent_level,
-                            is_expanded: true, // You might want to track this state separately
-                        });
-                        self.add_files_to_list(items, is_staged, children, indent_level + 1);
-                    }
-                }
-            }
-        }
-    }
+    fn add_files_to_list(&self, items: &mut Vec<GitListItem>, is_staged: bool) {
+        let mut files: Vec<_> = self
+            .files
+            .iter()
+            .filter(|(_, file)| file.staged == is_staged)
+            .collect();
 
-    fn directory_has_files(&self, node: &BTreeMap<String, FileTreeNode>, is_staged: bool) -> bool {
-        for node in node.values() {
-            match node {
-                FileTreeNode::File(id) => {
-                    if let Some(file) = self.files.get(id) {
-                        if file.staged == is_staged {
-                            return true;
-                        }
-                    }
-                }
-                FileTreeNode::Directory(children) => {
-                    if self.directory_has_files(children, is_staged) {
-                        return true;
-                    }
-                }
-            }
+        files.sort_by(|(_, a), (_, b)| a.file_path.cmp(&b.file_path));
+
+        for (id, file) in files {
+            items.push(GitListItem::File {
+                id: id.clone(),
+                indent_level: 0,
+            });
         }
-        false
     }
 
     fn count_files_in_directory(&self, path: &str) -> usize {
-        self.file_tree
-            .root
-            .iter()
-            .filter(|(dir_path, node)| {
-                dir_path.starts_with(path) && matches!(node, FileTreeNode::File(_))
-            })
+        self.files
+            .values()
+            .filter(|file| file.file_path.starts_with(path))
             .count()
     }
 
@@ -220,7 +178,7 @@ impl GitPanelState {
         let mut all_staged = true;
         let mut all_unstaged = true;
 
-        for (_, file) in &self.files {
+        for file in self.files.values() {
             if file.file_path.starts_with(path) {
                 if file.staged {
                     all_unstaged = false;
@@ -331,17 +289,6 @@ impl GitPanelState {
             }
             self.file_tree = FileTree::new(&self.files);
         }
-    }
-
-    fn generate_changed_file_items(&self) -> Vec<GitListItem> {
-        let mut items = Vec::new();
-        items.push(GitListItem::Header(false)); // Unstaged header
-                                                // Add unstaged files and directories
-        items.push(GitListItem::Divider);
-        items.push(GitListItem::Header(true)); // Staged header
-                                               // Add staged files and directories
-                                               // This part needs to be implemented based on the file_tree structure
-        items
     }
 }
 
