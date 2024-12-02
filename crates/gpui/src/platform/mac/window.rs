@@ -331,6 +331,7 @@ struct MacWindowState {
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
+    do_command_handled: Option<bool>,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
@@ -609,6 +610,7 @@ impl MacWindow {
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
+                do_command_handled: None,
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
@@ -1251,14 +1253,22 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     // otherwise we only send to the input handler if we don't have a matching binding.
     // The input handler may call `do_command_by_selector` if it doesn't know how to handle
     // a key. If it does so, it will return YES so we won't send the key twice.
-    if is_composing || event.keystroke.key.is_empty() {
-        window_state.as_ref().lock().keystroke_for_do_command = Some(event.keystroke.clone());
+    if is_composing || event.keystroke.key_char.is_none() {
+        {
+            let mut lock = window_state.as_ref().lock();
+            lock.keystroke_for_do_command = Some(event.keystroke.clone());
+            lock.do_command_handled.take();
+            drop(lock);
+        }
+
         let handled: BOOL = unsafe {
             let input_context: id = msg_send![this, inputContext];
             msg_send![input_context, handleEvent: native_event]
         };
         window_state.as_ref().lock().keystroke_for_do_command.take();
-        if handled == YES {
+        if let Some(handled) = window_state.as_ref().lock().do_command_handled.take() {
+            return handled as BOOL;
+        } else if handled == YES {
             return YES;
         }
 
@@ -1377,6 +1387,14 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         };
 
         match &event {
+            PlatformInput::MouseDown(_) => {
+                drop(lock);
+                unsafe {
+                    let input_context: id = msg_send![this, inputContext];
+                    msg_send![input_context, handleEvent: native_event]
+                }
+                lock = window_state.as_ref().lock();
+            }
             PlatformInput::MouseMove(
                 event @ MouseMoveEvent {
                     pressed_button: Some(_),
@@ -1790,10 +1808,11 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
     drop(lock);
 
     if let Some((keystroke, mut callback)) = keystroke.zip(event_callback.as_mut()) {
-        (callback)(PlatformInput::KeyDown(KeyDownEvent {
+        let handled = (callback)(PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: false,
         }));
+        state.as_ref().lock().do_command_handled = Some(!handled.propagate);
     }
 
     state.as_ref().lock().event_callback = event_callback;
