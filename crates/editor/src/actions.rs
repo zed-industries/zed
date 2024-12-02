@@ -303,6 +303,7 @@ gpui::actions!(
         OpenPermalinkToLine,
         OpenUrl,
         Outdent,
+        AutoIndent,
         PageDown,
         PageUp,
         Paste,
