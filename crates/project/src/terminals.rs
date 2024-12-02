@@ -287,10 +287,8 @@ impl Project {
                 .unwrap();
 
             if let Some(toolchain) = toolchain {
-                let mut path = PathBuf::from(String::from(toolchain.path));
-                path.pop();
-                path.pop();
-                return Some(path);
+                let toolchain_path = Path::new(toolchain.path.as_ref());
+                return Some(toolchain_path.parent()?.parent()?.to_path_buf());
             }
         }
 
