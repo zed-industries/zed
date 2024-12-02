@@ -2724,6 +2724,7 @@ impl EditorElement {
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_inline_completion_popover(
         &self,
         text_bounds: &Bounds<Pixels>,

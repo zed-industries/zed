@@ -5600,8 +5600,7 @@ impl Editor {
                         ..
                     } => {
                         let id = post_inc(&mut self.next_inlay_id);
-                        let new_inlays =
-                            vec![Inlay::suggestion(id, position.clone(), text.clone())];
+                        let new_inlays = vec![Inlay::suggestion(id, *position, text.clone())];
                         let new_inlay_ids: Vec<_> = new_inlays.iter().map(|i| i.id).collect();
                         self.display_map.update(cx, {
                             let old_inlay_ids = render_inlay_ids.clone();
