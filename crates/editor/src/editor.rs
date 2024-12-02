@@ -6297,6 +6297,25 @@ impl Editor {
         });
     }
 
+    pub fn autoindent(&mut self, _: &AutoIndent, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+        let selections = self
+            .selections
+            .all::<usize>(cx)
+            .into_iter()
+            .map(|s| s.range());
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.autoindent_ranges(selections, cx);
+            });
+            let selections = this.selections.all::<usize>(cx);
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+        });
+    }
+
     pub fn delete_line(&mut self, _: &DeleteLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
@@ -14611,7 +14630,8 @@ impl ViewInputHandler for Editor {
 
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
         let x = snapshot.x_for_display_point(start, &text_layout_details) - scroll_left
-            + self.gutter_dimensions.width;
+            + self.gutter_dimensions.width
+            + self.gutter_dimensions.margin;
         let y = line_height * (start.row().as_f32() - scroll_position.y);
 
         Some(Bounds {

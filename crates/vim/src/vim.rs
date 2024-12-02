@@ -470,6 +470,7 @@ impl Vim {
                 | Operator::Replace
                 | Operator::Indent
                 | Operator::Outdent
+                | Operator::AutoIndent
                 | Operator::Lowercase
                 | Operator::Uppercase
                 | Operator::OppositeCase
