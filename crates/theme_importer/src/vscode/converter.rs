@@ -159,6 +159,7 @@ impl VsCodeThemeConverter {
                 .active_background
                 .clone()
                 .or(vscode_tab_inactive_background.clone()),
+            search_match_background: vscode_colors.editor.find_match_background.clone(),
             panel_background: vscode_colors.panel.background.clone(),
             scrollbar_thumb_background: vscode_scrollbar_slider_background.clone(),
             scrollbar_thumb_hover_background: vscode_colors
