@@ -1154,7 +1154,7 @@ mod tests {
 
             assert_eq!(
                 retrieve_package_id_and_bin_name_from_metadata(metadata, absolute_path),
-                expected.map(|(pkgid, name, kind)| (pkgid.to_owned(), bin.to_owned(), kind))
+                expected.map(|(pkgid, name, kind)| (pkgid.to_owned(), name.to_owned(), kind))
             );
         }
     }
