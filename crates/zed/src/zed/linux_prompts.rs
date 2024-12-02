@@ -8,7 +8,7 @@ use language::CursorShape;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    h_flex, relative, v_flex, ActiveTheme, ButtonCommon, ButtonStyle, Clickable, ElevationIndex,
+    h_flex, v_flex, ActiveTheme, ButtonCommon, ButtonStyle, Clickable, ElevationIndex,
     FluentBuilder, LabelSize, TintColor,
 };
 use workspace::ui::StyledExt;
@@ -102,7 +102,6 @@ impl FallbackPromptRenderer {
             font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_weight: settings.ui_font.weight,
             font_size: ui::rems(0.75).into(),
-            line_height: relative(1.3),
             ..Default::default()
         };
         EditorElement::new(
@@ -143,8 +142,8 @@ impl Render for FallbackPromptRenderer {
                     .child(self.message.clone())
                     .text_color(ui::Color::Default.color(cx)),
             )
-            .when_some(self.detail.as_ref(), |el, detail| {
-                el.child(self.render_detail(detail, cx))
+            .when_some(self.detail.as_ref(), |div, detail| {
+                div.child(self.render_detail(detail, cx))
             })
             .child(h_flex().justify_end().gap_2().children(
                 self.actions.iter().enumerate().rev().map(|(ix, action)| {
