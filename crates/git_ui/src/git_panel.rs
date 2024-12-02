@@ -268,6 +268,7 @@ impl RenderOnce for GitStatusDirItem {
         );
 
         v_flex()
+            .w_full()
             .child(
                 h_flex()
                     .id(self.id.clone())
@@ -283,10 +284,10 @@ impl RenderOnce for GitStatusDirItem {
                     })
                     .group("")
                     .rounded_sm()
-                    .pl(px(12. + (self.indent_level as f32 * 16.)))
                     .h(px(24.))
                     .child(
                         h_flex()
+                            .pl(px(12. + (self.indent_level as f32 * 16.)))
                             .gap(px(8.))
                             .child(Checkbox::new(self.id.clone(), self.selection))
                             // .child(
@@ -767,6 +768,7 @@ fn new_list_state(total_item_count: usize, model_clone: Model<PanelGitProjectSta
                 .into_any_element()
             } else if ix == 1 {
                 v_flex()
+                    .w_full()
                     .children(render_file_tree(&status.unstaged_tree, "", false, 0))
                     .into_any_element()
             } else if ix == status.total_item_count() - 2 {
@@ -779,6 +781,7 @@ fn new_list_state(total_item_count: usize, model_clone: Model<PanelGitProjectSta
                 .into_any_element()
             } else if ix == status.total_item_count() - 1 {
                 v_flex()
+                    .w_full()
                     .children(render_file_tree(&status.staged_tree, "", true, 0))
                     .into_any_element()
             } else {
