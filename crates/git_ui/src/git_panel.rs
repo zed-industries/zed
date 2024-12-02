@@ -31,6 +31,25 @@ actions!(
     ]
 );
 
+const ADDED_COLOR: Hsla = Hsla {
+    h: 142. / 360.,
+    s: 0.68,
+    l: 0.45,
+    a: 1.0,
+};
+const MODIFIED_COLOR: Hsla = Hsla {
+    h: 48. / 360.,
+    s: 0.76,
+    l: 0.47,
+    a: 1.0,
+};
+const REMOVED_COLOR: Hsla = Hsla {
+    h: 355. / 360.,
+    s: 0.65,
+    l: 0.65,
+    a: 1.0,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ChangedFileId(SharedString);
 
@@ -347,18 +366,9 @@ impl RenderOnce for ChangedFileItem {
         let file_path = self.file.file_path.clone();
 
         let (icon_name, color) = match self.file.status {
-            GitFileStatus::Added => (
-                IconName::SquarePlus,
-                Color::Custom(hsla(142. / 360., 0.68, 0.45, 1.0)),
-            ),
-            GitFileStatus::Modified => (
-                IconName::SquareDot,
-                Color::Custom(hsla(48. / 360., 0.76, 0.47, 1.0)),
-            ),
-            GitFileStatus::Conflict => (
-                IconName::SquareMinus,
-                Color::Custom(hsla(355. / 360., 0.65, 0.65, 1.0)),
-            ),
+            GitFileStatus::Added => (IconName::SquarePlus, Color::Custom(ADDED_COLOR)),
+            GitFileStatus::Modified => (IconName::SquareDot, Color::Custom(MODIFIED_COLOR)),
+            GitFileStatus::Conflict => (IconName::SquareMinus, Color::Custom(REMOVED_COLOR)),
         };
 
         let is_deleted = self.file.status == GitFileStatus::Conflict;
@@ -400,14 +410,14 @@ impl RenderOnce for ChangedFileItem {
                             .when(self.file.lines_added > 0, |this| {
                                 this.child(
                                     Label::new(format!("+{}", self.file.lines_added))
-                                        .color(Color::Created)
+                                        .color(Color::Custom(ADDED_COLOR))
                                         .size(LabelSize::Small),
                                 )
                             })
                             .when(self.file.lines_removed > 0, |this| {
                                 this.child(
                                     Label::new(format!("-{}", self.file.lines_removed))
-                                        .color(Color::Deleted)
+                                        .color(Color::Custom(REMOVED_COLOR))
                                         .size(LabelSize::Small),
                                 )
                             }),
@@ -531,6 +541,7 @@ pub struct ProjectOverviewItem {
     id: ElementId,
     changed_file_count: usize,
     lines_changed: GitLines,
+    model: Model<GitPanelState>,
 }
 
 impl ProjectOverviewItem {
@@ -538,25 +549,35 @@ impl ProjectOverviewItem {
         id: impl Into<ElementId>,
         changed_file_count: usize,
         lines_changed: GitLines,
+        model: Model<GitPanelState>,
     ) -> Self {
         Self {
             id: id.into(),
             changed_file_count,
             lines_changed,
+            model,
         }
     }
 }
 
 impl RenderOnce for ProjectOverviewItem {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let changed_files: SharedString =
-            format!("{} Changed files", self.changed_file_count).into();
+        let changed_files: SharedString = format!("{} Changes", self.changed_file_count).into();
 
         let added_label: Option<SharedString> =
             (self.lines_changed.added > 0).then(|| format!("+{}", self.lines_changed.added).into());
         let removed_label: Option<SharedString> = (self.lines_changed.removed > 0)
             .then(|| format!("-{}", self.lines_changed.removed).into());
-        let total_label: SharedString = "total lines changed".into();
+
+        let model = self.model.read(cx);
+        let all_staged = model.all_staged();
+        let all_unstaged = model.all_unstaged();
+
+        let checkbox_selection = match (all_staged, all_unstaged) {
+            (true, false) => Selection::Selected,
+            (false, true) => Selection::Unselected,
+            _ => Selection::Indeterminate,
+        };
 
         h_flex()
             .id(self.id.clone())
@@ -568,6 +589,16 @@ impl RenderOnce for ProjectOverviewItem {
             .child(
                 h_flex()
                     .gap_4()
+                    .child(Checkbox::new("all-staged", checkbox_selection).on_click({
+                        let model = self.model.clone();
+                        move |_, cx| {
+                            if model.read(cx).all_staged() {
+                                cx.dispatch_action(Box::new(UnstageAll))
+                            } else {
+                                cx.dispatch_action(Box::new(StageAll))
+                            };
+                        }
+                    }))
                     .child(Label::new(changed_files).size(LabelSize::Small))
                     .child(
                         h_flex()
@@ -575,22 +606,17 @@ impl RenderOnce for ProjectOverviewItem {
                             .when(added_label.is_some(), |this| {
                                 this.child(
                                     Label::new(added_label.unwrap())
-                                        .color(Color::Created)
+                                        .color(Color::Custom(ADDED_COLOR))
                                         .size(LabelSize::Small),
                                 )
                             })
                             .when(removed_label.is_some(), |this| {
                                 this.child(
                                     Label::new(removed_label.unwrap())
-                                        .color(Color::Deleted)
+                                        .color(Color::Custom(REMOVED_COLOR))
                                         .size(LabelSize::Small),
                                 )
-                            })
-                            .child(
-                                Label::new(total_label)
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
+                            }),
                     ),
             )
     }
@@ -630,6 +656,7 @@ impl RenderOnce for StagingHeaderItem {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let staging_type = if self.is_staged { "Staged" } else { "Unstaged" };
         let label: SharedString = format!("{} Changes: {}", staging_type, self.count).into();
+        let selected_color = cx.theme().status().info.opacity(0.1);
 
         h_flex()
             .id(self.id.clone())
@@ -638,13 +665,13 @@ impl RenderOnce for StagingHeaderItem {
             .w_full()
             .map(|this| {
                 if self.is_selected {
-                    this.bg(cx.theme().colors().ghost_element_active)
+                    this.bg(selected_color)
                 } else {
                     this.bg(cx.theme().colors().elevated_surface_background)
                 }
             })
-            .px_3()
-            .py_2()
+            .h(px(28.))
+            .py(px(12.))
             .child(
                 h_flex()
                     .gap_2()
@@ -654,21 +681,6 @@ impl RenderOnce for StagingHeaderItem {
             .child(h_flex().gap_2().map(|this| {
                 if !self.is_staged {
                     this.child(
-                        Button::new(
-                            ElementId::Name(format!("{}-discard", self.id.clone()).into()),
-                            "Discard All",
-                        )
-                        .style(ButtonStyle::Filled)
-                        .layer(ui::ElevationIndex::ModalSurface)
-                        .size(ButtonSize::Compact)
-                        .label_size(LabelSize::Small)
-                        .icon(IconName::X)
-                        .icon_position(IconPosition::Start)
-                        .icon_color(Color::Muted)
-                        .disabled(self.no_changes)
-                        .on_click(move |_, cx| cx.dispatch_action(Box::new(DiscardAll))),
-                    )
-                    .child(
                         Button::new(
                             ElementId::Name(format!("{}-stage", self.id.clone()).into()),
                             "Stage All",
@@ -923,6 +935,7 @@ impl GitPanel {
 impl Render for GitPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         self.update_list_if_needed(cx);
+        let model = self.state.clone();
         let state = self.state.read(cx);
 
         v_flex()
@@ -946,6 +959,7 @@ impl Render for GitPanel {
                 "project-overview",
                 state.changed_file_count(),
                 state.lines_changed.clone(),
+                model.clone(),
             ))
             .child(Divider::horizontal_dashed())
             .child(list(self.list_state.clone()).size_full().into_any_element())
