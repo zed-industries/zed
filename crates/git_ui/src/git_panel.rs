@@ -160,6 +160,8 @@ impl RenderOnce for GitStatusListItem {
             ),
         };
 
+        let is_deleted = self.file.status.clone() == GitFileStatus::Conflict;
+
         h_flex()
             .id(self.id.clone())
             .items_center()
@@ -181,7 +183,16 @@ impl RenderOnce for GitStatusListItem {
                     .gap(px(8.))
                     .child(self.checkbox)
                     .child(Icon::new(icon_name).size(IconSize::Small).color(color))
-                    .child(Label::new(file_path).size(LabelSize::Small))
+                    .child(
+                        Label::new(file_path)
+                            .strikethrough(is_deleted)
+                            .size(LabelSize::Small)
+                            .color(if is_deleted {
+                                Color::Placeholder
+                            } else {
+                                Color::Default
+                            }),
+                    )
                     .child(
                         h_flex()
                             .gap_1()
@@ -298,7 +309,11 @@ impl RenderOnce for GitStatusDirItem {
                             //     })
                             //     .size(IconSize::Small),
                             // )
-                            .child(Icon::new(IconName::Folder).size(IconSize::Small))
+                            .child(
+                                Icon::new(IconName::Folder)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .child(Label::new(self.path).size(LabelSize::Small))
                             .child(
                                 Label::new(file_count_label)
@@ -1068,8 +1083,36 @@ fn static_changed_files() -> Vec<PanelChangedFile> {
         },
         PanelChangedFile {
             staged: false,
-            file_path: "tests/integration_test.rs".into(),
-            lines_added: 25,
+            file_path: "tests/user_auth_test.rs".into(),
+            lines_added: 30,
+            lines_removed: 0,
+            status: GitFileStatus::Added,
+        },
+        PanelChangedFile {
+            staged: false,
+            file_path: "tests/product_api_test.rs".into(),
+            lines_added: 45,
+            lines_removed: 0,
+            status: GitFileStatus::Added,
+        },
+        PanelChangedFile {
+            staged: true,
+            file_path: "tests/order_processing_test.rs".into(),
+            lines_added: 55,
+            lines_removed: 10,
+            status: GitFileStatus::Modified,
+        },
+        PanelChangedFile {
+            staged: false,
+            file_path: "tests/database_integration_test.rs".into(),
+            lines_added: 40,
+            lines_removed: 5,
+            status: GitFileStatus::Modified,
+        },
+        PanelChangedFile {
+            staged: true,
+            file_path: "tests/performance_test.rs".into(),
+            lines_added: 70,
             lines_removed: 0,
             status: GitFileStatus::Added,
         },
@@ -1081,11 +1124,46 @@ fn static_changed_files() -> Vec<PanelChangedFile> {
             status: GitFileStatus::Modified,
         },
         PanelChangedFile {
+            staged: false,
+            file_path: "src/models/product.rs".into(),
+            lines_added: 18,
+            lines_removed: 0,
+            status: GitFileStatus::Added,
+        },
+        PanelChangedFile {
+            staged: false,
+            file_path: "src/models/order.rs".into(),
+            lines_added: 0,
+            lines_removed: 22,
+            status: GitFileStatus::Conflict,
+        },
+        PanelChangedFile {
+            staged: false,
+            file_path: "src/models/customer.rs".into(),
+            lines_added: 0,
+            lines_removed: 15,
+            status: GitFileStatus::Modified,
+        },
+        PanelChangedFile {
             staged: true,
             file_path: "src/services/auth.rs".into(),
             lines_added: 0,
             lines_removed: 4,
             status: GitFileStatus::Modified,
+        },
+        PanelChangedFile {
+            staged: false,
+            file_path: "src/services/user.rs".into(),
+            lines_added: 15,
+            lines_removed: 2,
+            status: GitFileStatus::Modified,
+        },
+        PanelChangedFile {
+            staged: true,
+            file_path: "src/services/database.rs".into(),
+            lines_added: 30,
+            lines_removed: 0,
+            status: GitFileStatus::Added,
         },
         PanelChangedFile {
             staged: false,
