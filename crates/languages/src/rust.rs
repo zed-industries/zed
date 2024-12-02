@@ -645,7 +645,7 @@ struct CargoTarget {
     src_path: String,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum TargetKind {
     Bin,
     Example,
@@ -1118,7 +1118,11 @@ mod tests {
             (
                 r#"{"packages":[{"id":"path+file:///path/to/zed/crates/zed#0.131.0","targets":[{"name":"zed","kind":["bin"],"src_path":"/path/to/zed/src/main.rs"}]}]}"#,
                 "/path/to/zed/src/main.rs",
-                Some(("path+file:///path/to/zed/crates/zed#0.131.0", "zed")),
+                Some((
+                    "path+file:///path/to/zed/crates/zed#0.131.0",
+                    "zed",
+                    TargetKind::Bin,
+                )),
             ),
             (
                 r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["bin"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
@@ -1126,6 +1130,16 @@ mod tests {
                 Some((
                     "path+file:///path/to/custom-package#my-custom-package@0.1.0",
                     "my-custom-bin",
+                    TargetKind::Bin,
+                )),
+            ),
+            (
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                "/path/to/custom-package/src/main.rs",
+                Some((
+                    "path+file:///path/to/custom-package#my-custom-package@0.1.0",
+                    "my-custom-bin",
+                    TargetKind::Example,
                 )),
             ),
             (
@@ -1140,7 +1154,7 @@ mod tests {
 
             assert_eq!(
                 retrieve_package_id_and_bin_name_from_metadata(metadata, absolute_path),
-                expected.map(|(pkgid, bin)| (pkgid.to_owned(), bin.to_owned()))
+                expected.map(|(pkgid, name, kind)| (pkgid.to_owned(), bin.to_owned(), kind))
             );
         }
     }
