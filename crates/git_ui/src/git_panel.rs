@@ -1,6 +1,7 @@
 use git::repository::GitFileStatus;
 use gpui::*;
 use std::collections::{BTreeMap, HashMap};
+use std::ops::Range;
 use ui::{prelude::*, Checkbox, ElevationIndex, IconButtonShape};
 use ui::{Disclosure, Divider};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
@@ -749,21 +750,21 @@ fn directory_item(
 }
 
 fn update_list(model: Model<GitPanelState>, cx: &mut WindowContext) -> ListState {
-    let new_items = model.read(cx).generate_git_list_items();
-    let total_items = new_items.len();
+    let items = model.read(cx).generate_git_list_items();
+    let total_items = items.len();
 
     ListState::new(
         total_items,
         gpui::ListAlignment::Top,
         px(10.),
         move |ix, cx| {
-            let closure_state = model.read(cx);
-            match &new_items[ix] {
+            let state = model.read(cx);
+            match &items[ix] {
                 GitListItem::Header(is_staged) => {
                     let count = if *is_staged {
-                        closure_state.staged_count()
+                        state.staged_count()
                     } else {
-                        closure_state.unstaged_count()
+                        state.unstaged_count()
                     };
                     StagingHeaderItem::new(
                         if *is_staged {
@@ -773,7 +774,7 @@ fn update_list(model: Model<GitPanelState>, cx: &mut WindowContext) -> ListState
                         },
                         *is_staged,
                         count,
-                        closure_state.selected_index == ix,
+                        state.selected_index == ix,
                         true, // Always expanded for now
                         count == 0,
                     )
@@ -785,23 +786,23 @@ fn update_list(model: Model<GitPanelState>, cx: &mut WindowContext) -> ListState
                     indent_level,
                     is_expanded,
                 } => {
-                    let file_count = closure_state.count_files_in_directory(path);
-                    let selection = closure_state.directory_selection(path);
+                    let file_count = state.count_files_in_directory(path);
+                    let selection = state.directory_selection(path);
                     directory_item(
                         path,
                         file_count,
-                        closure_state.selected_index == ix,
+                        state.selected_index == ix,
                         *is_expanded,
                         *indent_level,
                         selection,
                     )
                 }
                 GitListItem::File { id, indent_level } => {
-                    if let Some(file) = closure_state.files.get(id) {
+                    if let Some(file) = state.files.get(id) {
                         changed_file_item(
                             id.clone(),
                             file,
-                            closure_state.selected_index == ix,
+                            state.selected_index == ix,
                             *indent_level,
                         )
                     } else {
@@ -819,6 +820,7 @@ pub struct GitPanel {
     focus_handle: FocusHandle,
     state: Model<GitPanelState>,
     list_state: ListState,
+    scroll_handle: UniformListScrollHandle,
     width: Option<Pixels>,
 }
 
@@ -827,12 +829,14 @@ impl GitPanel {
         let changed_files = static_changed_files();
         let new_state = GitPanelState::new(changed_files);
         let model = cx.new_model(|_cx| new_state);
+        let scroll_handle = UniformListScrollHandle::new();
 
         Self {
             id: id.into(),
             focus_handle: cx.focus_handle(),
             state: model.clone(),
             list_state: update_list(model, cx),
+            scroll_handle,
             width: Some(px(400.).into()),
         }
     }
@@ -930,6 +934,66 @@ impl GitPanel {
         let total_count = self.state.read(cx).total_item_count();
         self.set_selected_index(total_count - 1, cx);
     }
+
+    fn render_items(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
+        let state = self.state.read(cx);
+        let items = state.generate_git_list_items();
+        range
+            .map(|ix| {
+                match &items[ix] {
+                    GitListItem::Header(is_staged) => {
+                        let count = if *is_staged {
+                            state.staged_count()
+                        } else {
+                            state.unstaged_count()
+                        };
+                        StagingHeaderItem::new(
+                            if *is_staged {
+                                "staged-header"
+                            } else {
+                                "unstaged-header"
+                            },
+                            *is_staged,
+                            count,
+                            state.selected_index == ix,
+                            true, // Always expanded for now
+                            count == 0,
+                        )
+                        .into_any_element()
+                    }
+                    GitListItem::Divider => Divider::horizontal().into_any_element(),
+                    GitListItem::Directory {
+                        path,
+                        indent_level,
+                        is_expanded,
+                    } => {
+                        let file_count = state.count_files_in_directory(path);
+                        let selection = state.directory_selection(path);
+                        directory_item(
+                            path,
+                            file_count,
+                            state.selected_index == ix,
+                            *is_expanded,
+                            *indent_level,
+                            selection,
+                        )
+                    }
+                    GitListItem::File { id, indent_level } => {
+                        if let Some(file) = state.files.get(id) {
+                            changed_file_item(
+                                id.clone(),
+                                file,
+                                state.selected_index == ix,
+                                *indent_level,
+                            )
+                        } else {
+                            div().into_any_element() // Placeholder for missing files
+                        }
+                    }
+                }
+            })
+            .collect()
+    }
 }
 
 impl Render for GitPanel {
@@ -937,6 +1001,9 @@ impl Render for GitPanel {
         self.update_list_if_needed(cx);
         let model = self.state.clone();
         let state = self.state.read(cx);
+        let items_count = state.total_item_count();
+        let view = cx.view().clone();
+        let scroll_handle = self.scroll_handle.clone();
 
         v_flex()
             .id(self.id.clone())
@@ -961,8 +1028,18 @@ impl Render for GitPanel {
                 state.lines_changed.clone(),
                 model.clone(),
             ))
-            .child(Divider::horizontal_dashed())
-            .child(list(self.list_state.clone()).size_full().into_any_element())
+            .child(
+                h_flex()
+                    .items_center()
+                    .h(px(8.))
+                    .child(Divider::horizontal_dashed()),
+            )
+            .child(
+                uniform_list(view, "git-panel-list", items_count, Self::render_items)
+                    .track_scroll(scroll_handle)
+                    .size_full()
+                    .into_any_element(),
+            )
     }
 }
 
