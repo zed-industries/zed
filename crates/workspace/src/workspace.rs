@@ -4144,30 +4144,30 @@ impl Workspace {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.persistent_name().to_string());
             let left_dock_zoom = left_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.is_zoomed(cx))
                 .unwrap_or(false);
 
             let right_dock = this.right_dock.read(cx);
             let right_visible = right_dock.is_open();
             let right_active_panel = right_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.persistent_name().to_string());
             let right_dock_zoom = right_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.is_zoomed(cx))
                 .unwrap_or(false);
 
             let bottom_dock = this.bottom_dock.read(cx);
             let bottom_visible = bottom_dock.is_open();
             let bottom_active_panel = bottom_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.persistent_name().to_string());
             let bottom_dock_zoom = bottom_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.is_zoomed(cx))
                 .unwrap_or(false);
 
