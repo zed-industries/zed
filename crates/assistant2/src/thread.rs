@@ -211,14 +211,19 @@ impl Thread {
             let result = stream_completion.await;
 
             thread
-                .update(&mut cx, |_thread, cx| {
-                    let error_message = if let Some(error) = result.as_ref().err() {
+                .update(&mut cx, |_thread, cx| match result.as_ref() {
+                    Ok(stop_reason) => match stop_reason {
+                        StopReason::ToolUse => {
+                            cx.emit(ThreadEvent::UsePendingTools);
+                        }
+                        StopReason::EndTurn => {}
+                        StopReason::MaxTokens => {}
+                    },
+                    Err(error) => {
                         if error.is::<PaymentRequiredError>() {
                             cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
-                            Some(error.to_string())
                         } else if error.is::<MaxMonthlySpendReachedError>() {
                             cx.emit(ThreadEvent::ShowError(ThreadError::MaxMonthlySpendReached));
-                            Some(error.to_string())
                         } else {
                             let error_message = error
                                 .chain()
@@ -228,23 +233,6 @@ impl Thread {
                             cx.emit(ThreadEvent::ShowError(ThreadError::Message(
                                 SharedString::from(error_message.clone()),
                             )));
-                            Some(error_message)
-                        }
-                    } else {
-                        None
-                    };
-
-                    if let Some(error_message) = error_message {
-                        eprintln!("Completion failed: {error_message:?}");
-                    }
-
-                    if let Ok(stop_reason) = result {
-                        match stop_reason {
-                            StopReason::ToolUse => {
-                                cx.emit(ThreadEvent::UsePendingTools);
-                            }
-                            StopReason::EndTurn => {}
-                            StopReason::MaxTokens => {}
                         }
                     }
                 })
