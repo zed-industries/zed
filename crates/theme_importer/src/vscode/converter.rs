@@ -11,6 +11,8 @@ use crate::ThemeMetadata;
 
 use super::ZedSyntaxToken;
 
+const ZED_THEME_SCHEMA_URL: &'static str = "https://zed.dev/schema/themes/v0.1.0.json";
+
 pub(crate) fn try_parse_font_weight(font_style: &str) -> Option<FontWeightContent> {
     match font_style {
         style if style.contains("bold") => Some(FontWeightContent::Bold),
@@ -53,6 +55,7 @@ impl VsCodeThemeConverter {
         let syntax_theme = self.convert_syntax_theme()?;
 
         Ok(ThemeContent {
+            schema: ZED_THEME_SCHEMA_URL.to_string(),
             name: self.theme_metadata.name,
             appearance,
             style: ThemeStyleContent {

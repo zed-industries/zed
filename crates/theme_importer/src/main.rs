@@ -69,34 +69,53 @@ pub struct ThemeMetadata {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// The path to the theme to import.
-    theme_path: PathBuf,
-
-    /// Whether to warn when values are missing from the theme.
-    #[arg(long)]
-    warn_on_missing: bool,
-
-    /// The path to write the output to.
-    #[arg(long, short)]
-    output: Option<PathBuf>,
-
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
 }
 
-#[derive(Subcommand)]
+#[derive(PartialEq, Subcommand)]
 enum Command {
     /// Prints the JSON schema for a theme.
     PrintSchema,
+    /// Converts a VSCode theme to Zed format [default]
+    Convert {
+        /// The path to the theme to import.
+        theme_path: PathBuf,
+
+        /// Whether to warn when values are missing from the theme.
+        #[arg(long)]
+        warn_on_missing: bool,
+
+        /// The path to write the output to.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
+    match args.command {
+        Command::PrintSchema => {
+            let theme_family_schema = schema_for!(ThemeFamilyContent);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&theme_family_schema).unwrap()
+            );
+            Ok(())
+        }
+        Command::Convert {
+            theme_path,
+            warn_on_missing,
+            output,
+        } => convert(theme_path, output, warn_on_missing),
+    }
+}
+
+fn convert(theme_file_path: PathBuf, output: Option<PathBuf>, warn_on_missing: bool) -> Result<()> {
     let log_config = {
         let mut config = simplelog::ConfigBuilder::new();
-
-        if !args.warn_on_missing {
+        if !warn_on_missing {
             config.add_filter_ignore_str("theme_printer");
         }
 
@@ -111,28 +130,11 @@ fn main() -> Result<()> {
     )
     .expect("could not initialize logger");
 
-    if let Some(command) = args.command {
-        match command {
-            Command::PrintSchema => {
-                let theme_family_schema = schema_for!(ThemeFamilyContent);
-
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&theme_family_schema).unwrap()
-                );
-
-                return Ok(());
-            }
-        }
-    }
-
-    let theme_file_path = args.theme_path;
-
     let theme_file = match File::open(&theme_file_path) {
         Ok(file) => file,
         Err(err) => {
             log::info!("Failed to open file at path: {:?}", theme_file_path);
-            return Err(err)?;
+            return Err(err.into());
         }
     };
 
@@ -151,7 +153,7 @@ fn main() -> Result<()> {
 
     let theme_json = serde_json::to_string_pretty(&theme).unwrap();
 
-    if let Some(output) = args.output {
+    if let Some(output) = output {
         let mut file = File::create(output)?;
         file.write_all(theme_json.as_bytes())?;
     } else {
