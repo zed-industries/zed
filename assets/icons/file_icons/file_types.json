@@ -173,6 +173,9 @@
     "tsx": "react",
     "ttf": "font",
     "txt": "document",
+    "v": "v",
+    "vsh": "v",
+    "vv": "v",
     "vue": "vue",
     "wav": "audio",
     "webm": "video",
@@ -378,6 +381,9 @@
     },
     "typescript": {
       "icon": "icons/file_icons/typescript.svg"
+    },
+    "v": {
+      "icon": "icons/file_icons/v.svg"
     },
     "vcs": {
       "icon": "icons/file_icons/git.svg"
