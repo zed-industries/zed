@@ -43,6 +43,7 @@ pub struct ItemSettings {
     pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
     pub show_diagnostics: ShowDiagnostics,
+    pub always_show_close_button: bool,
 }
 
 #[derive(Deserialize)]
@@ -100,6 +101,10 @@ pub struct ItemSettingsContent {
     ///
     /// Default: all
     show_diagnostics: Option<ShowDiagnostics>,
+    /// Whether to always show the close button on tabs.
+    ///
+    /// Default: false
+    always_show_close_button: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]

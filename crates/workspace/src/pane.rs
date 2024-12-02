@@ -1918,7 +1918,7 @@ impl Pane {
     fn unpin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
         maybe!({
             let pane = cx.view().clone();
-            self.pinned_tab_count = self.pinned_tab_count.checked_sub(1).unwrap();
+            self.pinned_tab_count = self.pinned_tab_count.checked_sub(1)?;
             let destination_index = self.pinned_tab_count;
 
             let id = self.item_for_index(ix)?.item_id();
@@ -2015,7 +2015,9 @@ impl Pane {
             None
         };
 
-        let close_side = &ItemSettings::get_global(cx).close_position;
+        let settings = ItemSettings::get_global(cx);
+        let close_side = &settings.close_position;
+        let always_show_close_button = settings.always_show_close_button;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
@@ -2110,7 +2112,9 @@ impl Pane {
                     end_slot_action = &CloseActiveItem { save_intent: None };
                     end_slot_tooltip_text = "Close Tab";
                     IconButton::new("close tab", IconName::Close)
-                        .visible_on_hover("")
+                        .when(!always_show_close_button, |button| {
+                            button.visible_on_hover("")
+                        })
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)

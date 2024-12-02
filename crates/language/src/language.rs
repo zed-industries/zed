@@ -129,6 +129,10 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
         LanguageConfig {
             name: "Plain Text".into(),
             soft_wrap: Some(SoftWrap::EditorWidth),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["txt".to_owned()],
+                first_line_pattern: None,
+            },
             ..Default::default()
         },
         None,
@@ -1417,6 +1421,10 @@ impl Language {
 
     pub fn prettier_parser_name(&self) -> Option<&str> {
         self.config.prettier_parser_name.as_deref()
+    }
+
+    pub fn config(&self) -> &LanguageConfig {
+        &self.config
     }
 }
 

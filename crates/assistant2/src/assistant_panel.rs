@@ -14,6 +14,7 @@ use workspace::Workspace;
 
 use crate::message_editor::MessageEditor;
 use crate::thread::{Message, Thread, ThreadEvent};
+use crate::thread_store::ThreadStore;
 use crate::{NewThread, ToggleFocus, ToggleModelSelector};
 
 pub fn init(cx: &mut AppContext) {
@@ -29,6 +30,8 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
+    #[allow(unused)]
+    thread_store: Model<ThreadStore>,
     thread: Model<Thread>,
     message_editor: View<MessageEditor>,
     tools: Arc<ToolWorkingSet>,
@@ -42,13 +45,25 @@ impl AssistantPanel {
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let tools = Arc::new(ToolWorkingSet::default());
+            let thread_store = workspace
+                .update(&mut cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    ThreadStore::new(project, tools.clone(), cx)
+                })?
+                .await?;
+
             workspace.update(&mut cx, |workspace, cx| {
-                cx.new_view(|cx| Self::new(workspace, tools, cx))
+                cx.new_view(|cx| Self::new(workspace, thread_store, tools, cx))
             })
         })
     }
 
-    fn new(workspace: &Workspace, tools: Arc<ToolWorkingSet>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(
+        workspace: &Workspace,
+        thread_store: Model<ThreadStore>,
+        tools: Arc<ToolWorkingSet>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let thread = cx.new_model(|cx| Thread::new(tools.clone(), cx));
         let subscriptions = vec![
             cx.observe(&thread, |_, _, cx| cx.notify()),
@@ -57,6 +72,7 @@ impl AssistantPanel {
 
         Self {
             workspace: workspace.weak_handle(),
+            thread_store,
             thread: thread.clone(),
             message_editor: cx.new_view(|cx| MessageEditor::new(thread, cx)),
             tools,

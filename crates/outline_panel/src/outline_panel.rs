@@ -857,7 +857,7 @@ impl OutlinePanel {
     fn open_entry(
         &mut self,
         entry: &PanelEntry,
-        change_selection: bool,
+        prefer_selection_change: bool,
         change_focus: bool,
         cx: &mut ViewContext<OutlinePanel>,
     ) {
@@ -872,9 +872,11 @@ impl OutlinePanel {
             Point::new(0.0, -(active_editor.read(cx).file_header_size() as f32))
         };
 
+        let mut change_selection = prefer_selection_change;
         let scroll_target = match entry {
             PanelEntry::FoldedDirs(..) | PanelEntry::Fs(FsEntry::Directory(..)) => None,
             PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
+                change_selection = false;
                 let scroll_target = multi_buffer_snapshot.excerpts().find_map(
                     |(excerpt_id, buffer_snapshot, excerpt_range)| {
                         if &buffer_snapshot.remote_id() == buffer_id {
@@ -888,6 +890,7 @@ impl OutlinePanel {
                 Some(offset_from_top).zip(scroll_target)
             }
             PanelEntry::Fs(FsEntry::File(_, file_entry, ..)) => {
+                change_selection = false;
                 let scroll_target = self
                     .project
                     .update(cx, |project, cx| {
