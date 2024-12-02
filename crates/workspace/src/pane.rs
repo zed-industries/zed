@@ -755,7 +755,7 @@ impl Pane {
     }
 
     pub(crate) fn set_pinned_count(&mut self, count: usize) {
-        self.pinned_tab_count = count.min(self.items.len());
+        self.pinned_tab_count = count;
     }
 
     pub(crate) fn pinned_count(&self) -> usize {
