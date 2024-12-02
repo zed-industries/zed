@@ -113,26 +113,74 @@ impl GitPanelState {
     }
 
     fn generate_git_list_items(&self) -> Vec<GitListItem> {
-        // Implement this method to generate the list items
-        // This is a placeholder implementation
         let mut items = Vec::new();
+
+        // Unstaged header
         items.push(GitListItem::Header(false));
+
+        // Unstaged files
+        for (id, file) in &self.files {
+            if !file.staged {
+                items.push(GitListItem::File {
+                    id: id.clone(),
+                    indent_level: 0,
+                });
+            }
+        }
+
         items.push(GitListItem::Divider);
+
+        // Staged header
         items.push(GitListItem::Header(true));
-        // Add file and directory items based on self.file_tree
+
+        // Staged files
+        for (id, file) in &self.files {
+            if file.staged {
+                items.push(GitListItem::File {
+                    id: id.clone(),
+                    indent_level: 0,
+                });
+            }
+        }
+
         items
     }
 
     fn count_files_in_directory(&self, path: &str) -> usize {
-        // Implement this method to count files in a directory
-        // This is a placeholder implementation
-        0
+        self.file_tree
+            .root
+            .iter()
+            .filter(|(dir_path, node)| {
+                dir_path.starts_with(path) && matches!(node, FileTreeNode::File(_))
+            })
+            .count()
     }
 
     fn directory_selection(&self, path: &str) -> Selection {
-        // Implement this method to determine the selection state of a directory
-        // This is a placeholder implementation
-        Selection::Unselected
+        let mut all_staged = true;
+        let mut all_unstaged = true;
+
+        for (_, file) in &self.files {
+            if file.file_path.starts_with(path) {
+                if file.staged {
+                    all_unstaged = false;
+                } else {
+                    all_staged = false;
+                }
+
+                if !all_staged && !all_unstaged {
+                    break;
+                }
+            }
+        }
+
+        if all_staged {
+            Selection::Selected
+        } else if all_unstaged {
+            Selection::Unselected
+        } else {
+            Selection::Indeterminate
+        }
     }
 
     fn changed_file_count(&self) -> usize {
