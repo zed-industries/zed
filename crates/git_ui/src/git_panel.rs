@@ -1,5 +1,6 @@
 use git::repository::GitFileStatus;
 use gpui::*;
+use std::collections::BTreeMap;
 use ui::{prelude::*, Checkbox, ElevationIndex, IconButtonShape};
 use ui::{Disclosure, Divider};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
@@ -29,6 +30,71 @@ actions!(
         ToggleFocus
     ]
 );
+
+#[derive(Debug, Clone)]
+enum FileTreeNode {
+    File(PanelChangedFile),
+    Directory(BTreeMap<String, FileTreeNode>),
+}
+
+fn build_file_tree(files: &[PanelChangedFile]) -> BTreeMap<String, FileTreeNode> {
+    let mut root = BTreeMap::new();
+
+    for file in files {
+        let path_parts: Vec<&str> = file.file_path.split('/').collect();
+        insert_into_tree(&mut root, &path_parts, file);
+    }
+
+    // Flatten single-child directories
+    flatten_single_child_dirs(&mut root);
+
+    root
+}
+
+fn insert_into_tree(
+    node: &mut BTreeMap<String, FileTreeNode>,
+    path_parts: &[&str],
+    file: &PanelChangedFile,
+) {
+    if path_parts.is_empty() {
+        return;
+    }
+
+    let current = path_parts[0];
+    if path_parts.len() == 1 {
+        node.insert(current.to_string(), FileTreeNode::File(file.clone()));
+    } else {
+        let entry = node
+            .entry(current.to_string())
+            .or_insert_with(|| FileTreeNode::Directory(BTreeMap::new()));
+        if let FileTreeNode::Directory(ref mut child_map) = entry {
+            insert_into_tree(child_map, &path_parts[1..], file);
+        }
+    }
+}
+
+fn flatten_single_child_dirs(node: &mut BTreeMap<String, FileTreeNode>) {
+    let mut to_flatten = Vec::new();
+
+    for (key, value) in node.iter_mut() {
+        if let FileTreeNode::Directory(ref mut child_map) = value {
+            flatten_single_child_dirs(child_map);
+            if child_map.len() == 1 {
+                let (child_key, child_value) = child_map.iter().next().unwrap();
+                to_flatten.push((
+                    key.clone(),
+                    format!("{}/{}", key, child_key),
+                    child_value.clone(),
+                ));
+            }
+        }
+    }
+
+    for (old_key, new_key, new_value) in to_flatten {
+        node.remove(&old_key);
+        node.insert(new_key, new_value);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct PanelChangedFile {
@@ -142,6 +208,108 @@ impl RenderOnce for GitStatusListItem {
                             .icon_color(Color::Muted),
                     ),
             )
+    }
+}
+
+#[derive(IntoElement)]
+pub struct GitStatusDirItem {
+    id: ElementId,
+    path: String,
+    items: Vec<PanelChangedFile>,
+    is_selected: bool,
+    is_expanded: bool,
+}
+
+impl GitStatusDirItem {
+    fn new(
+        id: impl Into<ElementId>,
+        path: String,
+        items: Vec<PanelChangedFile>,
+        is_selected: bool,
+        is_expanded: bool,
+    ) -> Self {
+        let id = id.into();
+
+        Self {
+            id: id.clone().into(),
+            path,
+            items,
+            is_selected,
+            is_expanded,
+        }
+    }
+}
+
+impl RenderOnce for GitStatusDirItem {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let file_count = self.items.len();
+        let file_count_label = format!(
+            "{} file{}",
+            file_count,
+            if file_count == 1 { "" } else { "s" }
+        );
+
+        v_flex()
+            .child(
+                h_flex()
+                    .id(self.id.clone())
+                    .items_center()
+                    .justify_between()
+                    .w_full()
+                    .when(!self.is_selected, |this| {
+                        this.hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
+                    })
+                    .cursor(CursorStyle::PointingHand)
+                    .when(self.is_selected, |this| {
+                        this.bg(cx.theme().colors().ghost_element_active)
+                    })
+                    .group("")
+                    .rounded_sm()
+                    .pl(px(12.))
+                    .h(px(24.))
+                    .child(
+                        h_flex()
+                            .gap(px(8.))
+                            .child(
+                                Icon::new(if self.is_expanded {
+                                    IconName::ChevronDown
+                                } else {
+                                    IconName::ChevronRight
+                                })
+                                .size(IconSize::Small),
+                            )
+                            .child(Icon::new(IconName::Folder).size(IconSize::Small))
+                            .child(Label::new(self.path).size(LabelSize::Small))
+                            .child(
+                                Label::new(file_count_label)
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .invisible()
+                            .group_hover("", |this| this.visible())
+                            .child(
+                                IconButton::new("more-menu", IconName::EllipsisVertical)
+                                    .shape(IconButtonShape::Square)
+                                    .size(ButtonSize::Compact)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted),
+                            ),
+                    ),
+            )
+            .when(self.is_expanded, |this| {
+                this.child(
+                    v_flex().pl(px(24.)).children(
+                        self.items
+                            .iter()
+                            .enumerate()
+                            .map(|(ix, file)| render_status_item(ix, file, false)),
+                    ),
+                )
+            })
     }
 }
 
@@ -343,6 +511,8 @@ impl RenderOnce for PanelGitStagingControls {
 pub struct PanelGitProjectStatus {
     unstaged_files: Vec<PanelChangedFile>,
     staged_files: Vec<PanelChangedFile>,
+    unstaged_tree: BTreeMap<String, FileTreeNode>,
+    staged_tree: BTreeMap<String, FileTreeNode>,
     lines_changed: GitLines,
     staged_expanded: bool,
     unstaged_expanded: bool,
@@ -354,6 +524,9 @@ impl PanelGitProjectStatus {
     fn new(changed_files: Vec<PanelChangedFile>) -> Self {
         let (unstaged_files, staged_files): (Vec<_>, Vec<_>) =
             changed_files.into_iter().partition(|f| !f.staged);
+
+        let unstaged_tree = build_file_tree(&unstaged_files);
+        let staged_tree = build_file_tree(&staged_files);
 
         let lines_changed = GitLines {
             added: unstaged_files
@@ -371,6 +544,8 @@ impl PanelGitProjectStatus {
         Self {
             unstaged_files,
             staged_files,
+            unstaged_tree,
+            staged_tree,
             lines_changed,
             staged_expanded: true,
             unstaged_expanded: true,
@@ -487,6 +662,58 @@ fn render_status_item(file_ix: usize, file: &PanelChangedFile, is_selected: bool
     .into_any_element()
 }
 
+fn render_dir_item(path: &str, items: &[PanelChangedFile], is_selected: bool) -> AnyElement {
+    GitStatusDirItem::new(
+        ElementId::Name(format!("dir-{}", path).into()),
+        path.to_string(),
+        items.to_vec(),
+        is_selected,
+        true, // Initially not expanded
+    )
+    .into_any_element()
+}
+
+fn render_file_tree(
+    tree: &BTreeMap<String, FileTreeNode>,
+    parent_path: &str,
+    is_staged: bool,
+) -> Vec<AnyElement> {
+    let mut elements = Vec::new();
+
+    for (name, node) in tree {
+        let full_path = if parent_path.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", parent_path, name)
+        };
+
+        match node {
+            FileTreeNode::File(file) => {
+                elements.push(render_status_item(0, file, is_staged));
+            }
+            FileTreeNode::Directory(children) => {
+                // Only render directory if it has children
+                if !children.is_empty() {
+                    let dir_files: Vec<PanelChangedFile> = children
+                        .values()
+                        .filter_map(|node| match node {
+                            FileTreeNode::File(file) => Some(file.clone()),
+                            _ => None,
+                        })
+                        .collect();
+
+                    elements.push(render_dir_item(&full_path, &dir_files, is_staged));
+
+                    // Recursively render children
+                    elements.extend(render_file_tree(children, &full_path, is_staged));
+                }
+            }
+        }
+    }
+
+    elements
+}
+
 #[derive(Clone)]
 pub struct GitPanel {
     id: ElementId,
@@ -519,7 +746,12 @@ impl GitPanel {
                         is_selected,
                     )
                     .into_any_element()
-                } else if ix == status.total_item_count() - 1 {
+                } else if ix == 1 {
+                    v_flex()
+                        .child(Label::new("Unstaged Changes").size(LabelSize::Small))
+                        .children(render_file_tree(&status.unstaged_tree, "", false))
+                        .into_any_element()
+                } else if ix == status.total_item_count() - 2 {
                     PanelGitStagingControls::new(
                         "staged-controls",
                         model_clone.clone(),
@@ -527,16 +759,13 @@ impl GitPanel {
                         is_selected,
                     )
                     .into_any_element()
+                } else if ix == status.total_item_count() - 1 {
+                    v_flex()
+                        .child(Label::new("Staged Changes").size(LabelSize::Small))
+                        .children(render_file_tree(&status.staged_tree, "", true))
+                        .into_any_element()
                 } else {
-                    let file_ix = ix - 1;
-                    let file = if file_ix < status.unstaged_count() {
-                        status.unstaged_files.get(file_ix)
-                    } else {
-                        status.staged_files.get(file_ix - status.unstaged_count())
-                    };
-
-                    file.map(|file| render_status_item(file_ix, file, is_selected))
-                        .unwrap_or_else(|| div().into_any_element())
+                    div().into_any_element() // Empty element for other indices
                 }
             },
         );
@@ -551,42 +780,47 @@ impl GitPanel {
     }
 
     fn recreate_list_state(&mut self, cx: &mut ViewContext<Self>) {
-        let status = self.status.read(cx);
-        let status_clone = self.status.clone();
+        let changed_files = static_changed_files();
+        let model = cx.new_model(|_| PanelGitProjectStatus::new(changed_files));
+        let model_clone = model.clone();
+
+        let total_item_count = model_clone.read(cx).total_item_count();
 
         self.list_state = ListState::new(
-            status.total_item_count(),
+            total_item_count,
             gpui::ListAlignment::Top,
             px(10.),
             move |ix, cx| {
-                let status = status_clone.read(cx);
+                let status = model_clone.clone().read(cx);
                 let is_selected = status.selected_index == ix;
                 if ix == 0 {
                     PanelGitStagingControls::new(
                         "unstaged-controls",
-                        status_clone.clone(),
+                        model_clone.clone(),
                         false,
                         is_selected,
                     )
                     .into_any_element()
-                } else if ix == status.total_item_count() - 1 {
+                } else if ix == 1 {
+                    v_flex()
+                        .child(Label::new("Unstaged Changes").size(LabelSize::Small))
+                        .children(render_file_tree(&status.unstaged_tree, "", false))
+                        .into_any_element()
+                } else if ix == status.total_item_count() - 2 {
                     PanelGitStagingControls::new(
                         "staged-controls",
-                        status_clone.clone(),
+                        model_clone.clone(),
                         true,
                         is_selected,
                     )
                     .into_any_element()
+                } else if ix == status.total_item_count() - 1 {
+                    v_flex()
+                        .child(Label::new("Staged Changes").size(LabelSize::Small))
+                        .children(render_file_tree(&status.staged_tree, "", true))
+                        .into_any_element()
                 } else {
-                    let file_ix = ix - 1;
-                    let file = if file_ix < status.unstaged_count() {
-                        status.unstaged_files.get(file_ix)
-                    } else {
-                        status.staged_files.get(file_ix - status.unstaged_count())
-                    };
-
-                    file.map(|file| render_status_item(file_ix, file, is_selected))
-                        .unwrap_or_else(|| div().into_any_element())
+                    div().into_any_element() // Empty element for other indices
                 }
             },
         );
