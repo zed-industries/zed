@@ -292,7 +292,7 @@ impl LanguageRegistry {
             config.name.clone(),
             config.grammar.clone(),
             config.matcher.clone(),
-            config.hidden.clone(),
+            config.hidden,
             Arc::new(move || {
                 Ok(LoadedLanguage {
                     config: config.clone(),
