@@ -179,6 +179,10 @@ impl VsCodeThemeConverter {
             editor_active_line_number: vscode_colors.editor.foreground.clone(),
             editor_wrap_guide: vscode_panel_border.clone(),
             editor_active_wrap_guide: vscode_panel_border.clone(),
+            editor_document_highlight_bracket_background: vscode_colors
+                .editor_bracket_match
+                .background
+                .clone(),
             terminal_background: vscode_colors.terminal.background.clone(),
             terminal_ansi_black: vscode_colors.terminal.ansi_black.clone(),
             terminal_ansi_bright_black: vscode_colors.terminal.ansi_bright_black.clone(),
