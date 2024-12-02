@@ -34,6 +34,7 @@
     "dat": "storage",
     "db": "storage",
     "dbf": "storage",
+    "diff": "diff",
     "dll": "storage",
     "doc": "document",
     "docx": "document",
@@ -112,6 +113,7 @@
     "mkv": "video",
     "ml": "ocaml",
     "mli": "ocaml",
+    "mod": "go",
     "mov": "video",
     "mp3": "audio",
     "mp4": "video",
@@ -185,6 +187,7 @@
     "wmv": "video",
     "woff": "font",
     "woff2": "font",
+    "work": "go",
     "wv": "audio",
     "xls": "document",
     "xlsx": "document",
@@ -238,6 +241,9 @@
     },
     "default": {
       "icon": "icons/file_icons/file.svg"
+    },
+    "diff": {
+      "icon": "icons/file_icons/diff.svg"
     },
     "docker": {
       "icon": "icons/file_icons/docker.svg"
