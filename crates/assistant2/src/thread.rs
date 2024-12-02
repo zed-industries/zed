@@ -268,6 +268,8 @@ impl Thread {
                             .entry(next_user_message)
                             .or_default();
 
+                        dbg!(&output);
+
                         match output {
                             Ok(output) => {
                                 tool_results.push(LanguageModelToolResult {
