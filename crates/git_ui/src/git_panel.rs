@@ -344,6 +344,7 @@ pub struct ChangedFileItem {
     file: PanelChangedFile,
     is_selected: bool,
     indent_level: usize,
+    model: Model<GitPanelState>,
 }
 
 impl ChangedFileItem {
@@ -352,12 +353,14 @@ impl ChangedFileItem {
         file: PanelChangedFile,
         is_selected: bool,
         indent_level: usize,
+        model: Model<GitPanelState>,
     ) -> Self {
         Self {
             id: id.into(),
             file,
             is_selected,
             indent_level,
+            model,
         }
     }
 }
@@ -393,10 +396,30 @@ impl RenderOnce for ChangedFileItem {
             .child(
                 h_flex()
                     .gap(px(8.))
-                    .child(Checkbox::new(self.id.clone(), self.file.staged.into()))
+                    .child(
+                        Checkbox::new(self.id.clone(), self.file.staged.into()).on_click({
+                            let model = self.model.clone();
+                            let file_path = file_path.clone();
+
+                            move |_, cx| {
+                                let file_path = file_path.clone();
+                                model.update(cx, |state, cx| {
+                                    let file =
+                                        state.files.get_mut(&ChangedFileId(file_path.clone()));
+                                    if let Some(file) = file {
+                                        file.staged = !file.staged;
+                                    }
+                                    state.update_lines_changed();
+                                    state.file_tree = FileTree::new(&state.files);
+                                    state.needs_update = true;
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                    )
                     .child(Icon::new(icon_name).size(IconSize::Small).color(color))
                     .child(
-                        Label::new(file_path)
+                        Label::new(file_path.clone())
                             .strikethrough(is_deleted)
                             .size(LabelSize::Small)
                             .color(if is_deleted {
@@ -719,12 +742,14 @@ fn changed_file_item(
     file: &PanelChangedFile,
     is_selected: bool,
     indent_level: usize,
+    model: Model<GitPanelState>,
 ) -> AnyElement {
     ChangedFileItem::new(
         ElementId::Name(format!("file-{}", id.0).into()),
         file.clone(),
         is_selected,
         indent_level,
+        model,
     )
     .into_any_element()
 }
@@ -804,6 +829,7 @@ fn update_list(model: Model<GitPanelState>, cx: &mut WindowContext) -> ListState
                             file,
                             state.selected_index == ix,
                             *indent_level,
+                            model.clone(),
                         )
                     } else {
                         div().into_any_element() // Placeholder for missing files
@@ -938,6 +964,7 @@ impl GitPanel {
     fn render_items(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
         let state = self.state.read(cx);
         let items = state.generate_git_list_items();
+        let model = self.state.clone();
         range
             .map(|ix| {
                 match &items[ix] {
@@ -985,6 +1012,7 @@ impl GitPanel {
                                 file,
                                 state.selected_index == ix,
                                 *indent_level,
+                                model.clone(),
                             )
                         } else {
                             div().into_any_element() // Placeholder for missing files
