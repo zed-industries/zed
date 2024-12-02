@@ -1,6 +1,6 @@
 use git::repository::GitFileStatus;
 use gpui::*;
-use ui::{prelude::*, ElevationIndex, IconButtonShape};
+use ui::{prelude::*, Checkbox, ElevationIndex, IconButtonShape};
 use ui::{Disclosure, Divider};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::item::TabContentParams;
@@ -45,36 +45,48 @@ pub struct GitLines {
 }
 
 #[derive(IntoElement)]
-pub struct PanelChangedFileHeader {
+pub struct GitStatusListItem {
     id: ElementId,
     file: PanelChangedFile,
     is_selected: bool,
+    checkbox: Checkbox,
 }
 
-impl PanelChangedFileHeader {
+impl GitStatusListItem {
     fn new(id: impl Into<ElementId>, file: PanelChangedFile, is_selected: bool) -> Self {
+        let id = id.into();
+        let checkbox_id = ElementId::Name(format!("{}-checkbox", id).into());
+
+        let checkbox = Checkbox::new(checkbox_id, file.staged.into());
+
         Self {
-            id: id.into(),
+            id: id.clone().into(),
             file,
             is_selected,
+            checkbox,
         }
-    }
-
-    fn icon_for_status(&self) -> impl IntoElement {
-        let (icon_name, color) = match self.file.status {
-            GitFileStatus::Added => (IconName::SquarePlus, Color::Created),
-            GitFileStatus::Modified => (IconName::SquareDot, Color::Modified),
-            GitFileStatus::Conflict => (IconName::SquareMinus, Color::Conflict),
-        };
-
-        Icon::new(icon_name).size(IconSize::Small).color(color)
     }
 }
 
-impl RenderOnce for PanelChangedFileHeader {
+impl RenderOnce for GitStatusListItem {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let disclosure_id = ElementId::Name(format!("{}-file-disclosure", self.id.clone()).into());
+        // let disclosure_id = ElementId::Name(format!("{}-file-disclosure", self.id.clone()).into());
         let file_path = self.file.file_path.clone();
+
+        let (icon_name, color) = match self.file.status {
+            GitFileStatus::Added => (
+                IconName::SquarePlus,
+                Color::Custom(hsla(142. / 360., 0.68, 0.45, 1.0)),
+            ),
+            GitFileStatus::Modified => (
+                IconName::SquareDot,
+                Color::Custom(hsla(48. / 360., 0.76, 0.47, 1.0)),
+            ),
+            GitFileStatus::Conflict => (
+                IconName::SquareMinus,
+                Color::Custom(hsla(355. / 360., 0.65, 0.65, 1.0)),
+            ),
+        };
 
         h_flex()
             .id(self.id.clone())
@@ -89,12 +101,13 @@ impl RenderOnce for PanelChangedFileHeader {
             })
             .group("")
             .rounded_sm()
-            .px_2()
+            .px_3()
             .py_1p5()
             .child(
                 h_flex()
                     .gap_2()
-                    .child(self.icon_for_status())
+                    .child(self.checkbox)
+                    .child(Icon::new(icon_name).size(IconSize::Small).color(color))
                     .child(Label::new(file_path).size(LabelSize::Small))
                     .child(
                         h_flex()
@@ -118,40 +131,14 @@ impl RenderOnce for PanelChangedFileHeader {
             .child(
                 h_flex()
                     .gap_2()
-                    .when(self.is_selected, |this| {
-                        this.child(
-                            IconButton::new("more-menu", IconName::EllipsisVertical)
-                                .shape(IconButtonShape::Square)
-                                .size(ButtonSize::Compact)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted),
-                        )
-                    })
+                    .invisible()
+                    .group_hover("", |this| this.visible())
                     .child(
-                        IconButton::new("remove-file", IconName::X)
+                        IconButton::new("more-menu", IconName::EllipsisVertical)
                             .shape(IconButtonShape::Square)
                             .size(ButtonSize::Compact)
                             .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Error)
-                            .style(ButtonStyle::Filled)
-                            .layer(ElevationIndex::Background)
-                            .on_click(move |_, cx| cx.dispatch_action(Box::new(DiscardSelected))),
-                    )
-                    .child(
-                        IconButton::new("check-file", IconName::Check)
-                            .shape(IconButtonShape::Square)
-                            .size(ButtonSize::Compact)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Accent)
-                            .style(ButtonStyle::Filled)
-                            .layer(ElevationIndex::Background)
-                            .on_click(move |_, cx| {
-                                if self.file.staged {
-                                    cx.dispatch_action(Box::new(UnstageSelected))
-                                } else {
-                                    cx.dispatch_action(Box::new(StageSelected))
-                                }
-                            }),
+                            .icon_color(Color::Muted),
                     ),
             )
     }
@@ -490,6 +477,15 @@ impl PanelGitProjectStatus {
     }
 }
 
+fn render_status_item(file_ix: usize, file: &PanelChangedFile, is_selected: bool) -> AnyElement {
+    GitStatusListItem::new(
+        ElementId::Name(format!("file-{}", file_ix).into()),
+        file.clone(),
+        is_selected,
+    )
+    .into_any_element()
+}
+
 #[derive(Clone)]
 pub struct GitPanel {
     id: ElementId,
@@ -502,11 +498,63 @@ pub struct GitPanel {
 impl GitPanel {
     pub fn new(id: impl Into<ElementId>, cx: &mut ViewContext<Self>) -> Self {
         let changed_files = static_changed_files();
-        let status = cx.new_model(|_| PanelGitProjectStatus::new(changed_files));
+        let model = cx.new_model(|_| PanelGitProjectStatus::new(changed_files));
+        let model_clone = model.clone();
 
-        let status_clone = status.clone();
+        let total_item_count = model_clone.read(cx).total_item_count();
+
         let list_state = ListState::new(
-            status.read(cx).total_item_count(),
+            total_item_count,
+            gpui::ListAlignment::Top,
+            px(10.),
+            move |ix, cx| {
+                let status = model_clone.clone().read(cx);
+                let is_selected = status.selected_index == ix;
+                if ix == 0 {
+                    PanelGitStagingControls::new(
+                        "unstaged-controls",
+                        model_clone.clone(),
+                        false,
+                        is_selected,
+                    )
+                    .into_any_element()
+                } else if ix == status.total_item_count() - 1 {
+                    PanelGitStagingControls::new(
+                        "staged-controls",
+                        model_clone.clone(),
+                        true,
+                        is_selected,
+                    )
+                    .into_any_element()
+                } else {
+                    let file_ix = ix - 1;
+                    let file = if file_ix < status.unstaged_count() {
+                        status.unstaged_files.get(file_ix)
+                    } else {
+                        status.staged_files.get(file_ix - status.unstaged_count())
+                    };
+
+                    file.map(|file| render_status_item(file_ix, file, is_selected))
+                        .unwrap_or_else(|| div().into_any_element())
+                }
+            },
+        );
+
+        Self {
+            id: id.into(),
+            focus_handle: cx.focus_handle(),
+            status: model.clone(),
+            list_state,
+            width: Some(px(400.).into()),
+        }
+    }
+
+    fn recreate_list_state(&mut self, cx: &mut ViewContext<Self>) {
+        let status = self.status.read(cx);
+        let status_clone = self.status.clone();
+
+        self.list_state = ListState::new(
+            status.total_item_count(),
             gpui::ListAlignment::Top,
             px(10.),
             move |ix, cx| {
@@ -536,72 +584,8 @@ impl GitPanel {
                         status.staged_files.get(file_ix - status.unstaged_count())
                     };
 
-                    file.map(|file| {
-                        PanelChangedFileHeader::new(
-                            ElementId::Name(format!("file-{}", file_ix).into()),
-                            file.clone(),
-                            is_selected,
-                        )
-                        .into_any_element()
-                    })
-                    .unwrap_or_else(|| div().into_any_element())
-                }
-            },
-        );
-
-        Self {
-            id: id.into(),
-            focus_handle: cx.focus_handle(),
-            status,
-            list_state,
-            width: Some(px(400.).into()),
-        }
-    }
-
-    fn recreate_list_state(&mut self, cx: &mut ViewContext<Self>) {
-        let status = self.status.read(cx);
-        let status_clone = self.status.clone();
-
-        self.list_state = ListState::new(
-            status.total_item_count(),
-            gpui::ListAlignment::Top,
-            px(10.),
-            move |ix, cx| {
-                let is_selected = status_clone.read(cx).selected_index == ix;
-                if ix == 0 {
-                    PanelGitStagingControls::new(
-                        "unstaged-controls",
-                        status_clone.clone(),
-                        false,
-                        is_selected,
-                    )
-                    .into_any_element()
-                } else if ix == status_clone.read(cx).total_item_count() - 1 {
-                    PanelGitStagingControls::new(
-                        "staged-controls",
-                        status_clone.clone(),
-                        true,
-                        is_selected,
-                    )
-                    .into_any_element()
-                } else {
-                    let file_ix = ix - 1;
-                    let status = status_clone.read(cx);
-                    let file = if file_ix < status.unstaged_count() {
-                        status.unstaged_files.get(file_ix)
-                    } else {
-                        status.staged_files.get(file_ix - status.unstaged_count())
-                    };
-
-                    file.map(|file| {
-                        PanelChangedFileHeader::new(
-                            ElementId::Name(format!("file-{}", file_ix).into()),
-                            file.clone(),
-                            is_selected,
-                        )
-                        .into_any_element()
-                    })
-                    .unwrap_or_else(|| div().into_any_element())
+                    file.map(|file| render_status_item(file_ix, file, is_selected))
+                        .unwrap_or_else(|| div().into_any_element())
                 }
             },
         );

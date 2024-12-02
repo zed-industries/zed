@@ -1,0 +1,3 @@
+- TODO: Segmented Switch
+- TODO: Line diff chip
+- TODO: Git status indicator
