@@ -649,9 +649,7 @@ impl ExtensionsPage {
                 .entry("Copy Extension ID", None, {
                     let extension_id = extension_id.clone();
                     move |cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(
-                            extension_id.to_string(),
-                        ));
+                        cx.write_to_clipboard(ClipboardItem::new_string(extension_id.to_string()));
                     }
                 })
         });
