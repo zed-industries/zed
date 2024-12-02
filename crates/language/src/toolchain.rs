@@ -22,7 +22,7 @@ pub struct Toolchain {
     pub language_name: LanguageName,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait ToolchainLister: Send + Sync {
     async fn list(
         &self,

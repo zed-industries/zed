@@ -526,7 +526,7 @@ fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
         &self,
