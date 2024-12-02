@@ -538,12 +538,6 @@ impl DirectoryItem {
 
 impl RenderOnce for DirectoryItem {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let file_count_label = format!(
-            "{} file{}",
-            self.file_count,
-            if self.file_count == 1 { "" } else { "s" }
-        );
-
         h_flex()
             .id(self.id.clone())
             .items_center()
@@ -561,28 +555,23 @@ impl RenderOnce for DirectoryItem {
             .h(px(24.))
             .child(
                 h_flex()
-                    .pl(px(12. + (self.indent_level as f32 * 16.)))
+                    .pl(px(12.) + px(self.indent_level as f32 * 12.))
                     .gap(px(8.))
                     .child(Checkbox::new(self.id.clone(), self.selection))
-                    .child(
-                        Icon::new(if self.is_expanded {
-                            IconName::ChevronDown
-                        } else {
-                            IconName::ChevronRight
-                        })
-                        .size(IconSize::Small),
-                    )
+                    // .child(
+                    //     Icon::new(if self.is_expanded {
+                    //         IconName::ChevronDown
+                    //     } else {
+                    //         IconName::ChevronRight
+                    //     })
+                    //     .size(IconSize::Small),
+                    // )
                     .child(
                         Icon::new(IconName::Folder)
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(Label::new(self.path).size(LabelSize::Small))
-                    .child(
-                        Label::new(file_count_label)
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    ),
+                    .child(Label::new(self.path).size(LabelSize::Small)),
             )
             .child(
                 h_flex()
