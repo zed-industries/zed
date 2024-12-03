@@ -185,9 +185,9 @@ impl PickerDelegate for SlashCommandDelegate {
                         v_flex()
                             .group(format!("command-entry-label-{ix}"))
                             .w_full()
+                            .py_0p5()
                             .min_w(px(250.))
                             .max_w(px(400.))
-                            .overflow_hidden()
                             .child(
                                 h_flex()
                                     .gap_1p5()
@@ -217,10 +217,11 @@ impl PickerDelegate for SlashCommandDelegate {
                                     )),
                             )
                             .child(
-                                Label::new(info.description.clone())
-                                    .single_line()
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                div().overflow_hidden().text_ellipsis().child(
+                                    Label::new(info.description.clone())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
                             ),
                     ),
             ),
