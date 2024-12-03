@@ -475,35 +475,6 @@ impl Editor {
                                         .gap_1()
                                         .when(!is_branch_buffer, |row| {
                                             row.child(
-                                                IconButton::new("next-hunk", IconName::ArrowDown)
-                                                    .shape(IconButtonShape::Square)
-                                                    .icon_size(IconSize::Small)
-                                                    .disabled(!has_multiple_hunks)
-                                                    .tooltip({
-                                                        let focus_handle = editor.focus_handle(cx);
-                                                        move |cx| {
-                                                            Tooltip::for_action_in(
-                                                                "Next Hunk",
-                                                                &GoToHunk,
-                                                                &focus_handle,
-                                                                cx,
-                                                            )
-                                                        }
-                                                    })
-                                                    .on_click({
-                                                        let editor = editor.clone();
-                                                        let hunk = hunk.clone();
-                                                        move |_event, cx| {
-                                                            editor.update(cx, |editor, cx| {
-                                                                editor.go_to_subsequent_hunk(
-                                                                    hunk.multi_buffer_range.end,
-                                                                    cx,
-                                                                );
-                                                            });
-                                                        }
-                                                    }),
-                                            )
-                                            .child(
                                                 IconButton::new("prev-hunk", IconName::ArrowUp)
                                                     .shape(IconButtonShape::Square)
                                                     .icon_size(IconSize::Small)
@@ -526,6 +497,35 @@ impl Editor {
                                                             editor.update(cx, |editor, cx| {
                                                                 editor.go_to_preceding_hunk(
                                                                     hunk.multi_buffer_range.start,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                    }),
+                                            )
+                                            .child(
+                                                IconButton::new("next-hunk", IconName::ArrowDown)
+                                                    .shape(IconButtonShape::Square)
+                                                    .icon_size(IconSize::Small)
+                                                    .disabled(!has_multiple_hunks)
+                                                    .tooltip({
+                                                        let focus_handle = editor.focus_handle(cx);
+                                                        move |cx| {
+                                                            Tooltip::for_action_in(
+                                                                "Next Hunk",
+                                                                &GoToHunk,
+                                                                &focus_handle,
+                                                                cx,
+                                                            )
+                                                        }
+                                                    })
+                                                    .on_click({
+                                                        let editor = editor.clone();
+                                                        let hunk = hunk.clone();
+                                                        move |_event, cx| {
+                                                            editor.update(cx, |editor, cx| {
+                                                                editor.go_to_subsequent_hunk(
+                                                                    hunk.multi_buffer_range.end,
                                                                     cx,
                                                                 );
                                                             });
