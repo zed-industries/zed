@@ -409,7 +409,7 @@ You can change the following settings to modify vim mode's behavior:
 | use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |
 | toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                         | false         |
 | custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                  | {}            |
-| highlight_on_copy_duration   | The duration of the higlight animation(in ms). Set to `0` to disable                                                                                                                                 | 200           |
+| highlight_on_copy_duration   | The duration of the highlight animation(in ms). Set to `0` to disable                                                                                                                         | 200           |
 
 Here's an example of adding a digraph for the zombie emoji. This allows you to type `ctrl-k f z` to insert a zombie emoji. You can add as many digraphs as you like.
 
