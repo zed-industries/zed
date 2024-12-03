@@ -192,7 +192,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                         {
                                             label.push_str(&args);
                                         }
-                                        Label::new(label).size(LabelSize::Small)
+                                        Label::new(label).single_line().size(LabelSize::Small)
                                     }))
                                     .children(info.args.clone().filter(|_| !selected).map(
                                         |args| {
@@ -200,6 +200,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                                 .font_buffer(cx)
                                                 .child(
                                                     Label::new(args)
+                                                        .single_line()
                                                         .size(LabelSize::Small)
                                                         .color(Color::Muted),
                                                 )
@@ -211,6 +212,7 @@ impl PickerDelegate for SlashCommandDelegate {
                             )
                             .child(
                                 Label::new(info.description.clone())
+                                    .single_line()
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             ),
