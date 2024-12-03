@@ -3,7 +3,7 @@ title: Zed Terms of Use
 slug: terms
 ---
 
-PLEASE READ THESE TERMS AND CONDITIONS CAREFULLY BEFORE USING THE SERVICE OR SOFTWARE OFFERED BY ZED INDUSTRIES, INC. ("ZED", OR "WE"). BY ACCESSING OR USING THE SOLUTION (AS DEFINED BELOW) IN ANY MANNER, YOU ("YOU" OR "CUSTOMER") AGREE TO BE BOUND BY THESE TERMS (THE "AGREEMENT") TO THE EXCLUSION OF ALL OTHER TERMS. YOU REPRESENT AND WARRANT THAT YOU HAVE THE AUTHORITY TO ENTER INTO THIS AGREEMENT; IF YOU ARE ENTERING INTO THIS AGREEMENT ON BEHALF OF AN ORGANIZATION OR ENTITY, REFERENCES TO "CUSTOMER" AND "YOU" IN THIS AGREEMENT, REFER TO THAT ORGANIZATION OR ENTITY. IF YOU DO NOT AGREE TO ALL OF THE FOLLOWING, YOU MAY NOT USE OR ACCESS THE SOLUTION IN ANY MANNER.  IF THE TERMS OF THIS AGREEMENT ARE CONSIDERED AN OFFER, ACCEPTANCE IS EXPRESSLY LIMITED TO SUCH TERMS.
+PLEASE READ THESE TERMS AND CONDITIONS CAREFULLY BEFORE USING THE SERVICE OR SOFTWARE OFFERED BY ZED INDUSTRIES, INC. ("ZED", OR "WE"). BY ACCESSING OR USING THE SOLUTION (AS DEFINED BELOW) IN ANY MANNER, YOU ("YOU" OR "CUSTOMER") AGREE TO BE BOUND BY THESE TERMS (THE "AGREEMENT") TO THE EXCLUSION OF ALL OTHER TERMS. YOU REPRESENT AND WARRANT THAT YOU HAVE THE AUTHORITY TO ENTER INTO THIS AGREEMENT; IF YOU ARE ENTERING INTO THIS AGREEMENT ON BEHALF OF AN ORGANIZATION OR ENTITY, REFERENCES TO "CUSTOMER" AND "YOU" IN THIS AGREEMENT, REFER TO THAT ORGANIZATION OR ENTITY. IF YOU DO NOT AGREE TO ALL OF THE FOLLOWING, YOU MAY NOT USE OR ACCESS THE SOLUTION IN ANY MANNER. IF THE TERMS OF THIS AGREEMENT ARE CONSIDERED AN OFFER, ACCEPTANCE IS EXPRESSLY LIMITED TO SUCH TERMS.
 
 ## 1. ACCESS TO AND USE OF THE SOLUTION
 
@@ -94,7 +94,7 @@ Zed does not represent or warrant that the operation of the Zed Service or Edito
 
 ## 8. LIMITATIONS OF LIABILITY
 
-IN NO EVENT SHALL ZED BE LIABLE FOR ANY LOST DATA, LOST PROFITS, BUSINESS INTERRUPTION, REPLACEMENT SERVICE OR OTHER SPECIAL, INCIDENTAL, CONSEQUENTIAL, PUNITIVE OR INDIRECT DAMAGES, HOWEVER CAUSED AND REGARDLESS OF THEORY OF LIABILITY.  ZED'S LIABILITY FOR ALL CLAIMS ARISING UNDER THIS AGREEMENT, WHETHER IN CONTRACT, TORT OR OTHERWISE, SHALL NOT EXCEED ONE THOUSAND US DOLLARS ($1,000).
+IN NO EVENT SHALL ZED BE LIABLE FOR ANY LOST DATA, LOST PROFITS, BUSINESS INTERRUPTION, REPLACEMENT SERVICE OR OTHER SPECIAL, INCIDENTAL, CONSEQUENTIAL, PUNITIVE OR INDIRECT DAMAGES, HOWEVER CAUSED AND REGARDLESS OF THEORY OF LIABILITY. ZED'S LIABILITY FOR ALL CLAIMS ARISING UNDER THIS AGREEMENT, WHETHER IN CONTRACT, TORT OR OTHERWISE, SHALL NOT EXCEED ONE THOUSAND US DOLLARS ($1,000).
 
 ## 9. Third Party Services
 
@@ -112,11 +112,11 @@ You shall comply with all applicable laws and regulations in its use of the Solu
 
 ### 10.3. Assignment
 
-Neither party may transfer and assign its rights and obligations under this Agreement without the prior written consent of the other party.  Notwithstanding the foregoing, Zed may transfer and assign its rights under this Agreement without consent from the other party in connection with a change in control, acquisition or sale of all or substantially all of its assets.
+Neither party may transfer and assign its rights and obligations under this Agreement without the prior written consent of the other party. Notwithstanding the foregoing, Zed may transfer and assign its rights under this Agreement without consent from the other party in connection with a change in control, acquisition or sale of all or substantially all of its assets.
 
 ### 10.4. Force Majeure
 
-Neither party shall be responsible for failure or delay in performance by events out of their reasonable control, including but not limited to, acts of God, Internet outage, terrorism, war, fires, earthquakes and other disasters (each a "Force Majeure").  Notwithstanding the foregoing: if a Force Majeure continues for more than thirty (30) days, either party may to terminate this agreement by written notice to the other party.
+Neither party shall be responsible for failure or delay in performance by events out of their reasonable control, including but not limited to, acts of God, Internet outage, terrorism, war, fires, earthquakes and other disasters (each a "Force Majeure"). Notwithstanding the foregoing: if a Force Majeure continues for more than thirty (30) days, either party may to terminate this agreement by written notice to the other party.
 
 ### 10.5. Notice
 
@@ -124,11 +124,11 @@ All notices between the parties shall be in writing and shall be deemed to have 
 
 ### 10.6. No Agency
 
-Both parties agree that no agency, partnership, joint venture, or employment is created as a result of this Agreement.  You do not have any authority of any kind to bind Zed.
+Both parties agree that no agency, partnership, joint venture, or employment is created as a result of this Agreement. You do not have any authority of any kind to bind Zed.
 
 ### 10.7. Governing Law
 
-This Agreement shall be governed exclusively by, and construed exclusively in accordance with, the laws of the United States and the State of California, without regard to its conflict of laws provisions.  The federal courts of the United States in the Northern District of California and the state courts of the State of California shall have exclusive jurisdiction to adjudicate any dispute arising out of or relating to this Agreement.  Each party hereby consents to the jurisdiction of such courts and waives any right it may otherwise have to challenge the appropriateness of such forums, whether on the basis of the doctrine of forum non conveniens or otherwise.  The United Nations Convention on Contracts for the International Sale of Goods shall not apply to this Agreement or any Purchase Order issued under this Agreement.
+This Agreement shall be governed exclusively by, and construed exclusively in accordance with, the laws of the United States and the State of California, without regard to its conflict of laws provisions. The federal courts of the United States in the Northern District of California and the state courts of the State of California shall have exclusive jurisdiction to adjudicate any dispute arising out of or relating to this Agreement. Each party hereby consents to the jurisdiction of such courts and waives any right it may otherwise have to challenge the appropriateness of such forums, whether on the basis of the doctrine of forum non conveniens or otherwise. The United Nations Convention on Contracts for the International Sale of Goods shall not apply to this Agreement or any Purchase Order issued under this Agreement.
 
 ### 10.8. Updated Agreement
 

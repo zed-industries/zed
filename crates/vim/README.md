@@ -30,7 +30,6 @@ cargo test -p vim --features neovim test_visual_star_hash
 
 This will run your keystrokes against a headless neovim and cache the results in the test_data directory.
 
-
 ## Testing zed-only behavior
 
 Zed does more than vim/neovim in their default modes. The `VimTestContext` can be used instead. This lets you test integration with the language server and other parts of zed's UI that don't have a NeoVim equivalent.

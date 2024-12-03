@@ -1,6 +1,7 @@
 Design notes:
 
 This crate is split into two conceptual halves:
+
 - The terminal.rs file and the src/mappings/ folder, these contain the code for interacting with Alacritty and maintaining the pty event loop. Some behavior in this file is constrained by terminal protocols and standards. The Zed init function is also placed here.
 - Everything else. These other files integrate the `Terminal` struct created in terminal.rs into the rest of GPUI. The main entry point for GPUI is the terminal_view.rs file and the modal.rs file.
 

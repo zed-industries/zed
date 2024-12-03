@@ -6,7 +6,7 @@ Let's work through the prototypical "Build a todo app" example to showcase how w
 
 We'll create a headline, a list of todo items, and a form to add new items.
 
-~~~rust
+```rust
 struct TodoList<V: 'static> {
     headline: SharedString,
     items: Vec<TodoItem>,
@@ -36,7 +36,7 @@ impl<V: 'static> TodoList<V> {
         }
     }
 }
-~~~
+```
 
 All of this is relatively straightforward.
 
@@ -44,7 +44,7 @@ We use [gpui::SharedString] in components instead of [std::string::String]. This
 
 When we want to pass an action we pass a `ClickHandler`. Whenever we want to add an action, the struct it belongs to needs to be generic over the view type `V`.
 
-~~~rust
+```rust
 use gpui::hsla
 
 impl<V: 'static> TodoList<V> {
@@ -53,7 +53,7 @@ impl<V: 'static> TodoList<V> {
         div().size_4().bg(hsla(50.0/360.0, 1.0, 0.5, 1.0))
     }
 }
-~~~
+```
 
 Every component needs a render method, and it should return `impl Element<V>`. This basic component will render a 16x16px yellow square on the screen.
 
@@ -84,7 +84,7 @@ Let's grab our [theme::colors::ThemeColors] from the theme and start building ou
 
 We can access the current theme's colors like this:
 
-~~~rust
+```rust
 impl<V: 'static> TodoList<V> {
     // ...
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
@@ -93,11 +93,11 @@ impl<V: 'static> TodoList<V> {
         div().size_4().hsla(50.0/360.0, 1.0, 0.5, 1.0)
     }
 }
-~~~
+```
 
 Now we have access to the complete set of colors defined in the theme.
 
-~~~rust
+```rust
 use gpui::hsla
 
 impl<V: 'static> TodoList<V> {
@@ -108,11 +108,11 @@ impl<V: 'static> TodoList<V> {
         div().size_4().bg(color.surface)
     }
 }
-~~~
+```
 
 Let's finish up some basic styles for the container then move on to adding the other elements.
 
-~~~rust
+```rust
 use gpui::hsla
 
 impl<V: 'static> TodoList<V> {
@@ -140,7 +140,7 @@ impl<V: 'static> TodoList<V> {
             )
     }
 }
-~~~
+```
 
 ### Headline
 
@@ -153,7 +153,6 @@ TODO
 ### Input
 
 TODO
-
 
 ### End result
 

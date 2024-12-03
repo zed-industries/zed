@@ -1,6 +1,6 @@
 # Extracting an extension to dedicated repo
 
-These are some notes of how to extract an extension from the main zed repository and generate a new repository which preserves the history as best as possible.  In the this example we will be extracting the `ruby` extension, substitute as appropriate.
+These are some notes of how to extract an extension from the main zed repository and generate a new repository which preserves the history as best as possible. In the this example we will be extracting the `ruby` extension, substitute as appropriate.
 
 ## Pre-requisites
 
@@ -23,7 +23,7 @@ regex:(?<![\[a-zA-Z0-9])(#[0-9]{3,5})==>zed-industries/zed\1
 ```
 
 This file takes the form of `patern==>replacement`, where the replacement is optional.
-Note whitespace matters so `ruby: ==>` is removing the `ruby:` prefix from a commit messages and adding a space after `==> ` means the replacement begins with a space.  Regex capture groups are numbered `\1`, `\2`, etc.
+Note whitespace matters so `ruby: ==>` is removing the `ruby:` prefix from a commit messages and adding a space after `==> ` means the replacement begins with a space. Regex capture groups are numbered `\1`, `\2`, etc.
 
 See: [Git Filter Repo Docs](https://htmlpreview.github.io/?https://github.com/newren/git-filter-repo/blob/docs/html/git-filter-repo.html) for more.
 
@@ -69,6 +69,7 @@ git log --grep="(\d+\.\d+\.\d+\.)" --perl-regexp --oneline --reverse
 ```
 
 Then just:
+
 ```
 git tag v0.0.2 abcd1234
 git tag v0.0.3 deadbeef
