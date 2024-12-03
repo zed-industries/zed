@@ -30,6 +30,7 @@ use crate::{
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
+use file_icons::FileIcons;
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
@@ -2251,8 +2252,8 @@ impl EditorElement {
                                                 .map(|header| {
                                                     let editor = self.editor.clone();
                                                     let multi_buffer_snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-                                                    let current_excerpt_id = next_excerpt.id;
-                                                    let related_excerpts = multi_buffer_snapshot.excerpts().skip_while(|&(excerpt_id, ..)| excerpt_id != current_excerpt_id).take_while(|&(excerpt_id, ..)| excerpt_id == current_excerpt_id).collect::<Vec<_>>();
+                                                    let buffer_to_fold = next_excerpt.buffer_id;
+                                                    let related_excerpts = multi_buffer_snapshot.excerpts().skip_while(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id() != buffer_to_fold).take_while(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id() == buffer_to_fold).collect::<Vec<_>>();
 
                                                     let fold_start = related_excerpts.first().and_then(|(excerpt_id, _, excerpt_range)| {
                                                         multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, excerpt_range.context.start)
@@ -2269,7 +2270,7 @@ impl EditorElement {
                                                         .read(cx)
                                                         .folded_excerpts
                                                         .get(&fold_start) {
-                                                            Some(&existing_fold) => header.child(Button::new("unfold-file", "Unfold").on_click(
+                                                            Some(&existing_fold) => header.child(ButtonLike::new("unfold-buffer").children(FileIcons::get_chevron_icon(false, cx).map(Icon::from_path)).on_click(
                                                                 move |_, cx| {
                                                                     editor.update(cx, |editor, cx| {
                                                                         editor.remove_blocks(HashSet::from_iter(Some(existing_fold)), None, cx);
@@ -2279,7 +2280,7 @@ impl EditorElement {
                                                                 }
                                                             )),
                                                             None => {
-                                                                header.child(Button::new("fold-file", "Fold").on_click(
+                                                                header.child(ButtonLike::new("fold-buffer").children(FileIcons::get_chevron_icon(true, cx).map(Icon::from_path)).on_click(
                                                                 move |_, cx| {
                                                                     editor.update(cx, |editor, cx| {
                                                                         let mut block_ids = editor.insert_blocks(
@@ -2291,7 +2292,7 @@ impl EditorElement {
                                                                                 height: 1,
                                                                                 style: BlockStyle::Flex,
                                                                                 priority: 0,
-                                                                                render: Arc::new(|_| div().into_any()),
+                                                                                render: Arc::new(|_| Label::new("…").into_any_element()),
                                                                             }),
                                                                             None,
                                                                             cx,
