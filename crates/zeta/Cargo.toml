@@ -24,6 +24,7 @@ language.workspace = true
 log.workspace = true
 open_ai.workspace = true
 similar.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

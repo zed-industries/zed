@@ -1,10 +1,10 @@
 use anyhow::{Context as _, Result};
-use collections::{BTreeMap, HashMap};
+use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
 use http_client::HttpClient;
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, OffsetRangeExt,
-    Point, Rope, ToOffset, ToPoint,
+    Point, ToOffset, ToPoint,
 };
 use std::{
     borrow::Cow,
@@ -16,21 +16,22 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use uuid::Uuid;
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
-const ORIGINAL_MARKER: &str = "<<<<<<< ORIGINAL\n";
-const SEPARATOR_MARKER: &str = "\n=======\n";
-const UPDATED_MARKER: &str = "\n>>>>>>> UPDATED";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-struct InlineCompletionId(usize);
+struct InlineCompletionId(Uuid);
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-struct EventId(usize);
+impl InlineCompletionId {
+    fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
 
 #[derive(Clone)]
 struct ZetaGlobal(Model<Zeta>);
@@ -42,9 +43,7 @@ pub struct Zeta {
     api_url: Arc<str>,
     api_key: Arc<str>,
     model: Arc<str>,
-    events: BTreeMap<EventId, Event>,
-    next_inline_completion_id: InlineCompletionId,
-    next_event_id: EventId,
+    events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
 }
 
@@ -52,7 +51,8 @@ pub struct InlineCompletion {
     id: InlineCompletionId,
     path: Arc<Path>,
     edits: Vec<(Range<Anchor>, String)>,
-    snapshot: BufferSnapshot,
+    _snapshot: BufferSnapshot,
+    _raw_response: String,
 }
 
 impl std::fmt::Debug for InlineCompletion {
@@ -105,46 +105,38 @@ impl Zeta {
             api_url,
             api_key,
             model,
-            events: BTreeMap::new(),
-            next_inline_completion_id: InlineCompletionId(0),
-            next_event_id: EventId(0),
+            events: VecDeque::new(),
             registered_buffers: HashMap::default(),
         }
     }
 
     fn push_event(&mut self, event: Event) {
-        // Coalesce edits for the same buffer when they happen one after the other.
-        if let Event::BufferChange {
-            old_snapshot,
-            new_snapshot,
-            timestamp,
-        } = &event
+        if let Some(Event::BufferChange {
+            new_snapshot: last_new_snapshot,
+            timestamp: last_timestamp,
+            ..
+        }) = self.events.back_mut()
         {
-            if let Some(mut last_entry) = self.events.last_entry() {
-                if let Event::BufferChange {
-                    new_snapshot: last_new_snapshot,
-                    timestamp: last_timestamp,
-                    ..
-                } = last_entry.get_mut()
-                {
-                    if timestamp.duration_since(*last_timestamp) <= BUFFER_CHANGE_GROUPING_INTERVAL
-                        && old_snapshot.remote_id() == last_new_snapshot.remote_id()
-                        && old_snapshot.version == last_new_snapshot.version
-                    {
-                        *last_new_snapshot = new_snapshot.clone();
-                        *last_timestamp = *timestamp;
-                        return;
-                    }
-                }
+            // Coalesce edits for the same buffer when they happen one after the other.
+            let Event::BufferChange {
+                old_snapshot,
+                new_snapshot,
+                timestamp,
+            } = &event;
+
+            if timestamp.duration_since(*last_timestamp) <= BUFFER_CHANGE_GROUPING_INTERVAL
+                && old_snapshot.remote_id() == last_new_snapshot.remote_id()
+                && old_snapshot.version == last_new_snapshot.version
+            {
+                *last_new_snapshot = new_snapshot.clone();
+                *last_timestamp = *timestamp;
+                return;
             }
         }
 
-        let id = self.next_event_id;
-        self.next_event_id.0 += 1;
-
-        self.events.insert(id, event);
+        self.events.push_back(event);
         if self.events.len() > 10 {
-            self.events.pop_first();
+            self.events.pop_front();
         }
     }
 
@@ -201,11 +193,8 @@ impl Zeta {
             .map(|f| f.path().clone())
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
 
-        let id = self.next_inline_completion_id;
-        self.next_inline_completion_id.0 += 1;
-
         let mut events = String::new();
-        for event in self.events.values() {
+        for event in &self.events {
             if !events.is_empty() {
                 events.push('\n');
                 events.push('\n');
@@ -324,10 +313,11 @@ impl Zeta {
                     })
                     .collect();
                 Ok(Some(InlineCompletion {
-                    id,
+                    id: InlineCompletionId::new(),
                     path,
                     edits,
-                    snapshot,
+                    _snapshot: snapshot,
+                    _raw_response: content,
                 }))
             }
         })
@@ -335,7 +325,7 @@ impl Zeta {
 
     pub fn accept_inline_completion(
         &mut self,
-        _completion: &InlineCompletion,
+        _completion: InlineCompletion,
         cx: &mut ModelContext<Self>,
     ) {
         cx.notify();
@@ -343,10 +333,9 @@ impl Zeta {
 
     pub fn reject_inline_completion(
         &mut self,
-        completion: InlineCompletion,
+        _completion: InlineCompletion,
         cx: &mut ModelContext<Self>,
     ) {
-        // self.push_event(Event::InlineCompletionRejected(completion));
         cx.notify();
     }
 
@@ -432,7 +421,7 @@ fn prompt_for_excerpt(
 }
 
 fn excerpt_range_for_position(point: Point, snapshot: &BufferSnapshot) -> Range<usize> {
-    const CONTEXT_LINES: u32 = 8;
+    const CONTEXT_LINES: u32 = 16;
 
     let mut context_lines_before = CONTEXT_LINES;
     let mut context_lines_after = CONTEXT_LINES;
@@ -471,7 +460,6 @@ enum Event {
         new_snapshot: BufferSnapshot,
         timestamp: Instant,
     },
-    InlineCompletionRejected(InlineCompletion),
 }
 
 impl Event {
@@ -558,36 +546,8 @@ impl Event {
 
                 prompt
             }
-            Event::InlineCompletionRejected(completion) => {
-                let mut edits = String::new();
-                for (old_range, new_text) in &completion.edits {
-                    if !edits.is_empty() {
-                        edits.push('\n');
-                    }
-
-                    edits.push_str(&format_edit(
-                        &completion
-                            .snapshot
-                            .text_for_range(old_range.clone())
-                            .collect::<String>(),
-                        new_text,
-                    ));
-                }
-
-                format!(
-                    "User rejected these edits you suggested for file {:?}:\n{}",
-                    completion.path, edits
-                )
-            }
         }
     }
-}
-
-fn format_edit(old_text: &str, new_text: &str) -> String {
-    format!(
-        "{}{}{}{}{}",
-        ORIGINAL_MARKER, old_text, SEPARATOR_MARKER, new_text, UPDATED_MARKER
-    )
 }
 
 pub struct ZetaInlineCompletionProvider {
@@ -664,14 +624,13 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         _direction: inline_completion::Direction,
         _cx: &mut ModelContext<Self>,
     ) {
-        // todo!()
+        // Right now we don't support cycling.
     }
 
     fn accept(&mut self, cx: &mut ModelContext<Self>) {
         if let Some(completion) = self.current_completion.take() {
-            self.zeta.update(cx, |zeta, cx| {
-                zeta.accept_inline_completion(&completion, cx)
-            });
+            self.zeta
+                .update(cx, |zeta, cx| zeta.accept_inline_completion(completion, cx));
         }
     }
 

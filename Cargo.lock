@@ -16133,6 +16133,7 @@ dependencies = [
  "similar",
  "tree-sitter-go",
  "tree-sitter-rust",
+ "uuid",
  "worktree",
 ]
 
