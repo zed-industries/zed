@@ -79,6 +79,7 @@ impl LspAdapter for PythonLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let node = delegate.which("node".as_ref()).await?;
@@ -535,7 +536,7 @@ fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
         &self,
@@ -753,33 +754,29 @@ impl LspAdapter for PyLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        _: &dyn LspAdapterDelegate,
-        _: &AsyncAppContext,
+        delegate: &dyn LspAdapterDelegate,
+        toolchains: Arc<dyn LanguageToolchainStore>,
+        cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        // We don't support user-provided pylsp, as global packages are discouraged in Python ecosystem.
-        None
+        let venv = toolchains
+            .active_toolchain(
+                delegate.worktree_id(),
+                LanguageName::new("Python"),
+                &mut cx.clone(),
+            )
+            .await?;
+        let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
+        pylsp_path.exists().then(|| LanguageServerBinary {
+            path: venv.path.to_string().into(),
+            arguments: vec![pylsp_path.into()],
+            env: None,
+        })
     }
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Any + Send>> {
-        // let uri = "https://pypi.org/pypi/python-lsp-server/json";
-        // let mut root_manifest = delegate
-        //     .http_client()
-        //     .get(&uri, Default::default(), true)
-        //     .await?;
-        // let mut body = Vec::new();
-        // root_manifest.body_mut().read_to_end(&mut body).await?;
-        // let as_str = String::from_utf8(body)?;
-        // let json = serde_json::Value::from_str(&as_str)?;
-        // let latest_version = json
-        //     .get("info")
-        //     .and_then(|info| info.get("version"))
-        //     .and_then(|version| version.as_str().map(ToOwned::to_owned))
-        //     .ok_or_else(|| {
-        //         anyhow!("PyPI response did not contain version info for python-language-server")
-        //     })?;
         Ok(Box::new(()) as Box<_>)
     }
 
@@ -917,13 +914,17 @@ impl LspAdapter for PyLspAdapter {
                     .unwrap_or_else(|| {
                         json!({
                             "plugins": {
-                                "rope_autoimport": {"enabled": true},
-                                "mypy": {"enabled": true}
-                            }
+                                "pycodestyle": {"enabled": false},
+                                "rope_autoimport": {"enabled": true, "memory": true},
+                                "pylsp_mypy": {"enabled": false}
+                            },
+                            "rope": {
+                                "ropeFolder": null
+                            },
                         })
                     });
 
-            // If python.pythonPath is not set in user config, do so using our toolchain picker.
+            // If user did not explicitly modify their python venv, use one from picker.
             if let Some(toolchain) = toolchain {
                 if user_settings.is_null() {
                     user_settings = Value::Object(serde_json::Map::default());
@@ -939,23 +940,22 @@ impl LspAdapter for PyLspAdapter {
                         .or_insert(Value::Object(serde_json::Map::default()))
                         .as_object_mut()
                     {
-                        jedi.insert(
-                            "environment".to_string(),
-                            Value::String(toolchain.path.clone().into()),
-                        );
+                        jedi.entry("environment".to_string())
+                            .or_insert_with(|| Value::String(toolchain.path.clone().into()));
                     }
                     if let Some(pylint) = python
-                        .entry("mypy")
+                        .entry("pylsp_mypy")
                         .or_insert(Value::Object(serde_json::Map::default()))
                         .as_object_mut()
                     {
-                        pylint.insert(
-                            "overrides".to_string(),
+                        pylint.entry("overrides".to_string()).or_insert_with(|| {
                             Value::Array(vec![
                                 Value::String("--python-executable".into()),
                                 Value::String(toolchain.path.into()),
-                            ]),
-                        );
+                                Value::String("--cache-dir=/dev/null".into()),
+                                Value::Bool(true),
+                            ])
+                        });
                     }
                 }
             }

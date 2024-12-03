@@ -172,11 +172,6 @@ function download_git() {
         x86_64-apple-darwin)
             download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" bin/git ./git
             ;;
-        universal)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" bin/git ./git_arm64
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" bin/git ./git_x64
-            lipo -create ./git_arm64 ./git_x64 -output ./git
-            ;;
         *)
             echo "Unsupported architecture: $architecture"
             exit 1
@@ -377,20 +372,7 @@ else
     prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
     prepare_binaries "x86_64-apple-darwin" "$app_path_x64"
 
-    cp -R "$app_path_x64" target/release/
-    app_path=target/release/$(basename "$app_path_x64")
-    lipo \
-        -create \
-        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/zed \
-        -output \
-        "${app_path}/Contents/MacOS/zed"
-    lipo \
-        -create \
-        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/cli \
-        -output \
-        "${app_path}/Contents/MacOS/cli"
 
-    sign_app_binaries "$app_path" "universal" "."
     sign_app_binaries "$app_path_x64" "x86_64-apple-darwin" "x86_64-apple-darwin"
     sign_app_binaries "$app_path_aarch64" "aarch64-apple-darwin" "aarch64-apple-darwin"
 

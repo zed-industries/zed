@@ -26,13 +26,13 @@ impl_actions!(vim, [Increment, Decrement]);
 pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, action: &Increment, cx| {
         vim.record_current_action(cx);
-        let count = vim.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         let step = if action.step { 1 } else { 0 };
         vim.increment(count as i64, step, cx)
     });
     Vim::action(editor, cx, |vim, action: &Decrement, cx| {
         vim.record_current_action(cx);
-        let count = vim.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         let step = if action.step { -1 } else { 0 };
         vim.increment(-(count as i64), step, cx)
     });

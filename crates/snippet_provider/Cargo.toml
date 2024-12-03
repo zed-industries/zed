@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+extension.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true

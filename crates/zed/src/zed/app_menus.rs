@@ -23,7 +23,10 @@ pub fn app_menus() -> Vec<Menu> {
                             zed_actions::OpenDefaultKeymap,
                         ),
                         MenuItem::action("Open Project Settings", super::OpenProjectSettings),
-                        MenuItem::action("Select Theme...", theme_selector::Toggle::default()),
+                        MenuItem::action(
+                            "Select Theme...",
+                            zed_actions::theme_selector::Toggle::default(),
+                        ),
                     ],
                 }),
                 MenuItem::separator(),
@@ -176,7 +179,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
-                MenuItem::action("Give Feedback...", feedback::GiveFeedback),
+                MenuItem::action("Give Feedback...", zed_actions::feedback::GiveFeedback),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",

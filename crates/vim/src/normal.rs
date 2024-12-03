@@ -77,17 +77,17 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &DeleteLeft, cx| {
         vim.record_current_action(cx);
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.delete_motion(Motion::Left, times, cx);
     });
     Vim::action(editor, cx, |vim, _: &DeleteRight, cx| {
         vim.record_current_action(cx);
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.delete_motion(Motion::Right, times, cx);
     });
     Vim::action(editor, cx, |vim, _: &ChangeToEndOfLine, cx| {
         vim.start_recording(cx);
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.change_motion(
             Motion::EndOfLine {
                 display_lines: false,
@@ -98,7 +98,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &DeleteToEndOfLine, cx| {
         vim.record_current_action(cx);
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.delete_motion(
             Motion::EndOfLine {
                 display_lines: false,
@@ -109,7 +109,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &JoinLines, cx| {
         vim.record_current_action(cx);
-        let mut times = vim.take_count(cx).unwrap_or(1);
+        let mut times = Vim::take_count(cx).unwrap_or(1);
         if vim.mode.is_visual() {
             times = 1;
         } else if times > 1 {
@@ -130,7 +130,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &Undo, cx| {
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.update_editor(cx, |_, editor, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.undo(&editor::actions::Undo, cx);
@@ -138,7 +138,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         });
     });
     Vim::action(editor, cx, |vim, _: &Redo, cx| {
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.update_editor(cx, |_, editor, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.redo(&editor::actions::Redo, cx);
@@ -396,7 +396,7 @@ impl Vim {
     }
 
     fn yank_line(&mut self, _: &YankLine, cx: &mut ViewContext<Self>) {
-        let count = self.take_count(cx);
+        let count = Vim::take_count(cx);
         self.yank_motion(motion::Motion::CurrentLine, count, cx)
     }
 
@@ -416,7 +416,7 @@ impl Vim {
     }
 
     pub(crate) fn normal_replace(&mut self, text: Arc<str>, cx: &mut ViewContext<Self>) {
-        let count = self.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
