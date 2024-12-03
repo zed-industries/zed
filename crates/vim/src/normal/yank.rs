@@ -202,6 +202,8 @@ impl Vim {
             return;
         }
 
+        let highlight_duration = VimSettings::get_global(cx).highlight_on_copy_duration;
+
         editor.highlight_background::<HighlightOnYank>(
             &ranges_to_highlight,
             |colors| colors.editor_document_highlight_read_background,
@@ -209,7 +211,7 @@ impl Vim {
         );
         cx.spawn(|this, mut cx| async move {
             cx.background_executor()
-                .timer(Duration::from_millis(200))
+                .timer(Duration::from_millis(highlight_duration))
                 .await;
             this.update(&mut cx, |editor, cx| {
                 editor.clear_background_highlights::<HighlightOnYank>(cx)

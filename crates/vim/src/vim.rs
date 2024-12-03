@@ -1189,6 +1189,7 @@ struct VimSettings {
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_copy: bool,
+    pub highlight_on_copy_duration: u64,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1199,6 +1200,7 @@ struct VimSettingsContent {
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_copy: Option<bool>,
+    pub highlight_on_copy_duration: Option<u64>,
 }
 
 impl Settings for VimSettings {
