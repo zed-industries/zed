@@ -1124,10 +1124,7 @@ impl ToString for IdType {
 
 fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
-        Ok(path) => Ok(format!(
-            "file://{}",
-            path.to_string_lossy().trim_start_matches(r#"\\?\"#)
-        )),
+        Ok(path) => Ok(format!("file://{}", path.display())),
         Err(error) => {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")

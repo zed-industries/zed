@@ -1,4 +1,5 @@
 /.direnv
+.envrc
 .idea
 **/target
 **/cargo-target

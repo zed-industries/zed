@@ -17,6 +17,7 @@ use file_icons::FileIcons;
 
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, BTreeSet, HashMap};
+use command_palette_hooks::CommandPaletteFilter;
 use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
@@ -38,6 +39,7 @@ use project_panel_settings::{
 };
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use std::any::TypeId;
 use std::{
     cell::OnceCell,
     cmp,
@@ -310,6 +312,15 @@ impl ProjectPanel {
                 _ => {}
             })
             .detach();
+
+            let trash_action = [TypeId::of::<Trash>()];
+            let is_remote = project.read(cx).is_via_collab();
+
+            if is_remote {
+                CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                    filter.hide_action_types(&trash_action);
+                });
+            }
 
             let filename_editor = cx.new_view(Editor::single_line);
 
@@ -655,9 +666,11 @@ impl ProjectPanel {
                             .action("Copy Relative Path", Box::new(CopyRelativePath))
                             .separator()
                             .action("Rename", Box::new(Rename))
-                            .when(!is_root, |menu| {
+                            .when(!is_root & !is_remote, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
-                                    .action("Delete", Box::new(Delete { skip_prompt: false }))
+                            })
+                            .when(!is_root, |menu| {
+                                menu.action("Delete", Box::new(Delete { skip_prompt: false }))
                             })
                             .when(!is_remote & is_root, |menu| {
                                 menu.separator()
@@ -1185,7 +1198,7 @@ impl ProjectPanel {
 
     fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
-            let items_to_delete = self.disjoint_entries_for_removal(cx);
+            let items_to_delete = self.disjoint_entries(cx);
             if items_to_delete.is_empty() {
                 return None;
             }
@@ -1546,7 +1559,7 @@ impl ProjectPanel {
     }
 
     fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
-        let entries = self.marked_entries();
+        let entries = self.disjoint_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Cut(entries));
             cx.notify();
@@ -1554,7 +1567,7 @@ impl ProjectPanel {
     }
 
     fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        let entries = self.marked_entries();
+        let entries = self.disjoint_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Copied(entries));
             cx.notify();
@@ -1928,7 +1941,7 @@ impl ProjectPanel {
         None
     }
 
-    fn disjoint_entries_for_removal(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
+    fn disjoint_entries(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
         let marked_entries = self.marked_entries();
         let mut sanitized_entries = BTreeSet::new();
         if marked_entries.is_empty() {
@@ -1976,25 +1989,25 @@ impl ProjectPanel {
         sanitized_entries
     }
 
-    // Returns list of entries that should be affected by an operation.
-    // When currently selected entry is not marked, it's treated as the only marked entry.
+    // Returns the union of the currently selected entry and all marked entries.
     fn marked_entries(&self) -> BTreeSet<SelectedEntry> {
-        let Some(mut selection) = self.selection else {
-            return Default::default();
-        };
-        if self.marked_entries.contains(&selection) {
-            self.marked_entries
-                .iter()
-                .copied()
-                .map(|mut entry| {
-                    entry.entry_id = self.resolve_entry(entry.entry_id);
-                    entry
-                })
-                .collect()
-        } else {
-            selection.entry_id = self.resolve_entry(selection.entry_id);
-            BTreeSet::from_iter([selection])
+        let mut entries = self
+            .marked_entries
+            .iter()
+            .map(|entry| SelectedEntry {
+                entry_id: self.resolve_entry(entry.entry_id),
+                worktree_id: entry.worktree_id,
+            })
+            .collect::<BTreeSet<_>>();
+
+        if let Some(selection) = self.selection {
+            entries.insert(SelectedEntry {
+                entry_id: self.resolve_entry(selection.entry_id),
+                worktree_id: selection.worktree_id,
+            });
         }
+
+        entries
     }
 
     /// Finds the currently selected subentry for a given leaf entry id. If a given entry
@@ -2915,6 +2928,7 @@ impl ProjectPanel {
                         this.marked_entries.remove(&selection);
                     }
                 } else if kind.is_dir() {
+                    this.marked_entries.clear();
                     this.toggle_expanded(entry_id, cx);
                 } else {
                     let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
@@ -3051,7 +3065,8 @@ impl ProjectPanel {
                                                     .single_line()
                                                     .color(filename_text_color)
                                                     .when(
-                                                        is_active && index == active_index,
+                                                        index == active_index
+                                                            && (is_active || is_marked),
                                                         |this| this.underline(true),
                                                     ),
                                             );
@@ -5174,6 +5189,163 @@ mod tests {
                 "              one.txt",
                 "              two.txt"
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_paste_directory_with_sibling_file(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/test",
+            json!({
+                "dir1": {
+                    "a.txt": "",
+                    "b.txt": "",
+                },
+                "dir2": {},
+                "c.txt": "",
+                "d.txt": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "test/dir1", cx);
+
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        });
+
+        select_path_with_mark(&panel, "test/dir1", cx);
+        select_path_with_mark(&panel, "test/c.txt", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v test",
+                "    v dir1  <== marked",
+                "          a.txt",
+                "          b.txt",
+                "    > dir2",
+                "      c.txt  <== selected  <== marked",
+                "      d.txt",
+            ],
+            "Initial state before copying dir1 and c.txt"
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+        });
+        select_path(&panel, "test/dir2", cx);
+        panel.update(cx, |panel, cx| {
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+
+        toggle_expand_dir(&panel, "test/dir2/dir1", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v test",
+                "    v dir1  <== marked",
+                "          a.txt",
+                "          b.txt",
+                "    v dir2",
+                "        v dir1  <== selected",
+                "              a.txt",
+                "              b.txt",
+                "          c.txt",
+                "      c.txt  <== marked",
+                "      d.txt",
+            ],
+            "Should copy dir1 as well as c.txt into dir2"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_paste_nested_and_root_entries(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/test",
+            json!({
+                "dir1": {
+                    "a.txt": "",
+                    "b.txt": "",
+                },
+                "dir2": {},
+                "c.txt": "",
+                "d.txt": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "test/dir1", cx);
+
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        });
+
+        select_path_with_mark(&panel, "test/dir1/a.txt", cx);
+        select_path_with_mark(&panel, "test/dir1", cx);
+        select_path_with_mark(&panel, "test/c.txt", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v test",
+                "    v dir1  <== marked",
+                "          a.txt  <== marked",
+                "          b.txt",
+                "    > dir2",
+                "      c.txt  <== selected  <== marked",
+                "      d.txt",
+            ],
+            "Initial state before copying a.txt, dir1 and c.txt"
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+        });
+        select_path(&panel, "test/dir2", cx);
+        panel.update(cx, |panel, cx| {
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+
+        toggle_expand_dir(&panel, "test/dir2/dir1", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v test",
+                "    v dir1  <== marked",
+                "          a.txt  <== marked",
+                "          b.txt",
+                "    v dir2",
+                "        v dir1  <== selected",
+                "              a.txt",
+                "              b.txt",
+                "          c.txt",
+                "      c.txt  <== marked",
+                "      d.txt",
+            ],
+            "Should copy dir1 and c.txt into dir2. a.txt is already present in copied dir1."
         );
     }
 
@@ -7339,7 +7511,7 @@ mod tests {
         path: ProjectPath,
     }
 
-    impl project::Item for TestProjectItem {
+    impl project::ProjectItem for TestProjectItem {
         fn try_open(
             _project: &Model<Project>,
             path: &ProjectPath,
@@ -7355,6 +7527,10 @@ mod tests {
 
         fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
             Some(self.path.clone())
+        }
+
+        fn is_dirty(&self) -> bool {
+            false
         }
     }
 

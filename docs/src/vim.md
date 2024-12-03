@@ -79,12 +79,41 @@ The following commands use the language server to help you navigate and refactor
 
 ### Treesitter
 
-Treesitter is a powerful tool that Zed uses to understand the structure of your code. These commands help you navigate your code semantically.
+Treesitter is a powerful tool that Zed uses to understand the structure of your code. Zed provides motions that change the current cursor position, and text objects that can be used as the target of actions.
 
-| Command                      | Default Shortcut |
-| ---------------------------- | ---------------- |
-| Select a smaller syntax node | `] x`            |
-| Select a larger syntax node  | `[ x`            |
+| Command                         | Default Shortcut            |
+| ------------------------------- | --------------------------- |
+| Go to next/previous method      | `] m` / `[ m`               |
+| Go to next/previous method end  | `] M` / `[ M`               |
+| Go to next/previous section     | `] ]` / `[ [`               |
+| Go to next/previous section end | `] [` / `[ ]`               |
+| Go to next/previous comment     | `] /`, `] *` / `[ /`, `[ *` |
+| Select a larger syntax node     | `[ x`                       |
+| Select a larger syntax node     | `[ x`                       |
+
+| Text Objects                                               | Default Shortcut |
+| ---------------------------------------------------------- | ---------------- |
+| Around a class, definition, etc.                           | `a c`            |
+| Inside a class, definition, etc.                           | `i c`            |
+| Around a function, method etc.                             | `a f`            |
+| Inside a function, method, etc.                            | `i f`            |
+| A comment                                                  | `g c`            |
+| An argument, or list item, etc.                            | `i a`            |
+| An argument, or list item, etc. (including trailing comma) | `a a`            |
+| Around an HTML-like tag                                    | `i a`            |
+| Inside an HTML-like tag                                    | `i a`            |
+| The current indent level, and one line before and after    | `a I`            |
+| The current indent level, and one line before              | `a i`            |
+| The current indent level                                   | `i i`            |
+
+Note that the definitions for the targets of the `[m` family of motions are the same as the
+boundaries defined by `af`. The targets of the `[[` are the same as those defined by `ac`, though
+if there are no classes, then functions are also used. Similarly `gc` is used to find `[ /`. `g c`
+
+The definition of functions, classes and comments is language dependent, and support can be added
+to extensions by adding a [`textobjects.scm`]. The definition of arguments and tags operates at
+the tree-sitter level, but looks for certain patterns in the parse tree and is not currently configurable
+per language.
 
 ### Multi cursor
 

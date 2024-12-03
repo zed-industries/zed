@@ -22,8 +22,8 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::AnchorRangeExt;
 use project::{
-    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Item as _,
-    Project, ProjectPath,
+    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Project,
+    ProjectItem as _, ProjectPath,
 };
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
@@ -47,7 +47,7 @@ use workspace::item::{BreadcrumbText, FollowEvent};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    ItemId, ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
@@ -665,7 +665,7 @@ impl Item for Editor {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
         self.buffer
             .read(cx)
@@ -954,7 +954,7 @@ impl SerializableItem for Editor {
         workspace: WeakView<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: ItemId,
-        cx: &mut ViewContext<Pane>,
+        cx: &mut WindowContext,
     ) -> Task<Result<View<Self>>> {
         let serialized_editor = match DB
             .get_serialized_editor(item_id, workspace_id)
@@ -989,7 +989,7 @@ impl SerializableItem for Editor {
                 contents: Some(contents),
                 language,
                 ..
-            } => cx.spawn(|pane, mut cx| {
+            } => cx.spawn(|mut cx| {
                 let project = project.clone();
                 async move {
                     let language = if let Some(language_name) = language {
@@ -1019,7 +1019,7 @@ impl SerializableItem for Editor {
                         buffer.set_text(contents, cx);
                     })?;
 
-                    pane.update(&mut cx, |_, cx| {
+                    cx.update(|cx| {
                         cx.new_view(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), cx);
 
@@ -1046,7 +1046,7 @@ impl SerializableItem for Editor {
 
                 match project_item {
                     Some(project_item) => {
-                        cx.spawn(|pane, mut cx| async move {
+                        cx.spawn(|mut cx| async move {
                             let (_, project_item) = project_item.await?;
                             let buffer = project_item.downcast::<Buffer>().map_err(|_| {
                                 anyhow!("Project item at stored path was not a buffer")
@@ -1073,7 +1073,7 @@ impl SerializableItem for Editor {
                                 })?;
                             }
 
-                            pane.update(&mut cx, |_, cx| {
+                            cx.update(|cx| {
                                 cx.new_view(|cx| {
                                     let mut editor = Editor::for_buffer(buffer, Some(project), cx);
 
@@ -1087,7 +1087,7 @@ impl SerializableItem for Editor {
                         let open_by_abs_path = workspace.update(cx, |workspace, cx| {
                             workspace.open_abs_path(abs_path.clone(), false, cx)
                         });
-                        cx.spawn(|_, mut cx| async move {
+                        cx.spawn(|mut cx| async move {
                             let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
                             editor.update(&mut cx, |editor, cx| {
                                 editor.read_scroll_position_from_db(item_id, workspace_id, cx);

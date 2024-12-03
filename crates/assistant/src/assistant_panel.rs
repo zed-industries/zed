@@ -416,7 +416,6 @@ impl AssistantPanel {
                 ControlFlow::Break(())
             });
 
-            pane.set_can_split(false, cx);
             pane.set_can_navigate(true, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
@@ -451,6 +450,7 @@ impl AssistantPanel {
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
                         IconButton::new("new-chat", IconName::Plus)
+                            .icon_size(IconSize::Small)
                             .on_click(
                                 cx.listener(|_, _, cx| {
                                     cx.dispatch_action(NewContext.boxed_clone())

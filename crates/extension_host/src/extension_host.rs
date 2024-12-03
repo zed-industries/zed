@@ -162,6 +162,7 @@ pub struct ExtensionIndexLanguageEntry {
     pub extension: Arc<str>,
     pub path: PathBuf,
     pub matcher: LanguageMatcher,
+    pub hidden: bool,
     pub grammar: Option<Arc<str>>,
 }
 
@@ -1097,6 +1098,7 @@ impl ExtensionStore {
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
+                language.hidden,
                 Arc::new(move || {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
@@ -1324,6 +1326,7 @@ impl ExtensionStore {
                         extension: extension_id.clone(),
                         path: relative_path,
                         matcher: config.matcher,
+                        hidden: config.hidden,
                         grammar: config.grammar,
                     },
                 );

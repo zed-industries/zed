@@ -14,7 +14,8 @@ use crate::{
         SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
-    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
+    TreeSitterOptions,
 };
 use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
@@ -455,6 +456,7 @@ struct AutoindentRequest {
     before_edit: BufferSnapshot,
     entries: Vec<AutoindentRequestEntry>,
     is_block_mode: bool,
+    ignore_empty_lines: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1279,7 +1281,7 @@ impl Buffer {
 
         let autoindent_requests = self.autoindent_requests.clone();
         Some(async move {
-            let mut indent_sizes = BTreeMap::new();
+            let mut indent_sizes = BTreeMap::<u32, (IndentSize, bool)>::new();
             for request in autoindent_requests {
                 // Resolve each edited range to its row in the current buffer and in the
                 // buffer before this batch of edits.
@@ -1373,10 +1375,12 @@ impl Buffer {
                             let suggested_indent = indent_sizes
                                 .get(&suggestion.basis_row)
                                 .copied()
+                                .map(|e| e.0)
                                 .unwrap_or_else(|| {
                                     snapshot.indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
+
                             if old_suggestions.get(&new_row).map_or(
                                 true,
                                 |(old_indentation, was_within_error)| {
@@ -1384,7 +1388,10 @@ impl Buffer {
                                         && (!suggestion.within_error || *was_within_error)
                                 },
                             ) {
-                                indent_sizes.insert(new_row, suggested_indent);
+                                indent_sizes.insert(
+                                    new_row,
+                                    (suggested_indent, request.ignore_empty_lines),
+                                );
                             }
                         }
                     }
@@ -1392,10 +1399,12 @@ impl Buffer {
                     if let (true, Some(original_indent_column)) =
                         (request.is_block_mode, original_indent_column)
                     {
-                        let new_indent = indent_sizes
-                            .get(&row_range.start)
-                            .copied()
-                            .unwrap_or_else(|| snapshot.indent_size_for_line(row_range.start));
+                        let new_indent =
+                            if let Some((indent, _)) = indent_sizes.get(&row_range.start) {
+                                *indent
+                            } else {
+                                snapshot.indent_size_for_line(row_range.start)
+                            };
                         let delta = new_indent.len as i64 - original_indent_column as i64;
                         if delta != 0 {
                             for row in row_range.skip(1) {
@@ -1410,7 +1419,7 @@ impl Buffer {
                                             Ordering::Equal => {}
                                         }
                                     }
-                                    size
+                                    (size, request.ignore_empty_lines)
                                 });
                             }
                         }
@@ -1421,6 +1430,15 @@ impl Buffer {
             }
 
             indent_sizes
+                .into_iter()
+                .filter_map(|(row, (indent, ignore_empty_lines))| {
+                    if ignore_empty_lines && snapshot.line_len(row) == 0 {
+                        None
+                    } else {
+                        Some((row, indent))
+                    }
+                })
+                .collect()
         })
     }
 
@@ -1965,6 +1983,7 @@ impl Buffer {
                 before_edit,
                 entries,
                 is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
+                ignore_empty_lines: false,
             }));
         }
 
@@ -1990,6 +2009,30 @@ impl Buffer {
             cx.emit(BufferEvent::DirtyChanged);
         }
         cx.notify();
+    }
+
+    pub fn autoindent_ranges<I, T>(&mut self, ranges: I, cx: &mut ModelContext<Self>)
+    where
+        I: IntoIterator<Item = Range<T>>,
+        T: ToOffset + Copy,
+    {
+        let before_edit = self.snapshot();
+        let entries = ranges
+            .into_iter()
+            .map(|range| AutoindentRequestEntry {
+                range: before_edit.anchor_before(range.start)..before_edit.anchor_after(range.end),
+                first_line_is_new: true,
+                indent_size: before_edit.language_indent_size_at(range.start, cx),
+                original_indent_column: None,
+            })
+            .collect();
+        self.autoindent_requests.push(Arc::new(AutoindentRequest {
+            before_edit,
+            entries,
+            is_block_mode: false,
+            ignore_empty_lines: true,
+        }));
+        self.request_autoindent(cx);
     }
 
     // Inserts newlines at the given position to create an empty line, returning the start of the new line.
@@ -3265,6 +3308,72 @@ impl BufferSnapshot {
                 return Some((open, close));
             }
             None
+        })
+    }
+
+    pub fn text_object_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        options: TreeSitterOptions,
+    ) -> impl Iterator<Item = (Range<usize>, TextObject)> + '_ {
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
+
+        let mut matches =
+            self.syntax
+                .matches_with_options(range.clone(), &self.text, options, |grammar| {
+                    grammar.text_object_config.as_ref().map(|c| &c.query)
+                });
+
+        let configs = matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.text_object_config.as_ref())
+            .collect::<Vec<_>>();
+
+        let mut captures = Vec::<(Range<usize>, TextObject)>::new();
+
+        iter::from_fn(move || loop {
+            while let Some(capture) = captures.pop() {
+                if capture.0.overlaps(&range) {
+                    return Some(capture);
+                }
+            }
+
+            let mat = matches.peek()?;
+
+            let Some(config) = configs[mat.grammar_index].as_ref() else {
+                matches.advance();
+                continue;
+            };
+
+            for capture in mat.captures {
+                let Some(ix) = config
+                    .text_objects_by_capture_ix
+                    .binary_search_by_key(&capture.index, |e| e.0)
+                    .ok()
+                else {
+                    continue;
+                };
+                let text_object = config.text_objects_by_capture_ix[ix].1;
+                let byte_range = capture.node.byte_range();
+
+                let mut found = false;
+                for (range, existing) in captures.iter_mut() {
+                    if existing == &text_object {
+                        range.start = range.start.min(byte_range.start);
+                        range.end = range.end.max(byte_range.end);
+                        found = true;
+                        break;
+                    }
+                }
+
+                if !found {
+                    captures.push((byte_range, text_object));
+                }
+            }
+
+            matches.advance();
         })
     }
 

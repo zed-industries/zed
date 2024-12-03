@@ -125,8 +125,8 @@ use parking_lot::{Mutex, RwLock};
 use project::{
     lsp_store::{FormatTarget, FormatTrigger},
     project_settings::{GitGutterSetting, ProjectSettings},
-    CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Item, Location,
-    LocationLink, Project, ProjectTransaction, TaskSourceKind,
+    CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
+    Project, ProjectItem, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -596,7 +596,6 @@ pub struct Editor {
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
-    completion_documentation_pre_resolve_debounce: DebouncedDelay,
     available_code_actions: Option<(Location, Arc<[AvailableCodeAction]>)>,
     code_actions_task: Option<Task<Result<()>>>,
     document_highlights_task: Option<Task<()>>,
@@ -1007,7 +1006,7 @@ struct CompletionsMenu {
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
-    selected_completion_documentation_resolve_debounce: Option<Arc<Mutex<DebouncedDelay>>>,
+    selected_completion_resolve_debounce: Option<Arc<Mutex<DebouncedDelay>>>,
 }
 
 impl CompletionsMenu {
@@ -1039,9 +1038,7 @@ impl CompletionsMenu {
             matches: Vec::new().into(),
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
-            selected_completion_documentation_resolve_debounce: Some(Arc::new(Mutex::new(
-                DebouncedDelay::new(),
-            ))),
+            selected_completion_resolve_debounce: Some(Arc::new(Mutex::new(DebouncedDelay::new()))),
         }
     }
 
@@ -1094,15 +1091,12 @@ impl CompletionsMenu {
             matches,
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
-            selected_completion_documentation_resolve_debounce: Some(Arc::new(Mutex::new(
-                DebouncedDelay::new(),
-            ))),
+            selected_completion_resolve_debounce: Some(Arc::new(Mutex::new(DebouncedDelay::new()))),
         }
     }
 
     fn suppress_documentation_resolution(mut self) -> Self {
-        self.selected_completion_documentation_resolve_debounce
-            .take();
+        self.selected_completion_resolve_debounce.take();
         self
     }
 
@@ -1114,7 +1108,7 @@ impl CompletionsMenu {
         self.selected_item = 0;
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.attempt_resolve_selected_completion_documentation(provider, cx);
+        self.resolve_selected_completion(provider, cx);
         cx.notify();
     }
 
@@ -1130,7 +1124,7 @@ impl CompletionsMenu {
         }
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.attempt_resolve_selected_completion_documentation(provider, cx);
+        self.resolve_selected_completion(provider, cx);
         cx.notify();
     }
 
@@ -1146,7 +1140,7 @@ impl CompletionsMenu {
         }
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.attempt_resolve_selected_completion_documentation(provider, cx);
+        self.resolve_selected_completion(provider, cx);
         cx.notify();
     }
 
@@ -1158,58 +1152,20 @@ impl CompletionsMenu {
         self.selected_item = self.matches.len() - 1;
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.attempt_resolve_selected_completion_documentation(provider, cx);
+        self.resolve_selected_completion(provider, cx);
         cx.notify();
     }
 
-    fn pre_resolve_completion_documentation(
-        buffer: Model<Buffer>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
-        matches: Arc<[StringMatch]>,
-        editor: &Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> Task<()> {
-        let settings = EditorSettings::get_global(cx);
-        if !settings.show_completion_documentation {
-            return Task::ready(());
-        }
-
-        let Some(provider) = editor.completion_provider.as_ref() else {
-            return Task::ready(());
-        };
-
-        let resolve_task = provider.resolve_completions(
-            buffer,
-            matches.iter().map(|m| m.candidate_id).collect(),
-            completions.clone(),
-            cx,
-        );
-
-        cx.spawn(move |this, mut cx| async move {
-            if let Some(true) = resolve_task.await.log_err() {
-                this.update(&mut cx, |_, cx| cx.notify()).ok();
-            }
-        })
-    }
-
-    fn attempt_resolve_selected_completion_documentation(
+    fn resolve_selected_completion(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        let settings = EditorSettings::get_global(cx);
-        if !settings.show_completion_documentation {
-            return;
-        }
-
         let completion_index = self.matches[self.selected_item].candidate_id;
         let Some(provider) = provider else {
             return;
         };
-        let Some(documentation_resolve) = self
-            .selected_completion_documentation_resolve_debounce
-            .as_ref()
-        else {
+        let Some(completion_resolve) = self.selected_completion_resolve_debounce.as_ref() else {
             return;
         };
 
@@ -1224,7 +1180,7 @@ impl CompletionsMenu {
             EditorSettings::get_global(cx).completion_documentation_secondary_query_debounce;
         let delay = Duration::from_millis(delay_ms);
 
-        documentation_resolve.lock().fire_new(delay, cx, |_, cx| {
+        completion_resolve.lock().fire_new(delay, cx, |_, cx| {
             cx.spawn(move |this, mut cx| async move {
                 if let Some(true) = resolve_task.await.log_err() {
                     this.update(&mut cx, |_, cx| cx.notify()).ok();
@@ -2140,7 +2096,6 @@ impl Editor {
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
-            completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
             next_inlay_id: 0,
             code_action_providers,
             available_code_actions: Default::default(),
@@ -2999,7 +2954,7 @@ impl Editor {
         let start;
         let end;
         let mode;
-        let auto_scroll;
+        let mut auto_scroll;
         match click_count {
             1 => {
                 start = buffer.anchor_before(position.to_point(&display_map));
@@ -3035,6 +2990,7 @@ impl Editor {
                 auto_scroll = false;
             }
         }
+        auto_scroll &= EditorSettings::get_global(cx).autoscroll_on_clicks;
 
         let point_to_delete: Option<usize> = {
             let selected_points: Vec<Selection<Point>> =
@@ -4165,8 +4121,10 @@ impl Editor {
 
                         if buffer.contains_str_at(selection.start, &pair.end) {
                             let pair_start_len = pair.start.len();
-                            if buffer.contains_str_at(selection.start - pair_start_len, &pair.start)
-                            {
+                            if buffer.contains_str_at(
+                                selection.start.saturating_sub(pair_start_len),
+                                &pair.start,
+                            ) {
                                 selection.start -= pair_start_len;
                                 selection.end += pair.end.len();
 
@@ -4546,9 +4504,9 @@ impl Editor {
         let sort_completions = provider.sort_completions();
 
         let id = post_inc(&mut self.next_completion_id);
-        let task = cx.spawn(|this, mut cx| {
+        let task = cx.spawn(|editor, mut cx| {
             async move {
-                this.update(&mut cx, |this, _| {
+                editor.update(&mut cx, |this, _| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
                 })?;
                 let completions = completions.await.log_err();
@@ -4566,34 +4524,14 @@ impl Editor {
                     if menu.matches.is_empty() {
                         None
                     } else {
-                        this.update(&mut cx, |editor, cx| {
-                            let completions = menu.completions.clone();
-                            let matches = menu.matches.clone();
-
-                            let delay_ms = EditorSettings::get_global(cx)
-                                .completion_documentation_secondary_query_debounce;
-                            let delay = Duration::from_millis(delay_ms);
-                            editor
-                                .completion_documentation_pre_resolve_debounce
-                                .fire_new(delay, cx, |editor, cx| {
-                                    CompletionsMenu::pre_resolve_completion_documentation(
-                                        buffer,
-                                        completions,
-                                        matches,
-                                        editor,
-                                        cx,
-                                    )
-                                });
-                        })
-                        .ok();
                         Some(menu)
                     }
                 } else {
                     None
                 };
 
-                this.update(&mut cx, |this, cx| {
-                    let mut context_menu = this.context_menu.write();
+                editor.update(&mut cx, |editor, cx| {
+                    let mut context_menu = editor.context_menu.write();
                     match context_menu.as_ref() {
                         None => {}
 
@@ -4606,19 +4544,20 @@ impl Editor {
                         _ => return,
                     }
 
-                    if this.focus_handle.is_focused(cx) && menu.is_some() {
-                        let menu = menu.unwrap();
+                    if editor.focus_handle.is_focused(cx) && menu.is_some() {
+                        let mut menu = menu.unwrap();
+                        menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
                         *context_menu = Some(ContextMenu::Completions(menu));
                         drop(context_menu);
-                        this.discard_inline_completion(false, cx);
+                        editor.discard_inline_completion(false, cx);
                         cx.notify();
-                    } else if this.completion_tasks.len() <= 1 {
+                    } else if editor.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
                         // empty, we should hide it. If it was already hidden, we should
                         // also show the copilot completion when available.
                         drop(context_menu);
-                        if this.hide_context_menu(cx).is_none() {
-                            this.update_visible_inline_completion(cx);
+                        if editor.hide_context_menu(cx).is_none() {
+                            editor.update_visible_inline_completion(cx);
                         }
                     }
                 })?;
@@ -6377,6 +6316,25 @@ impl Editor {
                     None,
                     cx,
                 );
+            });
+            let selections = this.selections.all::<usize>(cx);
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+        });
+    }
+
+    pub fn autoindent(&mut self, _: &AutoIndent, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+        let selections = self
+            .selections
+            .all::<usize>(cx)
+            .into_iter()
+            .map(|s| s.range());
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.autoindent_ranges(selections, cx);
             });
             let selections = this.selections.all::<usize>(cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
@@ -11884,6 +11842,10 @@ impl Editor {
         self.blame.as_ref()
     }
 
+    pub fn show_git_blame_gutter(&self) -> bool {
+        self.show_git_blame_gutter
+    }
+
     pub fn render_git_blame_gutter(&mut self, cx: &mut WindowContext) -> bool {
         self.show_git_blame_gutter && self.has_blame_entries(cx)
     }
@@ -12894,8 +12856,41 @@ impl Editor {
                 };
 
                 for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {
-                    let editor =
-                        workspace.open_project_item::<Self>(pane.clone(), buffer, true, true, cx);
+                    let editor = buffer
+                        .read(cx)
+                        .file()
+                        .is_none()
+                        .then(|| {
+                            // Handle file-less buffers separately: those are not really the project items, so won't have a paroject path or entity id,
+                            // so `workspace.open_project_item` will never find them, always opening a new editor.
+                            // Instead, we try to activate the existing editor in the pane first.
+                            let (editor, pane_item_index) =
+                                pane.read(cx).items().enumerate().find_map(|(i, item)| {
+                                    let editor = item.downcast::<Editor>()?;
+                                    let singleton_buffer =
+                                        editor.read(cx).buffer().read(cx).as_singleton()?;
+                                    if singleton_buffer == buffer {
+                                        Some((editor, i))
+                                    } else {
+                                        None
+                                    }
+                                })?;
+                            pane.update(cx, |pane, cx| {
+                                pane.activate_item(pane_item_index, true, true, cx)
+                            });
+                            Some(editor)
+                        })
+                        .flatten()
+                        .unwrap_or_else(|| {
+                            workspace.open_project_item::<Self>(
+                                pane.clone(),
+                                buffer,
+                                true,
+                                true,
+                                cx,
+                            )
+                        });
+
                     editor.update(cx, |editor, cx| {
                         let autoscroll = match scroll_offset {
                             Some(scroll_offset) => Autoscroll::top_relative(scroll_offset as usize),
@@ -14682,7 +14677,8 @@ impl ViewInputHandler for Editor {
 
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
         let x = snapshot.x_for_display_point(start, &text_layout_details) - scroll_left
-            + self.gutter_dimensions.width;
+            + self.gutter_dimensions.width
+            + self.gutter_dimensions.margin;
         let y = line_height * (start.row().as_f32() - scroll_position.y);
 
         Some(Bounds {
