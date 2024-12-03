@@ -427,6 +427,14 @@ fn start_output_stream(
     (receive_task, thread)
 }
 
+#[cfg(target_os = "windows")]
+pub fn play_remote_video_track(
+    track: &track::RemoteVideoTrack,
+) -> impl Stream<Item = RemoteVideoFrame> {
+    futures::stream::empty()
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn play_remote_video_track(
     track: &track::RemoteVideoTrack,
 ) -> impl Stream<Item = RemoteVideoFrame> {
