@@ -432,7 +432,7 @@ Here's an example of these settings changed:
     "use_multiline_find": true,
     "use_smartcase_find": true,
     "toggle_relative_line_numbers": true,
-    "highlight_on_copy_duration": 50,
+    "highlight_on_yank_duration": 50,
     "custom_digraphs": {
       "fz": "🧟‍♀️"
     }
