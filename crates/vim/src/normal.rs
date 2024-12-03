@@ -170,6 +170,9 @@ impl Vim {
             Some(Operator::Indent) => self.indent_motion(motion, times, IndentDirection::In, cx),
             Some(Operator::Rewrap) => self.rewrap_motion(motion, times, cx),
             Some(Operator::Outdent) => self.indent_motion(motion, times, IndentDirection::Out, cx),
+            Some(Operator::AutoIndent) => {
+                self.indent_motion(motion, times, IndentDirection::Auto, cx)
+            }
             Some(Operator::Lowercase) => {
                 self.change_case_motion(motion, times, CaseTarget::Lowercase, cx)
             }
@@ -201,6 +204,9 @@ impl Vim {
                 }
                 Some(Operator::Outdent) => {
                     self.indent_object(object, around, IndentDirection::Out, cx)
+                }
+                Some(Operator::AutoIndent) => {
+                    self.indent_object(object, around, IndentDirection::Auto, cx)
                 }
                 Some(Operator::Rewrap) => self.rewrap_object(object, around, cx),
                 Some(Operator::Lowercase) => {

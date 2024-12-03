@@ -6297,6 +6297,25 @@ impl Editor {
         });
     }
 
+    pub fn autoindent(&mut self, _: &AutoIndent, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+        let selections = self
+            .selections
+            .all::<usize>(cx)
+            .into_iter()
+            .map(|s| s.range());
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.autoindent_ranges(selections, cx);
+            });
+            let selections = this.selections.all::<usize>(cx);
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+        });
+    }
+
     pub fn delete_line(&mut self, _: &DeleteLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
@@ -12814,8 +12833,41 @@ impl Editor {
                 };
 
                 for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {
-                    let editor =
-                        workspace.open_project_item::<Self>(pane.clone(), buffer, true, true, cx);
+                    let editor = buffer
+                        .read(cx)
+                        .file()
+                        .is_none()
+                        .then(|| {
+                            // Handle file-less buffers separately: those are not really the project items, so won't have a paroject path or entity id,
+                            // so `workspace.open_project_item` will never find them, always opening a new editor.
+                            // Instead, we try to activate the existing editor in the pane first.
+                            let (editor, pane_item_index) =
+                                pane.read(cx).items().enumerate().find_map(|(i, item)| {
+                                    let editor = item.downcast::<Editor>()?;
+                                    let singleton_buffer =
+                                        editor.read(cx).buffer().read(cx).as_singleton()?;
+                                    if singleton_buffer == buffer {
+                                        Some((editor, i))
+                                    } else {
+                                        None
+                                    }
+                                })?;
+                            pane.update(cx, |pane, cx| {
+                                pane.activate_item(pane_item_index, true, true, cx)
+                            });
+                            Some(editor)
+                        })
+                        .flatten()
+                        .unwrap_or_else(|| {
+                            workspace.open_project_item::<Self>(
+                                pane.clone(),
+                                buffer,
+                                true,
+                                true,
+                                cx,
+                            )
+                        });
+
                     editor.update(cx, |editor, cx| {
                         let autoscroll = match scroll_offset {
                             Some(scroll_offset) => Autoscroll::top_relative(scroll_offset as usize),
@@ -14611,7 +14663,8 @@ impl ViewInputHandler for Editor {
 
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
         let x = snapshot.x_for_display_point(start, &text_layout_details) - scroll_left
-            + self.gutter_dimensions.width;
+            + self.gutter_dimensions.width
+            + self.gutter_dimensions.margin;
         let y = line_height * (start.row().as_f32() - scroll_position.y);
 
         Some(Bounds {

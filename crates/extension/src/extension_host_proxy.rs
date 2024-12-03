@@ -159,6 +159,7 @@ pub trait ExtensionLanguageProxy: Send + Sync + 'static {
         language: LanguageName,
         grammar: Option<Arc<str>>,
         matcher: LanguageMatcher,
+        hidden: bool,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
     );
 
@@ -175,13 +176,14 @@ impl ExtensionLanguageProxy for ExtensionHostProxy {
         language: LanguageName,
         grammar: Option<Arc<str>>,
         matcher: LanguageMatcher,
+        hidden: bool,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
     ) {
         let Some(proxy) = self.language_proxy.read().clone() else {
             return;
         };
 
-        proxy.register_language(language, grammar, matcher, load)
+        proxy.register_language(language, grammar, matcher, hidden, load)
     }
 
     fn remove_languages(
