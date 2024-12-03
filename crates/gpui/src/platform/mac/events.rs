@@ -1,20 +1,20 @@
 use crate::{
-    platform::mac::NSStringExt, point, px, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent,
-    TouchPhase,
+    platform::mac::{
+        kTISPropertyUnicodeKeyLayoutData, LMGetKbdType, NSStringExt,
+        TISCopyCurrentKeyboardLayoutInputSource, TISGetInputSourceProperty, UCKeyTranslate,
+    },
+    point, px, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
+    PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
 };
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
     base::{id, YES},
 };
-use core_graphics::{
-    event::{CGEvent, CGEventFlags, CGKeyCode},
-    event_source::{CGEventSource, CGEventSourceStateID},
-};
-use metal::foreign_types::ForeignType as _;
-use objc::{class, msg_send, sel, sel_impl};
-use std::{borrow::Cow, mem, ptr, sync::Once};
+use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
+use core_graphics::event::CGKeyCode;
+use objc::{msg_send, sel, sel_impl};
+use std::{borrow::Cow, ffi::c_void};
 
 const BACKSPACE_KEY: u16 = 0x7f;
 const SPACE_KEY: u16 = b' ' as u16;
@@ -23,24 +23,6 @@ const NUMPAD_ENTER_KEY: u16 = 0x03;
 const ESCAPE_KEY: u16 = 0x1b;
 const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
-
-fn synthesize_keyboard_event(code: CGKeyCode) -> CGEvent {
-    static mut EVENT_SOURCE: core_graphics::sys::CGEventSourceRef = ptr::null_mut();
-    static INIT_EVENT_SOURCE: Once = Once::new();
-
-    INIT_EVENT_SOURCE.call_once(|| {
-        let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
-        unsafe {
-            EVENT_SOURCE = source.as_ptr();
-        };
-        mem::forget(source);
-    });
-
-    let source = unsafe { core_graphics::event_source::CGEventSource::from_ptr(EVENT_SOURCE) };
-    let event = CGEvent::new_keyboard_event(source.clone(), code, true).unwrap();
-    mem::forget(source);
-    event
-}
 
 pub fn key_to_native(key: &str) -> Cow<str> {
     use cocoa::appkit::*;
@@ -259,11 +241,12 @@ impl PlatformInput {
 unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     use cocoa::appkit::*;
 
-    let mut chars_ignoring_modifiers = native_event
+    let mut characters = native_event
         .charactersIgnoringModifiers()
         .to_str()
         .to_string();
-    let first_char = chars_ignoring_modifiers.chars().next().map(|ch| ch as u16);
+    let mut key_char = None;
+    let first_char = characters.chars().next().map(|ch| ch as u16);
     let modifiers = native_event.modifierFlags();
 
     let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
@@ -277,11 +260,20 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
 
     #[allow(non_upper_case_globals)]
     let key = match first_char {
-        Some(SPACE_KEY) => "space".to_string(),
+        Some(SPACE_KEY) => {
+            key_char = Some(" ".to_string());
+            "space".to_string()
+        }
+        Some(TAB_KEY) => {
+            key_char = Some("\t".to_string());
+            "tab".to_string()
+        }
+        Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => {
+            key_char = Some("\n".to_string());
+            "enter".to_string()
+        }
         Some(BACKSPACE_KEY) => "backspace".to_string(),
-        Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter".to_string(),
         Some(ESCAPE_KEY) => "escape".to_string(),
-        Some(TAB_KEY) => "tab".to_string(),
         Some(SHIFT_TAB_KEY) => "tab".to_string(),
         Some(NSUpArrowFunctionKey) => "up".to_string(),
         Some(NSDownArrowFunctionKey) => "down".to_string(),
@@ -314,31 +306,67 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         Some(NSF18FunctionKey) => "f18".to_string(),
         Some(NSF19FunctionKey) => "f19".to_string(),
         _ => {
-            let mut chars_ignoring_modifiers_and_shift =
-                chars_for_modified_key(native_event.keyCode(), false, false);
+            // Cases to test when modifying this:
+            //
+            //           qwerty key | none | cmd   | cmd-shift
+            // * Armenian         s | ս    | cmd-s | cmd-shift-s  (layout is non-ASCII, so we use cmd layout)
+            // * Dvorak+QWERTY    s | o    | cmd-s | cmd-shift-s  (layout switches on cmd)
+            // * Ukrainian+QWERTY s | с    | cmd-s | cmd-shift-s  (macOS reports cmd-s instead of cmd-S)
+            // * Czech            7 | ý    | cmd-ý | cmd-7        (layout has shifted numbers)
+            // * Norwegian        7 | 7    | cmd-7 | cmd-/        (macOS reports cmd-shift-7 instead of cmd-/)
+            // * Russian          7 | 7    | cmd-7 | cmd-&        (shift-7 is . but when cmd is down, should use cmd layout)
+            // * German QWERTZ    ; | ö    | cmd-ö | cmd-Ö        (Zed's shift special case only applies to a-z)
+            //
+            let mut chars_ignoring_modifiers =
+                chars_for_modified_key(native_event.keyCode(), NO_MOD);
+            let mut chars_with_shift = chars_for_modified_key(native_event.keyCode(), SHIFT_MOD);
+            let always_use_cmd_layout = always_use_command_layout();
 
-            // Honor ⌘ when Dvorak-QWERTY is used.
-            let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), true, false);
-            if command && chars_ignoring_modifiers_and_shift != chars_with_cmd {
-                chars_ignoring_modifiers =
-                    chars_for_modified_key(native_event.keyCode(), true, shift);
-                chars_ignoring_modifiers_and_shift = chars_with_cmd;
+            // Handle Dvorak+QWERTY / Russian / Armeniam
+            if command || always_use_cmd_layout {
+                let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), CMD_MOD);
+                let chars_with_both =
+                    chars_for_modified_key(native_event.keyCode(), CMD_MOD | SHIFT_MOD);
+
+                // We don't do this in the case that the shifted command key generates
+                // the same character as the unshifted command key (Norwegian, e.g.)
+                if chars_with_both != chars_with_cmd {
+                    chars_with_shift = chars_with_both;
+
+                // Handle edge-case where cmd-shift-s reports cmd-s instead of
+                // cmd-shift-s (Ukrainian, etc.)
+                } else if chars_with_cmd.to_ascii_uppercase() != chars_with_cmd {
+                    chars_with_shift = chars_with_cmd.to_ascii_uppercase();
+                }
+                chars_ignoring_modifiers = chars_with_cmd;
             }
 
-            if shift {
-                if chars_ignoring_modifiers_and_shift
-                    == chars_ignoring_modifiers.to_ascii_lowercase()
-                {
-                    chars_ignoring_modifiers_and_shift
-                } else if chars_ignoring_modifiers_and_shift != chars_ignoring_modifiers {
-                    shift = false;
-                    chars_ignoring_modifiers
-                } else {
-                    chars_ignoring_modifiers
+            if !control && !command && !function {
+                let mut mods = NO_MOD;
+                if shift {
+                    mods |= SHIFT_MOD;
                 }
+                if alt {
+                    mods |= OPTION_MOD;
+                }
+
+                key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
+            }
+
+            let mut key = if shift
+                && chars_ignoring_modifiers
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase())
+            {
+                chars_ignoring_modifiers
+            } else if shift {
+                shift = false;
+                chars_with_shift
             } else {
                 chars_ignoring_modifiers
-            }
+            };
+
+            key
         }
     };
 
@@ -351,28 +379,83 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             function,
         },
         key,
-        ime_key: None,
+        key_char,
     }
 }
 
-fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
-    // Ideally, we would use `[NSEvent charactersByApplyingModifiers]` but that
-    // always returns an empty string with certain keyboards, e.g. Japanese. Synthesizing
-    // an event with the given flags instead lets us access `characters`, which always
-    // returns a valid string.
-    let event = synthesize_keyboard_event(code);
+fn always_use_command_layout() -> bool {
+    if chars_for_modified_key(0, NO_MOD).is_ascii() {
+        return false;
+    }
 
-    let mut flags = CGEventFlags::empty();
-    if cmd {
-        flags |= CGEventFlags::CGEventFlagCommand;
+    chars_for_modified_key(0, CMD_MOD).is_ascii()
+}
+
+const NO_MOD: u32 = 0;
+const CMD_MOD: u32 = 1;
+const SHIFT_MOD: u32 = 2;
+const OPTION_MOD: u32 = 8;
+
+fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
+    // Values from: https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h#L126
+    // shifted >> 8 for UCKeyTranslate
+    const CG_SPACE_KEY: u16 = 49;
+    // https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/CarbonCore.framework/Versions/A/Headers/UnicodeUtilities.h#L278
+    #[allow(non_upper_case_globals)]
+    const kUCKeyActionDown: u16 = 0;
+    #[allow(non_upper_case_globals)]
+    const kUCKeyTranslateNoDeadKeysMask: u32 = 0;
+
+    let keyboard_type = unsafe { LMGetKbdType() as u32 };
+    const BUFFER_SIZE: usize = 4;
+    let mut dead_key_state = 0;
+    let mut buffer: [u16; BUFFER_SIZE] = [0; BUFFER_SIZE];
+    let mut buffer_size: usize = 0;
+
+    let keyboard = unsafe { TISCopyCurrentKeyboardLayoutInputSource() };
+    if keyboard.is_null() {
+        return "".to_string();
     }
-    if shift {
-        flags |= CGEventFlags::CGEventFlagShift;
+    let layout_data = unsafe {
+        TISGetInputSourceProperty(keyboard, kTISPropertyUnicodeKeyLayoutData as *const c_void)
+            as CFDataRef
+    };
+    if layout_data.is_null() {
+        unsafe {
+            let _: () = msg_send![keyboard, release];
+        }
+        return "".to_string();
     }
-    event.set_flags(flags);
+    let keyboard_layout = unsafe { CFDataGetBytePtr(layout_data) };
 
     unsafe {
-        let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
-        event.characters().to_str().to_string()
+        UCKeyTranslate(
+            keyboard_layout as *const c_void,
+            code,
+            kUCKeyActionDown,
+            modifiers,
+            keyboard_type,
+            kUCKeyTranslateNoDeadKeysMask,
+            &mut dead_key_state,
+            BUFFER_SIZE,
+            &mut buffer_size as *mut usize,
+            &mut buffer as *mut u16,
+        );
+        if dead_key_state != 0 {
+            UCKeyTranslate(
+                keyboard_layout as *const c_void,
+                CG_SPACE_KEY,
+                kUCKeyActionDown,
+                modifiers,
+                keyboard_type,
+                kUCKeyTranslateNoDeadKeysMask,
+                &mut dead_key_state,
+                BUFFER_SIZE,
+                &mut buffer_size as *mut usize,
+                &mut buffer as *mut u16,
+            );
+        }
+        let _: () = msg_send![keyboard, release];
     }
+    String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
 }

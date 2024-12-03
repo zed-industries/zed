@@ -4,15 +4,13 @@ use futures::{future, StreamExt};
 use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
-    language_settings::{
-        language_settings, AllLanguageSettings, LanguageSettingsContent, SoftWrap,
-    },
-    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
+    language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
+    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, DiskState, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
 use lsp::{DiagnosticSeverity, NumberOrString};
 use parking_lot::Mutex;
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
@@ -106,7 +104,6 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             end_of_line = lf
             insert_final_newline = true
             trim_trailing_whitespace = true
-            max_line_length = 80
         [*.js]
             tab_width = 10
         "#,
@@ -116,7 +113,6 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 "hard_tabs": false,
                 "ensure_final_newline_on_save": false,
                 "remove_trailing_whitespace_on_save": false,
-                "preferred_line_length": 64,
                 "soft_wrap": "editor_width"
             }"#,
         },
@@ -125,7 +121,6 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             ".editorconfig": r#"
             [*.rs]
                 indent_size = 2
-                max_line_length = off
             "#,
             "b.rs": "fn b() {\n    B\n}",
         },
@@ -174,20 +169,12 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         assert_eq!(settings_a.hard_tabs, true);
         assert_eq!(settings_a.ensure_final_newline_on_save, true);
         assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
-        assert_eq!(settings_a.preferred_line_length, 80);
-
-        // "max_line_length" also sets "soft_wrap"
-        assert_eq!(settings_a.soft_wrap, SoftWrap::PreferredLineLength);
 
         // .editorconfig in b/ overrides .editorconfig in root
         assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
 
         // "indent_size" is not set, so "tab_width" is used
         assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
-
-        // When max_line_length is "off", default to .zed/settings.json
-        assert_eq!(settings_b.preferred_line_length, 64);
-        assert_eq!(settings_b.soft_wrap, SoftWrap::EditorWidth);
 
         // README.md should not be affected by .editorconfig's globe "*.rs"
         assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
@@ -494,7 +481,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // The buffer is configured based on the language server's capabilities.
     rust_buffer.update(cx, |buffer, _| {
         assert_eq!(
-            buffer.completion_triggers(),
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
         );
     });
@@ -541,7 +532,14 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // This buffer is configured based on the second language server's
     // capabilities.
     json_buffer.update(cx, |buffer, _| {
-        assert_eq!(buffer.completion_triggers(), &[":".to_string()]);
+        assert_eq!(
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            &[":".to_string()]
+        );
     });
 
     // When opening another buffer whose language server is already running,
@@ -554,7 +552,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         .unwrap();
     rust_buffer2.update(cx, |buffer, _| {
         assert_eq!(
-            buffer.completion_triggers(),
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
         );
     });
@@ -1241,7 +1243,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         events.next().await.unwrap(),
         Event::LanguageServerAdded(
             LanguageServerId(0),
-            fake_server.server.name().into(),
+            fake_server.server.name(),
             Some(worktree_id)
         ),
     );
@@ -1376,7 +1378,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         events.next().await.unwrap(),
         Event::LanguageServerAdded(
             LanguageServerId(1),
-            fake_server.server.name().into(),
+            fake_server.server.name(),
             Some(worktree_id)
         )
     );
@@ -2790,7 +2792,9 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_language_servers.next().await.unwrap();
 
     // Language server returns code actions that contain commands, and not edits.
-    let actions = project.update(cx, |project, cx| project.code_actions(&buffer, 0..0, cx));
+    let actions = project.update(cx, |project, cx| {
+        project.code_actions(&buffer, 0..0, None, cx)
+    });
     fake_server
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
             Ok(Some(vec![
@@ -3237,10 +3241,22 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
             Path::new("b/c/file5")
         );
 
-        assert!(!buffer2.read(cx).file().unwrap().is_deleted());
-        assert!(!buffer3.read(cx).file().unwrap().is_deleted());
-        assert!(!buffer4.read(cx).file().unwrap().is_deleted());
-        assert!(buffer5.read(cx).file().unwrap().is_deleted());
+        assert_matches!(
+            buffer2.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_matches!(
+            buffer3.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_matches!(
+            buffer4.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_eq!(
+            buffer5.read(cx).file().unwrap().disk_state(),
+            DiskState::Deleted
+        );
     });
 
     // Update the remote worktree. Check that it becomes consistent with the
@@ -3414,7 +3430,11 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
             ]
         );
         events.lock().clear();
-        buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), cx);
+        buffer.did_save(
+            buffer.version(),
+            buffer.file().unwrap().disk_state().mtime(),
+            cx,
+        );
     });
 
     // after saving, the buffer is not dirty, and emits a saved event.
@@ -4653,61 +4673,6 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_search_ordering(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.background_executor.clone());
-    fs.insert_tree(
-        "/dir",
-        json!({
-            ".git": {},
-            ".gitignore": "**/target\n/node_modules\n",
-            "aaa.txt": "key:value",
-            "bbb": {
-                "index.txt": "index_key:index_value"
-            },
-            "node_modules": {
-                "10 eleven": "key",
-                "1 two": "key"
-            },
-        }),
-    )
-    .await;
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-
-    let mut search = project.update(cx, |project, cx| {
-        project.search(
-            SearchQuery::text(
-                "key",
-                false,
-                false,
-                true,
-                Default::default(),
-                Default::default(),
-                None,
-            )
-            .unwrap(),
-            cx,
-        )
-    });
-
-    fn file_name(search_result: Option<SearchResult>, cx: &mut gpui::TestAppContext) -> String {
-        match search_result.unwrap() {
-            SearchResult::Buffer { buffer, .. } => buffer.read_with(cx, |buffer, _| {
-                buffer.file().unwrap().path().to_string_lossy().to_string()
-            }),
-            _ => panic!("Expected buffer"),
-        }
-    }
-
-    assert_eq!(file_name(search.next().await, cx), "bbb/index.txt");
-    assert_eq!(file_name(search.next().await, cx), "node_modules/1 two");
-    assert_eq!(file_name(search.next().await, cx), "node_modules/10 eleven");
-    assert_eq!(file_name(search.next().await, cx), "aaa.txt");
-    assert!(search.next().await.is_none())
-}
-
-#[gpui::test]
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -4863,11 +4828,10 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         });
         let new_server_name = new_server.server.name();
         assert!(
-            !servers_with_hover_requests.contains_key(new_server_name),
+            !servers_with_hover_requests.contains_key(&new_server_name),
             "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
         );
-        let new_server_name = new_server_name.to_string();
-        match new_server_name.as_str() {
+        match new_server_name.as_ref() {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
@@ -5000,6 +4964,84 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.ts": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let fake_server = fake_language_servers
+        .next()
+        .await
+        .expect("failed to get the language server");
+
+    let mut request_handled = fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+        move |_, _| async move {
+            Ok(Some(vec![
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    title: "organize imports".to_string(),
+                    kind: Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+                    ..lsp::CodeAction::default()
+                }),
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    title: "fix code".to_string(),
+                    kind: Some(CodeActionKind::SOURCE_FIX_ALL),
+                    ..lsp::CodeAction::default()
+                }),
+            ]))
+        },
+    );
+
+    let code_actions_task = project.update(cx, |project, cx| {
+        project.code_actions(
+            &buffer,
+            0..buffer.read(cx).len(),
+            Some(vec![CodeActionKind::SOURCE_ORGANIZE_IMPORTS]),
+            cx,
+        )
+    });
+
+    let () = request_handled
+        .next()
+        .await
+        .expect("The code action request should have been triggered");
+
+    let code_actions = code_actions_task.await.unwrap();
+    assert_eq!(code_actions.len(), 1);
+    assert_eq!(
+        code_actions[0].lsp_action.kind,
+        Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS)
+    );
+}
+
+#[gpui::test]
 async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -5087,11 +5129,10 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         let new_server_name = new_server.server.name();
 
         assert!(
-            !servers_with_actions_requests.contains_key(new_server_name),
+            !servers_with_actions_requests.contains_key(&new_server_name),
             "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
         );
-        let new_server_name = new_server_name.to_string();
-        match new_server_name.as_str() {
+        match new_server_name.0.as_ref() {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_actions_requests.insert(
                     new_server_name.clone(),
@@ -5131,7 +5172,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     }
 
     let code_actions_task = project.update(cx, |project, cx| {
-        project.code_actions(&buffer, 0..buffer.read(cx).len(), cx)
+        project.code_actions(&buffer, 0..buffer.read(cx).len(), None, cx)
     });
 
     // cx.run_until_parked();

@@ -72,11 +72,13 @@ pub enum Operator {
     Jump { line: bool },
     Indent,
     Outdent,
+    AutoIndent,
     Rewrap,
     Lowercase,
     Uppercase,
     OppositeCase,
     Digraph { first_char: Option<char> },
+    Literal { prefix: Option<String> },
     Register,
     RecordRegister,
     ReplayRegister,
@@ -149,9 +151,15 @@ pub struct VimGlobals {
     pub dot_recording: bool,
     pub dot_replaying: bool,
 
+    /// pre_count is the number before an operator is specified (3 in 3d2d)
+    pub pre_count: Option<usize>,
+    /// post_count is the number after an operator is specified (2 in 3d2d)
+    pub post_count: Option<usize>,
+
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
     pub recorded_count: Option<usize>,
+    pub recording_actions: Vec<ReplayableAction>,
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
@@ -227,9 +235,9 @@ impl VimGlobals {
                     }
                     '*' => {
                         self.registers.insert('"', content.clone());
-                        #[cfg(target_os = "linux")]
+                        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                         cx.write_to_primary(content.into());
-                        #[cfg(not(target_os = "linux"))]
+                        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
                         cx.write_to_clipboard(content.into());
                     }
                     '"' => {
@@ -281,7 +289,7 @@ impl VimGlobals {
         &mut self,
         register: Option<char>,
         editor: Option<&mut Editor>,
-        cx: &ViewContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<Register> {
         let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
@@ -298,11 +306,11 @@ impl VimGlobals {
             '_' | ':' | '.' | '#' | '=' => None,
             '+' => cx.read_from_clipboard().map(|item| item.into()),
             '*' => {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 {
                     cx.read_from_primary().map(|item| item.into())
                 }
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
                 {
                     cx.read_from_clipboard().map(|item| item.into())
                 }
@@ -338,11 +346,12 @@ impl VimGlobals {
 
     pub fn observe_action(&mut self, action: Box<dyn Action>) {
         if self.dot_recording {
-            self.recorded_actions
+            self.recording_actions
                 .push(ReplayableAction::Action(action.boxed_clone()));
 
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
+                self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -362,12 +371,13 @@ impl VimGlobals {
             return;
         }
         if self.dot_recording {
-            self.recorded_actions.push(ReplayableAction::Insertion {
+            self.recording_actions.push(ReplayableAction::Insertion {
                 text: text.clone(),
                 utf16_range_to_replace: range_to_replace.clone(),
             });
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
+                self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -444,6 +454,7 @@ impl Operator {
             Operator::Yank => "y",
             Operator::Replace => "r",
             Operator::Digraph { .. } => "^K",
+            Operator::Literal { .. } => "^V",
             Operator::FindForward { before: false } => "f",
             Operator::FindForward { before: true } => "t",
             Operator::FindBackward { after: false } => "F",
@@ -455,6 +466,7 @@ impl Operator {
             Operator::Jump { line: true } => "'",
             Operator::Jump { line: false } => "`",
             Operator::Indent => ">",
+            Operator::AutoIndent => "eq",
             Operator::Rewrap => "gq",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
@@ -464,6 +476,18 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
+        }
+    }
+
+    pub fn status(&self) -> String {
+        match self {
+            Operator::Digraph {
+                first_char: Some(first_char),
+            } => format!("^K{first_char}"),
+            Operator::Literal {
+                prefix: Some(prefix),
+            } => format!("^V{prefix}"),
+            _ => self.id().to_string(),
         }
     }
 
@@ -479,6 +503,7 @@ impl Operator {
             | Operator::ReplayRegister
             | Operator::Replace
             | Operator::Digraph { .. }
+            | Operator::Literal { .. }
             | Operator::ChangeSurrounds { target: Some(_) }
             | Operator::DeleteSurrounds => true,
             Operator::Change
@@ -487,6 +512,7 @@ impl Operator {
             | Operator::Rewrap
             | Operator::Indent
             | Operator::Outdent
+            | Operator::AutoIndent
             | Operator::Lowercase
             | Operator::Uppercase
             | Operator::Object { .. }

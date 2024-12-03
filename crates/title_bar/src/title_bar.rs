@@ -18,7 +18,6 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::{OpenRemote, RecentProjects};
 use rpc::proto;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -28,14 +27,16 @@ use ui::{
     IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
-use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
+use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
 #[cfg(feature = "stories")]
 pub use stories::*;
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
+
+const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
 
 actions!(
     collab,
@@ -75,7 +76,7 @@ impl Render for TitleBar {
         let height = Self::height(cx);
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
-        let titlebar_color = if cfg!(target_os = "linux") {
+        let titlebar_color = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if cx.is_window_active() && !self.should_move {
                 cx.theme().colors().title_bar_background
             } else {
@@ -394,7 +395,6 @@ impl TitleBar {
             "Open recent project".to_string()
         };
 
-        let workspace = self.workspace.clone();
         Button::new("project_name_trigger", name)
             .when(!is_project_selected, |b| b.color(Color::Muted))
             .style(ButtonStyle::Subtle)
@@ -402,18 +402,19 @@ impl TitleBar {
             .tooltip(move |cx| {
                 Tooltip::for_action(
                     "Recent Projects",
-                    &recent_projects::OpenRecent {
+                    &zed_actions::OpenRecent {
                         create_new_window: false,
                     },
                     cx,
                 )
             })
             .on_click(cx.listener(move |_, _, cx| {
-                if let Some(workspace) = workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        RecentProjects::open(workspace, false, cx);
-                    })
-                }
+                cx.dispatch_action(
+                    OpenRecent {
+                        create_new_window: false,
+                    }
+                    .boxed_clone(),
+                );
             }))
     }
 
@@ -440,14 +441,14 @@ impl TitleBar {
                 .tooltip(move |cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
-                        Some(&ToggleVcsMenu),
+                        Some(&zed_actions::branches::OpenRecent),
                         "Local branches only",
                         cx,
                     )
                 })
                 .on_click(move |_, cx| {
-                    let _ = workspace.update(cx, |this, cx| {
-                        BranchList::open(this, &Default::default(), cx);
+                    let _ = workspace.update(cx, |_this, cx| {
+                        cx.dispatch_action(zed_actions::branches::OpenRecent.boxed_clone());
                     });
                 }),
         )
@@ -577,9 +578,19 @@ impl TitleBar {
                         })
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
                         .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
-                        .action("Themes…", theme_selector::Toggle::default().boxed_clone())
-                        .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                        .action(
+                            "Themes…",
+                            zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                        )
+                        .action("Extensions", zed_actions::Extensions.boxed_clone())
                         .separator()
+                        .link(
+                            "Book Onboarding",
+                            OpenBrowser {
+                                url: BOOK_ONBOARDING.to_string(),
+                            }
+                            .boxed_clone(),
+                        )
                         .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -606,8 +617,19 @@ impl TitleBar {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
-                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
-                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                            .action(
+                                "Themes…",
+                                zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                            )
+                            .action("Extensions", zed_actions::Extensions.boxed_clone())
+                            .separator()
+                            .link(
+                                "Book Onboarding",
+                                OpenBrowser {
+                                    url: BOOK_ONBOARDING.to_string(),
+                                }
+                                .boxed_clone(),
+                            )
                     })
                     .into()
                 })

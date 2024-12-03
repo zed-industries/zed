@@ -1,6 +1,6 @@
-use crate::wasm_host::parse_wasm_extension_version;
-use crate::ExtensionManifest;
-use crate::{extension_manifest::ExtensionLibraryKind, GrammarManifestEntry};
+use crate::{
+    parse_wasm_extension_version, ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry,
+};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -11,7 +11,7 @@ use serde::Deserialize;
 use std::{
     env, fs, mem,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::Arc,
 };
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
@@ -36,7 +36,7 @@ const WASI_ADAPTER_URL: &str =
 const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-21/";
 const WASI_SDK_ASSET_NAME: Option<&str> = if cfg!(target_os = "macos") {
     Some("wasi-sdk-21.0-macos.tar.gz")
-} else if cfg!(target_os = "linux") {
+} else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
     Some("wasi-sdk-21.0-linux.tar.gz")
 } else if cfg!(target_os = "windows") {
     Some("wasi-sdk-21.0.m-mingw.tar.gz")
@@ -130,11 +130,13 @@ impl ExtensionBuilder {
             "compiling Rust crate for extension {}",
             extension_dir.display()
         );
-        let output = Command::new("cargo")
+        let output = util::command::new_std_command("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
             .arg(extension_dir.join("target"))
+            // WASI builds do not work with sccache and just stuck, so disable it.
+            .env("RUSTC_WRAPPER", "")
             .current_dir(extension_dir)
             .output()
             .context("failed to run `cargo`")?;
@@ -235,7 +237,7 @@ impl ExtensionBuilder {
         let scanner_path = src_path.join("scanner.c");
 
         log::info!("compiling {grammar_name} parser");
-        let clang_output = Command::new(&clang_path)
+        let clang_output = util::command::new_std_command(&clang_path)
             .args(["-fPIC", "-shared", "-Os"])
             .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
             .arg("-o")
@@ -262,7 +264,7 @@ impl ExtensionBuilder {
         let git_dir = directory.join(".git");
 
         if directory.exists() {
-            let remotes_output = Command::new("git")
+            let remotes_output = util::command::new_std_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "-v"])
@@ -285,7 +287,7 @@ impl ExtensionBuilder {
             fs::create_dir_all(directory).with_context(|| {
                 format!("failed to create grammar directory {}", directory.display(),)
             })?;
-            let init_output = Command::new("git")
+            let init_output = util::command::new_std_command("git")
                 .arg("init")
                 .current_dir(directory)
                 .output()?;
@@ -296,7 +298,7 @@ impl ExtensionBuilder {
                 );
             }
 
-            let remote_add_output = Command::new("git")
+            let remote_add_output = util::command::new_std_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "add", "origin", url])
@@ -310,14 +312,14 @@ impl ExtensionBuilder {
             }
         }
 
-        let fetch_output = Command::new("git")
+        let fetch_output = util::command::new_std_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["fetch", "--depth", "1", "origin", rev])
             .output()
             .context("failed to execute `git fetch`")?;
 
-        let checkout_output = Command::new("git")
+        let checkout_output = util::command::new_std_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["checkout", rev])
@@ -344,7 +346,7 @@ impl ExtensionBuilder {
     }
 
     fn install_rust_wasm_target_if_needed(&self) -> Result<()> {
-        let rustc_output = Command::new("rustc")
+        let rustc_output = util::command::new_std_command("rustc")
             .arg("--print")
             .arg("sysroot")
             .output()
@@ -361,14 +363,17 @@ impl ExtensionBuilder {
             return Ok(());
         }
 
-        let output = Command::new("rustup")
+        let output = util::command::new_std_command("rustup")
             .args(["target", "add", RUST_TARGET])
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .stdout(Stdio::inherit())
             .output()
             .context("failed to run `rustup target add`")?;
         if !output.status.success() {
-            bail!("failed to install the `{RUST_TARGET}` target");
+            bail!(
+                "failed to install the `{RUST_TARGET}` target: {}",
+                String::from_utf8_lossy(&rustc_output.stderr)
+            );
         }
 
         Ok(())

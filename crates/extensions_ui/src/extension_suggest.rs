@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
-use extension::ExtensionStore;
+use extension_host::ExtensionStore;
 use gpui::{Model, VisualContext};
 use language::Buffer;
 use ui::{SharedString, ViewContext};
@@ -17,6 +17,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("astro", &["astro"]),
     ("beancount", &["beancount"]),
     ("clojure", &["bb", "clj", "cljc", "cljs", "edn"]),
+    ("neocmake", &["CMakeLists.txt", "cmake"]),
     ("csharp", &["cs"]),
     ("dart", &["dart"]),
     ("dockerfile", &["Dockerfile"]),

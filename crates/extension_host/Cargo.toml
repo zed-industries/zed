@@ -1,0 +1,65 @@
+[package]
+name = "extension_host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/extension_host.rs"
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+anyhow.workspace = true
+async-compression.workspace = true
+async-tar.workspace = true
+async-trait.workspace = true
+client.workspace = true
+collections.workspace = true
+context_server_settings.workspace = true
+extension.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+http_client.workspace = true
+language.workspace = true
+log.workspace = true
+lsp.workspace = true
+node_runtime.workspace = true
+paths.workspace = true
+project.workspace = true
+remote.workspace = true
+release_channel.workspace = true
+schemars.workspace = true
+semantic_version.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_json_lenient.workspace = true
+settings.workspace = true
+task.workspace = true
+tempfile.workspace = true
+toml.workspace = true
+url.workspace = true
+util.workspace = true
+wasmparser.workspace = true
+wasmtime-wasi.workspace = true
+wasmtime.workspace = true
+
+[dev-dependencies]
+ctor.workspace = true
+env_logger.workspace = true
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+language_extension.workspace = true
+parking_lot.workspace = true
+project = { workspace = true, features = ["test-support"] }
+reqwest_client.workspace = true
+theme = { workspace = true, features = ["test-support"] }
+theme_extension.workspace = true

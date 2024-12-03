@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    rems, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View,
-    ViewContext, WeakView,
+    EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
+    WeakView,
 };
 use language::Diagnostic;
 use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
@@ -77,8 +77,10 @@ impl Render for DiagnosticIndicator {
         };
 
         h_flex()
-            .h(rems(1.375))
             .gap_2()
+            .pl_1()
+            .border_l_1()
+            .border_color(cx.theme().colors().border)
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)
@@ -136,11 +138,12 @@ impl DiagnosticIndicator {
     }
 
     fn update(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-        let editor = editor.read(cx);
-        let buffer = editor.buffer().read(cx);
-        let cursor_position = editor.selections.newest::<usize>(cx).head();
+        let (buffer, cursor_position) = editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let cursor_position = editor.selections.newest::<usize>(cx).head();
+            (buffer, cursor_position)
+        });
         let new_diagnostic = buffer
-            .snapshot(cx)
             .diagnostics_in_range::<_, usize>(cursor_position..cursor_position, false)
             .filter(|entry| !entry.range.is_empty())
             .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))

@@ -1,5 +1,5 @@
 use crate::{
-    display_map::{InlayOffset, ToDisplayPoint},
+    display_map::{invisibles::is_invisible, InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
@@ -7,11 +7,11 @@ use crate::{
 };
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, FontWeight, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, ScrollHandle, Size, StatefulInteractiveElement,
+    MouseButton, ParentElement, Pixels, ScrollHandle, Size, Stateful, StatefulInteractiveElement,
     StyleRefinement, Styled, Task, TextStyleRefinement, View, ViewContext,
 };
 use itertools::Itertools;
-use language::{DiagnosticEntry, Language, LanguageRegistry};
+use language::{Diagnostic, DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
@@ -21,7 +21,7 @@ use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::{prelude::*, window_is_transparent};
+use ui::{prelude::*, window_is_transparent, Scrollbar, ScrollbarState};
 use util::TryFutureExt;
 pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
@@ -144,10 +144,12 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 let blocks = vec![inlay_hover.tooltip];
                 let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
 
+                let scroll_handle = ScrollHandle::new();
                 let hover_popover = InfoPopover {
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
-                    scroll_handle: ScrollHandle::new(),
+                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                    scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(false)),
                     anchor: None,
                 };
@@ -259,7 +261,7 @@ fn show_hover(
             }
 
             // If there's a diagnostic, assign it on the hover state and notify
-            let local_diagnostic = snapshot
+            let mut local_diagnostic = snapshot
                 .buffer_snapshot
                 .diagnostics_in_range::<_, usize>(anchor..anchor, false)
                 // Find the entry with the most specific range
@@ -280,6 +282,41 @@ fn show_hover(
                         range: entry.range.to_anchors(&snapshot.buffer_snapshot),
                     })
             });
+            if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let after = snapshot.buffer_snapshot.anchor_after(
+                    anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
+                );
+                local_diagnostic = Some(DiagnosticEntry {
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: format!("Unicode character U+{:02X}", invisible as u32),
+                        ..Default::default()
+                    },
+                    range: anchor..after,
+                })
+            } else if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .reversed_chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let before = snapshot.buffer_snapshot.anchor_before(
+                    anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
+                );
+                local_diagnostic = Some(DiagnosticEntry {
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: format!("Unicode character U+{:02X}", invisible as u32),
+                        ..Default::default()
+                    },
+                    range: before..anchor,
+                })
+            }
 
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
@@ -400,12 +437,14 @@ fn show_hover(
                 let language = hover_result.language;
                 let parsed_content =
                     parse_blocks(&blocks, &language_registry, language, &mut cx).await;
+                let scroll_handle = ScrollHandle::new();
                 info_popover_tasks.push((
                     range.clone(),
                     InfoPopover {
                         symbol_range: RangeInEditor::Text(range),
                         parsed_content,
-                        scroll_handle: ScrollHandle::new(),
+                        scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                        scroll_handle,
                         keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                         anchor: Some(anchor),
                     },
@@ -576,7 +615,7 @@ impl HoverState {
         !self.info_popovers.is_empty() || self.diagnostic_popover.is_some()
     }
 
-    pub fn render(
+    pub(crate) fn render(
         &mut self,
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
@@ -645,25 +684,25 @@ impl HoverState {
 }
 
 #[derive(Debug, Clone)]
-
-pub struct InfoPopover {
-    pub symbol_range: RangeInEditor,
-    pub parsed_content: Option<View<Markdown>>,
-    pub scroll_handle: ScrollHandle,
-    pub keyboard_grace: Rc<RefCell<bool>>,
-    pub anchor: Option<Anchor>,
+pub(crate) struct InfoPopover {
+    pub(crate) symbol_range: RangeInEditor,
+    pub(crate) parsed_content: Option<View<Markdown>>,
+    pub(crate) scroll_handle: ScrollHandle,
+    pub(crate) scrollbar_state: ScrollbarState,
+    pub(crate) keyboard_grace: Rc<RefCell<bool>>,
+    pub(crate) anchor: Option<Anchor>,
 }
 
 impl InfoPopover {
-    pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
+    pub(crate) fn render(
+        &mut self,
+        max_size: Size<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut d = div()
             .id("info_popover")
             .elevation_2(cx)
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle)
-            .max_w(max_size.width)
-            .max_h(max_size.height)
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
@@ -671,11 +710,21 @@ impl InfoPopover {
                 let mut keyboard_grace = keyboard_grace.borrow_mut();
                 *keyboard_grace = false;
                 cx.stop_propagation();
-            })
-            .p_2();
+            });
 
         if let Some(markdown) = &self.parsed_content {
-            d = d.child(markdown.clone());
+            d = d
+                .child(
+                    div()
+                        .id("info-md-container")
+                        .overflow_y_scroll()
+                        .max_w(max_size.width)
+                        .max_h(max_size.height)
+                        .p_2()
+                        .track_scroll(&self.scroll_handle)
+                        .child(markdown.clone()),
+                )
+                .child(self.render_vertical_scrollbar(cx));
         }
         d.into_any_element()
     }
@@ -688,6 +737,38 @@ impl InfoPopover {
         ) / 2.0;
         cx.notify();
         self.scroll_handle.set_offset(current);
+    }
+    fn render_vertical_scrollbar(&self, cx: &mut ViewContext<Editor>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("info-popover-vertical-scroll")
+            .on_mouse_move(cx.listener(|_, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
 }
 
@@ -1313,6 +1394,61 @@ mod tests {
         cx.background_executor.run_until_parked();
         cx.editor(|Editor { hover_state, .. }, _| {
             hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
+        });
+    }
+
+    #[gpui::test]
+    // https://github.com/zed-industries/zed/issues/15498
+    async fn test_info_hover_with_hrs(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn fuˇnc(abc def: i32) -> u32 {
+            }
+        "});
+
+        cx.lsp.handle_request::<lsp::request::HoverRequest, _, _>({
+            |_, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: indoc!(
+                            r#"
+                    ### function `errands_data_read`
+
+                    ---
+                    → `char *`
+                    Function to read a file into a string
+
+                    ---
+                    ```cpp
+                    static char *errands_data_read()
+                    ```
+                    "#
+                        )
+                        .to_string(),
+                    }),
+                    range: None,
+                }))
+            }
+        });
+        cx.update_editor(|editor, cx| hover(editor, &Default::default(), cx));
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, cx| {
+            let popover = editor.hover_state.info_popovers.first().unwrap();
+            let content = popover.get_rendered_text(cx);
+
+            assert!(content.contains("Function to read a file"));
         });
     }
 

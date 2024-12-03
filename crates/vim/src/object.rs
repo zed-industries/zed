@@ -28,6 +28,7 @@ pub enum Object {
     CurlyBrackets,
     AngleBrackets,
     Argument,
+    IndentObj { include_below: bool },
     Tag,
 }
 
@@ -37,8 +38,14 @@ struct Word {
     #[serde(default)]
     ignore_punctuation: bool,
 }
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct IndentObj {
+    #[serde(default)]
+    include_below: bool,
+}
 
-impl_actions!(vim, [Word]);
+impl_actions!(vim, [Word, IndentObj]);
 
 actions!(
     vim,
@@ -100,6 +107,13 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &Argument, cx| {
         vim.object(Object::Argument, cx)
     });
+    Vim::action(
+        editor,
+        cx,
+        |vim, &IndentObj { include_below }: &IndentObj, cx| {
+            vim.object(Object::IndentObj { include_below }, cx)
+        },
+    );
 }
 
 impl Vim {
@@ -129,13 +143,18 @@ impl Object {
             | Object::AngleBrackets
             | Object::CurlyBrackets
             | Object::SquareBrackets
-            | Object::Argument => true,
+            | Object::Argument
+            | Object::IndentObj { .. } => true,
         }
     }
 
     pub fn always_expands_both_ways(self) -> bool {
         match self {
-            Object::Word { .. } | Object::Sentence | Object::Paragraph | Object::Argument => false,
+            Object::Word { .. }
+            | Object::Sentence
+            | Object::Paragraph
+            | Object::Argument
+            | Object::IndentObj { .. } => false,
             Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
@@ -167,7 +186,8 @@ impl Object {
             | Object::AngleBrackets
             | Object::VerticalBars
             | Object::Tag
-            | Object::Argument => Mode::Visual,
+            | Object::Argument
+            | Object::IndentObj { .. } => Mode::Visual,
             Object::Paragraph => Mode::VisualLine,
         }
     }
@@ -204,7 +224,11 @@ impl Object {
             Object::Parentheses => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
             }
-            Object::Tag => surrounding_html_tag(map, selection, around),
+            Object::Tag => {
+                let head = selection.head();
+                let range = selection.range();
+                surrounding_html_tag(map, head, range, around)
+            }
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -215,6 +239,7 @@ impl Object {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '<', '>')
             }
             Object::Argument => argument(map, relative_to, around),
+            Object::IndentObj { include_below } => indent(map, relative_to, around, include_below),
         }
     }
 
@@ -262,9 +287,10 @@ fn in_word(
     Some(start..end)
 }
 
-fn surrounding_html_tag(
+pub fn surrounding_html_tag(
     map: &DisplaySnapshot,
-    selection: Selection<DisplayPoint>,
+    head: DisplayPoint,
+    range: Range<DisplayPoint>,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
     fn read_tag(chars: impl Iterator<Item = char>) -> String {
@@ -286,7 +312,7 @@ fn surrounding_html_tag(
     }
 
     let snapshot = &map.buffer_snapshot;
-    let offset = selection.head().to_offset(map, Bias::Left);
+    let offset = head.to_offset(map, Bias::Left);
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
     let offset = excerpt.map_offset_to_buffer(offset);
@@ -307,14 +333,14 @@ fn surrounding_html_tag(
                 let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
                 let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));
                 // It needs to be handled differently according to the selection length
-                let is_valid = if selection.end.to_offset(map, Bias::Left)
-                    - selection.start.to_offset(map, Bias::Left)
+                let is_valid = if range.end.to_offset(map, Bias::Left)
+                    - range.start.to_offset(map, Bias::Left)
                     <= 1
                 {
                     offset <= last_child.end_byte()
                 } else {
-                    selection.start.to_offset(map, Bias::Left) >= first_child.start_byte()
-                        && selection.end.to_offset(map, Bias::Left) <= last_child.start_byte() + 1
+                    range.start.to_offset(map, Bias::Left) >= first_child.start_byte()
+                        && range.end.to_offset(map, Bias::Left) <= last_child.start_byte() + 1
                 };
                 if open_tag.is_some() && open_tag == close_tag && is_valid {
                     let range = if around {
@@ -564,6 +590,58 @@ fn argument(
     }
 }
 
+fn indent(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    around: bool,
+    include_below: bool,
+) -> Option<Range<DisplayPoint>> {
+    let point = relative_to.to_point(map);
+    let row = point.row;
+
+    let desired_indent = map.line_indent_for_buffer_row(MultiBufferRow(row));
+
+    // Loop backwards until we find a non-blank line with less indent
+    let mut start_row = row;
+    for prev_row in (0..row).rev() {
+        let indent = map.line_indent_for_buffer_row(MultiBufferRow(prev_row));
+        if indent.is_line_empty() {
+            continue;
+        }
+        if indent.spaces < desired_indent.spaces || indent.tabs < desired_indent.tabs {
+            if around {
+                // When around is true, include the first line with less indent
+                start_row = prev_row;
+            }
+            break;
+        }
+        start_row = prev_row;
+    }
+
+    // Loop forwards until we find a non-blank line with less indent
+    let mut end_row = row;
+    let max_rows = map.max_buffer_row().0;
+    for next_row in (row + 1)..=max_rows {
+        let indent = map.line_indent_for_buffer_row(MultiBufferRow(next_row));
+        if indent.is_line_empty() {
+            continue;
+        }
+        if indent.spaces < desired_indent.spaces || indent.tabs < desired_indent.tabs {
+            if around && include_below {
+                // When around is true and including below, include this line
+                end_row = next_row;
+            }
+            break;
+        }
+        end_row = next_row;
+    }
+
+    let end_len = map.buffer_snapshot.line_len(MultiBufferRow(end_row));
+    let start = map.point_to_display_point(Point::new(start_row, 0), Bias::Right);
+    let end = map.point_to_display_point(Point::new(end_row, end_len), Bias::Left);
+    Some(start..end)
+}
+
 fn sentence(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
@@ -738,11 +816,11 @@ fn paragraph(
             let paragraph_start_row = paragraph_start.row();
             if paragraph_start_row.0 != 0 {
                 let previous_paragraph_last_line_start =
-                    Point::new(paragraph_start_row.0 - 1, 0).to_display_point(map);
+                    DisplayPoint::new(paragraph_start_row - 1, 0);
                 paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
             }
         } else {
-            let next_paragraph_start = Point::new(paragraph_end_row.0 + 1, 0).to_display_point(map);
+            let next_paragraph_start = DisplayPoint::new(paragraph_end_row + 1, 0);
             paragraph_end = end_of_paragraph(map, next_paragraph_start);
         }
     }
@@ -1451,6 +1529,94 @@ mod test {
         cx.set_state("let a = [test::callˇ(first_arg)]", Mode::Normal);
         cx.simulate_keystrokes("v i a");
         cx.assert_state("let a = [«test::call(first_arg)ˇ»]", Mode::Visual);
+    }
+
+    #[gpui::test]
+    async fn test_indent_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Base use case
+        cx.set_state(
+            indoc! {"
+                fn boop() {
+                    // Comment
+                    baz();ˇ
+
+                    loop {
+                        bar(1);
+                        bar(2);
+                    }
+
+                    result
+                }
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v i i");
+        cx.assert_state(
+            indoc! {"
+                fn boop() {
+                «    // Comment
+                    baz();
+
+                    loop {
+                        bar(1);
+                        bar(2);
+                    }
+
+                    resultˇ»
+                }
+            "},
+            Mode::Visual,
+        );
+
+        // Around indent (include line above)
+        cx.set_state(
+            indoc! {"
+                const ABOVE: str = true;
+                fn boop() {
+
+                    hello();
+                    worˇld()
+                }
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a i");
+        cx.assert_state(
+            indoc! {"
+                const ABOVE: str = true;
+                «fn boop() {
+
+                    hello();
+                    world()ˇ»
+                }
+            "},
+            Mode::Visual,
+        );
+
+        // Around indent (include line above & below)
+        cx.set_state(
+            indoc! {"
+                const ABOVE: str = true;
+                fn boop() {
+                    hellˇo();
+                    world()
+
+                }
+                const BELOW: str = true;
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c a shift-i");
+        cx.assert_state(
+            indoc! {"
+                const ABOVE: str = true;
+                ˇ
+                const BELOW: str = true;
+            "},
+            Mode::Insert,
+        );
     }
 
     #[gpui::test]

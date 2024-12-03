@@ -2,7 +2,7 @@ use anyhow::Context;
 use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
-use language::LanguageServerName;
+use lsp::LanguageServerName;
 use paths::{
     local_settings_file_relative_path, local_tasks_file_relative_path,
     local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
@@ -111,6 +111,16 @@ impl GitSettings {
             _ => None,
         }
     }
+
+    pub fn show_inline_commit_summary(&self) -> bool {
+        match self.inline_blame {
+            Some(InlineBlameSettings {
+                show_commit_summary,
+                ..
+            }) => show_commit_summary,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -141,10 +151,19 @@ pub struct InlineBlameSettings {
     ///
     /// Default: 0
     pub min_column: Option<u32>,
+    /// Whether to show commit summary as part of the inline blame.
+    ///
+    /// Default: false
+    #[serde(default = "false_value")]
+    pub show_commit_summary: bool,
 }
 
 const fn true_value() -> bool {
     true
+}
+
+const fn false_value() -> bool {
+    false
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

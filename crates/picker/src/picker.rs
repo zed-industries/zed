@@ -3,8 +3,8 @@ use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent,
     DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListSizingBehavior, ListState,
-    MouseButton, MouseUpEvent, Render, Task, UniformListScrollHandle, View, ViewContext,
-    WindowContext,
+    MouseButton, MouseUpEvent, Render, ScrollStrategy, Task, UniformListScrollHandle, View,
+    ViewContext, WindowContext,
 };
 use head::Head;
 use serde::Deserialize;
@@ -425,6 +425,19 @@ impl<D: PickerDelegate> Picker<D> {
         self.cancel(&menu::Cancel, cx);
     }
 
+    pub fn refresh_placeholder(&mut self, cx: &mut WindowContext<'_>) {
+        match &self.head {
+            Head::Editor(view) => {
+                let placeholder = self.delegate.placeholder_text(cx);
+                view.update(cx, |this, cx| {
+                    this.set_placeholder_text(placeholder, cx);
+                    cx.notify();
+                });
+            }
+            Head::Empty(_) => {}
+        }
+    }
+
     pub fn refresh(&mut self, cx: &mut ViewContext<Self>) {
         let query = self.query(cx);
         self.update_matches(query, cx);
@@ -495,7 +508,9 @@ impl<D: PickerDelegate> Picker<D> {
     fn scroll_to_item_index(&mut self, ix: usize) {
         match &mut self.element_container {
             ElementContainer::List(state) => state.scroll_to_reveal_item(ix),
-            ElementContainer::UniformList(scroll_handle) => scroll_handle.scroll_to_item(ix),
+            ElementContainer::UniformList(scroll_handle) => {
+                scroll_handle.scroll_to_item(ix, ScrollStrategy::Top)
+            }
         }
     }
 

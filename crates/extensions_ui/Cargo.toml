@@ -11,16 +11,13 @@ workspace = true
 [lib]
 path = "src/extensions_ui.rs"
 
-[features]
-test-support = []
-
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
 db.workspace = true
 editor.workspace = true
-extension.workspace = true
+extension_host.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
@@ -34,11 +31,11 @@ serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 theme.workspace = true
-theme_selector.workspace = true
 ui.workspace = true
 util.workspace = true
-vim.workspace = true
+vim_mode_setting.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

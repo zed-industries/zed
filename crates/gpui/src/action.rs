@@ -1,7 +1,7 @@
 use crate::SharedString;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-pub use no_action::NoAction;
+pub use no_action::{is_no_action, NoAction};
 use serde_json::json;
 use std::any::{Any, TypeId};
 
@@ -321,6 +321,12 @@ macro_rules! __impl_action {
 
 mod no_action {
     use crate as gpui;
+    use std::any::Any as _;
 
     actions!(zed, [NoAction]);
+
+    /// Returns whether or not this action represents a removed key binding.
+    pub fn is_no_action(action: &dyn gpui::Action) -> bool {
+        action.as_any().type_id() == (NoAction {}).type_id()
+    }
 }

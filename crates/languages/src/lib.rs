@@ -2,6 +2,7 @@ use anyhow::Context;
 use gpui::{AppContext, UpdateGlobal};
 use json::json_task_context;
 pub use language::*;
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use python::{PythonContextProvider, PythonToolchainProvider};
 use rust_embed::RustEmbed;
@@ -61,14 +62,15 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
+                config.hidden,
+                Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),
                         context_provider: None,
                         toolchain_provider: None,
                     })
-                },
+                }),
             );
         };
         ($name:literal, $adapters:expr) => {
@@ -82,14 +84,15 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
+                config.hidden,
+                Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),
                         context_provider: None,
                         toolchain_provider: None,
                     })
-                },
+                }),
             );
         };
         ($name:literal, $adapters:expr, $context_provider:expr) => {
@@ -103,14 +106,15 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
+                config.hidden,
+                Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),
                         context_provider: Some(Arc::new($context_provider)),
                         toolchain_provider: None,
                     })
-                },
+                }),
             );
         };
         ($name:literal, $adapters:expr, $context_provider:expr, $toolchain_provider:expr) => {
@@ -124,14 +128,15 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
+                config.hidden,
+                Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),
                         context_provider: Some(Arc::new($context_provider)),
                         toolchain_provider: Some($toolchain_provider),
                     })
-                },
+                }),
             );
         };
     }
@@ -174,9 +179,10 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
     language!("markdown-inline");
     language!(
         "python",
-        vec![Arc::new(python::PythonLspAdapter::new(
-            node_runtime.clone(),
-        ))],
+        vec![
+            Arc::new(python::PythonLspAdapter::new(node_runtime.clone(),)),
+            Arc::new(python::PyLspAdapter::new())
+        ],
         PythonContextProvider,
         Arc::new(PythonToolchainProvider::default()) as Arc<dyn ToolchainLister>
     );
@@ -325,7 +331,7 @@ fn load_config(name: &str) -> LanguageConfig {
         .with_context(|| format!("failed to load config.toml for language {name:?}"))
         .unwrap();
 
-    #[cfg(not(feature = "load-grammars"))]
+    #[cfg(not(any(feature = "load-grammars", test)))]
     {
         config = LanguageConfig {
             name: config.name,

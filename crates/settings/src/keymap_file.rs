@@ -19,6 +19,8 @@ pub struct KeymapFile(Vec<KeymapBlock>);
 pub struct KeymapBlock {
     #[serde(default)]
     context: Option<String>,
+    #[serde(default)]
+    use_layout_keys: Option<bool>,
     bindings: BTreeMap<String, KeymapAction>,
 }
 
@@ -74,7 +76,14 @@ impl KeymapFile {
     }
 
     pub fn add_to_cx(self, cx: &mut AppContext) -> Result<()> {
-        for KeymapBlock { context, bindings } in self.0 {
+        let key_equivalents = crate::key_equivalents::get_key_equivalents(&cx.keyboard_layout());
+
+        for KeymapBlock {
+            context,
+            use_layout_keys,
+            bindings,
+        } in self.0
+        {
             let bindings = bindings
                 .into_iter()
                 .filter_map(|(keystroke, action)| {
@@ -110,7 +119,18 @@ impl KeymapFile {
                         )
                     })
                     .log_err()
-                    .map(|action| KeyBinding::load(&keystroke, action, context.as_deref()))
+                    .map(|action| {
+                        KeyBinding::load(
+                            &keystroke,
+                            action,
+                            context.as_deref(),
+                            if use_layout_keys.unwrap_or_default() {
+                                None
+                            } else {
+                                key_equivalents.as_ref()
+                            },
+                        )
+                    })
                 })
                 .collect::<Result<Vec<_>>>()?;
 

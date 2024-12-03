@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use anyhow::{bail, Result};
 
@@ -13,7 +13,7 @@ use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use settings::WorktreeId;
 use util::ResultExt as _;
 
-use crate::worktree_store::WorktreeStore;
+use crate::{worktree_store::WorktreeStore, ProjectEnvironment};
 
 pub struct ToolchainStore(ToolchainStoreInner);
 enum ToolchainStoreInner {
@@ -32,11 +32,13 @@ impl ToolchainStore {
     pub fn local(
         languages: Arc<LanguageRegistry>,
         worktree_store: Model<WorktreeStore>,
+        project_environment: Model<ProjectEnvironment>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let model = cx.new_model(|_| LocalToolchainStore {
             languages,
             worktree_store,
+            project_environment,
             active_toolchains: Default::default(),
         });
         let subscription = cx.subscribe(&model, |_, _, e: &ToolchainStoreEvent, cx| {
@@ -117,6 +119,7 @@ impl ToolchainStore {
             let toolchain = Toolchain {
                 name: toolchain.name.into(),
                 path: toolchain.path.into(),
+                as_json: serde_json::Value::from_str(&toolchain.raw_json)?,
                 language_name,
             };
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
@@ -142,6 +145,7 @@ impl ToolchainStore {
             toolchain: toolchain.map(|toolchain| proto::Toolchain {
                 name: toolchain.name.into(),
                 path: toolchain.path.into(),
+                raw_json: toolchain.as_json.to_string(),
             }),
         })
     }
@@ -180,6 +184,7 @@ impl ToolchainStore {
                 .map(|toolchain| proto::Toolchain {
                     name: toolchain.name.to_string(),
                     path: toolchain.path.to_string(),
+                    raw_json: toolchain.as_json.to_string(),
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -192,7 +197,7 @@ impl ToolchainStore {
             groups,
         })
     }
-    pub(crate) fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
+    pub fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
         match &self.0 {
             ToolchainStoreInner::Local(local, _) => Arc::new(LocalStore(local.downgrade())),
             ToolchainStoreInner::Remote(remote) => Arc::new(RemoteStore(remote.downgrade())),
@@ -203,6 +208,7 @@ impl ToolchainStore {
 struct LocalToolchainStore {
     languages: Arc<LanguageRegistry>,
     worktree_store: Model<WorktreeStore>,
+    project_environment: Model<ProjectEnvironment>,
     active_toolchains: BTreeMap<(WorktreeId, LanguageName), Toolchain>,
 }
 
@@ -296,10 +302,23 @@ impl LocalToolchainStore {
         else {
             return Task::ready(None);
         };
-        cx.spawn(|_| async move {
-            let language = registry.language_for_name(&language_name.0).await.ok()?;
-            let toolchains = language.toolchain_lister()?.list(root.to_path_buf()).await;
-            Some(toolchains)
+
+        let environment = self.project_environment.clone();
+        cx.spawn(|mut cx| async move {
+            let project_env = environment
+                .update(&mut cx, |environment, cx| {
+                    environment.get_environment(Some(worktree_id), Some(root.clone()), cx)
+                })
+                .ok()?
+                .await;
+
+            cx.background_executor()
+                .spawn(async move {
+                    let language = registry.language_for_name(&language_name.0).await.ok()?;
+                    let toolchains = language.toolchain_lister()?;
+                    Some(toolchains.list(root.to_path_buf(), project_env).await)
+                })
+                .await
         })
     }
     pub(crate) fn active_toolchain(
@@ -338,6 +357,7 @@ impl RemoteToolchainStore {
                     toolchain: Some(proto::Toolchain {
                         name: toolchain.name.into(),
                         path: toolchain.path.into(),
+                        raw_json: toolchain.as_json.to_string(),
                     }),
                 })
                 .await
@@ -345,6 +365,7 @@ impl RemoteToolchainStore {
             Some(())
         })
     }
+
     pub(crate) fn list_toolchains(
         &self,
         worktree_id: WorktreeId,
@@ -368,10 +389,13 @@ impl RemoteToolchainStore {
             let toolchains = response
                 .toolchains
                 .into_iter()
-                .map(|toolchain| Toolchain {
-                    language_name: language_name.clone(),
-                    name: toolchain.name.into(),
-                    path: toolchain.path.into(),
+                .filter_map(|toolchain| {
+                    Some(Toolchain {
+                        language_name: language_name.clone(),
+                        name: toolchain.name.into(),
+                        path: toolchain.path.into(),
+                        as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
+                    })
                 })
                 .collect();
             let groups = response
@@ -406,10 +430,13 @@ impl RemoteToolchainStore {
                 .await
                 .log_err()?;
 
-            response.toolchain.map(|toolchain| Toolchain {
-                language_name: language_name.clone(),
-                name: toolchain.name.into(),
-                path: toolchain.path.into(),
+            response.toolchain.and_then(|toolchain| {
+                Some(Toolchain {
+                    language_name: language_name.clone(),
+                    name: toolchain.name.into(),
+                    path: toolchain.path.into(),
+                    as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
+                })
             })
         })
     }

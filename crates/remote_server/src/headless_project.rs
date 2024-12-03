@@ -1,4 +1,6 @@
 use anyhow::{anyhow, Result};
+use extension::ExtensionHostProxy;
+use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context as _, Model, ModelContext, PromptLevel};
 use http_client::HttpClient;
@@ -37,6 +39,7 @@ pub struct HeadlessProject {
     pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
+    pub extensions: Model<HeadlessExtensionStore>,
 }
 
 pub struct HeadlessAppState {
@@ -45,6 +48,7 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
+    pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
 
 impl HeadlessProject {
@@ -61,9 +65,11 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
+            extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        language_extension::init(proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new_model(|cx| {
@@ -78,20 +84,29 @@ impl HeadlessProject {
         });
         let prettier_store = cx.new_model(|cx| {
             PrettierStore::new(
-                node_runtime,
+                node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
                 worktree_store.clone(),
                 cx,
             )
         });
-
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+        let toolchain_store = cx.new_model(|cx| {
+            ToolchainStore::local(
+                languages.clone(),
+                worktree_store.clone(),
+                environment.clone(),
+                cx,
+            )
+        });
+
         let task_store = cx.new_model(|cx| {
             let mut task_store = TaskStore::local(
                 fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
+                toolchain_store.read(cx).as_language_toolchain_store(),
                 environment.clone(),
                 cx,
             );
@@ -108,8 +123,7 @@ impl HeadlessProject {
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             observer
         });
-        let toolchain_store =
-            cx.new_model(|cx| ToolchainStore::local(languages.clone(), worktree_store.clone(), cx));
+
         let lsp_store = cx.new_model(|cx| {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
@@ -118,7 +132,7 @@ impl HeadlessProject {
                 toolchain_store.clone(),
                 environment,
                 languages.clone(),
-                http_client,
+                http_client.clone(),
                 fs.clone(),
                 cx,
             );
@@ -138,6 +152,15 @@ impl HeadlessProject {
             },
         )
         .detach();
+
+        let extensions = HeadlessExtensionStore::new(
+            fs.clone(),
+            http_client.clone(),
+            paths::remote_extensions_dir().to_path_buf(),
+            proxy,
+            node_runtime,
+            cx,
+        );
 
         let client: AnyProtoClient = session.clone().into();
 
@@ -165,6 +188,15 @@ impl HeadlessProject {
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
 
+        client.add_request_handler(
+            extensions.clone().downgrade(),
+            HeadlessExtensionStore::handle_sync_extensions,
+        );
+        client.add_request_handler(
+            extensions.clone().downgrade(),
+            HeadlessExtensionStore::handle_install_extension,
+        );
+
         BufferStore::init(&client);
         WorktreeStore::init(&client);
         SettingsObserver::init(&client);
@@ -182,6 +214,7 @@ impl HeadlessProject {
             task_store,
             next_entry_id: Default::default(),
             languages,
+            extensions,
         }
     }
 

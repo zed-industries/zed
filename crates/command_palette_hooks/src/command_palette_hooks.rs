@@ -39,11 +39,13 @@ impl CommandPaletteFilter {
     }
 
     /// Updates the global [`CommandPaletteFilter`] using the given closure.
-    pub fn update_global<F, R>(cx: &mut AppContext, update: F) -> R
+    pub fn update_global<F>(cx: &mut AppContext, update: F)
     where
-        F: FnOnce(&mut Self, &mut AppContext) -> R,
+        F: FnOnce(&mut Self, &mut AppContext),
     {
-        cx.update_global(|this: &mut GlobalCommandPaletteFilter, cx| update(&mut this.0, cx))
+        if cx.has_global::<GlobalCommandPaletteFilter>() {
+            cx.update_global(|this: &mut GlobalCommandPaletteFilter, cx| update(&mut this.0, cx))
+        }
     }
 
     /// Returns whether the given [`Action`] is hidden by the filter.

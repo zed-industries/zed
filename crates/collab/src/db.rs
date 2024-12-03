@@ -740,6 +740,7 @@ impl ProjectCollaborator {
             peer_id: Some(self.connection_id.into()),
             replica_id: self.replica_id.0 as u32,
             user_id: self.user_id.to_proto(),
+            is_host: self.is_host,
         }
     }
 }

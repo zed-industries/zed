@@ -1,0 +1,49 @@
+[package]
+name = "language_models"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/language_models.rs"
+
+[dependencies]
+anthropic = { workspace = true, features = ["schemars"] }
+anyhow.workspace = true
+client.workspace = true
+collections.workspace = true
+copilot = { workspace = true, features = ["schemars"] }
+editor.workspace = true
+feature_flags.workspace = true
+fs.workspace = true
+futures.workspace = true
+google_ai = { workspace = true, features = ["schemars"] }
+gpui.workspace = true
+http_client.workspace = true
+language_model.workspace = true
+menu.workspace = true
+ollama = { workspace = true, features = ["schemars"] }
+open_ai = { workspace = true, features = ["schemars"] }
+project.workspace = true
+proto.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+smol.workspace = true
+strum.workspace = true
+telemetry_events.workspace = true
+theme.workspace = true
+thiserror.workspace = true
+tiktoken-rs.workspace = true
+ui.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+language_model = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }

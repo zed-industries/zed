@@ -43,6 +43,8 @@
 - [Inline Assistant](./assistant/inline-assistant.md)
 - [Commands](./assistant/commands.md)
 - [Prompts](./assistant/prompting.md)
+- [Context Servers](./assistant/context-servers.md)
+  - [Model Context Protocol](./assistant/model-context-protocol.md)
 
 # Extensions
 
@@ -51,11 +53,13 @@
 - [Developing Extensions](./extensions/developing-extensions.md)
 - [Language Extensions](./extensions/languages.md)
 - [Theme Extensions](./extensions/themes.md)
-- [Slash Commands](./extensions/slash-commands.md)
+- [Slash Command Extensions](./extensions/slash-commands.md)
+- [Context Server Extensions](./extensions/context-servers.md)
 
 # Language Support
 
 - [All Languages](./languages.md)
+- [Ansible](./languages/ansible.md)
 - [AsciiDoc](./languages/asciidoc.md)
 - [Astro](./languages/astro.md)
 - [Bash](./languages/bash.md)
@@ -129,10 +133,3 @@
   - [Local Collaboration](./development/local-collaboration.md)
 - [Release Process](./development/releases.md)
 - [Debugging Crashes](./development/debugging-crashes.md)
-
-# Community
-
-- [Code of Conduct](./code-of-conduct.md)
-- [Contributing to Zed](./contribute-to-zed.md)
-- [Conversations](./conversations.md)
-- [Feedback and Support](./feedback-and-support.md)

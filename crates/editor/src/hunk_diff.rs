@@ -399,6 +399,12 @@ impl Editor {
         }
     }
 
+    fn has_multiple_hunks(&self, cx: &AppContext) -> bool {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut hunks = snapshot.git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX);
+        hunks.nth(1).is_some()
+    }
+
     fn hunk_header_block(
         &self,
         hunk: &HoveredHunk,
@@ -425,9 +431,10 @@ impl Editor {
             height: 1,
             style: BlockStyle::Sticky,
             priority: 0,
-            render: Box::new({
+            render: Arc::new({
                 let editor = cx.view().clone();
                 let hunk = hunk.clone();
+                let has_multiple_hunks = self.has_multiple_hunks(cx);
 
                 move |cx| {
                     let hunk_controls_menu_handle =
@@ -435,6 +442,7 @@ impl Editor {
 
                     h_flex()
                         .id(cx.block_id)
+                        .block_mouse_down()
                         .h(cx.line_height())
                         .w_full()
                         .border_t_1()
@@ -470,6 +478,7 @@ impl Editor {
                                                 IconButton::new("next-hunk", IconName::ArrowDown)
                                                     .shape(IconButtonShape::Square)
                                                     .icon_size(IconSize::Small)
+                                                    .disabled(!has_multiple_hunks)
                                                     .tooltip({
                                                         let focus_handle = editor.focus_handle(cx);
                                                         move |cx| {
@@ -498,6 +507,7 @@ impl Editor {
                                                 IconButton::new("prev-hunk", IconName::ArrowUp)
                                                     .shape(IconButtonShape::Square)
                                                     .icon_size(IconSize::Small)
+                                                    .disabled(!has_multiple_hunks)
                                                     .tooltip({
                                                         let focus_handle = editor.focus_handle(cx);
                                                         move |cx| {
@@ -707,12 +717,13 @@ impl Editor {
             height,
             style: BlockStyle::Flex,
             priority: 0,
-            render: Box::new(move |cx| {
+            render: Arc::new(move |cx| {
                 let width = EditorElement::diff_hunk_strip_width(cx.line_height());
                 let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
 
                 h_flex()
                     .id(cx.block_id)
+                    .block_mouse_down()
                     .bg(deleted_hunk_color)
                     .h(height as f32 * cx.line_height())
                     .w_full()

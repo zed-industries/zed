@@ -1001,6 +1001,7 @@ impl InputHandler for TerminalInputHandler {
     fn text_for_range(
         &mut self,
         _: std::ops::Range<usize>,
+        _: &mut Option<std::ops::Range<usize>>,
         _: &mut WindowContext,
     ) -> Option<String> {
         None
@@ -1043,6 +1044,10 @@ impl InputHandler for TerminalInputHandler {
         _: &mut WindowContext,
     ) -> Option<Bounds<Pixels>> {
         self.cursor_bounds
+    }
+
+    fn apple_press_and_hold_enabled(&mut self) -> bool {
+        false
     }
 }
 

@@ -27,7 +27,10 @@ use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;
 
-use ui::{h_flex, prelude::*, IconButton, IconButtonShape, IconName, Tooltip, BASE_REM_SIZE_IN_PX};
+use ui::{
+    h_flex, prelude::*, utils::SearchInputWidth, IconButton, IconButtonShape, IconName, Tooltip,
+    BASE_REM_SIZE_IN_PX,
+};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -38,8 +41,6 @@ use workspace::{
 pub use registrar::DivRegistrar;
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
-const MIN_INPUT_WIDTH_REMS: f32 = 10.;
-const MAX_INPUT_WIDTH_REMS: f32 = 30.;
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
 #[derive(PartialEq, Clone, Deserialize)]
@@ -133,6 +134,10 @@ impl BufferSearchBar {
             },
         )
     }
+
+    pub fn query_editor_focused(&self) -> bool {
+        self.query_editor_focused
+    }
 }
 
 impl EventEmitter<Event> for BufferSearchBar {}
@@ -156,12 +161,12 @@ impl Render for BufferSearchBar {
             query_editor.placeholder_text(cx).is_none()
         }) {
             self.query_editor.update(cx, |editor, cx| {
-                editor.set_placeholder_text("Search", cx);
+                editor.set_placeholder_text("Search…", cx);
             });
         }
 
         self.replacement_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text("Replace with...", cx);
+            editor.set_placeholder_text("Replace with…", cx);
         });
 
         let mut text_color = Color::Default;
@@ -199,21 +204,26 @@ impl Render for BufferSearchBar {
             cx.theme().colors().border
         };
 
+        let container_width = cx.viewport_size().width;
+        let input_width = SearchInputWidth::calc_width(container_width);
+
+        let input_base_styles = || {
+            h_flex()
+                .w(input_width)
+                .h_8()
+                .px_2()
+                .py_1()
+                .border_1()
+                .border_color(editor_border)
+                .rounded_lg()
+        };
+
         let search_line = h_flex()
             .gap_2()
             .child(
-                h_flex()
+                input_base_styles()
                     .id("editor-scroll")
                     .track_scroll(&self.editor_scroll_handle)
-                    .flex_1()
-                    .h_8()
-                    .px_2()
-                    .py_1()
-                    .border_1()
-                    .border_color(editor_border)
-                    .min_w(rems(MIN_INPUT_WIDTH_REMS))
-                    .max_w(rems(MAX_INPUT_WIDTH_REMS))
-                    .rounded_lg()
                     .child(self.render_text_input(&self.query_editor, text_color.color(cx), cx))
                     .when(!hide_inline_icons, |div| {
                         div.children(supported_options.case.then(|| {
@@ -245,8 +255,8 @@ impl Render for BufferSearchBar {
             )
             .child(
                 h_flex()
-                    .flex_none()
-                    .gap_0p5()
+                    .gap_1()
+                    .min_w_64()
                     .when(supported_options.replacement, |this| {
                         this.child(
                             IconButton::new(
@@ -319,20 +329,27 @@ impl Render for BufferSearchBar {
                                 }
                             }),
                     )
-                    .child(render_nav_button(
-                        ui::IconName::ChevronLeft,
-                        self.active_match_index.is_some(),
-                        "Select Previous Match",
-                        &SelectPrevMatch,
-                        focus_handle.clone(),
-                    ))
-                    .child(render_nav_button(
-                        ui::IconName::ChevronRight,
-                        self.active_match_index.is_some(),
-                        "Select Next Match",
-                        &SelectNextMatch,
-                        focus_handle.clone(),
-                    ))
+                    .child(
+                        h_flex()
+                            .pl_2()
+                            .ml_2()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(render_nav_button(
+                                ui::IconName::ChevronLeft,
+                                self.active_match_index.is_some(),
+                                "Select Previous Match",
+                                &SelectPrevMatch,
+                                focus_handle.clone(),
+                            ))
+                            .child(render_nav_button(
+                                ui::IconName::ChevronRight,
+                                self.active_match_index.is_some(),
+                                "Select Next Match",
+                                &SelectNextMatch,
+                                focus_handle.clone(),
+                            )),
+                    )
                     .when(!narrow_mode, |this| {
                         this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
                             Label::new(match_text).size(LabelSize::Small).color(
@@ -349,30 +366,15 @@ impl Render for BufferSearchBar {
         let replace_line = should_show_replace_input.then(|| {
             h_flex()
                 .gap_2()
-                .flex_1()
+                .child(input_base_styles().child(self.render_text_input(
+                    &self.replacement_editor,
+                    cx.theme().colors().text,
+                    cx,
+                )))
                 .child(
                     h_flex()
-                        .flex_1()
-                        // We're giving this a fixed height to match the height of the search input,
-                        // which has an icon inside that is increasing its height.
-                        .h_8()
-                        .px_2()
-                        .py_1()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .rounded_lg()
-                        .min_w(rems(MIN_INPUT_WIDTH_REMS))
-                        .max_w(rems(MAX_INPUT_WIDTH_REMS))
-                        .child(self.render_text_input(
-                            &self.replacement_editor,
-                            cx.theme().colors().text,
-                            cx,
-                        )),
-                )
-                .child(
-                    h_flex()
-                        .flex_none()
-                        .gap_0p5()
+                        .min_w_64()
+                        .gap_1()
                         .child(
                             IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
                                 .shape(IconButtonShape::Square)
@@ -414,6 +416,7 @@ impl Render for BufferSearchBar {
 
         v_flex()
             .id("buffer_search")
+            .gap_2()
             .track_scroll(&self.scroll_handle)
             .key_context(key_context)
             .capture_action(cx.listener(Self::tab))
@@ -442,20 +445,22 @@ impl Render for BufferSearchBar {
             .when(self.supported_options().selection, |this| {
                 this.on_action(cx.listener(Self::toggle_selection))
             })
-            .gap_2()
             .child(
                 h_flex()
+                    .relative()
                     .child(search_line.w_full())
                     .when(!narrow_mode, |div| {
                         div.child(
-                            IconButton::new(SharedString::from("Close"), IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(move |cx| {
-                                    Tooltip::for_action("Close Search Bar", &Dismiss, cx)
-                                })
-                                .on_click(cx.listener(|this, _: &ClickEvent, cx| {
-                                    this.dismiss(&Dismiss, cx)
-                                })),
+                            h_flex().absolute().right_0().child(
+                                IconButton::new(SharedString::from("Close"), IconName::Close)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip(move |cx| {
+                                        Tooltip::for_action("Close Search Bar", &Dismiss, cx)
+                                    })
+                                    .on_click(cx.listener(|this, _: &ClickEvent, cx| {
+                                        this.dismiss(&Dismiss, cx)
+                                    })),
+                            ),
                         )
                     }),
             )
@@ -544,6 +549,9 @@ impl BufferSearchBar {
             this.select_all_matches(action, cx);
         }));
         registrar.register_handler(ForDeployed(|this, _: &editor::actions::Cancel, cx| {
+            this.dismiss(&Dismiss, cx);
+        }));
+        registrar.register_handler(ForDeployed(|this, _: &Dismiss, cx| {
             this.dismiss(&Dismiss, cx);
         }));
 
@@ -650,6 +658,7 @@ impl BufferSearchBar {
             return true;
         }
 
+        cx.propagate();
         false
     }
 
@@ -1856,6 +1865,86 @@ mod tests {
                 });
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_search_query_with_match_whole_word(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let buffer_text = r#"
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                edits,
+                Some(AutoindentMode::Block {
+                    original_indent_columns,
+                }),
+                cx,
+            )
+        });
+
+        this.buffer.update(cx, |buffer, cx| {
+            buffer.edit([(end_of_line..start_of_next_line, replace)], None, cx)
+        });
+        "#
+        .unindent();
+        let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
+        let cx = cx.add_empty_window();
+
+        let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
+
+        let search_bar = cx.new_view(|cx| {
+            let mut search_bar = BufferSearchBar::new(cx);
+            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(cx);
+            search_bar
+        });
+
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search(
+                    "edit\\(",
+                    Some(SearchOptions::WHOLE_WORD | SearchOptions::REGEX),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.select_all_matches(&SelectAllMatches, cx);
+        });
+        search_bar.update(cx, |_, cx| {
+            let all_selections =
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+            assert_eq!(
+                all_selections.len(),
+                2,
+                "Should select all `edit(` in the buffer, but got: {all_selections:?}"
+            );
+        });
+
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search(
+                    "edit(",
+                    Some(SearchOptions::WHOLE_WORD | SearchOptions::CASE_SENSITIVE),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.select_all_matches(&SelectAllMatches, cx);
+        });
+        search_bar.update(cx, |_, cx| {
+            let all_selections =
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+            assert_eq!(
+                all_selections.len(),
+                2,
+                "Should select all `edit(` in the buffer, but got: {all_selections:?}"
+            );
+        });
     }
 
     #[gpui::test]

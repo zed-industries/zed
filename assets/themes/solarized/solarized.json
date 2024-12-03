@@ -519,8 +519,8 @@
             "selection": "#d337813d"
           },
           {
-            "cursor": "#cb4b17ff",
-            "background": "#cb4b17ff",
+            "cursor": "#cb4b16ff",
+            "background": "#cb4b16ff",
             "selection": "#cb4b173d"
           },
           {
@@ -596,7 +596,7 @@
             "font_weight": 700
           },
           "enum": {
-            "color": "#cb4b17ff",
+            "color": "#cb4b16ff",
             "font_style": null,
             "font_weight": null
           },
@@ -621,7 +621,7 @@
             "font_weight": null
           },
           "link_text": {
-            "color": "#cb4b17ff",
+            "color": "#cb4b16ff",
             "font_style": "italic",
             "font_weight": null
           },
@@ -636,7 +636,7 @@
             "font_weight": null
           },
           "operator": {
-            "color": "#cb4b17ff",
+            "color": "#cb4b16ff",
             "font_style": null,
             "font_weight": null
           },
@@ -686,7 +686,7 @@
             "font_weight": null
           },
           "string": {
-            "color": "#cb4b17ff",
+            "color": "#cb4b16ff",
             "font_style": null,
             "font_weight": null
           },
@@ -696,17 +696,17 @@
             "font_weight": null
           },
           "string.regex": {
-            "color": "#cb4b17ff",
+            "color": "#cb4b16ff",
             "font_style": null,
             "font_weight": null
           },
           "string.special": {
-            "color": "#cb4b17ff",
+            "color": "#cb4b16ff",
             "font_style": null,
             "font_weight": null
           },
           "string.special.symbol": {
-            "color": "#cb4b17ff",
+            "color": "#cb4b16ff",
             "font_style": null,
             "font_weight": null
           },
@@ -716,7 +716,7 @@
             "font_weight": null
           },
           "text.literal": {
-            "color": "#cb4b17ff",
+            "color": "#cb4b16ff",
             "font_style": null,
             "font_weight": null
           },

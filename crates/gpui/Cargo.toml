@@ -90,8 +90,8 @@ profiling.workspace = true
 rand = { optional = true, workspace = true }
 raw-window-handle = "0.6"
 refineable.workspace = true
-resvg = { version = "0.41.0", default-features = false }
-usvg = { version = "0.41.0", default-features = false }
+resvg = { version = "0.44.0", default-features = false }
+usvg = { version = "0.44.0", default-features = false }
 schemars.workspace = true
 seahash = "4.1"
 semantic_version.workspace = true
@@ -119,7 +119,7 @@ http_client = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 
 [build-dependencies]
-embed-resource = "2.4"
+embed-resource = "3.0"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.70.0"
@@ -139,10 +139,10 @@ media.workspace = true
 metal = "0.29"
 objc = "0.2"
 
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 # Always used
 flume = "0.11"
 oo7 = "0.3.0"

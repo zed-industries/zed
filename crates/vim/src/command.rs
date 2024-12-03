@@ -101,7 +101,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         let Some(workspace) = vim.workspace(cx) else {
             return;
         };
-        let count = vim.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         workspace.update(cx, |workspace, cx| {
             command_palette::CommandPalette::toggle(
                 workspace,
@@ -628,10 +628,12 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
             ("tabo", "nly"),
             workspace::CloseInactiveItems {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseInactiveItems {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: false,
         }),
         VimCommand::new(
             ("on", "ly"),
@@ -682,11 +684,13 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::str(("Ch", "at"), "chat_panel::ToggleFocus"),
         VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
         VimCommand::str(("A", "I"), "assistant::ToggleFocus"),
+        VimCommand::new(("noh", "lsearch"), search::buffer_search::Dismiss),
         VimCommand::new(("$", ""), EndOfDocument),
         VimCommand::new(("%", ""), EndOfDocument),
         VimCommand::new(("0", ""), StartOfDocument),
         VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
             .bang(editor::actions::ReloadFile),
+        VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
     ]
 }
 

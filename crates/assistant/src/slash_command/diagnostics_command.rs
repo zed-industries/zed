@@ -98,6 +98,10 @@ impl SlashCommand for DiagnosticsSlashCommand {
         "Insert diagnostics".into()
     }
 
+    fn icon(&self) -> IconName {
+        IconName::XCircle
+    }
+
     fn menu_text(&self) -> String {
         self.description()
     }

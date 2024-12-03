@@ -1,6 +1,6 @@
 {
   "core_labels": [
-    "defect",
+    "bug",
     "design",
     "documentation",
     "duplicate",

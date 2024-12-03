@@ -72,7 +72,12 @@ fn main() {
             }
         },
         Some(Commands::Version) => {
-            println!("{}", env!("ZED_PKG_VERSION"));
+            if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
+                println!("{}", build_sha);
+            } else {
+                println!("{}", env!("ZED_PKG_VERSION"));
+            }
+
             std::process::exit(0);
         }
         None => {

@@ -681,7 +681,7 @@ impl Window {
             let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let last_input_timestamp = last_input_timestamp.clone();
-            move || {
+            move |request_frame_options| {
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {
                     handle
@@ -695,7 +695,8 @@ impl Window {
 
                 // Keep presenting the current scene for 1 extra second since the
                 // last input to prevent the display from underclocking the refresh rate.
-                let needs_present = needs_present.get()
+                let needs_present = request_frame_options.require_presentation
+                    || needs_present.get()
                     || (active.get()
                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
@@ -899,7 +900,13 @@ impl<'a> WindowContext<'a> {
 
     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
-    pub fn notify(&mut self, view_id: EntityId) {
+    /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
+    pub fn notify(&mut self, view_id: Option<EntityId>) {
+        let Some(view_id) = view_id else {
+            self.refresh();
+            return;
+        };
+
         for view_id in self
             .window
             .rendered_frame
@@ -1164,13 +1171,7 @@ impl<'a> WindowContext<'a> {
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
     pub fn request_animation_frame(&self) {
         let parent_id = self.parent_view_id();
-        self.on_next_frame(move |cx| {
-            if let Some(parent_id) = parent_id {
-                cx.notify(parent_id)
-            } else {
-                cx.refresh()
-            }
-        });
+        self.on_next_frame(move |cx| cx.notify(parent_id));
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -1240,7 +1241,11 @@ impl<'a> WindowContext<'a> {
     /// that currently owns the mouse cursor.
     /// On mac, this is equivalent to `is_window_active`.
     pub fn is_window_hovered(&self) -> bool {
-        if cfg!(target_os = "linux") {
+        if cfg!(any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )) {
             self.window.hovered.get()
         } else {
             self.is_window_active()
@@ -1751,12 +1756,18 @@ impl<'a> WindowContext<'a> {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
-        window.next_frame.accessed_element_states.extend(
-            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
-        );
+        if let Some(element_states) = window
+            .rendered_frame
+            .accessed_element_states
+            .get(range.start.accessed_element_states_index..range.end.accessed_element_states_index)
+        {
+            window.next_frame.accessed_element_states.extend(
+                element_states
+                    .iter()
+                    .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+            );
+        }
+
         window
             .text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
@@ -1981,9 +1992,7 @@ impl<'a> WindowContext<'a> {
     ///
     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
     /// time.
-    ///
-    /// This asset will not be cached by default, see [Self::use_cached_asset]
-    pub fn use_asset<A: Asset + 'static>(&mut self, source: &A::Source) -> Option<A::Output> {
+    pub fn use_asset<A: Asset>(&mut self, source: &A::Source) -> Option<A::Output> {
         let (task, is_first) = self.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
             if is_first {
@@ -1993,13 +2002,7 @@ impl<'a> WindowContext<'a> {
                     |mut cx| async move {
                         task.await;
 
-                        cx.on_next_frame(move |cx| {
-                            if let Some(parent_id) = parent_id {
-                                cx.notify(parent_id)
-                            } else {
-                                cx.refresh()
-                            }
-                        });
+                        cx.on_next_frame(move |cx| cx.notify(parent_id));
                     }
                 })
                 .detach();
@@ -2162,6 +2165,9 @@ impl<'a> WindowContext<'a> {
     /// A variant of `with_element_state` that allows the element's id to be optional. This is a convenience
     /// method for elements where the element id may or may not be assigned. Prefer using `with_element_state`
     /// when the element is guaranteed to have an id.
+    ///
+    /// The first option means 'no ID provided'
+    /// The second option means 'not yet initialized'
     pub fn with_optional_element_state<S, R>(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -2689,6 +2695,20 @@ impl<'a> WindowContext<'a> {
         });
     }
 
+    /// Removes an image from the sprite atlas.
+    pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
+        for frame_index in 0..data.frame_count() {
+            let params = RenderImageParams {
+                image_id: data.id,
+                frame_index,
+            };
+
+            self.window.sprite_atlas.remove(&params.clone().into());
+        }
+
+        Ok(())
+    }
+
     #[must_use]
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
@@ -3042,7 +3062,7 @@ impl<'a> WindowContext<'a> {
             return true;
         }
 
-        if let Some(input) = keystroke.ime_key {
+        if let Some(input) = keystroke.key_char {
             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
                 input_handler.dispatch_input(&input, self);
                 self.window.platform_window.set_input_handler(input_handler);
@@ -3116,7 +3136,7 @@ impl<'a> WindowContext<'a> {
                     self.window.mouse_position = position;
                     if self.active_drag.is_none() {
                         self.active_drag = Some(AnyDrag {
-                            value: Box::new(paths.clone()),
+                            value: Arc::new(paths.clone()),
                             view: self.new_view(|_| paths).into(),
                             cursor_offset: position,
                         });
@@ -3251,7 +3271,7 @@ impl<'a> WindowContext<'a> {
                 if let Some(key) = key {
                     keystroke = Some(Keystroke {
                         key: key.to_string(),
-                        ime_key: None,
+                        key_char: None,
                         modifiers: Modifiers::default(),
                     });
                 }
@@ -3324,17 +3344,18 @@ impl<'a> WindowContext<'a> {
             return;
         }
 
-        self.pending_input_changed();
         self.propagate_event = true;
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref());
             if !self.propagate_event {
                 self.dispatch_keystroke_observers(event, Some(binding.action));
+                self.pending_input_changed();
                 return;
             }
         }
 
-        self.finish_dispatch_key_event(event, dispatch_path)
+        self.finish_dispatch_key_event(event, dispatch_path);
+        self.pending_input_changed();
     }
 
     fn finish_dispatch_key_event(
@@ -3465,7 +3486,7 @@ impl<'a> WindowContext<'a> {
             if !self.propagate_event {
                 continue 'replay;
             }
-            if let Some(input) = replay.keystroke.ime_key.as_ref().cloned() {
+            if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
                 if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
                     input_handler.dispatch_input(&input, self);
                     self.window.platform_window.set_input_handler(input_handler)
@@ -3664,6 +3685,22 @@ impl<'a> WindowContext<'a> {
         receiver
     }
 
+    /// Returns the current context stack.
+    pub fn context_stack(&self) -> Vec<KeyContext> {
+        let dispatch_tree = &self.window.rendered_frame.dispatch_tree;
+        let node_id = self
+            .window
+            .focus
+            .and_then(|focus_id| dispatch_tree.focusable_node_id(focus_id))
+            .unwrap_or_else(|| dispatch_tree.root_node_id());
+
+        dispatch_tree
+            .dispatch_path(node_id)
+            .iter()
+            .filter_map(move |&node_id| dispatch_tree.node(node_id).context.clone())
+            .collect()
+    }
+
     /// Returns all available actions for the focused element.
     pub fn available_actions(&self) -> Vec<Box<dyn Action>> {
         let node_id = self
@@ -3702,6 +3739,11 @@ impl<'a> WindowContext<'a> {
                 action,
                 &self.window.rendered_frame.dispatch_tree.context_stack,
             )
+    }
+
+    /// Returns key bindings that invoke the given action on the currently focused element.
+    pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
+        RefCell::borrow(&self.keymap).all_bindings_for_input(input)
     }
 
     /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.
@@ -4204,7 +4246,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     pub fn notify(&mut self) {
-        self.window_cx.notify(self.view.entity_id());
+        self.window_cx.notify(Some(self.view.entity_id()));
     }
 
     /// Register a callback to be invoked when the window is resized.

@@ -1,11 +1,13 @@
 #![allow(missing_docs)]
 
-use gpui::{Hsla, WindowBackgroundAppearance};
+use gpui::{Hsla, SharedString, WindowBackgroundAppearance, WindowContext};
 use refineable::Refineable;
 use std::sync::Arc;
+use strum::{AsRefStr, EnumIter, IntoEnumIterator};
 
 use crate::{
-    AccentColors, PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme, SystemColors,
+    AccentColors, ActiveTheme, PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme,
+    SystemColors,
 };
 
 #[derive(Refineable, Clone, Debug, PartialEq)]
@@ -247,6 +249,237 @@ pub struct ThemeColors {
     // UI/Rich Text
     // ===
     pub link_text_hover: Hsla,
+}
+
+#[derive(EnumIter, Debug, Clone, Copy, AsRefStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum ThemeColorField {
+    Border,
+    BorderVariant,
+    BorderFocused,
+    BorderSelected,
+    BorderTransparent,
+    BorderDisabled,
+    ElevatedSurfaceBackground,
+    SurfaceBackground,
+    Background,
+    ElementBackground,
+    ElementHover,
+    ElementActive,
+    ElementSelected,
+    ElementDisabled,
+    DropTargetBackground,
+    GhostElementBackground,
+    GhostElementHover,
+    GhostElementActive,
+    GhostElementSelected,
+    GhostElementDisabled,
+    Text,
+    TextMuted,
+    TextPlaceholder,
+    TextDisabled,
+    TextAccent,
+    Icon,
+    IconMuted,
+    IconDisabled,
+    IconPlaceholder,
+    IconAccent,
+    StatusBarBackground,
+    TitleBarBackground,
+    TitleBarInactiveBackground,
+    ToolbarBackground,
+    TabBarBackground,
+    TabInactiveBackground,
+    TabActiveBackground,
+    SearchMatchBackground,
+    PanelBackground,
+    PanelFocusedBorder,
+    PanelIndentGuide,
+    PanelIndentGuideHover,
+    PanelIndentGuideActive,
+    PaneFocusedBorder,
+    PaneGroupBorder,
+    ScrollbarThumbBackground,
+    ScrollbarThumbHoverBackground,
+    ScrollbarThumbBorder,
+    ScrollbarTrackBackground,
+    ScrollbarTrackBorder,
+    EditorForeground,
+    EditorBackground,
+    EditorGutterBackground,
+    EditorSubheaderBackground,
+    EditorActiveLineBackground,
+    EditorHighlightedLineBackground,
+    EditorLineNumber,
+    EditorActiveLineNumber,
+    EditorInvisible,
+    EditorWrapGuide,
+    EditorActiveWrapGuide,
+    EditorIndentGuide,
+    EditorIndentGuideActive,
+    EditorDocumentHighlightReadBackground,
+    EditorDocumentHighlightWriteBackground,
+    EditorDocumentHighlightBracketBackground,
+    TerminalBackground,
+    TerminalForeground,
+    TerminalBrightForeground,
+    TerminalDimForeground,
+    TerminalAnsiBackground,
+    TerminalAnsiBlack,
+    TerminalAnsiBrightBlack,
+    TerminalAnsiDimBlack,
+    TerminalAnsiRed,
+    TerminalAnsiBrightRed,
+    TerminalAnsiDimRed,
+    TerminalAnsiGreen,
+    TerminalAnsiBrightGreen,
+    TerminalAnsiDimGreen,
+    TerminalAnsiYellow,
+    TerminalAnsiBrightYellow,
+    TerminalAnsiDimYellow,
+    TerminalAnsiBlue,
+    TerminalAnsiBrightBlue,
+    TerminalAnsiDimBlue,
+    TerminalAnsiMagenta,
+    TerminalAnsiBrightMagenta,
+    TerminalAnsiDimMagenta,
+    TerminalAnsiCyan,
+    TerminalAnsiBrightCyan,
+    TerminalAnsiDimCyan,
+    TerminalAnsiWhite,
+    TerminalAnsiBrightWhite,
+    TerminalAnsiDimWhite,
+    LinkTextHover,
+}
+
+impl ThemeColors {
+    pub fn color(&self, field: ThemeColorField) -> Hsla {
+        match field {
+            ThemeColorField::Border => self.border,
+            ThemeColorField::BorderVariant => self.border_variant,
+            ThemeColorField::BorderFocused => self.border_focused,
+            ThemeColorField::BorderSelected => self.border_selected,
+            ThemeColorField::BorderTransparent => self.border_transparent,
+            ThemeColorField::BorderDisabled => self.border_disabled,
+            ThemeColorField::ElevatedSurfaceBackground => self.elevated_surface_background,
+            ThemeColorField::SurfaceBackground => self.surface_background,
+            ThemeColorField::Background => self.background,
+            ThemeColorField::ElementBackground => self.element_background,
+            ThemeColorField::ElementHover => self.element_hover,
+            ThemeColorField::ElementActive => self.element_active,
+            ThemeColorField::ElementSelected => self.element_selected,
+            ThemeColorField::ElementDisabled => self.element_disabled,
+            ThemeColorField::DropTargetBackground => self.drop_target_background,
+            ThemeColorField::GhostElementBackground => self.ghost_element_background,
+            ThemeColorField::GhostElementHover => self.ghost_element_hover,
+            ThemeColorField::GhostElementActive => self.ghost_element_active,
+            ThemeColorField::GhostElementSelected => self.ghost_element_selected,
+            ThemeColorField::GhostElementDisabled => self.ghost_element_disabled,
+            ThemeColorField::Text => self.text,
+            ThemeColorField::TextMuted => self.text_muted,
+            ThemeColorField::TextPlaceholder => self.text_placeholder,
+            ThemeColorField::TextDisabled => self.text_disabled,
+            ThemeColorField::TextAccent => self.text_accent,
+            ThemeColorField::Icon => self.icon,
+            ThemeColorField::IconMuted => self.icon_muted,
+            ThemeColorField::IconDisabled => self.icon_disabled,
+            ThemeColorField::IconPlaceholder => self.icon_placeholder,
+            ThemeColorField::IconAccent => self.icon_accent,
+            ThemeColorField::StatusBarBackground => self.status_bar_background,
+            ThemeColorField::TitleBarBackground => self.title_bar_background,
+            ThemeColorField::TitleBarInactiveBackground => self.title_bar_inactive_background,
+            ThemeColorField::ToolbarBackground => self.toolbar_background,
+            ThemeColorField::TabBarBackground => self.tab_bar_background,
+            ThemeColorField::TabInactiveBackground => self.tab_inactive_background,
+            ThemeColorField::TabActiveBackground => self.tab_active_background,
+            ThemeColorField::SearchMatchBackground => self.search_match_background,
+            ThemeColorField::PanelBackground => self.panel_background,
+            ThemeColorField::PanelFocusedBorder => self.panel_focused_border,
+            ThemeColorField::PanelIndentGuide => self.panel_indent_guide,
+            ThemeColorField::PanelIndentGuideHover => self.panel_indent_guide_hover,
+            ThemeColorField::PanelIndentGuideActive => self.panel_indent_guide_active,
+            ThemeColorField::PaneFocusedBorder => self.pane_focused_border,
+            ThemeColorField::PaneGroupBorder => self.pane_group_border,
+            ThemeColorField::ScrollbarThumbBackground => self.scrollbar_thumb_background,
+            ThemeColorField::ScrollbarThumbHoverBackground => self.scrollbar_thumb_hover_background,
+            ThemeColorField::ScrollbarThumbBorder => self.scrollbar_thumb_border,
+            ThemeColorField::ScrollbarTrackBackground => self.scrollbar_track_background,
+            ThemeColorField::ScrollbarTrackBorder => self.scrollbar_track_border,
+            ThemeColorField::EditorForeground => self.editor_foreground,
+            ThemeColorField::EditorBackground => self.editor_background,
+            ThemeColorField::EditorGutterBackground => self.editor_gutter_background,
+            ThemeColorField::EditorSubheaderBackground => self.editor_subheader_background,
+            ThemeColorField::EditorActiveLineBackground => self.editor_active_line_background,
+            ThemeColorField::EditorHighlightedLineBackground => {
+                self.editor_highlighted_line_background
+            }
+            ThemeColorField::EditorLineNumber => self.editor_line_number,
+            ThemeColorField::EditorActiveLineNumber => self.editor_active_line_number,
+            ThemeColorField::EditorInvisible => self.editor_invisible,
+            ThemeColorField::EditorWrapGuide => self.editor_wrap_guide,
+            ThemeColorField::EditorActiveWrapGuide => self.editor_active_wrap_guide,
+            ThemeColorField::EditorIndentGuide => self.editor_indent_guide,
+            ThemeColorField::EditorIndentGuideActive => self.editor_indent_guide_active,
+            ThemeColorField::EditorDocumentHighlightReadBackground => {
+                self.editor_document_highlight_read_background
+            }
+            ThemeColorField::EditorDocumentHighlightWriteBackground => {
+                self.editor_document_highlight_write_background
+            }
+            ThemeColorField::EditorDocumentHighlightBracketBackground => {
+                self.editor_document_highlight_bracket_background
+            }
+            ThemeColorField::TerminalBackground => self.terminal_background,
+            ThemeColorField::TerminalForeground => self.terminal_foreground,
+            ThemeColorField::TerminalBrightForeground => self.terminal_bright_foreground,
+            ThemeColorField::TerminalDimForeground => self.terminal_dim_foreground,
+            ThemeColorField::TerminalAnsiBackground => self.terminal_ansi_background,
+            ThemeColorField::TerminalAnsiBlack => self.terminal_ansi_black,
+            ThemeColorField::TerminalAnsiBrightBlack => self.terminal_ansi_bright_black,
+            ThemeColorField::TerminalAnsiDimBlack => self.terminal_ansi_dim_black,
+            ThemeColorField::TerminalAnsiRed => self.terminal_ansi_red,
+            ThemeColorField::TerminalAnsiBrightRed => self.terminal_ansi_bright_red,
+            ThemeColorField::TerminalAnsiDimRed => self.terminal_ansi_dim_red,
+            ThemeColorField::TerminalAnsiGreen => self.terminal_ansi_green,
+            ThemeColorField::TerminalAnsiBrightGreen => self.terminal_ansi_bright_green,
+            ThemeColorField::TerminalAnsiDimGreen => self.terminal_ansi_dim_green,
+            ThemeColorField::TerminalAnsiYellow => self.terminal_ansi_yellow,
+            ThemeColorField::TerminalAnsiBrightYellow => self.terminal_ansi_bright_yellow,
+            ThemeColorField::TerminalAnsiDimYellow => self.terminal_ansi_dim_yellow,
+            ThemeColorField::TerminalAnsiBlue => self.terminal_ansi_blue,
+            ThemeColorField::TerminalAnsiBrightBlue => self.terminal_ansi_bright_blue,
+            ThemeColorField::TerminalAnsiDimBlue => self.terminal_ansi_dim_blue,
+            ThemeColorField::TerminalAnsiMagenta => self.terminal_ansi_magenta,
+            ThemeColorField::TerminalAnsiBrightMagenta => self.terminal_ansi_bright_magenta,
+            ThemeColorField::TerminalAnsiDimMagenta => self.terminal_ansi_dim_magenta,
+            ThemeColorField::TerminalAnsiCyan => self.terminal_ansi_cyan,
+            ThemeColorField::TerminalAnsiBrightCyan => self.terminal_ansi_bright_cyan,
+            ThemeColorField::TerminalAnsiDimCyan => self.terminal_ansi_dim_cyan,
+            ThemeColorField::TerminalAnsiWhite => self.terminal_ansi_white,
+            ThemeColorField::TerminalAnsiBrightWhite => self.terminal_ansi_bright_white,
+            ThemeColorField::TerminalAnsiDimWhite => self.terminal_ansi_dim_white,
+            ThemeColorField::LinkTextHover => self.link_text_hover,
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (ThemeColorField, Hsla)> + '_ {
+        ThemeColorField::iter().map(move |field| (field, self.color(field)))
+    }
+
+    pub fn to_vec(&self) -> Vec<(ThemeColorField, Hsla)> {
+        self.iter().collect()
+    }
+}
+
+pub fn all_theme_colors(cx: &WindowContext) -> Vec<(Hsla, SharedString)> {
+    let theme = cx.theme();
+    ThemeColorField::iter()
+        .map(|field| {
+            let color = theme.colors().color(field);
+            let name = field.as_ref().to_string();
+            (color, SharedString::from(name))
+        })
+        .collect()
 }
 
 #[derive(Refineable, Clone, PartialEq)]

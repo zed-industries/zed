@@ -1,8 +1,10 @@
 use crate::components::KernelListItem;
-use crate::KernelStatus;
+use crate::kernels::RemoteRunningKernel;
+use crate::setup_editor_session_actions;
 use crate::{
-    kernels::{Kernel, KernelSpecification, RunningKernel},
+    kernels::{Kernel, KernelSpecification, NativeRunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
+    KernelStatus,
 };
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
@@ -14,8 +16,7 @@ use editor::{
     scroll::Autoscroll,
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
 };
-use futures::io::BufReader;
-use futures::{AsyncBufReadExt as _, FutureExt as _, StreamExt as _};
+use futures::FutureExt as _;
 use gpui::{
     div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
 };
@@ -28,14 +29,13 @@ use runtimelib::{
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
 use ui::{prelude::*, IconButtonShape, Tooltip};
+use util::ResultExt as _;
 
 pub struct Session {
     fs: Arc<dyn Fs>,
     editor: WeakView<Editor>,
     pub kernel: Kernel,
     blocks: HashMap<String, EditorBlock>,
-    messaging_task: Option<Task<()>>,
-    process_status_task: Option<Task<()>>,
     pub kernel_specification: KernelSpecification,
     telemetry: Arc<Telemetry>,
     _buffer_subscription: Subscription,
@@ -120,7 +120,7 @@ impl EditorBlock {
         execution_view: View<ExecutionView>,
         on_close: CloseBlockFn,
     ) -> RenderBlock {
-        let render = move |cx: &mut BlockContext| {
+        Arc::new(move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
             let text_style = crate::outputs::plain::text_style(cx);
 
@@ -162,6 +162,7 @@ impl EditorBlock {
 
             div()
                 .id(cx.block_id)
+                .block_mouse_down()
                 .flex()
                 .items_start()
                 .min_h(text_line_height)
@@ -185,9 +186,7 @@ impl EditorBlock {
                         .child(execution_view),
                 )
                 .into_any_element()
-        };
-
-        Box::new(render)
+        })
     }
 }
 
@@ -207,12 +206,18 @@ impl Session {
             None => Subscription::new(|| {}),
         };
 
+        let editor_handle = editor.clone();
+
+        editor
+            .update(cx, |editor, _cx| {
+                setup_editor_session_actions(editor, editor_handle);
+            })
+            .ok();
+
         let mut session = Self {
             fs,
             editor,
             kernel: Kernel::StartingKernel(Task::ready(()).shared()),
-            messaging_task: None,
-            process_status_task: None,
             blocks: HashMap::default(),
             kernel_specification,
             _buffer_subscription: subscription,
@@ -224,7 +229,7 @@ impl Session {
     }
 
     fn start_kernel(&mut self, cx: &mut ViewContext<Self>) {
-        let kernel_language = self.kernel_specification.kernelspec.language.clone();
+        let kernel_language = self.kernel_specification.language();
         let entity_id = self.editor.entity_id();
         let working_directory = self
             .editor
@@ -233,137 +238,45 @@ impl Session {
             .unwrap_or_else(temp_dir);
 
         self.telemetry.report_repl_event(
-            kernel_language.clone(),
+            kernel_language.into(),
             KernelStatus::Starting.to_string(),
             cx.entity_id().to_string(),
         );
 
-        let kernel = RunningKernel::new(
-            self.kernel_specification.clone(),
-            entity_id,
-            working_directory,
-            self.fs.clone(),
-            cx,
-        );
+        let session_view = cx.view().clone();
+
+        let kernel = match self.kernel_specification.clone() {
+            KernelSpecification::Jupyter(kernel_specification)
+            | KernelSpecification::PythonEnv(kernel_specification) => NativeRunningKernel::new(
+                kernel_specification,
+                entity_id,
+                working_directory,
+                self.fs.clone(),
+                session_view,
+                cx,
+            ),
+            KernelSpecification::Remote(remote_kernel_specification) => RemoteRunningKernel::new(
+                remote_kernel_specification,
+                working_directory,
+                session_view,
+                cx,
+            ),
+        };
 
         let pending_kernel = cx
             .spawn(|this, mut cx| async move {
                 let kernel = kernel.await;
 
                 match kernel {
-                    Ok((mut kernel, mut messages_rx)) => {
+                    Ok(kernel) => {
                         this.update(&mut cx, |session, cx| {
-                            let stderr = kernel.process.stderr.take();
-
-                            cx.spawn(|_session, mut _cx| async move {
-                                if stderr.is_none() {
-                                    return;
-                                }
-                                let reader = BufReader::new(stderr.unwrap());
-                                let mut lines = reader.lines();
-                                while let Some(Ok(line)) = lines.next().await {
-                                    // todo!(): Log stdout and stderr to something the session can show
-                                    log::error!("kernel: {}", line);
-                                }
-                            })
-                            .detach();
-
-                            let stdout = kernel.process.stdout.take();
-
-                            cx.spawn(|_session, mut _cx| async move {
-                                if stdout.is_none() {
-                                    return;
-                                }
-                                let reader = BufReader::new(stdout.unwrap());
-                                let mut lines = reader.lines();
-                                while let Some(Ok(line)) = lines.next().await {
-                                    log::info!("kernel: {}", line);
-                                }
-                            })
-                            .detach();
-
-                            let status = kernel.process.status();
                             session.kernel(Kernel::RunningKernel(kernel), cx);
-
-                            let process_status_task = cx.spawn(|session, mut cx| async move {
-                                let error_message = match status.await {
-                                    Ok(status) => {
-                                        if status.success() {
-                                            log::info!("kernel process exited successfully");
-                                            return;
-                                        }
-
-                                        format!("kernel process exited with status: {:?}", status)
-                                    }
-                                    Err(err) => {
-                                        format!("kernel process exited with error: {:?}", err)
-                                    }
-                                };
-
-                                log::error!("{}", error_message);
-
-                                session
-                                    .update(&mut cx, |session, cx| {
-                                        session.kernel(
-                                            Kernel::ErroredLaunch(error_message.clone()),
-                                            cx,
-                                        );
-
-                                        session.blocks.values().for_each(|block| {
-                                            block.execution_view.update(
-                                                cx,
-                                                |execution_view, cx| {
-                                                    match execution_view.status {
-                                                        ExecutionStatus::Finished => {
-                                                            // Do nothing when the output was good
-                                                        }
-                                                        _ => {
-                                                            // All other cases, set the status to errored
-                                                            execution_view.status =
-                                                                ExecutionStatus::KernelErrored(
-                                                                    error_message.clone(),
-                                                                )
-                                                        }
-                                                    }
-                                                    cx.notify();
-                                                },
-                                            );
-                                        });
-
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            });
-
-                            session.process_status_task = Some(process_status_task);
-
-                            session.messaging_task = Some(cx.spawn(|session, mut cx| async move {
-                                while let Some(message) = messages_rx.next().await {
-                                    session
-                                        .update(&mut cx, |session, cx| {
-                                            session.route(&message, cx);
-                                        })
-                                        .ok();
-                                }
-                            }));
-
-                            // todo!(@rgbkrk): send KernelInfoRequest once our shell channel read/writes are split
-                            // cx.spawn(|this, mut cx| async move {
-                            //     cx.background_executor()
-                            //         .timer(Duration::from_millis(120))
-                            //         .await;
-                            //     this.update(&mut cx, |this, cx| {
-                            //         this.send(KernelInfoRequest {}.into(), cx).ok();
-                            //     })
-                            //     .ok();
-                            // })
-                            // .detach();
                         })
                         .ok();
                     }
                     Err(err) => {
                         this.update(&mut cx, |session, cx| {
-                            session.kernel(Kernel::ErroredLaunch(err.to_string()), cx);
+                            session.kernel_errored(err.to_string(), cx);
                         })
                         .ok();
                     }
@@ -373,6 +286,26 @@ impl Session {
 
         self.kernel(Kernel::StartingKernel(pending_kernel), cx);
         cx.notify();
+    }
+
+    pub fn kernel_errored(&mut self, error_message: String, cx: &mut ViewContext<Self>) {
+        self.kernel(Kernel::ErroredLaunch(error_message.clone()), cx);
+
+        self.blocks.values().for_each(|block| {
+            block.execution_view.update(cx, |execution_view, cx| {
+                match execution_view.status {
+                    ExecutionStatus::Finished => {
+                        // Do nothing when the output was good
+                    }
+                    _ => {
+                        // All other cases, set the status to errored
+                        execution_view.status =
+                            ExecutionStatus::KernelErrored(error_message.clone())
+                    }
+                }
+                cx.notify();
+            });
+        });
     }
 
     fn on_buffer_event(
@@ -408,7 +341,7 @@ impl Session {
 
     fn send(&mut self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
         if let Kernel::RunningKernel(kernel) = &mut self.kernel {
-            kernel.request_tx.try_send(message).ok();
+            kernel.request_tx().try_send(message).ok();
         }
 
         anyhow::Ok(())
@@ -545,7 +478,7 @@ impl Session {
         }
     }
 
-    fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
+    pub fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
         let parent_message_id = match message.parent_header.as_ref() {
             Some(header) => &header.msg_id,
             None => return,
@@ -556,7 +489,7 @@ impl Session {
                 self.kernel.set_execution_state(&status.execution_state);
 
                 self.telemetry.report_repl_event(
-                    self.kernel_specification.kernelspec.language.clone(),
+                    self.kernel_specification.language().into(),
                     KernelStatus::from(&self.kernel).to_string(),
                     cx.entity_id().to_string(),
                 );
@@ -607,7 +540,7 @@ impl Session {
         }
 
         let kernel_status = KernelStatus::from(&kernel).to_string();
-        let kernel_language = self.kernel_specification.kernelspec.language.clone();
+        let kernel_language = self.kernel_specification.language().into();
 
         self.telemetry.report_repl_event(
             kernel_language,
@@ -623,22 +556,18 @@ impl Session {
 
         match kernel {
             Kernel::RunningKernel(mut kernel) => {
-                let mut request_tx = kernel.request_tx.clone();
+                let mut request_tx = kernel.request_tx().clone();
+
+                let forced = kernel.force_shutdown(cx);
 
                 cx.spawn(|this, mut cx| async move {
                     let message: JupyterMessage = ShutdownRequest { restart: false }.into();
                     request_tx.try_send(message).ok();
 
+                    forced.await.log_err();
+
                     // Give the kernel a bit of time to clean up
                     cx.background_executor().timer(Duration::from_secs(3)).await;
-
-                    this.update(&mut cx, |session, _cx| {
-                        session.messaging_task.take();
-                        session.process_status_task.take();
-                    })
-                    .ok();
-
-                    kernel.process.kill().ok();
 
                     this.update(&mut cx, |session, cx| {
                         session.clear_outputs(cx);
@@ -650,8 +579,6 @@ impl Session {
                 .detach();
             }
             _ => {
-                self.messaging_task.take();
-                self.process_status_task.take();
                 self.kernel(Kernel::Shutdown, cx);
             }
         }
@@ -666,7 +593,9 @@ impl Session {
                 // Do nothing if already restarting
             }
             Kernel::RunningKernel(mut kernel) => {
-                let mut request_tx = kernel.request_tx.clone();
+                let mut request_tx = kernel.request_tx().clone();
+
+                let forced = kernel.force_shutdown(cx);
 
                 cx.spawn(|this, mut cx| async move {
                     // Send shutdown request with restart flag
@@ -674,17 +603,11 @@ impl Session {
                     let message: JupyterMessage = ShutdownRequest { restart: true }.into();
                     request_tx.try_send(message).ok();
 
-                    this.update(&mut cx, |session, _cx| {
-                        session.messaging_task.take();
-                        session.process_status_task.take();
-                    })
-                    .ok();
-
                     // Wait for kernel to shutdown
                     cx.background_executor().timer(Duration::from_secs(1)).await;
 
                     // Force kill the kernel if it hasn't shut down
-                    kernel.process.kill().ok();
+                    forced.await.log_err();
 
                     // Start a new kernel
                     this.update(&mut cx, |session, cx| {
@@ -697,9 +620,6 @@ impl Session {
                 .detach();
             }
             _ => {
-                // If it's not already running, we can just clean up and start a new kernel
-                self.messaging_task.take();
-                self.process_status_task.take();
                 self.clear_outputs(cx);
                 self.start_kernel(cx);
             }
@@ -719,7 +639,7 @@ impl Render for Session {
         let (status_text, interrupt_button) = match &self.kernel {
             Kernel::RunningKernel(kernel) => (
                 kernel
-                    .kernel_info
+                    .kernel_info()
                     .as_ref()
                     .map(|info| info.language_info.name.clone()),
                 Some(
@@ -739,7 +659,7 @@ impl Render for Session {
 
         KernelListItem::new(self.kernel_specification.clone())
             .status_color(match &self.kernel {
-                Kernel::RunningKernel(kernel) => match kernel.execution_state {
+                Kernel::RunningKernel(kernel) => match kernel.execution_state() {
                     ExecutionState::Idle => Color::Success,
                     ExecutionState::Busy => Color::Modified,
                 },
@@ -749,7 +669,7 @@ impl Render for Session {
                 Kernel::Shutdown => Color::Disabled,
                 Kernel::Restarting => Color::Modified,
             })
-            .child(Label::new(self.kernel_specification.name.clone()))
+            .child(Label::new(self.kernel_specification.name()))
             .children(status_text.map(|status_text| Label::new(format!("({status_text})"))))
             .button(
                 Button::new("shutdown", "Shutdown")

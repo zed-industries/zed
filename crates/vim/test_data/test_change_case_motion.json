@@ -21,3 +21,7 @@
 {"Get":{"state":"ˇABC def","mode":"Normal"}}
 {"Key":"."}
 {"Get":{"state":"ˇabc def","mode":"Normal"}}
+{"Key":"g"}
+{"Key":"shift-u"}
+{"Key":"$"}
+{"Get":{"state":"ˇABC DEF","mode":"Normal"}}

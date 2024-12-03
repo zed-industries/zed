@@ -20,7 +20,7 @@ pub fn config_dir() -> &'static PathBuf {
                 .join("Zed");
         }
 
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             return if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
                 flatpak_xdg_config.into()
             } else {
@@ -41,7 +41,7 @@ pub fn support_dir() -> &'static PathBuf {
             return home_dir().join("Library/Application Support/Zed");
         }
 
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             return if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
                 flatpak_xdg_data.into()
             } else {
@@ -76,7 +76,7 @@ pub fn temp_dir() -> &'static PathBuf {
                 .join("Zed");
         }
 
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             return if let Ok(flatpak_xdg_cache) = std::env::var("FLATPAK_XDG_CACHE_HOME") {
                 flatpak_xdg_cache.into()
             } else {
@@ -163,6 +163,22 @@ pub fn tasks_file() -> &'static PathBuf {
 pub fn extensions_dir() -> &'static PathBuf {
     static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
     EXTENSIONS_DIR.get_or_init(|| support_dir().join("extensions"))
+}
+
+/// Returns the path to the extensions directory.
+///
+/// This is where installed extensions are stored on a remote.
+pub fn remote_extensions_dir() -> &'static PathBuf {
+    static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    EXTENSIONS_DIR.get_or_init(|| support_dir().join("remote_extensions"))
+}
+
+/// Returns the path to the extensions directory.
+///
+/// This is where installed extensions are stored on a remote.
+pub fn remote_extensions_uploads_dir() -> &'static PathBuf {
+    static UPLOAD_DIR: OnceLock<PathBuf> = OnceLock::new();
+    UPLOAD_DIR.get_or_init(|| remote_extensions_dir().join("uploads"))
 }
 
 /// Returns the path to the themes directory.

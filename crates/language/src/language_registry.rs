@@ -130,6 +130,7 @@ pub struct AvailableLanguage {
     name: LanguageName,
     grammar: Option<Arc<str>>,
     matcher: LanguageMatcher,
+    hidden: bool,
     load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     loaded: bool,
 }
@@ -141,6 +142,9 @@ impl AvailableLanguage {
 
     pub fn matcher(&self) -> &LanguageMatcher {
         &self.matcher
+    }
+    pub fn hidden(&self) -> bool {
+        self.hidden
     }
 }
 
@@ -288,14 +292,15 @@ impl LanguageRegistry {
             config.name.clone(),
             config.grammar.clone(),
             config.matcher.clone(),
-            move || {
+            config.hidden,
+            Arc::new(move || {
                 Ok(LoadedLanguage {
                     config: config.clone(),
                     queries: Default::default(),
                     toolchain_provider: None,
                     context_provider: None,
                 })
-            },
+            }),
         )
     }
 
@@ -436,9 +441,9 @@ impl LanguageRegistry {
         name: LanguageName,
         grammar_name: Option<Arc<str>>,
         matcher: LanguageMatcher,
-        load: impl Fn() -> Result<LoadedLanguage> + 'static + Send + Sync,
+        hidden: bool,
+        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     ) {
-        let load = Arc::new(load);
         let state = &mut *self.state.write();
 
         for existing_language in &mut state.available_languages {
@@ -456,6 +461,7 @@ impl LanguageRegistry {
             grammar: grammar_name,
             matcher,
             load,
+            hidden,
             loaded: false,
         });
         state.version += 1;
@@ -523,6 +529,7 @@ impl LanguageRegistry {
             name: language.name(),
             grammar: language.config.grammar.clone(),
             matcher: language.config.matcher.clone(),
+            hidden: language.config.hidden,
             load: Arc::new(|| Err(anyhow!("already loaded"))),
             loaded: true,
         });
@@ -591,15 +598,12 @@ impl LanguageRegistry {
         async move { rx.await? }
     }
 
-    pub fn available_language_for_name(
-        self: &Arc<Self>,
-        name: &LanguageName,
-    ) -> Option<AvailableLanguage> {
+    pub fn available_language_for_name(self: &Arc<Self>, name: &str) -> Option<AvailableLanguage> {
         let state = self.state.read();
         state
             .available_languages
             .iter()
-            .find(|l| &l.name == name)
+            .find(|l| l.name.0.as_ref() == name)
             .cloned()
     }
 
@@ -965,6 +969,7 @@ impl LanguageRegistryState {
                 tab_size: language.config.tab_size,
                 hard_tabs: language.config.hard_tabs,
                 soft_wrap: language.config.soft_wrap,
+                auto_indent_on_paste: language.config.auto_indent_on_paste,
                 ..Default::default()
             }
             .clone(),

@@ -34,6 +34,7 @@
     "dat": "storage",
     "db": "storage",
     "dbf": "storage",
+    "diff": "diff",
     "dll": "storage",
     "doc": "document",
     "docx": "document",
@@ -58,6 +59,7 @@
     "gitignore": "vcs",
     "gitkeep": "vcs",
     "gitmodules": "vcs",
+    "gleam": "gleam",
     "go": "go",
     "gql": "graphql",
     "graphql": "graphql",
@@ -83,6 +85,7 @@
     "j2k": "image",
     "java": "java",
     "jfif": "image",
+    "jl": "julia",
     "jp2": "image",
     "jpeg": "image",
     "jpg": "image",
@@ -90,7 +93,6 @@
     "json": "storage",
     "jsonc": "storage",
     "jsx": "react",
-    "julia": "julia",
     "jxl": "image",
     "kt": "kotlin",
     "ldf": "storage",
@@ -111,6 +113,7 @@
     "mkv": "video",
     "ml": "ocaml",
     "mli": "ocaml",
+    "mod": "go",
     "mov": "video",
     "mp3": "audio",
     "mp4": "video",
@@ -126,6 +129,7 @@
     "ogg": "audio",
     "opus": "audio",
     "otf": "font",
+    "pcss": "css",
     "pdb": "storage",
     "pdf": "document",
     "php": "php",
@@ -172,6 +176,9 @@
     "tsx": "react",
     "ttf": "font",
     "txt": "document",
+    "v": "v",
+    "vsh": "v",
+    "vv": "v",
     "vue": "vue",
     "wav": "audio",
     "webm": "video",
@@ -180,6 +187,7 @@
     "wmv": "video",
     "woff": "font",
     "woff2": "font",
+    "work": "go",
     "wv": "audio",
     "xls": "document",
     "xlsx": "document",
@@ -234,6 +242,9 @@
     "default": {
       "icon": "icons/file_icons/file.svg"
     },
+    "diff": {
+      "icon": "icons/file_icons/diff.svg"
+    },
     "docker": {
       "icon": "icons/file_icons/docker.svg"
     },
@@ -263,6 +274,9 @@
     },
     "fsharp": {
       "icon": "icons/file_icons/fsharp.svg"
+    },
+    "gleam": {
+      "icon": "icons/file_icons/gleam.svg"
     },
     "go": {
       "icon": "icons/file_icons/go.svg"
@@ -374,6 +388,9 @@
     },
     "typescript": {
       "icon": "icons/file_icons/typescript.svg"
+    },
+    "v": {
+      "icon": "icons/file_icons/v.svg"
     },
     "vcs": {
       "icon": "icons/file_icons/git.svg"

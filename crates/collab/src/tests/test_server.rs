@@ -168,7 +168,7 @@ impl TestServer {
             client::init_settings(cx);
         });
 
-        let clock = Arc::new(FakeSystemClock::default());
+        let clock = Arc::new(FakeSystemClock::new());
         let http = FakeHttpClient::with_404_response();
         let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
         {
@@ -243,6 +243,7 @@ impl TestServer {
                                 client_name,
                                 Principal::User(user),
                                 ZedVersion(SemanticVersion::new(1, 0, 0)),
+                                None,
                                 None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
@@ -512,6 +513,7 @@ impl TestServer {
             rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             clickhouse_client: None,
+            kinesis_client: None,
             config: Config {
                 http_port: 0,
                 database_url: "".into(),
@@ -550,6 +552,10 @@ impl TestServer {
                 stripe_api_key: None,
                 supermaven_admin_api_key: None,
                 user_backfiller_github_access_token: None,
+                kinesis_region: None,
+                kinesis_stream: None,
+                kinesis_access_key: None,
+                kinesis_secret_key: None,
             },
         })
     }

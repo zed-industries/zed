@@ -20,7 +20,7 @@ A common workflow when using the inline assistant is to create a context in the 
 
 ### Example Recipe - Fixing Errors with the Inline Assistant
 
-1. Create a new context in the assistant panel.
+1. Create a new chat in the assistant panel.
 2. Use the `/diagnostic` command to add current diagnostics to the context.
 3. OR use the `/terminal` command to add the current terminal output to the context (maybe a panic, error, or log?)
 4. Use the inline assistant to generate a fix for the error.

@@ -1,15 +1,15 @@
 use crate::headless_project::HeadlessProject;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
+use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{Context, Model, TestAppContext};
+use gpui::{Context, Model, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     language_settings::{language_settings, AllLanguageSettings},
-    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
-    LineEnding,
+    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
 };
-use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind};
+use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{
     search::{SearchQuery, SearchResult},
@@ -529,6 +529,172 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_remote_cancel_language_server_work(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    fs.insert_tree(
+        "/code/project1/.zed",
+        json!({
+            "settings.json": r#"
+          {
+            "languages": {"Rust":{"language_servers":["rust-analyzer"]}},
+            "lsp": {
+              "rust-analyzer": {
+                "binary": {
+                  "path": "~/.cargo/bin/rust-analyzer"
+                }
+              }
+            }
+          }"#
+        }),
+    )
+    .await;
+
+    cx.update_model(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                ..Default::default()
+            },
+        )
+    });
+
+    let mut fake_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_language_server(
+            LanguageServerName("rust-analyzer".into()),
+            Default::default(),
+            None,
+        )
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+
+    cx.run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let mut fake_lsp = fake_lsp.next().await.unwrap();
+
+    // Cancelling all language server work for a given buffer
+    {
+        // Two operations, one cancellable and one not.
+        fake_lsp
+            .start_progress_with(
+                "another-token",
+                lsp::WorkDoneProgressBegin {
+                    cancellable: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        let progress_token = "the-progress-token";
+        fake_lsp
+            .start_progress_with(
+                progress_token,
+                lsp::WorkDoneProgressBegin {
+                    cancellable: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        cx.executor().run_until_parked();
+
+        project.update(cx, |project, cx| {
+            project.cancel_language_server_work_for_buffers([buffer.clone()], cx)
+        });
+
+        cx.executor().run_until_parked();
+
+        // Verify the cancellation was received on the server side
+        let cancel_notification = fake_lsp
+            .receive_notification::<lsp::notification::WorkDoneProgressCancel>()
+            .await;
+        assert_eq!(
+            cancel_notification.token,
+            lsp::NumberOrString::String(progress_token.into())
+        );
+    }
+
+    // Cancelling work by server_id and token
+    {
+        let server_id = fake_lsp.server.server_id();
+        let progress_token = "the-progress-token";
+
+        fake_lsp
+            .start_progress_with(
+                progress_token,
+                lsp::WorkDoneProgressBegin {
+                    cancellable: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        cx.executor().run_until_parked();
+
+        project.update(cx, |project, cx| {
+            project.cancel_language_server_work(server_id, Some(progress_token.into()), cx)
+        });
+
+        cx.executor().run_until_parked();
+
+        // Verify the cancellation was received on the server side
+        let cancel_notification = fake_lsp
+            .receive_notification::<lsp::notification::WorkDoneProgressCancel>()
+            .await;
+        assert_eq!(
+            cancel_notification.token,
+            lsp::NumberOrString::String(progress_token.into())
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -921,6 +1087,45 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_remote_root_rename(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    fs.rename(
+        &PathBuf::from("/code/project1"),
+        &PathBuf::from("/code/project2"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+    worktree.update(cx, |worktree, _| {
+        assert_eq!(worktree.root_name(), "project2")
+    })
+}
+
+#[gpui::test]
 async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -1018,12 +1223,19 @@ pub async fn init_test(
     server_cx: &mut TestAppContext,
 ) -> (Model<Project>, Model<HeadlessProject>) {
     let server_fs = server_fs.clone();
+    cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
     init_logger();
 
     let (opts, ssh_server_client) = SshRemoteClient::fake_server(cx, server_cx);
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
+    let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
     let headless = server_cx.new_model(|cx| {
         client::init_settings(cx);
@@ -1035,6 +1247,7 @@ pub async fn init_test(
                 http_client,
                 node_runtime,
                 languages,
+                extension_host_proxy: proxy,
             },
             cx,
         )
@@ -1067,7 +1280,7 @@ fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<
 
     let client = cx.update(|cx| {
         Client::new(
-            Arc::new(FakeSystemClock::default()),
+            Arc::new(FakeSystemClock::new()),
             FakeHttpClient::with_404_response(),
             cx,
         )

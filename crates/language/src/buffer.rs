@@ -21,6 +21,7 @@ use async_watch as watch;
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::HashMap;
+use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
@@ -40,17 +41,18 @@ use std::{
     borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
     fmt,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
+    num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
     sync::{Arc, LazyLock},
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
     vec,
 };
 use sum_tree::TreeMap;
@@ -103,10 +105,11 @@ pub struct Buffer {
     text: TextBuffer,
     diff_base: Option<BufferDiffBase>,
     git_diff: git::diff::BufferDiff,
+    /// Filesystem state, `None` when there is no path.
     file: Option<Arc<dyn File>>,
     /// The mtime of the file when this buffer was last loaded from
     /// or saved to disk.
-    saved_mtime: Option<SystemTime>,
+    saved_mtime: Option<MTime>,
     /// The version vector when this buffer was last loaded from
     /// or saved to disk.
     saved_version: clock::Global,
@@ -125,7 +128,8 @@ pub struct Buffer {
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     diagnostics_timestamp: clock::Lamport,
-    completion_triggers: Vec<String>,
+    completion_triggers: BTreeSet<String>,
+    completion_triggers_per_language_server: HashMap<LanguageServerId, BTreeSet<String>>,
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
     capability: Capability,
@@ -314,6 +318,8 @@ pub enum Operation {
         triggers: Vec<String>,
         /// The buffer's lamport timestamp.
         lamport_timestamp: clock::Lamport,
+        /// The language server ID.
+        server_id: LanguageServerId,
     },
 }
 
@@ -367,8 +373,9 @@ pub trait File: Send + Sync {
         self.as_local().is_some()
     }
 
-    /// Returns the file's mtime.
-    fn mtime(&self) -> Option<SystemTime>;
+    /// Returns whether the file is new, exists in storage, or has been deleted. Includes metadata
+    /// only available in some states, such as modification time.
+    fn disk_state(&self) -> DiskState;
 
     /// Returns the path of this file relative to the worktree's root directory.
     fn path(&self) -> &Arc<Path>;
@@ -386,14 +393,6 @@ pub trait File: Send + Sync {
     /// This is needed for looking up project-specific settings.
     fn worktree_id(&self, cx: &AppContext) -> WorktreeId;
 
-    /// Returns whether the file has been deleted.
-    fn is_deleted(&self) -> bool;
-
-    /// Returns whether the file existed on disk at one point
-    fn is_created(&self) -> bool {
-        self.mtime().is_some()
-    }
-
     /// Converts this file into an [`Any`] trait object.
     fn as_any(&self) -> &dyn Any;
 
@@ -404,13 +403,41 @@ pub trait File: Send + Sync {
     fn is_private(&self) -> bool;
 }
 
+/// The file's storage status - whether it's stored (`Present`), and if so when it was last
+/// modified. In the case where the file is not stored, it can be either `New` or `Deleted`. In the
+/// UI these two states are distinguished. For example, the buffer tab does not display a deletion
+/// indicator for new files.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum DiskState {
+    /// File created in Zed that has not been saved.
+    New,
+    /// File present on the filesystem.
+    Present { mtime: MTime },
+    /// Deleted file that was previously present.
+    Deleted,
+}
+
+impl DiskState {
+    /// Returns the file's last known modification time on disk.
+    pub fn mtime(self) -> Option<MTime> {
+        match self {
+            DiskState::New => None,
+            DiskState::Present { mtime } => Some(mtime),
+            DiskState::Deleted => None,
+        }
+    }
+}
+
 /// The file associated with a buffer, in the case where the file is on the local disk.
 pub trait LocalFile: File {
     /// Returns the absolute path of this file
     fn abs_path(&self, cx: &AppContext) -> PathBuf;
 
-    /// Loads the file's contents from disk.
+    /// Loads the file contents from disk and returns them as a UTF-8 encoded string.
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
+
+    /// Loads the file's contents from disk.
+    fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>>;
 
     /// Returns true if the file should not be shared with collaborators.
     fn is_private(&self, _: &AppContext) -> bool {
@@ -440,6 +467,7 @@ struct AutoindentRequest {
     before_edit: BufferSnapshot,
     entries: Vec<AutoindentRequestEntry>,
     is_block_mode: bool,
+    ignore_empty_lines: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -696,12 +724,15 @@ impl Buffer {
             }));
         }
 
-        operations.push(proto::serialize_operation(
-            &Operation::UpdateCompletionTriggers {
-                triggers: self.completion_triggers.clone(),
-                lamport_timestamp: self.completion_triggers_timestamp,
-            },
-        ));
+        for (server_id, completions) in &self.completion_triggers_per_language_server {
+            operations.push(proto::serialize_operation(
+                &Operation::UpdateCompletionTriggers {
+                    triggers: completions.iter().cloned().collect(),
+                    lamport_timestamp: self.completion_triggers_timestamp,
+                    server_id: *server_id,
+                },
+            ));
+        }
 
         let text_operations = self.text.operations().clone();
         cx.background_executor().spawn(async move {
@@ -740,7 +771,7 @@ impl Buffer {
         file: Option<Arc<dyn File>>,
         capability: Capability,
     ) -> Self {
-        let saved_mtime = file.as_ref().and_then(|file| file.mtime());
+        let saved_mtime = file.as_ref().and_then(|file| file.disk_state().mtime());
         let snapshot = buffer.snapshot();
         let git_diff = git::diff::BufferDiff::new(&snapshot);
         let syntax_map = Mutex::new(SyntaxMap::new(&snapshot));
@@ -773,6 +804,7 @@ impl Buffer {
             diagnostics: Default::default(),
             diagnostics_timestamp: Default::default(),
             completion_triggers: Default::default(),
+            completion_triggers_per_language_server: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
@@ -943,7 +975,7 @@ impl Buffer {
     }
 
     /// The mtime of the buffer's file when the buffer was last saved or reloaded from disk.
-    pub fn saved_mtime(&self) -> Option<SystemTime> {
+    pub fn saved_mtime(&self) -> Option<MTime> {
         self.saved_mtime
     }
 
@@ -978,7 +1010,7 @@ impl Buffer {
     pub fn did_save(
         &mut self,
         version: clock::Global,
-        mtime: Option<SystemTime>,
+        mtime: Option<MTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
@@ -1003,7 +1035,7 @@ impl Buffer {
         self.reload_task = Some(cx.spawn(|this, mut cx| async move {
             let Some((new_mtime, new_text)) = this.update(&mut cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
-                Some((file.mtime(), file.load(cx)))
+                Some((file.disk_state().mtime(), file.load(cx)))
             })?
             else {
                 return Ok(());
@@ -1044,7 +1076,7 @@ impl Buffer {
         &mut self,
         version: clock::Global,
         line_ending: LineEnding,
-        mtime: Option<SystemTime>,
+        mtime: Option<MTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
@@ -1059,6 +1091,7 @@ impl Buffer {
     /// Updates the [`File`] backing this buffer. This should be called when
     /// the file has changed or has been deleted.
     pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
+        let was_dirty = self.is_dirty();
         let mut file_changed = false;
 
         if let Some(old_file) = self.file.as_ref() {
@@ -1066,21 +1099,12 @@ impl Buffer {
                 file_changed = true;
             }
 
-            if new_file.is_deleted() {
-                if !old_file.is_deleted() {
-                    file_changed = true;
-                    if !self.is_dirty() {
-                        cx.emit(BufferEvent::DirtyChanged);
-                    }
-                }
-            } else {
-                let new_mtime = new_file.mtime();
-                if new_mtime != old_file.mtime() {
-                    file_changed = true;
-
-                    if !self.is_dirty() {
-                        cx.emit(BufferEvent::ReloadNeeded);
-                    }
+            let old_state = old_file.disk_state();
+            let new_state = new_file.disk_state();
+            if old_state != new_state {
+                file_changed = true;
+                if !was_dirty && matches!(new_state, DiskState::Present { .. }) {
+                    cx.emit(BufferEvent::ReloadNeeded)
                 }
             }
         } else {
@@ -1090,6 +1114,9 @@ impl Buffer {
         self.file = Some(new_file);
         if file_changed {
             self.non_text_state_update_count += 1;
+            if was_dirty != self.is_dirty() {
+                cx.emit(BufferEvent::DirtyChanged);
+            }
             cx.emit(BufferEvent::FileHandleChanged);
             cx.notify();
         }
@@ -1355,7 +1382,7 @@ impl Buffer {
 
         let autoindent_requests = self.autoindent_requests.clone();
         Some(async move {
-            let mut indent_sizes = BTreeMap::new();
+            let mut indent_sizes = BTreeMap::<u32, (IndentSize, bool)>::new();
             for request in autoindent_requests {
                 // Resolve each edited range to its row in the current buffer and in the
                 // buffer before this batch of edits.
@@ -1449,10 +1476,12 @@ impl Buffer {
                             let suggested_indent = indent_sizes
                                 .get(&suggestion.basis_row)
                                 .copied()
+                                .map(|e| e.0)
                                 .unwrap_or_else(|| {
                                     snapshot.indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
+
                             if old_suggestions.get(&new_row).map_or(
                                 true,
                                 |(old_indentation, was_within_error)| {
@@ -1460,7 +1489,10 @@ impl Buffer {
                                         && (!suggestion.within_error || *was_within_error)
                                 },
                             ) {
-                                indent_sizes.insert(new_row, suggested_indent);
+                                indent_sizes.insert(
+                                    new_row,
+                                    (suggested_indent, request.ignore_empty_lines),
+                                );
                             }
                         }
                     }
@@ -1468,10 +1500,12 @@ impl Buffer {
                     if let (true, Some(original_indent_column)) =
                         (request.is_block_mode, original_indent_column)
                     {
-                        let new_indent = indent_sizes
-                            .get(&row_range.start)
-                            .copied()
-                            .unwrap_or_else(|| snapshot.indent_size_for_line(row_range.start));
+                        let new_indent =
+                            if let Some((indent, _)) = indent_sizes.get(&row_range.start) {
+                                *indent
+                            } else {
+                                snapshot.indent_size_for_line(row_range.start)
+                            };
                         let delta = new_indent.len as i64 - original_indent_column as i64;
                         if delta != 0 {
                             for row in row_range.skip(1) {
@@ -1486,7 +1520,7 @@ impl Buffer {
                                             Ordering::Equal => {}
                                         }
                                     }
-                                    size
+                                    (size, request.ignore_empty_lines)
                                 });
                             }
                         }
@@ -1497,6 +1531,15 @@ impl Buffer {
             }
 
             indent_sizes
+                .into_iter()
+                .filter_map(|(row, (indent, ignore_empty_lines))| {
+                    if ignore_empty_lines && snapshot.line_len(row) == 0 {
+                        None
+                    } else {
+                        Some((row, indent))
+                    }
+                })
+                .collect()
         })
     }
 
@@ -1731,20 +1774,31 @@ impl Buffer {
     pub fn is_dirty(&self) -> bool {
         self.capability != Capability::ReadOnly
             && (self.has_conflict
-                || self.has_unsaved_edits()
-                || self
-                    .file
-                    .as_ref()
-                    .map_or(false, |file| file.is_deleted() || !file.is_created()))
+                || self.file.as_ref().map_or(false, |file| {
+                    matches!(file.disk_state(), DiskState::New | DiskState::Deleted)
+                })
+                || self.has_unsaved_edits())
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
     /// was last saved or reloaded.
     pub fn has_conflict(&self) -> bool {
-        self.has_conflict
-            || self.file.as_ref().map_or(false, |file| {
-                file.mtime() > self.saved_mtime && self.has_unsaved_edits()
-            })
+        if self.has_conflict {
+            return true;
+        }
+        let Some(file) = self.file.as_ref() else {
+            return false;
+        };
+        match file.disk_state() {
+            DiskState::New => false,
+            DiskState::Present { mtime } => match self.saved_mtime {
+                Some(saved_mtime) => {
+                    mtime.bad_is_greater_than(saved_mtime) && self.has_unsaved_edits()
+                }
+                None => true,
+            },
+            DiskState::Deleted => true,
+        }
     }
 
     /// Gets a [`Subscription`] that tracks all of the changes to the buffer's text.
@@ -2030,6 +2084,7 @@ impl Buffer {
                 before_edit,
                 entries,
                 is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
+                ignore_empty_lines: false,
             }));
         }
 
@@ -2055,6 +2110,30 @@ impl Buffer {
             cx.emit(BufferEvent::DirtyChanged);
         }
         cx.notify();
+    }
+
+    pub fn autoindent_ranges<I, T>(&mut self, ranges: I, cx: &mut ModelContext<Self>)
+    where
+        I: IntoIterator<Item = Range<T>>,
+        T: ToOffset + Copy,
+    {
+        let before_edit = self.snapshot();
+        let entries = ranges
+            .into_iter()
+            .map(|range| AutoindentRequestEntry {
+                range: before_edit.anchor_before(range.start)..before_edit.anchor_after(range.end),
+                first_line_is_new: true,
+                indent_size: before_edit.language_indent_size_at(range.start, cx),
+                original_indent_column: None,
+            })
+            .collect();
+        self.autoindent_requests.push(Arc::new(AutoindentRequest {
+            before_edit,
+            entries,
+            is_block_mode: false,
+            ignore_empty_lines: true,
+        }));
+        self.request_autoindent(cx);
     }
 
     // Inserts newlines at the given position to create an empty line, returning the start of the new line.
@@ -2228,8 +2307,21 @@ impl Buffer {
             Operation::UpdateCompletionTriggers {
                 triggers,
                 lamport_timestamp,
+                server_id,
             } => {
-                self.completion_triggers = triggers;
+                if triggers.is_empty() {
+                    self.completion_triggers_per_language_server
+                        .remove(&server_id);
+                    self.completion_triggers = self
+                        .completion_triggers_per_language_server
+                        .values()
+                        .flat_map(|triggers| triggers.into_iter().cloned())
+                        .collect();
+                } else {
+                    self.completion_triggers_per_language_server
+                        .insert(server_id, triggers.iter().cloned().collect());
+                    self.completion_triggers.extend(triggers);
+                }
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
@@ -2373,13 +2465,31 @@ impl Buffer {
     }
 
     /// Override current completion triggers with the user-provided completion triggers.
-    pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
-        self.completion_triggers.clone_from(&triggers);
+    pub fn set_completion_triggers(
+        &mut self,
+        server_id: LanguageServerId,
+        triggers: BTreeSet<String>,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.completion_triggers_timestamp = self.text.lamport_clock.tick();
+        if triggers.is_empty() {
+            self.completion_triggers_per_language_server
+                .remove(&server_id);
+            self.completion_triggers = self
+                .completion_triggers_per_language_server
+                .values()
+                .flat_map(|triggers| triggers.into_iter().cloned())
+                .collect();
+        } else {
+            self.completion_triggers_per_language_server
+                .insert(server_id, triggers.clone());
+            self.completion_triggers.extend(triggers.iter().cloned());
+        }
         self.send_operation(
             Operation::UpdateCompletionTriggers {
-                triggers,
+                triggers: triggers.iter().cloned().collect(),
                 lamport_timestamp: self.completion_triggers_timestamp,
+                server_id,
             },
             true,
             cx,
@@ -2389,7 +2499,7 @@ impl Buffer {
 
     /// Returns a list of strings which trigger a completion menu for this language.
     /// Usually this is driven by LSP server which returns a list of trigger characters for completions.
-    pub fn completion_triggers(&self) -> &[String] {
+    pub fn completion_triggers(&self) -> &BTreeSet<String> {
         &self.completion_triggers
     }
 
@@ -4103,6 +4213,10 @@ impl<'a> BufferChunks<'a> {
                 diagnostic_endpoints
                     .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
                 *diagnostics = diagnostic_endpoints.into_iter().peekable();
+                self.hint_depth = 0;
+                self.error_depth = 0;
+                self.warning_depth = 0;
+                self.information_depth = 0;
             }
         }
     }
@@ -4321,6 +4435,13 @@ impl IndentSize {
         }
         self
     }
+
+    pub fn len_with_expanded_tabs(&self, tab_size: NonZeroU32) -> usize {
+        match self.kind {
+            IndentKind::Space => self.len as usize,
+            IndentKind::Tab => self.len as usize * tab_size.get() as usize,
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -4343,7 +4464,7 @@ impl File for TestFile {
         None
     }
 
-    fn mtime(&self) -> Option<SystemTime> {
+    fn disk_state(&self) -> DiskState {
         unimplemented!()
     }
 
@@ -4353,10 +4474,6 @@ impl File for TestFile {
 
     fn worktree_id(&self, _: &AppContext) -> WorktreeId {
         WorktreeId::from_usize(0)
-    }
-
-    fn is_deleted(&self) -> bool {
-        unimplemented!()
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

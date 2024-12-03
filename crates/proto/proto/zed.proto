@@ -257,7 +257,6 @@ message Envelope {
         FindSearchCandidatesResponse find_search_candidates_response = 244;
 
         CloseBuffer close_buffer = 245;
-        UpdateUserSettings update_user_settings = 246;
 
         ShutdownRemoteServer shutdown_remote_server = 257;
 
@@ -277,6 +276,7 @@ message Envelope {
 
         LanguageServerPromptRequest language_server_prompt_request = 268;
         LanguageServerPromptResponse language_server_prompt_response = 269;
+
         GitBranches git_branches = 270;
         GitBranchesResponse git_branches_response = 271;
 
@@ -289,7 +289,19 @@ message Envelope {
         ActiveToolchainResponse active_toolchain_response = 277;
 
         GetPathMetadata get_path_metadata = 278;
-        GetPathMetadataResponse get_path_metadata_response = 279; // current max
+        GetPathMetadataResponse get_path_metadata_response = 279;
+
+        GetPanicFiles get_panic_files = 280;
+        GetPanicFilesResponse get_panic_files_response = 281;
+
+        CancelLanguageServerWork cancel_language_server_work = 282;
+
+        LspExtOpenDocs lsp_ext_open_docs = 283;
+        LspExtOpenDocsResponse lsp_ext_open_docs_response = 284;
+
+        SyncExtensions sync_extensions = 285;
+        SyncExtensionsResponse sync_extensions_response = 286;
+        InstallExtension install_extension = 287; // current max
     }
 
     reserved 87 to 88;
@@ -304,6 +316,7 @@ message Envelope {
     reserved 205 to 206;
     reserved 221;
     reserved 224 to 229;
+    reserved 246;
     reserved 247 to 254;
     reserved 255 to 256;
 }
@@ -1254,12 +1267,14 @@ message LspWorkStart {
     optional string title = 4;
     optional string message = 2;
     optional uint32 percentage = 3;
+    optional bool is_cancellable = 5;
 }
 
 message LspWorkProgress {
     string token = 1;
     optional string message = 2;
     optional uint32 percentage = 3;
+    optional bool is_cancellable = 4;
 }
 
 message LspWorkEnd {
@@ -1721,6 +1736,7 @@ message Collaborator {
     PeerId peer_id = 1;
     uint32 replica_id = 2;
     uint64 user_id = 3;
+    bool is_host = 4;
 }
 
 message User {
@@ -1898,6 +1914,7 @@ message Operation {
         uint32 replica_id = 1;
         uint32 lamport_timestamp = 2;
         repeated string triggers = 3;
+        uint64 language_server_id = 4;
     }
 }
 
@@ -2015,6 +2032,17 @@ message LspExtExpandMacroResponse {
     string expansion = 2;
 }
 
+message LspExtOpenDocs {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message LspExtOpenDocsResponse {
+    optional string web = 1;
+    optional string local = 2;
+}
+
 message LspExtSwitchSourceHeader {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
@@ -2116,10 +2144,16 @@ message CommitPermalink {
 }
 
 message BlameBufferResponse {
-    repeated BlameEntry entries = 1;
-    repeated CommitMessage messages = 2;
-    repeated CommitPermalink permalinks = 3;
-    optional string remote_url = 4;
+    message BlameResponse {
+        repeated BlameEntry entries = 1;
+        repeated CommitMessage messages = 2;
+        repeated CommitPermalink permalinks = 3;
+        optional string remote_url = 4;
+    }
+
+    optional BlameResponse blame_response = 5;
+
+    reserved 1 to 4;
 }
 
 message MultiLspQuery {
@@ -2237,9 +2271,13 @@ message ContextOperation {
         InsertMessage insert_message = 1;
         UpdateMessage update_message = 2;
         UpdateSummary update_summary = 3;
-        SlashCommandFinished slash_command_finished = 4;
         BufferOperation buffer_operation = 5;
+        SlashCommandStarted slash_command_started = 6;
+        SlashCommandOutputSectionAdded slash_command_output_section_added = 7;
+        SlashCommandCompleted slash_command_completed = 8;
     }
+
+    reserved 4;
 
     message InsertMessage {
         ContextMessage message = 1;
@@ -2261,11 +2299,24 @@ message ContextOperation {
         repeated VectorClockEntry version = 4;
     }
 
-    message SlashCommandFinished {
+    message SlashCommandStarted {
         LamportTimestamp id = 1;
         AnchorRange output_range = 2;
-        repeated SlashCommandOutputSection sections = 3;
+        string name = 3;
         repeated VectorClockEntry version = 4;
+    }
+
+    message SlashCommandOutputSectionAdded {
+        LamportTimestamp timestamp = 1;
+        SlashCommandOutputSection section = 2;
+        repeated VectorClockEntry version = 3;
+    }
+
+    message SlashCommandCompleted {
+        LamportTimestamp id = 1;
+        LamportTimestamp timestamp = 3;
+        optional string error_message = 4;
+        repeated VectorClockEntry version = 5;
     }
 
     message BufferOperation {
@@ -2347,17 +2398,6 @@ message AddWorktreeResponse {
     string canonicalized_path = 2;
 }
 
-message UpdateUserSettings {
-    uint64 project_id = 1;
-    string content = 2;
-    optional Kind kind = 3;
-
-    enum Kind {
-        Settings = 0;
-        Tasks = 1;
-    }
-}
-
 message GetPathMetadata {
     uint64 project_id = 1;
     string path = 2;
@@ -2433,6 +2473,7 @@ message ListToolchains {
 message Toolchain {
     string name = 1;
     string path = 2;
+    string raw_json = 3;
 }
 
 message ToolchainGroup {
@@ -2482,5 +2523,49 @@ message UpdateGitBranch {
     uint64 project_id = 1;
     string branch_name = 2;
     ProjectPath repository = 3;
+}
 
+message GetPanicFiles {
+}
+
+message GetPanicFilesResponse {
+    repeated string file_contents = 2;
+}
+
+message CancelLanguageServerWork {
+    uint64 project_id = 1;
+
+    oneof work {
+        Buffers buffers = 2;
+        LanguageServerWork language_server_work = 3;
+    }
+
+    message Buffers {
+        repeated uint64 buffer_ids = 2;
+    }
+
+    message LanguageServerWork {
+        uint64 language_server_id = 1;
+        optional string token = 2;
+    }
+}
+
+message Extension {
+    string id = 1;
+    string version = 2;
+    bool dev = 3;
+}
+
+message SyncExtensions {
+    repeated Extension extensions = 1;
+}
+
+message SyncExtensionsResponse {
+    string tmp_dir = 1;
+    repeated Extension missing_extensions = 2;
+}
+
+message InstallExtension {
+    Extension extension = 1;
+    string tmp_dir = 2;
 }

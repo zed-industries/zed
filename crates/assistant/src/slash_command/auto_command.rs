@@ -14,7 +14,7 @@ use language_model::{
 use semantic_index::{FileSummary, SemanticDb};
 use smol::channel;
 use std::sync::{atomic::AtomicBool, Arc};
-use ui::{BorrowAppContext, WindowContext};
+use ui::{prelude::*, BorrowAppContext, WindowContext};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -35,6 +35,10 @@ impl SlashCommand for AutoCommand {
 
     fn description(&self) -> String {
         "Automatically infer what context to add".into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Wand
     }
 
     fn menu_text(&self) -> String {

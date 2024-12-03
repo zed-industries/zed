@@ -21,8 +21,6 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::slash_command::diagnostics_command::collect_buffer_diagnostics;
-
 pub(crate) struct FileSlashCommand;
 
 impl FileSlashCommand {
@@ -117,7 +115,7 @@ impl SlashCommand for FileSlashCommand {
     }
 
     fn description(&self) -> String {
-        "Insert file".into()
+        "Insert file and/or directory".into()
     }
 
     fn menu_text(&self) -> String {
@@ -126,6 +124,10 @@ impl SlashCommand for FileSlashCommand {
 
     fn requires_argument(&self) -> bool {
         true
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::File
     }
 
     fn complete_argument(
@@ -254,8 +256,7 @@ fn collect_files(
                         break;
                     }
                     directory_stack.pop().unwrap();
-                    events_tx
-                        .unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
+                    events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
                     events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                         SlashCommandContent::Text {
                             text: "\n".into(),
@@ -360,7 +361,7 @@ fn collect_files(
             }
 
             while let Some(_) = directory_stack.pop() {
-                events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
+                events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
             }
         }
 
@@ -539,8 +540,6 @@ pub fn append_buffer_to_output(
     output.text.push('\n');
 
     let section_ix = output.sections.len();
-    collect_buffer_diagnostics(output, buffer, false);
-
     output.sections.insert(
         section_ix,
         build_entry_output_section(prev_len..output.text.len(), path, false, None),

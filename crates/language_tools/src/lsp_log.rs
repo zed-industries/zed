@@ -7,10 +7,10 @@ use gpui::{
     IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, View,
     ViewContext, VisualContext, WeakModel, WindowContext,
 };
-use language::{LanguageServerId, LanguageServerName};
+use language::LanguageServerId;
 use lsp::{
-    notification::SetTrace, IoKind, LanguageServer, MessageType, ServerCapabilities,
-    SetTraceParams, TraceValue,
+    notification::SetTrace, IoKind, LanguageServer, LanguageServerName, MessageType,
+    ServerCapabilities, SetTraceParams, TraceValue,
 };
 use project::{search::SearchQuery, Project, WorktreeId};
 use std::{borrow::Cow, sync::Arc};
@@ -751,7 +751,7 @@ impl LspLogView {
         let mut rows = log_store
             .language_servers
             .iter()
-            .filter_map(|(server_id, state)| match &state.kind {
+            .map(|(server_id, state)| match &state.kind {
                 LanguageServerKind::Local { .. } | LanguageServerKind::Remote { .. } => {
                     let worktree_root_name = state
                         .worktree_id
@@ -759,8 +759,7 @@ impl LspLogView {
                         .map(|worktree| worktree.read(cx).root_name().to_string())
                         .unwrap_or_else(|| "Unknown worktree".to_string());
 
-                    let state = log_store.language_servers.get(&server_id)?;
-                    Some(LogMenuItem {
+                    LogMenuItem {
                         server_id: *server_id,
                         server_name: state.name.clone().unwrap_or(unknown_server.clone()),
                         server_kind: state.kind.clone(),
@@ -768,10 +767,10 @@ impl LspLogView {
                         rpc_trace_enabled: state.rpc_state.is_some(),
                         selected_entry: self.active_entry_kind,
                         trace_level: lsp::TraceValue::Off,
-                    })
+                    }
                 }
 
-                LanguageServerKind::Global => Some(LogMenuItem {
+                LanguageServerKind::Global => LogMenuItem {
                     server_id: *server_id,
                     server_name: state.name.clone().unwrap_or(unknown_server.clone()),
                     server_kind: state.kind.clone(),
@@ -779,7 +778,7 @@ impl LspLogView {
                     rpc_trace_enabled: state.rpc_state.is_some(),
                     selected_entry: self.active_entry_kind,
                     trace_level: lsp::TraceValue::Off,
-                }),
+                },
             })
             .chain(
                 self.project
@@ -1186,7 +1185,7 @@ impl Render for LspLogToolbarItemView {
                                 );
                             // We do not support tracing for remote language servers right now
                             if row.server_kind.is_remote() {
-                                return menu;
+                                continue;
                             }
                             menu = menu.entry(
                                 SERVER_TRACE,

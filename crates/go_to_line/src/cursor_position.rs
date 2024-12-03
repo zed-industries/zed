@@ -1,9 +1,9 @@
 use editor::{Editor, ToPoint};
-use gpui::{AppContext, Subscription, View, WeakView};
+use gpui::{AppContext, FocusHandle, FocusableView, Subscription, Task, View, WeakView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use std::fmt::Write;
+use std::{fmt::Write, time::Duration};
 use text::{Point, Selection};
 use ui::{
     div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, ParentElement,
@@ -22,7 +22,9 @@ pub(crate) struct SelectionStats {
 pub struct CursorPosition {
     position: Option<Point>,
     selected_count: SelectionStats,
+    context: Option<FocusHandle>,
     workspace: WeakView<Workspace>,
+    update_position: Task<()>,
     _observe_active_editor: Option<Subscription>,
 }
 
@@ -30,42 +32,76 @@ impl CursorPosition {
     pub fn new(workspace: &Workspace) -> Self {
         Self {
             position: None,
+            context: None,
             selected_count: Default::default(),
             workspace: workspace.weak_handle(),
+            update_position: Task::ready(()),
             _observe_active_editor: None,
         }
     }
 
-    fn update_position(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-        let editor = editor.read(cx);
-        let buffer = editor.buffer().read(cx).snapshot(cx);
-
-        self.selected_count = Default::default();
-        self.selected_count.selections = editor.selections.count();
-        let mut last_selection: Option<Selection<usize>> = None;
-        for selection in editor.selections.all::<usize>(cx) {
-            self.selected_count.characters += buffer
-                .text_for_range(selection.start..selection.end)
-                .map(|t| t.chars().count())
-                .sum::<usize>();
-            if last_selection
-                .as_ref()
-                .map_or(true, |last_selection| selection.id > last_selection.id)
-            {
-                last_selection = Some(selection);
+    fn update_position(
+        &mut self,
+        editor: View<Editor>,
+        debounce: Option<Duration>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let editor = editor.downgrade();
+        self.update_position = cx.spawn(|cursor_position, mut cx| async move {
+            if let Some(debounce) = debounce {
+                cx.background_executor().timer(debounce).await;
             }
-        }
-        for selection in editor.selections.all::<Point>(cx) {
-            if selection.end != selection.start {
-                self.selected_count.lines += (selection.end.row - selection.start.row) as usize;
-                if selection.end.column != 0 {
-                    self.selected_count.lines += 1;
-                }
-            }
-        }
-        self.position = last_selection.map(|s| s.head().to_point(&buffer));
 
-        cx.notify();
+            editor
+                .update(&mut cx, |editor, cx| {
+                    cursor_position.update(cx, |cursor_position, cx| {
+                        cursor_position.selected_count = SelectionStats::default();
+                        cursor_position.selected_count.selections = editor.selections.count();
+                        match editor.mode() {
+                            editor::EditorMode::AutoHeight { .. }
+                            | editor::EditorMode::SingleLine { .. } => {
+                                cursor_position.position = None;
+                                cursor_position.context = None;
+                            }
+                            editor::EditorMode::Full => {
+                                let mut last_selection = None::<Selection<usize>>;
+                                let buffer = editor.buffer().read(cx).snapshot(cx);
+                                if buffer.excerpts().count() > 0 {
+                                    for selection in editor.selections.all::<usize>(cx) {
+                                        cursor_position.selected_count.characters += buffer
+                                            .text_for_range(selection.start..selection.end)
+                                            .map(|t| t.chars().count())
+                                            .sum::<usize>();
+                                        if last_selection.as_ref().map_or(true, |last_selection| {
+                                            selection.id > last_selection.id
+                                        }) {
+                                            last_selection = Some(selection);
+                                        }
+                                    }
+                                    for selection in editor.selections.all::<Point>(cx) {
+                                        if selection.end != selection.start {
+                                            cursor_position.selected_count.lines +=
+                                                (selection.end.row - selection.start.row) as usize;
+                                            if selection.end.column != 0 {
+                                                cursor_position.selected_count.lines += 1;
+                                            }
+                                        }
+                                    }
+                                }
+                                cursor_position.position =
+                                    last_selection.map(|s| s.head().to_point(&buffer));
+                                cursor_position.context = Some(editor.focus_handle(cx));
+                            }
+                        }
+
+                        cx.notify();
+                    })
+                })
+                .ok()
+                .transpose()
+                .ok()
+                .flatten();
+        });
     }
 
     fn write_position(&self, text: &mut String, cx: &AppContext) {
@@ -126,6 +162,8 @@ impl Render for CursorPosition {
             );
             self.write_position(&mut text, cx);
 
+            let context = self.context.clone();
+
             el.child(
                 Button::new("go-to-line-column", text)
                     .label_size(LabelSize::Small)
@@ -142,17 +180,25 @@ impl Render for CursorPosition {
                             });
                         }
                     }))
-                    .tooltip(|cx| {
-                        Tooltip::for_action(
+                    .tooltip(move |cx| match context.as_ref() {
+                        Some(context) => Tooltip::for_action_in(
+                            "Go to Line/Column",
+                            &editor::actions::ToggleGoToLine,
+                            context,
+                            cx,
+                        ),
+                        None => Tooltip::for_action(
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
                             cx,
-                        )
+                        ),
                     }),
             )
         })
     }
 }
+
+const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 impl StatusItemView for CursorPosition {
     fn set_active_pane_item(
@@ -161,8 +207,11 @@ impl StatusItemView for CursorPosition {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
-            self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
-            self.update_position(editor, cx);
+            self._observe_active_editor =
+                Some(cx.observe(&editor, |cursor_position, editor, cx| {
+                    Self::update_position(cursor_position, editor, Some(UPDATE_DEBOUNCE), cx)
+                }));
+            self.update_position(editor, None, cx);
         } else {
             self.position = None;
             self._observe_active_editor = None;

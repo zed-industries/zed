@@ -159,7 +159,9 @@ impl VsCodeThemeConverter {
                 .active_background
                 .clone()
                 .or(vscode_tab_inactive_background.clone()),
+            search_match_background: vscode_colors.editor.find_match_background.clone(),
             panel_background: vscode_colors.panel.background.clone(),
+            pane_group_border: vscode_colors.editor_group.border.clone(),
             scrollbar_thumb_background: vscode_scrollbar_slider_background.clone(),
             scrollbar_thumb_hover_background: vscode_colors
                 .scrollbar_slider
@@ -168,7 +170,6 @@ impl VsCodeThemeConverter {
             scrollbar_thumb_border: vscode_scrollbar_slider_background.clone(),
             scrollbar_track_background: vscode_editor_background.clone(),
             scrollbar_track_border: vscode_colors.editor_overview_ruler.border.clone(),
-            pane_group_border: vscode_colors.editor_group.border.clone(),
             editor_foreground: vscode_editor_foreground
                 .clone()
                 .or(vscode_token_colors_foreground.clone()),
@@ -179,6 +180,10 @@ impl VsCodeThemeConverter {
             editor_active_line_number: vscode_colors.editor.foreground.clone(),
             editor_wrap_guide: vscode_panel_border.clone(),
             editor_active_wrap_guide: vscode_panel_border.clone(),
+            editor_document_highlight_bracket_background: vscode_colors
+                .editor_bracket_match
+                .background
+                .clone(),
             terminal_background: vscode_colors.terminal.background.clone(),
             terminal_ansi_black: vscode_colors.terminal.ansi_black.clone(),
             terminal_ansi_bright_black: vscode_colors.terminal.ansi_bright_black.clone(),

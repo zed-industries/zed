@@ -16,7 +16,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 
 impl Vim {
     fn move_to_change(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
-        let count = self.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         if self.change_list.is_empty() {
             return;
         }

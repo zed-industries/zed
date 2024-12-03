@@ -1,7 +1,7 @@
 use anyhow::{bail, Context};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::{
-    fmt,
+    fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
 };
 
@@ -20,6 +20,17 @@ pub fn rgba(hex: u32) -> Rgba {
     let b = ((hex >> 8) & 0xFF) as f32 / 255.0;
     let a = (hex & 0xFF) as f32 / 255.0;
     Rgba { r, g, b, a }
+}
+
+/// Swap from RGBA with premultiplied alpha to BGRA
+pub(crate) fn swap_rgba_pa_to_bgra(color: &mut [u8]) {
+    color.swap(0, 2);
+    if color[3] > 0 {
+        let a = color[3] as f32 / 255.;
+        color[0] = (color[0] as f32 / a) as u8;
+        color[1] = (color[1] as f32 / a) as u8;
+        color[2] = (color[2] as f32 / a) as u8;
+    }
 }
 
 /// An RGBA color
@@ -279,6 +290,19 @@ impl Hash for Hsla {
     }
 }
 
+impl Display for Hsla {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "hsla({:.2}, {:.2}%, {:.2}%, {:.2})",
+            self.h * 360.,
+            self.s * 100.,
+            self.l * 100.,
+            self.a
+        )
+    }
+}
+
 /// Construct an [`Hsla`] object from plain values
 pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
     Hsla {
@@ -290,7 +314,7 @@ pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
 }
 
 /// Pure black in [`Hsla`]
-pub fn black() -> Hsla {
+pub const fn black() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -300,7 +324,7 @@ pub fn black() -> Hsla {
 }
 
 /// Transparent black in [`Hsla`]
-pub fn transparent_black() -> Hsla {
+pub const fn transparent_black() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -310,7 +334,7 @@ pub fn transparent_black() -> Hsla {
 }
 
 /// Transparent black in [`Hsla`]
-pub fn transparent_white() -> Hsla {
+pub const fn transparent_white() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -330,7 +354,7 @@ pub fn opaque_grey(lightness: f32, opacity: f32) -> Hsla {
 }
 
 /// Pure white in [`Hsla`]
-pub fn white() -> Hsla {
+pub const fn white() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -340,7 +364,7 @@ pub fn white() -> Hsla {
 }
 
 /// The color red in [`Hsla`]
-pub fn red() -> Hsla {
+pub const fn red() -> Hsla {
     Hsla {
         h: 0.,
         s: 1.,
@@ -350,9 +374,9 @@ pub fn red() -> Hsla {
 }
 
 /// The color blue in [`Hsla`]
-pub fn blue() -> Hsla {
+pub const fn blue() -> Hsla {
     Hsla {
-        h: 0.6,
+        h: 0.6666666667,
         s: 1.,
         l: 0.5,
         a: 1.,
@@ -360,19 +384,19 @@ pub fn blue() -> Hsla {
 }
 
 /// The color green in [`Hsla`]
-pub fn green() -> Hsla {
+pub const fn green() -> Hsla {
     Hsla {
-        h: 0.33,
+        h: 0.3333333333,
         s: 1.,
-        l: 0.5,
+        l: 0.25,
         a: 1.,
     }
 }
 
 /// The color yellow in [`Hsla`]
-pub fn yellow() -> Hsla {
+pub const fn yellow() -> Hsla {
     Hsla {
-        h: 0.16,
+        h: 0.1666666667,
         s: 1.,
         l: 0.5,
         a: 1.,
@@ -386,32 +410,32 @@ impl Hsla {
     }
 
     /// The color red
-    pub fn red() -> Self {
+    pub const fn red() -> Self {
         red()
     }
 
     /// The color green
-    pub fn green() -> Self {
+    pub const fn green() -> Self {
         green()
     }
 
     /// The color blue
-    pub fn blue() -> Self {
+    pub const fn blue() -> Self {
         blue()
     }
 
     /// The color black
-    pub fn black() -> Self {
+    pub const fn black() -> Self {
         black()
     }
 
     /// The color white
-    pub fn white() -> Self {
+    pub const fn white() -> Self {
         white()
     }
 
     /// The color transparent black
-    pub fn transparent_black() -> Self {
+    pub const fn transparent_black() -> Self {
         transparent_black()
     }
 

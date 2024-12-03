@@ -6,6 +6,7 @@ on:
 
 jobs:
   stale:
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/stale@28ca1036281a5e5922ead5184a1bbf96e5fc984e # v9
@@ -24,7 +25,7 @@ jobs:
           # issues, preventing 365 days from working until then.
           days-before-stale: 180
           days-before-close: 7
-          any-of-issue-labels: "defect,panic / crash"
+          any-of-issue-labels: "bug,panic / crash"
           operations-per-run: 1000
           ascending: true
           enable-statistics: true

@@ -42,6 +42,7 @@ pub struct ItemSettings {
     pub close_position: ClosePosition,
     pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
+    pub always_show_close_button: bool,
 }
 
 #[derive(Deserialize)]
@@ -85,6 +86,10 @@ pub struct ItemSettingsContent {
     ///
     /// Default: history
     pub activate_on_close: Option<ActivateOnClose>,
+    /// Whether to always show the close button on tabs.
+    ///
+    /// Default: false
+    always_show_close_button: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -208,7 +213,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn for_each_project_item(
         &self,
         _: &AppContext,
-        _: &mut dyn FnMut(EntityId, &dyn project::Item),
+        _: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
     }
     fn is_singleton(&self, _cx: &AppContext) -> bool {
@@ -226,6 +231,9 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
     fn is_dirty(&self, _: &AppContext) -> bool {
+        false
+    }
+    fn has_deleted_file(&self, _: &AppContext) -> bool {
         false
     }
     fn has_conflict(&self, _: &AppContext) -> bool {
@@ -275,7 +283,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
         ToolbarItemLocation::Hidden
     }
 
@@ -312,7 +320,7 @@ pub trait SerializableItem: Item {
         _workspace: WeakView<Workspace>,
         _workspace_id: WorkspaceId,
         _item_id: ItemId,
-        _cx: &mut ViewContext<Pane>,
+        _cx: &mut WindowContext,
     ) -> Task<Result<View<Self>>>;
 
     fn serialize(
@@ -383,7 +391,7 @@ pub trait ItemHandle: 'static + Send {
     fn for_each_project_item(
         &self,
         _: &AppContext,
-        _: &mut dyn FnMut(EntityId, &dyn project::Item),
+        _: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     );
     fn is_singleton(&self, cx: &AppContext) -> bool;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
@@ -405,6 +413,7 @@ pub trait ItemHandle: 'static + Send {
     fn item_id(&self) -> EntityId;
     fn to_any(&self) -> AnyView;
     fn is_dirty(&self, cx: &AppContext) -> bool;
+    fn has_deleted_file(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
     fn save(
@@ -559,7 +568,7 @@ impl<T: Item> ItemHandle for View<T> {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
         self.read(cx).for_each_project_item(cx, f)
     }
@@ -768,6 +777,10 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).is_dirty(cx)
     }
 
+    fn has_deleted_file(&self, cx: &AppContext) -> bool {
+        self.read(cx).has_deleted_file(cx)
+    }
+
     fn has_conflict(&self, cx: &AppContext) -> bool {
         self.read(cx).has_conflict(cx)
     }
@@ -819,7 +832,7 @@ impl<T: Item> ItemHandle for View<T> {
     }
 
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {
-        self.read(cx).breadcrumb_location()
+        self.read(cx).breadcrumb_location(cx)
     }
 
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
@@ -883,7 +896,7 @@ impl<T: Item> WeakItemHandle for WeakView<T> {
 }
 
 pub trait ProjectItem: Item {
-    type Item: project::Item;
+    type Item: project::ProjectItem;
 
     fn for_project_item(
         project: Model<Project>,
@@ -1024,7 +1037,7 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakView<T> {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
-    use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
+    use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
         InteractiveElement, IntoElement, Model, Render, SharedString, Task, View, ViewContext,
@@ -1032,10 +1045,12 @@ pub mod test {
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, path::Path};
+    use ui::WindowContext;
 
     pub struct TestProjectItem {
         pub entry_id: Option<ProjectEntryId>,
         pub project_path: Option<ProjectPath>,
+        pub is_dirty: bool,
     }
 
     pub struct TestItem {
@@ -1056,7 +1071,7 @@ pub mod test {
         focus_handle: gpui::FocusHandle,
     }
 
-    impl project::Item for TestProjectItem {
+    impl project::ProjectItem for TestProjectItem {
         fn try_open(
             _project: &Model<Project>,
             _path: &ProjectPath,
@@ -1064,13 +1079,16 @@ pub mod test {
         ) -> Option<Task<gpui::Result<Model<Self>>>> {
             None
         }
-
         fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
             self.entry_id
         }
 
         fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
             self.project_path.clone()
+        }
+
+        fn is_dirty(&self) -> bool {
+            self.is_dirty
         }
     }
 
@@ -1088,6 +1106,7 @@ pub mod test {
             cx.new_model(|_| Self {
                 entry_id,
                 project_path,
+                is_dirty: false,
             })
         }
 
@@ -1095,6 +1114,7 @@ pub mod test {
             cx.new_model(|_| Self {
                 project_path: None,
                 entry_id: None,
+                is_dirty: false,
             })
         }
     }
@@ -1216,7 +1236,7 @@ pub mod test {
         fn for_each_project_item(
             &self,
             cx: &AppContext,
-            f: &mut dyn FnMut(EntityId, &dyn project::Item),
+            f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
         ) {
             self.project_items
                 .iter()
@@ -1331,7 +1351,7 @@ pub mod test {
             _workspace: WeakView<Workspace>,
             workspace_id: WorkspaceId,
             _item_id: ItemId,
-            cx: &mut ViewContext<Pane>,
+            cx: &mut WindowContext,
         ) -> Task<anyhow::Result<View<Self>>> {
             let view = cx.new_view(|cx| Self::new_deserialized(workspace_id, cx));
             Task::ready(Ok(view))

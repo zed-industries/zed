@@ -1957,9 +1957,10 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     });
     channel_notes_1_b.update(cx_b, |notes, cx| {
         assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
-        let editor = notes.editor.read(cx);
-        assert_eq!(editor.text(cx), "Hello from A.");
-        assert_eq!(editor.selections.ranges::<usize>(cx), &[3..4]);
+        notes.editor.update(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Hello from A.");
+            assert_eq!(editor.selections.ranges::<usize>(cx), &[3..4]);
+        })
     });
 
     //  Client A opens the notes for channel 2.
