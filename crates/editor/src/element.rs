@@ -2740,11 +2740,6 @@ impl EditorElement {
         const X_OFFSET: f32 = 25.;
         const PADDING_Y: f32 = 2.;
 
-        let accept_completion_keystroke = cx.keystroke_text_for_action_in(
-            &crate::AcceptInlineCompletion,
-            &self.editor.read(cx).focus_handle,
-        );
-
         let edit = self
             .editor
             .read(cx)
@@ -2771,10 +2766,16 @@ impl EditorElement {
         let (origin, mut element) = if show_go_to_edit_hint {
             if is_visible {
                 let element = container_element
-                    .child(Label::new(format!(
-                        "{} jump to edit",
-                        accept_completion_keystroke
-                    )))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .children(ui::KeyBinding::for_action_in(
+                                &crate::AcceptInlineCompletion,
+                                &self.editor.focus_handle(cx),
+                                cx,
+                            ))
+                            .child(Label::new("jump to edit")),
+                    )
                     .into_any();
 
                 let len = editor_snapshot.line_len(upper_left.row());
@@ -2793,10 +2794,12 @@ impl EditorElement {
                     .child(
                         h_flex()
                             .gap_1()
-                            .child(Label::new(format!(
-                                "{} jump to edit",
-                                accept_completion_keystroke
-                            )))
+                            .children(ui::KeyBinding::for_action_in(
+                                &crate::AcceptInlineCompletion,
+                                &self.editor.focus_handle(cx),
+                                cx,
+                            ))
+                            .child(Label::new("jump to edit"))
                             .child(Icon::new(if is_above {
                                 IconName::ArrowUp
                             } else {
