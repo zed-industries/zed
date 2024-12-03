@@ -26,8 +26,8 @@ use terminal::{
     Terminal,
 };
 use ui::{
-    div, h_flex, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton, IconSize,
-    InteractiveElement, PopoverMenu, Selectable, Tooltip,
+    prelude::*, ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Selectable,
+    Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -131,22 +131,21 @@ impl TerminalPanel {
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let split_context = pane
-                    .items()
-                    .find_map(|item| item.downcast::<TerminalView>())
+                    .active_item()
+                    .and_then(|item| item.downcast::<TerminalView>())
                     .map(|terminal_view| terminal_view.read(cx).focus_handle.clone());
                 if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
                 let right_children = h_flex()
-                    .gap_2()
-                    .children(assistant_tab_bar_button.clone())
+                    .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
                             .trigger(
                                 IconButton::new("plus", IconName::Plus)
                                     .icon_size(IconSize::Small)
-                                    .tooltip(|cx| Tooltip::text("New...", cx)),
+                                    .tooltip(|cx| Tooltip::text("New…", cx)),
                             )
                             .anchor(AnchorCorner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
@@ -170,6 +169,7 @@ impl TerminalPanel {
                                 Some(menu)
                             }),
                     )
+                    .children(assistant_tab_bar_button.clone())
                     .child(
                         PopoverMenu::new("terminal-pane-tab-bar-split")
                             .trigger(

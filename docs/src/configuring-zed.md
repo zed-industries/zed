@@ -634,7 +634,8 @@ List of `string` values
   "close_position": "right",
   "file_icons": false,
   "git_status": false,
-  "activate_on_close": "history"
+  "activate_on_close": "history",
+  "always_show_close_button": false
 },
 ```
 
@@ -697,6 +698,12 @@ List of `string` values
   "activate_on_close": "neighbour"
 }
 ```
+
+### Always show the close button
+
+- Description: Whether to always show the close button on tabs.
+- Setting: `always_show_close_button`
+- Default: `false`
 
 ## Editor Toolbar
 

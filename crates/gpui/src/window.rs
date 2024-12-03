@@ -3089,26 +3089,6 @@ impl<'a> WindowContext<'a> {
             .unwrap_or_else(|| action.name().to_string())
     }
 
-    /// Represent this action as a key binding string, to display in the UI.
-    pub fn keystroke_text_for_action_in(
-        &self,
-        action: &dyn Action,
-        focus_handle: &FocusHandle,
-    ) -> String {
-        self.bindings_for_action_in(action, focus_handle)
-            .into_iter()
-            .next()
-            .map(|binding| {
-                binding
-                    .keystrokes()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-            .unwrap_or_else(|| action.name().to_string())
-    }
-
     /// Dispatch a mouse or keyboard event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput) -> DispatchEventResult {

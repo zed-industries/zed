@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use assistant_tool::ToolWorkingSet;
+use client::zed_urls;
 use gpui::{
-    prelude::*, px, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
-    FocusableView, Model, Pixels, Subscription, Task, View, ViewContext, WeakView, WindowContext,
+    prelude::*, px, Action, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
+    FocusableView, FontWeight, Model, Pixels, Subscription, Task, View, ViewContext, WeakView,
+    WindowContext,
 };
 use language_model::{LanguageModelRegistry, Role};
 use language_model_selector::LanguageModelSelector;
@@ -13,7 +15,8 @@ use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
 use crate::message_editor::MessageEditor;
-use crate::thread::{Message, Thread, ThreadEvent};
+use crate::thread::{Message, Thread, ThreadError, ThreadEvent};
+use crate::thread_store::ThreadStore;
 use crate::{NewThread, ToggleFocus, ToggleModelSelector};
 
 pub fn init(cx: &mut AppContext) {
@@ -29,9 +32,12 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
+    #[allow(unused)]
+    thread_store: Model<ThreadStore>,
     thread: Model<Thread>,
     message_editor: View<MessageEditor>,
     tools: Arc<ToolWorkingSet>,
+    last_error: Option<ThreadError>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -42,13 +48,25 @@ impl AssistantPanel {
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let tools = Arc::new(ToolWorkingSet::default());
+            let thread_store = workspace
+                .update(&mut cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    ThreadStore::new(project, tools.clone(), cx)
+                })?
+                .await?;
+
             workspace.update(&mut cx, |workspace, cx| {
-                cx.new_view(|cx| Self::new(workspace, tools, cx))
+                cx.new_view(|cx| Self::new(workspace, thread_store, tools, cx))
             })
         })
     }
 
-    fn new(workspace: &Workspace, tools: Arc<ToolWorkingSet>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(
+        workspace: &Workspace,
+        thread_store: Model<ThreadStore>,
+        tools: Arc<ToolWorkingSet>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let thread = cx.new_model(|cx| Thread::new(tools.clone(), cx));
         let subscriptions = vec![
             cx.observe(&thread, |_, _, cx| cx.notify()),
@@ -57,9 +75,11 @@ impl AssistantPanel {
 
         Self {
             workspace: workspace.weak_handle(),
+            thread_store,
             thread: thread.clone(),
             message_editor: cx.new_view(|cx| MessageEditor::new(thread, cx)),
             tools,
+            last_error: None,
             _subscriptions: subscriptions,
         }
     }
@@ -86,6 +106,9 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
+            ThreadEvent::ShowError(error) => {
+                self.last_error = Some(error.clone());
+            }
             ThreadEvent::StreamedCompletion => {}
             ThreadEvent::UsePendingTools => {
                 let pending_tool_uses = self
@@ -304,6 +327,152 @@ impl AssistantPanel {
             )
             .child(v_flex().p_1p5().child(Label::new(message.text.clone())))
     }
+
+    fn render_last_error(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        let last_error = self.last_error.as_ref()?;
+
+        Some(
+            div()
+                .absolute()
+                .right_3()
+                .bottom_12()
+                .max_w_96()
+                .py_2()
+                .px_3()
+                .elevation_2(cx)
+                .occlude()
+                .child(match last_error {
+                    ThreadError::PaymentRequired => self.render_payment_required_error(cx),
+                    ThreadError::MaxMonthlySpendReached => {
+                        self.render_max_monthly_spend_reached_error(cx)
+                    }
+                    ThreadError::Message(error_message) => {
+                        self.render_error_message(error_message, cx)
+                    }
+                })
+                .into_any(),
+        )
+    }
+
+    fn render_payment_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+        const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
+
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::XCircle).color(Color::Error))
+                    .child(Label::new("Free Usage Exceeded").weight(FontWeight::MEDIUM)),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(ERROR_MESSAGE)),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.open_url(&zed_urls::account_url(cx));
+                            cx.notify();
+                        },
+                    )))
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
+    }
+
+    fn render_max_monthly_spend_reached_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+        const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
+
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::XCircle).color(Color::Error))
+                    .child(Label::new("Max Monthly Spend Reached").weight(FontWeight::MEDIUM)),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(ERROR_MESSAGE)),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(
+                        Button::new("subscribe", "Update Monthly Spend Limit").on_click(
+                            cx.listener(|this, _, cx| {
+                                this.last_error = None;
+                                cx.open_url(&zed_urls::account_url(cx));
+                                cx.notify();
+                            }),
+                        ),
+                    )
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
+    }
+
+    fn render_error_message(
+        &self,
+        error_message: &SharedString,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::XCircle).color(Color::Error))
+                    .child(
+                        Label::new("Error interacting with language model")
+                            .weight(FontWeight::MEDIUM),
+                    ),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_32()
+                    .overflow_y_scroll()
+                    .child(Label::new(error_message.clone())),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
+    }
 }
 
 impl Render for AssistantPanel {
@@ -338,5 +507,6 @@ impl Render for AssistantPanel {
                     .border_color(cx.theme().colors().border_variant)
                     .child(self.message_editor.clone()),
             )
+            .children(self.render_last_error(cx))
     }
 }

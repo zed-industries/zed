@@ -189,6 +189,7 @@ impl EditorElement {
         register_action(view, cx, Editor::tab_prev);
         register_action(view, cx, Editor::indent);
         register_action(view, cx, Editor::outdent);
+        register_action(view, cx, Editor::autoindent);
         register_action(view, cx, Editor::delete_line);
         register_action(view, cx, Editor::join_lines);
         register_action(view, cx, Editor::sort_lines_case_sensitive);

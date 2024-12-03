@@ -24,7 +24,7 @@ pub struct Toolchain {
     pub as_json: serde_json::Value,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait ToolchainLister: Send + Sync {
     async fn list(
         &self,
