@@ -120,6 +120,7 @@ members = [
     "crates/terminal_view",
     "crates/text",
     "crates/theme",
+    "crates/theme3",
     "crates/theme_extension",
     "crates/theme_importer",
     "crates/theme_selector",
@@ -127,6 +128,7 @@ members = [
     "crates/title_bar",
     "crates/toolchain_selector",
     "crates/ui",
+    "crates/ui3",
     "crates/ui_input",
     "crates/ui_macros",
     "crates/reqwest_client",
@@ -226,6 +228,7 @@ git_hosting_providers = { path = "crates/git_hosting_providers" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui", default-features = false, features = ["http_client"]}
+gpui3 = { path = "crates/gpui3", default-features = false, features = ["http_client"]}
 gpui_macros = { path = "crates/gpui_macros" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
@@ -300,6 +303,7 @@ terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
+theme3 = { path = "crates/theme3" }
 theme_extension = { path = "crates/theme_extension" }
 theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
@@ -307,6 +311,7 @@ time_format = { path = "crates/time_format" }
 title_bar = { path = "crates/title_bar" }
 toolchain_selector = { path = "crates/toolchain_selector" }
 ui = { path = "crates/ui" }
+ui3 = { path = "crates/ui3" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
 util = { path = "crates/util" }

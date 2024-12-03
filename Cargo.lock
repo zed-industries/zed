@@ -12544,6 +12544,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "theme3"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "derive_more",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "indexmap 1.9.3",
+ "log",
+ "palette",
+ "parking_lot",
+ "refineable",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "serde_json_lenient",
+ "serde_repr",
+ "settings",
+ "strum 0.25.0",
+ "util",
+ "uuid",
+]
+
+[[package]]
 name = "theme_extension"
 version = "0.1.0"
 dependencies = [
@@ -13541,6 +13568,24 @@ dependencies = [
  "story",
  "strum 0.25.0",
  "theme",
+ "ui_macros",
+ "windows 0.58.0",
+]
+
+[[package]]
+name = "ui3"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gpui3",
+ "itertools 0.13.0",
+ "menu",
+ "serde",
+ "settings",
+ "smallvec",
+ "story",
+ "strum 0.25.0",
+ "theme3",
  "ui_macros",
  "windows 0.58.0",
 ]
