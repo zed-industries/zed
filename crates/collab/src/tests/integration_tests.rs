@@ -328,7 +328,7 @@ async fn test_basic_calls(
     // to automatically leave the room. User C leaves the room as well because
     // nobody else is in there.
     server
-        .test_live_kit_server
+        .test_livekit_server
         .disconnect_client(client_b.user_id().unwrap().to_string())
         .await;
     executor.run_until_parked();
@@ -843,7 +843,7 @@ async fn test_client_disconnecting_from_room(
     // User B gets disconnected from the LiveKit server, which causes it
     // to automatically leave the room.
     server
-        .test_live_kit_server
+        .test_livekit_server
         .disconnect_client(client_b.user_id().unwrap().to_string())
         .await;
     executor.run_until_parked();

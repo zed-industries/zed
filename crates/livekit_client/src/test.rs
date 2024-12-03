@@ -12,7 +12,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
 use gpui::BackgroundExecutor;
-use live_kit_server::{proto, token};
+use livekit_server::{proto, token};
 #[cfg(not(windows))]
 use livekit::options::TrackPublishOptions;
 use parking_lot::Mutex;
@@ -107,7 +107,7 @@ impl TestServer {
     async fn join_room(&self, token: String, client_room: Room) -> Result<ParticipantIdentity> {
         self.executor.simulate_random_delay().await;
 
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
@@ -174,7 +174,7 @@ impl TestServer {
     async fn leave_room(&self, token: String) -> Result<()> {
         self.executor.simulate_random_delay().await;
 
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
@@ -195,7 +195,7 @@ impl TestServer {
         &self,
         token: String,
     ) -> Result<HashMap<ParticipantIdentity, RemoteParticipant>> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
         let local_identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap().to_string();
 
@@ -288,7 +288,7 @@ impl TestServer {
     ) -> Result<TrackSid> {
         self.executor.simulate_random_delay().await;
 
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
 
@@ -354,7 +354,7 @@ impl TestServer {
     ) -> Result<TrackSid> {
         self.executor.simulate_random_delay().await;
 
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
 
@@ -419,7 +419,7 @@ impl TestServer {
     }
 
     fn set_track_muted(&self, token: &str, track_sid: &TrackSid, muted: bool) -> Result<()> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let mut server_rooms = self.rooms.lock();
@@ -473,7 +473,7 @@ impl TestServer {
     }
 
     fn is_track_muted(&self, token: &str, track_sid: &TrackSid) -> Option<bool> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key).ok()?;
+        let claims = livekit_server::token::validate(&token, &self.secret_key).ok()?;
         let room_name = claims.video.room.unwrap();
 
         let mut server_rooms = self.rooms.lock();
@@ -488,7 +488,7 @@ impl TestServer {
     }
 
     fn video_tracks(&self, token: String) -> Result<Vec<RemoteVideoTrack>> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
 
@@ -511,7 +511,7 @@ impl TestServer {
     }
 
     fn audio_tracks(&self, token: String) -> Result<Vec<RemoteAudioTrack>> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
 
@@ -641,7 +641,7 @@ pub enum RoomEvent {
 
 #[cfg(not(target_os = "windows"))]
 #[async_trait]
-impl live_kit_server::api::Client for TestApiClient {
+impl livekit_server::api::Client for TestApiClient {
     fn url(&self) -> &str {
         &self.url
     }
@@ -670,7 +670,7 @@ impl live_kit_server::api::Client for TestApiClient {
         &self,
         room: String,
         identity: String,
-        permission: live_kit_server::proto::ParticipantPermission,
+        permission: livekit_server::proto::ParticipantPermission,
     ) -> Result<()> {
         let server = TestServer::get(&self.url)?;
         server

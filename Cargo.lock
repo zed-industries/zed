@@ -2058,7 +2058,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
- "live_kit_client",
+ "livekit_client",
  "log",
  "postage",
  "project",
@@ -2686,8 +2686,8 @@ dependencies = [
  "jsonwebtoken",
  "language",
  "language_model",
- "live_kit_client",
- "live_kit_server",
+ "livekit_client",
+ "livekit_server",
  "log",
  "lsp",
  "menu",
@@ -7097,51 +7097,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "643cb0b8d4fcc284004d5fd0d67ccf61dfffadb7f75e1e71bc420f4688a3a704"
 
 [[package]]
-name = "live_kit_client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "collections",
- "core-foundation 0.9.4",
- "coreaudio-rs 0.12.1",
- "cpal",
- "futures 0.3.31",
- "gpui",
- "http 0.2.12",
- "http_client",
- "image",
- "live_kit_server",
- "livekit",
- "log",
- "media",
- "nanoid",
- "parking_lot",
- "postage",
- "serde",
- "serde_json",
- "sha2",
- "simplelog",
- "smallvec",
- "util",
-]
-
-[[package]]
-name = "live_kit_server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "jsonwebtoken",
- "log",
- "prost 0.9.0",
- "prost-build 0.9.0",
- "prost-types 0.9.0",
- "reqwest 0.12.8",
- "serde",
-]
-
-[[package]]
 name = "livekit"
 version = "0.7.0"
 source = "git+https://github.com/zed-industries/rust-sdks?rev=799f10133d93ba2a88642cd480d01ec4da53408c#799f10133d93ba2a88642cd480d01ec4da53408c"
@@ -7214,6 +7169,51 @@ dependencies = [
  "async-std",
  "async-task",
  "futures 0.3.31",
+]
+
+[[package]]
+name = "livekit_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "core-foundation 0.9.4",
+ "coreaudio-rs 0.12.1",
+ "cpal",
+ "futures 0.3.31",
+ "gpui",
+ "http 0.2.12",
+ "http_client",
+ "image",
+ "livekit",
+ "livekit_server",
+ "log",
+ "media",
+ "nanoid",
+ "parking_lot",
+ "postage",
+ "serde",
+ "serde_json",
+ "sha2",
+ "simplelog",
+ "smallvec",
+ "util",
+]
+
+[[package]]
+name = "livekit_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "jsonwebtoken",
+ "log",
+ "prost 0.9.0",
+ "prost-build 0.9.0",
+ "prost-types 0.9.0",
+ "reqwest 0.12.8",
+ "serde",
 ]
 
 [[package]]

@@ -9,7 +9,7 @@ use gpui::{
     WindowHandle, WindowOptions,
 };
 #[cfg(not(target_os = "windows"))]
-use live_kit_client::{
+use livekit_client::{
     capture_local_audio_track, capture_local_video_track,
     id::ParticipantIdentity,
     options::{TrackPublishOptions, VideoCodec},
@@ -21,19 +21,19 @@ use live_kit_client::{
 };
 
 #[cfg(target_os = "windows")]
-use live_kit_client::{
+use livekit_client::{
     participant::{Participant, RemoteParticipant},
     publication::{LocalTrackPublication, RemoteTrackPublication},
     track::{LocalTrack, RemoteTrack, RemoteVideoTrack},
     AudioStream, RemoteVideoTrackView, Room, RoomEvent,
 };
 
-use live_kit_server::token::{self, VideoGrant};
+use livekit_server::token::{self, VideoGrant};
 use log::LevelFilter;
 use postage::stream::Stream as _;
 use simplelog::SimpleLogger;
 
-actions!(live_kit_client, [Quit]);
+actions!(livekit_client, [Quit]);
 
 #[cfg(windows)]
 fn main() {}
@@ -43,7 +43,7 @@ fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui::App::new().run(|cx| {
-        live_kit_client::init(
+        livekit_client::init(
             cx.background_executor().dispatcher.clone(),
             cx.http_client(),
         );
@@ -66,9 +66,9 @@ fn main() {
             }],
         }]);
 
-        let live_kit_url = std::env::var("LIVE_KIT_URL").unwrap_or("http://localhost:7880".into());
-        let live_kit_key = std::env::var("LIVE_KIT_KEY").unwrap_or("devkey".into());
-        let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap_or("secret".into());
+        let livekit_url = std::env::var("livekit_URL").unwrap_or("http://localhost:7880".into());
+        let livekit_key = std::env::var("livekit_KEY").unwrap_or("devkey".into());
+        let livekit_secret = std::env::var("livekit_SECRET").unwrap_or("secret".into());
         let height = px(800.);
         let width = px(800.);
 
@@ -76,8 +76,8 @@ fn main() {
             let mut windows = Vec::new();
             for i in 0..2 {
                 let token = token::create(
-                    &live_kit_key,
-                    &live_kit_secret,
+                    &livekit_key,
+                    &livekit_secret,
                     Some(&format!("test-participant-{i}")),
                     VideoGrant::to_join("test-room"),
                 )
@@ -85,7 +85,7 @@ fn main() {
 
                 let bounds = bounds(point(width * i, px(0.0)), size(width, height));
                 let window =
-                    LivekitWindow::new(live_kit_url.as_str(), token.as_str(), bounds, cx.clone())
+                    LivekitWindow::new(livekit_url.as_str(), token.as_str(), bounds, cx.clone())
                         .await;
                 windows.push(window);
             }

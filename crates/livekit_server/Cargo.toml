@@ -1,5 +1,5 @@
 [package]
-name = "live_kit_server"
+name = "livekit_server"
 version = "0.1.0"
 edition = "2021"
 description = "SDK for the LiveKit server API"
@@ -10,7 +10,7 @@ license = "AGPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/live_kit_server.rs"
+path = "src/livekit_server.rs"
 doctest = false
 
 [dependencies]

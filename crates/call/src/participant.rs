@@ -4,13 +4,13 @@ use anyhow::{anyhow, Result};
 use client::{proto, ParticipantIndex, User};
 use collections::HashMap;
 use gpui::WeakModel;
-use live_kit_client::AudioStream;
+use livekit_client::AudioStream;
 use project::Project;
 use std::sync::Arc;
 
 #[cfg(not(target_os = "windows"))]
-pub use live_kit_client::id::TrackSid;
-pub use live_kit_client::track::{RemoteAudioTrack, RemoteVideoTrack};
+pub use livekit_client::id::TrackSid;
+pub use livekit_client::track::{RemoteAudioTrack, RemoteVideoTrack};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ParticipantLocation {

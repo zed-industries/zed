@@ -17,7 +17,6 @@ use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
 use language::LanguageRegistry;
-use live_kit_client as livekit;
 #[cfg(not(target_os = "windows"))]
 use livekit::{
     capture_local_audio_track, capture_local_video_track,
@@ -30,6 +29,7 @@ use livekit::{
 };
 #[cfg(target_os = "windows")]
 use livekit::{publication::LocalTrackPublication, RoomEvent};
+use livekit_client as livekit;
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
@@ -118,12 +118,12 @@ impl Room {
     fn new(
         id: u64,
         channel_id: Option<ChannelId>,
-        live_kit_connection_info: Option<proto::LiveKitConnectionInfo>,
+        livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
         client: Arc<Client>,
         user_store: Model<UserStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        spawn_room_connection(live_kit_connection_info, cx);
+        spawn_room_connection(livekit_connection_info, cx);
 
         let maintain_connection = cx.spawn({
             let client = client.clone();
@@ -178,7 +178,7 @@ impl Room {
                 let mut room = Self::new(
                     room_proto.id,
                     None,
-                    response.live_kit_connection_info,
+                    response.livekit_connection_info,
                     client,
                     user_store,
                     cx,
@@ -283,7 +283,7 @@ impl Room {
             Self::new(
                 room_proto.id,
                 response.channel_id.map(ChannelId),
-                response.live_kit_connection_info,
+                response.livekit_connection_info,
                 client,
                 user_store,
                 cx,
@@ -732,8 +732,8 @@ impl Room {
                                 }
                             }
                             this.local_participant.projects.clear();
-                            if let Some(live_kit_room) = &mut this.live_kit {
-                                live_kit_room.stop_publishing(cx);
+                            if let Some(livekit_room) = &mut this.live_kit {
+                                livekit_room.stop_publishing(cx);
                             }
                         }
 
@@ -851,7 +851,7 @@ impl Room {
                                         livekit_participant.track_publications().into_values()
                                     {
                                         if let Some(track) = publication.track() {
-                                            this.live_kit_room_updated(
+                                            this.livekit_room_updated(
                                                 RoomEvent::TrackSubscribed {
                                                     track,
                                                     publication,
@@ -932,7 +932,7 @@ impl Room {
         })
     }
 
-    fn live_kit_room_updated(
+    fn livekit_room_updated(
         &mut self,
         event: RoomEvent,
         cx: &mut ModelContext<Self>,
@@ -1633,17 +1633,17 @@ impl Room {
 
 #[cfg(target_os = "windows")]
 fn spawn_room_connection(
-    live_kit_connection_info: Option<proto::LiveKitConnectionInfo>,
+    livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
     cx: &mut ModelContext<'_, Room>,
 ) {
 }
 
 #[cfg(not(target_os = "windows"))]
 fn spawn_room_connection(
-    live_kit_connection_info: Option<proto::LiveKitConnectionInfo>,
+    livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
     cx: &mut ModelContext<'_, Room>,
 ) {
-    if let Some(connection_info) = live_kit_connection_info {
+    if let Some(connection_info) = livekit_connection_info {
         cx.spawn(|this, mut cx| async move {
             let (room, mut events) = livekit::Room::connect(
                 &connection_info.server_url,
@@ -1657,7 +1657,7 @@ fn spawn_room_connection(
                     while let Some(event) = events.recv().await {
                         if this
                             .update(&mut cx, |this, cx| {
-                                this.live_kit_room_updated(event, cx).warn_on_err();
+                                this.livekit_room_updated(event, cx).warn_on_err();
                             })
                             .is_err()
                         {

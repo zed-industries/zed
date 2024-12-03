@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS "rooms" (
     "id" SERIAL PRIMARY KEY,
-    "live_kit_room" VARCHAR NOT NULL
+    "livekit_room" VARCHAR NOT NULL
 );
 
 ALTER TABLE "projects"
