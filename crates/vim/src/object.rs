@@ -283,7 +283,15 @@ impl Object {
                     TextObject::InsideFunction
                 },
             ),
-            Object::Comment => comment_object(map, relative_to),
+            Object::Comment => text_object(
+                map,
+                relative_to,
+                if around {
+                    TextObject::AroundComment
+                } else {
+                    TextObject::InsideComment
+                },
+            ),
             Object::Class => text_object(
                 map,
                 relative_to,
@@ -494,16 +502,6 @@ fn around_next_word(
     });
 
     Some(start..end)
-}
-
-fn comment_object(
-    map: &DisplaySnapshot,
-    relative_to: DisplayPoint,
-    target: TextObject,
-) -> Option<Range<DisplayPoint>> {
-    let snapshot = &map.buffer_snapshot;
-    let offset = relative_to.to_offset(map, Bias::Left);
-    snapshot.range_for_syntax_ancestor(range)
 }
 
 fn text_object(
