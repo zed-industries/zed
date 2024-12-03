@@ -274,7 +274,7 @@ impl Project {
         terminal
     }
 
-    pub fn python_venv_directory(
+    fn python_venv_directory(
         &self,
         abs_path: &Path,
         settings: &TerminalSettings,
@@ -283,8 +283,7 @@ impl Project {
         if let Some((worktree, _)) = self.find_worktree(abs_path, cx) {
             let toolchain = self
                 .active_toolchain(worktree.read(cx).id(), LanguageName::new("Python"), cx)
-                .now_or_never()
-                .unwrap();
+                .now_or_never()?;
 
             if let Some(toolchain) = toolchain {
                 let toolchain_path = Path::new(toolchain.path.as_ref());
