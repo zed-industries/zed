@@ -487,6 +487,7 @@ impl Operator {
             Operator::Literal {
                 prefix: Some(prefix),
             } => format!("^V{prefix}"),
+            Operator::AutoIndent => "=".to_string(),
             _ => self.id().to_string(),
         }
     }
