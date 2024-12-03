@@ -196,7 +196,7 @@ impl Vim {
             )
         });
 
-        let highlight_duration = VimSettings::get_global(cx).highlight_on_copy_duration;
+        let highlight_duration = VimSettings::get_global(cx).highlight_on_yank_duration;
         if !is_yank || self.mode == Mode::Visual || highlight_duration == 0 {
             return;
         }

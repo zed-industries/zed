@@ -1188,7 +1188,7 @@ struct VimSettings {
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
-    pub highlight_on_copy_duration: u64,
+    pub highlight_on_yank_duration: u64,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1198,7 +1198,7 @@ struct VimSettingsContent {
     pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
-    pub highlight_on_copy_duration: Option<u64>,
+    pub highlight_on_yank_duration: Option<u64>,
 }
 
 impl Settings for VimSettings {
