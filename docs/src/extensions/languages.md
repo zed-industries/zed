@@ -266,18 +266,16 @@ The `textobjects.scm` file defines rules for navigating by text objects. This wa
 
 Vim provides two levels of granularity for navigating around files. Section-by-section with `[]` etc., and method-by-method with `]m` etc. Even languages that don't support functions and classes can work well by defining similar concepts. For example CSS defines a rule-set as a method, and a media-query as a class.
 
-When there's only one level, use the function matchers instead of class as the `[[` family of motions will fall-back to methods if there are no classes defined. For example, Markdown defines a section as a method so that you can use `[[` to jump to the next heading.
-
 For languages with closures, these typically should not count as functions in Zed. This is best-effort however, as languages like Javascript do not syntactically differentiate syntactically between closures and top-level function declarations.
 
-For languages with declarations like C, provide queries that match `@class.around` or `@function.around`. The `im` and `ic` text objects will default to these if there is no inside.
+For languages with declarations like C, provide queries that match `@class.around` or `@function.around`. The `if` and `ic` text objects will default to these if there is no inside.
 
 If you are not sure what to put in textobjects.scm, both [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects), and the [Helix editor](https://github.com/helix-editor/helix) have queries for many langauges. You can refer to the Zed [built-in languages](https://github.com/zed-industries/zed/tree/main/crates/languages/src) to see how to adapt these.
 
 | Capture          | Description                                                             | Vim mode                                         |
 | ---------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
-| @function.around | An entire function definition or equivalent small section of a file.    | `[m`, `]m`, `[M`,`]M` motions. `am` text object  |
-| @function.inside | The function body (the stuff within the braces).                        | `im` text object                                 |
+| @function.around | An entire function definition or equivalent small section of a file.    | `[m`, `]m`, `[M`,`]M` motions. `af` text object  |
+| @function.inside | The function body (the stuff within the braces).                        | `if` text object                                 |
 | @class.around    | An entire class definition or equivalent large section of a file.       | `[[`, `]]`, `[]`, `][` motions. `ac` text object |
 | @class.inside    | The contents of a class definition.                                     | `ic` text object                                 |
 | @comment.around  | An entire comment (e.g. all adjacent line comments, or a block comment) | `gc` text object                                 |

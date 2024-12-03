@@ -2390,8 +2390,10 @@ fn section_motion(
                 .collect::<Vec<_>>();
             possibilities.sort_by_key(|(range_a, _)| range_a.start);
             let mut prev_end = None;
-            let possibilities = possibilities.into_iter().filter_map(|(range, _)| {
-                if prev_end.is_some_and(|prev_end| prev_end > range.start) {
+            let possibilities = possibilities.into_iter().filter_map(|(range, t)| {
+                if t == language::TextObject::AroundFunction
+                    && prev_end.is_some_and(|prev_end| prev_end > range.start)
+                {
                     return None;
                 }
                 prev_end = Some(range.end);

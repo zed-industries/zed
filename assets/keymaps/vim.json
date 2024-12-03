@@ -401,7 +401,7 @@
       "a": "vim::Argument",
       "i": "vim::IndentObj",
       "shift-i": ["vim::IndentObj", { "includeBelow": true }],
-      "m": "vim::Method",
+      "f": "vim::Method",
       "c": "vim::Class"
     }
   },

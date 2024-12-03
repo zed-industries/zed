@@ -1,3 +1,3 @@
 (section
     (atx_heading)
-    (_)* @function.inside) @function.around
+    (_)* @class.inside) @class.around
