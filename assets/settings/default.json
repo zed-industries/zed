@@ -1129,7 +1129,6 @@
     "use_system_clipboard": "always",
     "use_multiline_find": false,
     "use_smartcase_find": false,
-    "highlight_on_copy": true,
     "highlight_on_copy_duration": 200,
     "custom_digraphs": {}
   },
