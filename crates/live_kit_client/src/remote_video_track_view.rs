@@ -2,7 +2,6 @@ use crate::track::RemoteVideoTrack;
 use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{Empty, EventEmitter, IntoElement, Render, Task, View, ViewContext, VisualContext as _};
-use util::ResultExt as _;
 
 pub struct RemoteVideoTrackView {
     track: RemoteVideoTrack,
@@ -35,15 +34,16 @@ impl RemoteVideoTrackView {
                         cx.notify();
                     })?;
                 }
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |_this, cx| {
                     #[cfg(not(target_os = "macos"))]
                     {
-                        if let Some(frame) = this.previous_rendered_frame.take() {
+                        use util::ResultExt as _;
+                        if let Some(frame) = _this.previous_rendered_frame.take() {
                             cx.window_context().drop_image(frame).log_err();
                         }
                         // TODO(mgsloan): This might leak the last image of the screenshare if
                         // render is called after the screenshare ends.
-                        if let Some(frame) = this.current_rendered_frame.take() {
+                        if let Some(frame) = _this.current_rendered_frame.take() {
                             cx.window_context().drop_image(frame).log_err();
                         }
                     }
@@ -81,6 +81,7 @@ impl Render for RemoteVideoTrackView {
                 if let Some(frame) = self.previous_rendered_frame.take() {
                     // Only drop the frame if it's not also the current frame.
                     if frame.id != current_rendered_frame.id {
+                        use util::ResultExt as _;
                         _cx.window_context().drop_image(frame).log_err();
                     }
                 }
