@@ -274,16 +274,17 @@ For languages with declarations like C, provide queries that match `@class.aroun
 
 If you are not sure what to put in textobjects.scm, both [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects), and the [Helix editor](https://github.com/helix-editor/helix) have queries for many langauges. You can refer to the Zed [built-in languages](https://github.com/zed-industries/zed/tree/main/crates/languages/src) to see how to adapt these.
 
-| Capture          | Description | Vim mode |
-|------------------|-------------|----------|
-| @function.around | An entire function definition or equivalent small section of a file. | `[m`, `]m`, `[M`,`]M` motions.  `am` text object |
-| @function.inside | The function body (the stuff within the braces). | `im` text object |
-| @class.around    | An entire class definition or equivalent large section of a file. | `[[`, `]]`, `[]`, `][` motions. `ac` text object |
-| @class.inside    | The contents of a class definition. | `ic` text object |
-| @comment.around  | An entire comment (e.g. all adjacent line comments, or a block comment) | `gc` text object |
-| @comment.inside  | The contents of a comment | `igc` text object (rarely supported) |
+| Capture          | Description                                                             | Vim mode                                         |
+| ---------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
+| @function.around | An entire function definition or equivalent small section of a file.    | `[m`, `]m`, `[M`,`]M` motions. `am` text object  |
+| @function.inside | The function body (the stuff within the braces).                        | `im` text object                                 |
+| @class.around    | An entire class definition or equivalent large section of a file.       | `[[`, `]]`, `[]`, `][` motions. `ac` text object |
+| @class.inside    | The contents of a class definition.                                     | `ic` text object                                 |
+| @comment.around  | An entire comment (e.g. all adjacent line comments, or a block comment) | `gc` text object                                 |
+| @comment.inside  | The contents of a comment                                               | `igc` text object (rarely supported)             |
 
 For example:
+
 ```scheme
 ; include only the content of the method in the function
 (method_definition
