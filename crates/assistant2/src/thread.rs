@@ -167,6 +167,10 @@ impl Thread {
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
                                         last_message.text.push_str(&chunk);
+                                        cx.emit(ThreadEvent::StreamedAssistantText(
+                                            last_message.id,
+                                            chunk,
+                                        ));
                                     }
                                 }
                             }
@@ -320,6 +324,7 @@ pub enum ThreadError {
 pub enum ThreadEvent {
     ShowError(ThreadError),
     StreamedCompletion,
+    StreamedAssistantText(MessageId, String),
     MessageAdded(MessageId),
     UsePendingTools,
     ToolFinished {
