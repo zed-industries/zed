@@ -2143,9 +2143,14 @@ impl EditorElement {
                 let header_padding = px(6.0);
 
                 let mut result = v_flex().id(block_id).w_full();
-
                 if let Some(prev_excerpt) = prev_excerpt {
-                    if *show_excerpt_controls {
+                    if *show_excerpt_controls
+                        && !self
+                            .editor
+                            .read(cx)
+                            .folded_buffers
+                            .contains_key(&prev_excerpt.buffer_id)
+                    {
                         result = result.child(
                             h_flex()
                                 .w(icon_offset)
@@ -2256,16 +2261,18 @@ impl EditorElement {
                                                         return header;
                                                     };
 
-                                                    // TODO kb remove gutter elements (excerpt expand controls + line numbers + whatever else)
+                                                    // TODO kb remove gutter elements: line numbers + gutter marks + whatever else
+                                                    // TODO kb why are the folds of a different height?
+                                                    // TODO kb indent guides, caret marks and other things are visible still
                                                     match editor
                                                         .read(cx)
-                                                        .folded_excerpts
-                                                        .get(&fold_start) {
+                                                        .folded_buffers
+                                                        .get(&buffer_to_fold) {
                                                             Some(&existing_fold) => header.child(ButtonLike::new("unfold-buffer").children(FileIcons::get_chevron_icon(false, cx).map(Icon::from_path)).on_click(
                                                                 move |_, cx| {
                                                                     editor.update(cx, |editor, cx| {
                                                                         editor.remove_blocks(HashSet::from_iter(Some(existing_fold)), None, cx);
-                                                                        editor.folded_excerpts.remove(&fold_start);
+                                                                        editor.folded_buffers.remove(&buffer_to_fold);
                                                                     });
                                                                     cx.stop_propagation();
                                                                 }
@@ -2283,13 +2290,13 @@ impl EditorElement {
                                                                                 height: 1,
                                                                                 style: BlockStyle::Flex,
                                                                                 priority: 0,
-                                                                                render: Arc::new(|_| Label::new("…").into_any_element()),
+                                                                                render: Arc::new(|_| div().into_any_element()),
                                                                             }),
                                                                             None,
                                                                             cx,
                                                                         );
                                                                         if let Some(block_id) = block_ids.pop() {
-                                                                            editor.folded_excerpts.insert(fold_start, block_id);
+                                                                            editor.folded_buffers.insert(buffer_to_fold, block_id);
                                                                         }
                                                                     });
                                                                     cx.stop_propagation();
@@ -2335,7 +2342,13 @@ impl EditorElement {
                                         })),
                                 ),
                         );
-                        if *show_excerpt_controls {
+                        if *show_excerpt_controls
+                            && !self
+                                .editor
+                                .read(cx)
+                                .folded_buffers
+                                .contains_key(&next_excerpt.buffer_id)
+                        {
                             result = result.child(
                                 h_flex()
                                     .w(icon_offset)
@@ -2425,33 +2438,41 @@ impl EditorElement {
                                             * cx.line_height())
                                         .flex_none()
                                         .justify_end()
-                                        .child(if *show_excerpt_controls {
-                                            self.render_expand_excerpt_button(
-                                                next_excerpt.id,
-                                                ExpandExcerptDirection::Up,
-                                                IconName::ArrowUpFromLine,
-                                                cx,
-                                            )
-                                        } else {
-                                            ButtonLike::new("jump-icon")
-                                                .style(ButtonStyle::Transparent)
-                                                .child(
-                                                    svg()
-                                                        .path(IconName::ArrowUpRight.path())
-                                                        .size(IconSize::XSmall.rems())
-                                                        .text_color(
-                                                            cx.theme().colors().border_variant,
-                                                        )
-                                                        .group_hover(
-                                                            "excerpt-jump-action",
-                                                            |style| {
-                                                                style.text_color(
-                                                                    cx.theme().colors().border,
-                                                                )
-                                                            },
-                                                        ),
+                                        .child(
+                                            if *show_excerpt_controls
+                                                && !self
+                                                    .editor
+                                                    .read(cx)
+                                                    .folded_buffers
+                                                    .contains_key(&next_excerpt.buffer_id)
+                                            {
+                                                self.render_expand_excerpt_button(
+                                                    next_excerpt.id,
+                                                    ExpandExcerptDirection::Up,
+                                                    IconName::ArrowUpFromLine,
+                                                    cx,
                                                 )
-                                        }),
+                                            } else {
+                                                ButtonLike::new("jump-icon")
+                                                    .style(ButtonStyle::Transparent)
+                                                    .child(
+                                                        svg()
+                                                            .path(IconName::ArrowUpRight.path())
+                                                            .size(IconSize::XSmall.rems())
+                                                            .text_color(
+                                                                cx.theme().colors().border_variant,
+                                                            )
+                                                            .group_hover(
+                                                                "excerpt-jump-action",
+                                                                |style| {
+                                                                    style.text_color(
+                                                                        cx.theme().colors().border,
+                                                                    )
+                                                                },
+                                                            ),
+                                                    )
+                                            },
+                                        ),
                                 ),
                         );
                     }

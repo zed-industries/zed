@@ -979,7 +979,6 @@ impl<'a> BlockMapWriter<'a> {
             if let BlockPlacement::Replace(_) = &block.placement {
                 debug_assert!(block.height > 0);
             }
-
             let id = CustomBlockId(self.0.next_block_id.fetch_add(1, SeqCst));
             ids.push(id);
 
