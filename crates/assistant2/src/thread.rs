@@ -63,8 +63,8 @@ impl Thread {
         }
     }
 
-    pub fn messages(&self) -> impl Iterator<Item = &Message> {
-        self.messages.iter()
+    pub fn message(&self, id: MessageId) -> Option<&Message> {
+        self.messages.iter().find(|message| message.id == id)
     }
 
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
@@ -75,12 +75,14 @@ impl Thread {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn insert_user_message(&mut self, text: impl Into<String>) {
+    pub fn insert_user_message(&mut self, text: impl Into<String>, cx: &mut ModelContext<Self>) {
+        let id = self.next_message_id.post_inc();
         self.messages.push(Message {
-            id: self.next_message_id.post_inc(),
+            id,
             role: Role::User,
             text: text.into(),
         });
+        cx.emit(ThreadEvent::MessageAdded(id));
     }
 
     pub fn to_completion_request(
@@ -150,11 +152,13 @@ impl Thread {
                     thread.update(&mut cx, |thread, cx| {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
+                                let id = thread.next_message_id.post_inc();
                                 thread.messages.push(Message {
-                                    id: thread.next_message_id.post_inc(),
+                                    id,
                                     role: Role::Assistant,
                                     text: String::new(),
                                 });
+                                cx.emit(ThreadEvent::MessageAdded(id));
                             }
                             LanguageModelCompletionEvent::Stop(reason) => {
                                 stop_reason = reason;
@@ -316,6 +320,7 @@ pub enum ThreadError {
 pub enum ThreadEvent {
     ShowError(ThreadError),
     StreamedCompletion,
+    MessageAdded(MessageId),
     UsePendingTools,
     ToolFinished {
         #[allow(unused)]
