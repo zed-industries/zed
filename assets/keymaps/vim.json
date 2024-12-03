@@ -490,6 +490,13 @@
     }
   },
   {
+    "context": "vim_operator == eq",
+    "use_layout_keys": true,
+    "bindings": {
+      "=": "vim::CurrentLine"
+    }
+  },
+  {
     "context": "vim_operator == gc",
     "use_layout_keys": true,
     "bindings": {
