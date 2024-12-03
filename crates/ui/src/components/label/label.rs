@@ -164,17 +164,9 @@ impl LabelCommon for Label {
         self
     }
 
-    /// Make the label display in a single line mode
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ui::prelude::*;
-    ///
-    /// let my_label = Label::new("Hello, World!").single_line();
-    /// ```
     fn single_line(mut self) -> Self {
         self.single_line = true;
+        self.base = self.base.single_line();
         self
     }
 }
@@ -186,8 +178,6 @@ impl RenderOnce for Label {
         } else {
             self.label
         };
-        self.base
-            .child(target_label)
-            .when(self.single_line, |this| this.single_line())
+        self.base.child(target_label)
     }
 }

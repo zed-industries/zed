@@ -50,7 +50,7 @@ pub trait LabelCommon {
     /// Sets the alpha property of the label, overwriting the alpha value of the color.
     fn alpha(self, alpha: f32) -> Self;
 
-    /// Sets the no_wrap property of the label.
+    /// Sets the label to render as a single line.
     fn single_line(self) -> Self;
 }
 
