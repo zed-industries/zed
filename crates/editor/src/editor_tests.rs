@@ -11805,7 +11805,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
 
     multi_buffer_editor.update(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::Next), cx, |s| {
-            s.select_ranges(Some(60..70))
+            s.select_ranges(Some(70..70))
         });
         editor.open_excerpts(&OpenExcerpts, cx);
     });
