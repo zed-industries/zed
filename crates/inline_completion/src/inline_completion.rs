@@ -14,10 +14,12 @@ pub enum Direction {
     Next,
 }
 
+#[derive(Clone)]
 pub struct CompletionProposal {
     pub edits: Vec<CompletionEdit>,
 }
 
+#[derive(Clone)]
 pub struct CompletionEdit {
     pub text: Rope,
     pub range: Range<language::Anchor>,

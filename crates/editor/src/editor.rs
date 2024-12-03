@@ -42,6 +42,8 @@ pub mod tasks;
 
 #[cfg(test)]
 mod editor_tests;
+#[cfg(test)]
+mod inline_completion_tests;
 mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
