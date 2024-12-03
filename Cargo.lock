@@ -16021,6 +16021,7 @@ name = "zeta"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "collections",
  "ctor",
  "env_logger 0.11.5",
@@ -16034,9 +16035,11 @@ dependencies = [
  "open_ai",
  "reqwest_client",
  "rpc",
+ "serde_json",
  "similar",
  "tree-sitter-go",
  "tree-sitter-rust",
+ "util",
  "uuid",
  "worktree",
 ]

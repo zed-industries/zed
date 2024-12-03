@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-use client::telemetry::Telemetry;
+use client::Client;
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
@@ -9,11 +9,11 @@ use language::language_settings::all_language_settings;
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 
-pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
+pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new_views({
         let editors = editors.clone();
-        let telemetry = telemetry.clone();
+        let client = client.clone();
         move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
             if editor.mode() != EditorMode::Full {
                 return;
@@ -34,7 +34,7 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
                 .borrow_mut()
                 .insert(editor_handle, cx.window_handle());
             let provider = all_language_settings(None, cx).inline_completions.provider;
-            assign_inline_completion_provider(editor, provider, &telemetry, cx);
+            assign_inline_completion_provider(editor, provider, &client, cx);
         }
     })
     .detach();
@@ -43,7 +43,7 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, cx| {
             _ = editor.update(cx, |editor, cx| {
-                assign_inline_completion_provider(editor, provider, &telemetry, cx);
+                assign_inline_completion_provider(editor, provider, &client, cx);
             })
         });
     }
@@ -55,7 +55,7 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
             for (editor, window) in editors.borrow().iter() {
                 _ = window.update(cx, |_window, cx| {
                     _ = editor.update(cx, |editor, cx| {
-                        assign_inline_completion_provider(editor, provider, &telemetry, cx);
+                        assign_inline_completion_provider(editor, provider, &client, cx);
                     })
                 });
             }
@@ -103,7 +103,7 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &ViewContext<Ed
 fn assign_inline_completion_provider(
     editor: &mut Editor,
     provider: language::language_settings::InlineCompletionProvider,
-    telemetry: &Arc<Telemetry>,
+    client: &Arc<Client>,
     cx: &mut ViewContext<Editor>,
 ) {
     match provider {
@@ -118,7 +118,8 @@ fn assign_inline_completion_provider(
                     }
                 }
                 let provider = cx.new_model(|_| {
-                    CopilotCompletionProvider::new(copilot).with_telemetry(telemetry.clone())
+                    CopilotCompletionProvider::new(copilot)
+                        .with_telemetry(client.telemetry().clone())
                 });
                 editor.set_inline_completion_provider(Some(provider), cx);
             }
@@ -126,13 +127,14 @@ fn assign_inline_completion_provider(
         language::language_settings::InlineCompletionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
                 let provider = cx.new_model(|_| {
-                    SupermavenCompletionProvider::new(supermaven).with_telemetry(telemetry.clone())
+                    SupermavenCompletionProvider::new(supermaven)
+                        .with_telemetry(client.telemetry().clone())
                 });
                 editor.set_inline_completion_provider(Some(provider), cx);
             }
         }
         language::language_settings::InlineCompletionProvider::Zeta => {
-            let zeta = zeta::Zeta::global(cx);
+            let zeta = zeta::Zeta::register(client.clone(), cx);
             if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                 if buffer.read(cx).file().is_some() {
                     zeta.update(cx, |zeta, cx| {

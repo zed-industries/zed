@@ -15,6 +15,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+client.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -23,11 +24,15 @@ inline_completion.workspace = true
 language.workspace = true
 log.workspace = true
 open_ai.workspace = true
+rpc.workspace = true
+serde_json.workspace = true
 similar.workspace = true
+util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
+client = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
@@ -38,4 +43,5 @@ reqwest_client = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 tree-sitter-go.workspace = true
 tree-sitter-rust.workspace = true
+util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
