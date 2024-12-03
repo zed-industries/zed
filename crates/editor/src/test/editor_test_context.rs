@@ -13,7 +13,7 @@ use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
 use multi_buffer::{ExcerptRange, ToPoint};
 use parking_lot::RwLock;
-use project::{buffer_store::BufferChangeSet, FakeFs, Project};
+use project::{FakeFs, Project};
 use std::{
     any::TypeId,
     ops::{Deref, DerefMut, Range},
@@ -42,16 +42,16 @@ pub struct EditorTestContext {
 impl EditorTestContext {
     pub async fn new(cx: &mut gpui::TestAppContext) -> EditorTestContext {
         let fs = FakeFs::new(cx.executor());
-        // fs.insert_file("/file", "".to_owned()).await;
         let root = Self::root_path();
         fs.insert_tree(
             root,
             serde_json::json!({
+                ".git": {},
                 "file": "",
             }),
         )
         .await;
-        let project = Project::test(fs, [root], cx).await;
+        let project = Project::test(fs.clone(), [root], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(root.join("file"), cx)
@@ -278,13 +278,15 @@ impl EditorTestContext {
         snapshot.anchor_before(ranges[0].start)..snapshot.anchor_after(ranges[0].end)
     }
 
-    pub fn set_diff_base(&mut self, diff_base: Option<&str>) {
-        self.update_editor(|editor, cx| {
-            let buffer = editor.buffer.read(cx).as_singleton().unwrap();
-            let change_set =
-                cx.new_model(|cx| BufferChangeSet::new(diff_base.map(str::to_string), buffer, cx));
-            editor.diff_map.add_change_set(change_set, cx)
-        });
+    pub fn set_diff_base(&mut self, diff_base: &str) {
+        self.cx.run_until_parked();
+        let fs = self
+            .update_editor(|editor, cx| editor.project.as_ref().unwrap().read(cx).fs().as_fake());
+        fs.set_index_for_repo(
+            &Self::root_path().join(".git"),
+            &[(Path::new("file"), diff_base.to_string())],
+        );
+        self.cx.run_until_parked();
     }
 
     /// Change the editor's text and selections using a string containing

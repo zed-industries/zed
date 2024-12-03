@@ -897,8 +897,8 @@ impl Editor {
         let mut diff_base_buffer_unchanged = true;
         if let Some(diff_base_state) = diff_base_state {
             diff_base_state.change_set.update(cx, |change_set, _| {
-                if diff_base_state.last_version != Some(change_set.version) {
-                    diff_base_state.last_version = Some(change_set.version);
+                if diff_base_state.last_version != Some(change_set.base_text_version) {
+                    diff_base_state.last_version = Some(change_set.base_text_version);
                     diff_base_buffer_unchanged = false;
                 }
                 diff_base_buffer = change_set.base_text.clone();
@@ -995,11 +995,11 @@ impl Editor {
                                             recalculated_hunks.next();
                                             retain = true;
                                         } else {
-                                            hunks_to_reexpand.push(dbg!(HoveredHunk {
+                                            hunks_to_reexpand.push(HoveredHunk {
                                                 status,
                                                 multi_buffer_range,
                                                 diff_base_byte_range,
-                                            }));
+                                            });
                                         }
                                         break;
                                     }

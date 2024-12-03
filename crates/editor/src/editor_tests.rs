@@ -3313,7 +3313,7 @@ async fn test_join_lines_with_git_diff_base(
         .unindent(),
     );
 
-    cx.set_diff_base(Some(&diff_base));
+    cx.set_diff_base(&diff_base);
     executor.run_until_parked();
 
     // Join lines
@@ -3353,7 +3353,7 @@ async fn test_custom_newlines_cause_no_false_positive_diffs(
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
     cx.set_state("Line 0\r\nLine 1\rˇ\nLine 2\r\nLine 3");
-    cx.set_diff_base(Some("Line 0\r\nLine 1\r\nLine 2\r\nLine 3"));
+    cx.set_diff_base("Line 0\r\nLine 1\r\nLine 2\r\nLine 3");
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
@@ -10087,7 +10087,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
         .unindent(),
     );
 
-    cx.set_diff_base(Some(&diff_base));
+    cx.set_diff_base(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
@@ -11877,7 +11877,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         .unindent(),
     );
 
-    cx.set_diff_base(Some(&diff_base));
+    cx.set_diff_base(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
@@ -11989,7 +11989,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base(Some(&diff_base));
+    cx.set_diff_base(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
@@ -12017,7 +12017,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base(Some("new diff base!"));
+    cx.set_diff_base("new diff base!");
     executor.run_until_parked();
     cx.assert_state_with_diff(
         r#"
@@ -12117,7 +12117,7 @@ async fn test_fold_unfold_diff_hunk(executor: BackgroundExecutor, cx: &mut gpui:
         .unindent(),
     );
 
-    cx.set_diff_base(Some(&diff_base));
+    cx.set_diff_base(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
@@ -12485,7 +12485,7 @@ async fn test_edits_around_expanded_insertion_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base(Some(&diff_base));
+    cx.set_diff_base(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
@@ -12676,7 +12676,7 @@ async fn test_edits_around_expanded_deletion_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base(Some(&diff_base));
+    cx.set_diff_base(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
@@ -12819,7 +12819,7 @@ async fn test_edit_after_expanded_modification_hunk(
         .unindent(),
     );
 
-    cx.set_diff_base(Some(&diff_base));
+    cx.set_diff_base(&diff_base);
     executor.run_until_parked();
     cx.update_editor(|editor, cx| {
         editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
@@ -13940,7 +13940,7 @@ fn assert_hunk_revert(
     cx: &mut EditorLspTestContext,
 ) {
     cx.set_state(not_reverted_text_with_selections);
-    cx.set_diff_base(Some(base_text));
+    cx.set_diff_base(base_text);
     cx.executor().run_until_parked();
 
     let reverted_hunk_statuses = cx.update_editor(|editor, cx| {

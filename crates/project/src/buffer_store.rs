@@ -49,7 +49,7 @@ pub struct BufferChangeSet {
     pub diff_to_buffer: git::diff::BufferDiff,
     pub recalculate_diff_task: Option<Task<Result<()>>>,
     pub diff_updated_futures: Vec<oneshot::Sender<()>>,
-    pub version: usize,
+    pub base_text_version: usize,
 }
 
 enum BufferStoreState {
@@ -2040,7 +2040,7 @@ impl BufferChangeSet {
             diff_to_buffer: git::diff::BufferDiff::new(buffer),
             recalculate_diff_task: None,
             diff_updated_futures: Vec::new(),
-            version: 0,
+            base_text_version: 0,
         };
         this.set_base_text(base_text, buffer.text_snapshot(), cx);
         this
@@ -2082,7 +2082,7 @@ impl BufferChangeSet {
             self.base_text = None;
             self.diff_to_buffer = BufferDiff::new(&buffer_snapshot);
             self.recalculate_diff_task.take();
-            self.version += 1;
+            self.base_text_version += 1;
             cx.notify();
         }
     }
@@ -2119,6 +2119,7 @@ impl BufferChangeSet {
                 .await;
             this.update(&mut cx, |this, cx| {
                 if base_text_changed {
+                    this.base_text_version += 1;
                     this.base_text = Some(cx.new_model(|cx| {
                         Buffer::local_normalized(Rope::from(base_text), LineEnding::default(), cx)
                     }));
@@ -2126,7 +2127,6 @@ impl BufferChangeSet {
                 this.diff_to_buffer = diff;
                 this.recalculate_diff_task.take();
                 this.diff_updated_futures.clear();
-                this.version += 1;
                 cx.notify();
             })?;
             Ok(())
