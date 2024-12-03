@@ -474,7 +474,7 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
     let height = buffer.height();
     let stride = width * 4;
     let byte_len = (stride * height) as usize;
-    let bgra_frame_vec = unsafe {
+    let argb_image = unsafe {
         // Motivation for this unsafe code is to avoid initializing the frame data, since to_argb
         // will write all bytes anyway.
         let start_ptr = alloc(Layout::array::<u8>(byte_len).log_err()?);
@@ -483,7 +483,7 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
         }
         let bgra_frame_slice = std::slice::from_raw_parts_mut(start_ptr, byte_len);
         buffer.to_argb(
-            VideoFormatType::BGRA,
+            VideoFormatType::ARGB, // For some reason, this displays correctly while RGBA (the correct format) does not
             bgra_frame_slice,
             stride,
             width as i32,
@@ -494,7 +494,7 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
 
     Some(Arc::new(RenderImage::new(SmallVec::from_elem(
         Frame::new(
-            RgbaImage::from_raw(width, height, bgra_frame_vec)
+            RgbaImage::from_raw(width, height, argb_image)
                 .with_context(|| "Bug: not enough bytes allocated for image.")
                 .log_err()?,
         ),
