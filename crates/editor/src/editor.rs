@@ -678,6 +678,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    folded_excerpts: HashMap<Anchor, CustomBlockId>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
 }
 
@@ -1326,6 +1327,8 @@ impl Editor {
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             text_style_refinement: None,
+            folded_excerpts: HashMap::default(),
+            _scroll_cursor_center_top_bottom_task: Task::ready(()),
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);

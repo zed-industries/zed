@@ -17,11 +17,14 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
-    DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
-    EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
-    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
+    BlockId, BlockPlacement, BlockProperties, ChunkReplacement, CursorShape,
+    CustomBlockId, DisplayPoint, DisplayRow,
+    DocumentHighlightRead, DocumentHighlightWrite, Editor,
+    EditorMode, EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock,
+    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData,
+    LineDown,
+    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase,
+    Selection,
     SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
@@ -30,15 +33,14 @@ use collections::{BTreeMap, HashMap, HashSet};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
-    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, View, ViewContext,
-    WeakView, WindowContext,
+    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClickEvent,
+    ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
+    ElementInputHandler, Entity, FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla, InteractiveElement,
+    IntoElement, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun,
+    TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
 };
-use gpui::{ClickEvent, Subscription};
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -2142,7 +2144,6 @@ impl EditorElement {
                 show_excerpt_controls,
                 starts_new_buffer,
                 height,
-                ..
             } => {
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
@@ -2245,20 +2246,76 @@ impl EditorElement {
                                         .justify_between()
                                         .hover(|style| style.bg(cx.theme().colors().element_hover))
                                         .child(
-                                            h_flex().gap_3().child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(
-                                                        filename
-                                                            .map(SharedString::from)
-                                                            .unwrap_or_else(|| "untitled".into()),
-                                                    )
-                                                    .when_some(parent_path, |then, path| {
-                                                        then.child(div().child(path).text_color(
-                                                            cx.theme().colors().text_muted,
-                                                        ))
-                                                    }),
-                                            ),
+                                            h_flex()
+                                                .gap_3()
+                                                .map(|header| {
+                                                    let editor = self.editor.clone();
+                                                    let multi_buffer_snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                                                    // TODO kb all wrong
+                                                    let fold_start = prev_excerpt.as_ref()
+                                                        .and_then(|e| multi_buffer_snapshot.anchor_in_excerpt(e.id, e.range.context.end)).unwrap_or_else(|| Anchor::min());
+                                                    let fold_end = multi_buffer_snapshot.anchor_in_excerpt(next_excerpt.id, next_excerpt.range.context.start).unwrap_or_else(|| Anchor::max());
+
+                                                    match editor
+                                                        .read(cx)
+                                                        .folded_excerpts
+                                                        .get(&fold_start) {
+                                                            Some(&existing_fold) => header.child(Button::new("unfold-file", "Unfold").on_click(
+                                                                move |_, cx| {
+                                                                    editor.update(cx, |editor, cx| {
+                                                                        editor.remove_blocks(HashSet::from_iter(Some(existing_fold)), None, cx);
+                                                                        editor.folded_excerpts.remove(&fold_start);
+                                                                    });
+                                                                    cx.stop_propagation();
+                                                                }
+                                                            )),
+                                                            None => header.child(Button::new("fold-file", "Fold").on_click(
+                                                                move |_, cx| {
+                                                                    editor.update(cx, |editor, cx| {
+                                                                        let mut block_ids = editor.insert_blocks(
+                                                                            Some(BlockProperties {
+                                                                                placement:
+                                                                                    BlockPlacement::Replace(
+                                                                                        fold_start..fold_end,
+                                                                                    ),
+                                                                                height: 1,
+                                                                                style: BlockStyle::Flex,
+                                                                                priority: 0,
+                                                                                render: Arc::new(|_| {
+                                                                                    Label::new("folded?????")
+                                                                                        .into_any_element()
+                                                                                }),
+                                                                            }),
+                                                                            None,
+                                                                            cx,
+                                                                        );
+                                                                        if let Some(block_id) = block_ids.pop() {
+                                                                            editor.folded_excerpts.insert(fold_start, block_id);
+                                                                        }
+                                                                    });
+                                                                    cx.stop_propagation();
+                                                                }
+                                                            )),
+                                                        }
+                                                })
+                                                .child(
+                                                    h_flex()
+                                                        .gap_2()
+                                                        .child(
+                                                            filename
+                                                                .map(SharedString::from)
+                                                                .unwrap_or_else(|| {
+                                                                    "untitled".into()
+                                                                }),
+                                                        )
+                                                        .when_some(parent_path, |then, path| {
+                                                            then.child(
+                                                                div().child(path).text_color(
+                                                                    cx.theme().colors().text_muted,
+                                                                ),
+                                                            )
+                                                        }),
+                                                ),
                                         )
                                         .child(Icon::new(IconName::ArrowUpRight))
                                         .cursor_pointer()
