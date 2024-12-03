@@ -286,7 +286,20 @@ impl Zeta {
             } else {
                 let edits = edits
                     .into_iter()
-                    .map(|(old_range, new_text)| {
+                    .map(|(mut old_range, new_text)| {
+                        let prefix_len = common_prefix(
+                            snapshot.chars_for_range(old_range.clone()),
+                            new_text.chars(),
+                        );
+                        old_range.start += prefix_len;
+                        let suffix_len = common_prefix(
+                            snapshot.reversed_chars_for_range(old_range.clone()),
+                            new_text[prefix_len..].chars().rev(),
+                        );
+                        old_range.end = old_range.end.saturating_sub(suffix_len);
+
+                        let new_text =
+                            new_text[prefix_len..new_text.len() - suffix_len].to_string();
                         (
                             snapshot.anchor_after(old_range.start)
                                 ..snapshot.anchor_before(old_range.end),
@@ -345,6 +358,13 @@ impl Zeta {
 
         new_snapshot
     }
+}
+
+fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
+    a.zip(b)
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len_utf8())
+        .sum()
 }
 
 fn prompt_for_excerpt(
