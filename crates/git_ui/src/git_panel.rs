@@ -1,8 +1,10 @@
 use editor::Editor;
 use git::repository::GitFileStatus;
 use gpui::*;
+use settings::Settings;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
+use theme::ThemeSettings;
 use ui::{prelude::*, Checkbox, DividerColor, ElevationIndex, IconButtonShape};
 use ui::{Disclosure, Divider};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
@@ -658,7 +660,7 @@ impl StagingHeaderItem {
 impl RenderOnce for StagingHeaderItem {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let staging_type = if self.is_staged { "Staged" } else { "Unstaged" };
-        let label: SharedString = format!("{} Changes: {}", staging_type, self.count).into();
+        let label: SharedString = format!("{} Changes", staging_type).into();
         let selected_color = cx.theme().status().info.opacity(0.1);
 
         h_flex()
@@ -680,7 +682,12 @@ impl RenderOnce for StagingHeaderItem {
                 h_flex()
                     .gap_2()
                     .child(Disclosure::new(self.id.clone(), self.is_expanded))
-                    .child(Label::new(label).size(LabelSize::Small)),
+                    .child(Label::new(label).size(LabelSize::Small))
+                    .child(
+                        Label::new(self.count.to_string())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
             .child(h_flex().gap_2().map(|this| {
                 if !self.is_staged {
@@ -702,6 +709,9 @@ impl RenderOnce for StagingHeaderItem {
                             ElementId::Name(format!("{}-unstage", self.id.clone()).into()),
                             "Unstage All",
                         )
+                        .style(ButtonStyle::Filled)
+                        .size(ButtonSize::Compact)
+                        .label_size(LabelSize::Small)
                         .layer(ui::ElevationIndex::ModalSurface)
                         .disabled(self.no_changes)
                         .on_click(move |_, cx| cx.dispatch_action(Box::new(UnstageAll))),
@@ -833,16 +843,25 @@ impl GitPanel {
         let model = cx.new_model(|_cx| new_state);
         let scroll_handle = UniformListScrollHandle::new();
         let editor = cx.new_view(|cx| {
-            let text_style_refinement: TextStyleRefinement = TextStyleRefinement {
-                font_size: Some(px(14.).into()),
+            let theme = ThemeSettings::get_global(cx);
+
+            let mut text_style = cx.text_style();
+            let refinement = TextStyleRefinement {
+                font_family: Some(theme.buffer_font.family.clone()),
+                font_features: Some(FontFeatures::disable_ligatures()),
+                font_size: Some(px(12.).into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(gpui::transparent_black()),
                 ..Default::default()
             };
+
+            text_style.refine(&refinement);
 
             let mut editor = Editor::multi_line(cx);
             editor.set_placeholder_text("Add a commit message", cx);
             editor.set_show_gutter(false, cx);
             editor.set_current_line_highlight(None);
-            editor.set_text_style_refinement(text_style_refinement);
+            editor.set_text_style_refinement(refinement);
             editor
         });
 
@@ -1044,17 +1063,19 @@ impl GitPanel {
 
         let commit_message = state.commit_message.clone();
 
-        let commit_button_disabled = staged_count == 0 || commit_message.is_none();
+        // let commit_button_disabled = staged_count == 0 || commit_message.is_none();
 
         let commit_button = Button::new("commit-button", "Commit")
             .style(ButtonStyle::Filled)
             .size(ButtonSize::Compact)
-            .disabled(commit_button_disabled)
+            // .disabled(commit_button_disabled)
             .on_click(move |_, cx| {
                 model.update(cx, |state, cx| {
                     state.commit_message = None;
                     state.files.retain(|_, file| !file.staged);
-                    state.file_order.retain(|id| !state.files[id].staged);
+                    state
+                        .file_order
+                        .retain(|id| state.files.get(id).map_or(true, |file| !file.staged));
                     state.update_lines_changed();
                     state.file_tree = FileTree::new(&state.files);
                     state.needs_update = true;
