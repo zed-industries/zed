@@ -105,7 +105,7 @@ impl ProposedChangesEditor {
                                     let change_set = this.editor.update(cx, |editor, _| {
                                         Some(
                                             editor
-                                                .expanded_hunks
+                                                .diff_map
                                                 .diff_bases
                                                 .get(&buffer.remote_id())?
                                                 .change_set

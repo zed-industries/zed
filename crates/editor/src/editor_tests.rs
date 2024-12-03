@@ -11380,12 +11380,12 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
         ] {
             let change_set =
                 cx.new_model(|cx| BufferChangeSet::new(Some(diff_base.to_string()), buffer, cx));
-            editor.expanded_hunks.add_change_set(change_set, cx)
+            editor.diff_map.add_change_set(change_set, cx)
         }
     });
 
     editor.update(cx, |editor, cx| {
-        assert_eq!(editor.text(cx), "XaaaXbbbX\nccXc\ndXdd\n\nhXhh\nXiiiXjjjX\n\nXlllXmmmX\nnnXn\noXoo\n\nsXss\nXtttXuuuX\n\nXvvvXwwwX\nxxXx\nyXyy\n\n}X}}\nX~~~X\u{7f}\u{7f}\u{7f}X\n");
+        assert_eq!(editor.text(cx), "Xaaa\nXbbb\nXccc\n\nXfff\nXggg\n\nXjjj\nXlll\nXmmm\nXnnn\n\nXqqq\nXrrr\n\nXuuu\nXvvv\nXwww\nXxxx\n\nX{{{\nX|||\n\nX\u{7f}\u{7f}\u{7f}");
         editor.select_all(&SelectAll, cx);
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
     });
@@ -11430,13 +11430,13 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     buffer_2.update(cx, |buffer, _| {
         assert_eq!(
             buffer.text(),
-            "XlllXmmmX\nnnXn\noXoo\nXpppXqqqX\nrrXr\nsXss\nXtttXuuuX"
+            "Xlll\nXmmm\nXnnn\nXooo\nXppp\nXqqq\nXrrr\nXsss\nXttt\nXuuu"
         );
     });
     buffer_3.update(cx, |buffer, _| {
         assert_eq!(
             buffer.text(),
-            "XvvvXwwwX\nxxXx\nyXyy\nXzzzX{{{X\n||X|\n}X}}\nX~~~X\u{7f}\u{7f}\u{7f}X"
+            "Xvvv\nXwww\nXxxx\nXyyy\nXzzz\nX{{{\nX|||\nX}}}\nX~~~\nX\u{7f}\u{7f}\u{7f}"
         );
     });
 
@@ -11780,14 +11780,14 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
     });
     executor.run_until_parked();
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
           use some::modified;
 
 
           fn main() {
         -     println!("hello");
-        +     println!("hello there");
+        + ˇ    println!("hello there");
 
               println!("around the");
               println!("world");
@@ -11803,28 +11803,13 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         }
     });
     executor.run_until_parked();
-    cx.assert_editor_state(
-        &r#"
-        use some::modified;
-
-        ˇ
-        fn main() {
-            println!("hello there");
-
-            println!("around the");
-            println!("world");
-        }
-        "#
-        .unindent(),
-    );
-
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         - use some::mod;
         + use some::modified;
 
         - const A: u32 = 42;
-
+          ˇ
           fn main() {
         -     println!("hello");
         +     println!("hello there");
@@ -11840,11 +11825,11 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         editor.cancel(&Cancel, cx);
     });
 
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
           use some::modified;
 
-
+          ˇ
           fn main() {
               println!("hello there");
 
@@ -11906,7 +11891,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         - use some::mod1;
           use some::mod2;
@@ -11915,7 +11900,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         - const B: u32 = 42;
           const C: u32 = 42;
 
-          fn main() {
+          fn main(ˇ) {
         -     println!("hello");
         +     //println!("hello");
 
@@ -11929,14 +11914,14 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
 
     cx.set_diff_base(Some("new diff base!"));
     executor.run_until_parked();
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
           use some::mod2;
 
           const A: u32 = 42;
           const C: u32 = 42;
 
-          fn main() {
+          fn main(ˇ) {
               //println!("hello");
 
               println!("world");
@@ -11951,7 +11936,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         - new diff base!
         + use some::mod2;
@@ -11959,7 +11944,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         + const A: u32 = 42;
         + const C: u32 = 42;
         +
-        + fn main() {
+        + fn main(ˇ) {
         +     //println!("hello");
         +
         +     println!("world");
@@ -12035,10 +12020,10 @@ async fn test_fold_unfold_diff_hunk(executor: BackgroundExecutor, cx: &mut gpui:
     });
     executor.run_until_parked();
 
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         - use some::mod1;
-          use some::mod2;
+          «use some::mod2;
 
           const A: u32 = 42;
         - const B: u32 = 42;
@@ -12050,7 +12035,7 @@ async fn test_fold_unfold_diff_hunk(executor: BackgroundExecutor, cx: &mut gpui:
 
               println!("world");
         +     //
-        +     //
+        +     //ˇ»
           }
 
           fn another() {
@@ -12070,9 +12055,9 @@ async fn test_fold_unfold_diff_hunk(executor: BackgroundExecutor, cx: &mut gpui:
     cx.executor().run_until_parked();
 
     // Hunks are not shown if their position is within a fold
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
-          use some::mod2;
+          «use some::mod2;
 
           const A: u32 = 42;
           const C: u32 = 42;
@@ -12082,7 +12067,7 @@ async fn test_fold_unfold_diff_hunk(executor: BackgroundExecutor, cx: &mut gpui:
 
               println!("world");
               //
-              //
+              //ˇ»
           }
 
           fn another() {
@@ -12104,10 +12089,10 @@ async fn test_fold_unfold_diff_hunk(executor: BackgroundExecutor, cx: &mut gpui:
     cx.executor().run_until_parked();
 
     // The deletions reappear when unfolding.
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         - use some::mod1;
-          use some::mod2;
+          «use some::mod2;
 
           const A: u32 = 42;
         - const B: u32 = 42;
@@ -12130,7 +12115,7 @@ async fn test_fold_unfold_diff_hunk(executor: BackgroundExecutor, cx: &mut gpui:
         - fn another2() {
               println!("another2");
           }
-        "#
+          ˇ»"#
         .unindent(),
     );
 }
@@ -12219,7 +12204,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
             ] {
                 let change_set = cx
                     .new_model(|cx| BufferChangeSet::new(Some(diff_base.to_string()), buffer, cx));
-                editor.expanded_hunks.add_change_set(change_set, cx)
+                editor.diff_map.add_change_set(change_set, cx)
             }
         })
         .unwrap();
@@ -12263,9 +12248,9 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     });
     cx.executor().run_until_parked();
 
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         "
-            aaa
+            «aaa
           - bbb
             ccc
             ddd
@@ -12291,8 +12276,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
             777
 
             000
-            !!!"
-        .unindent(),
+            !!!ˇ»"
+            .unindent(),
     );
 }
 
@@ -12328,7 +12313,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
         .update(cx, |editor, cx| {
             let change_set =
                 cx.new_model(|cx| BufferChangeSet::new(Some(base.to_string()), buffer, cx));
-            editor.expanded_hunks.add_change_set(change_set, cx)
+            editor.diff_map.add_change_set(change_set, cx)
         })
         .unwrap();
 
@@ -12338,9 +12323,9 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     cx.update_editor(|editor, cx| editor.expand_all_hunk_diffs(&Default::default(), cx));
     cx.executor().run_until_parked();
 
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         "
-            aaa
+            ˇaaa
           - bbb
           + BBB
 
@@ -12403,7 +12388,7 @@ async fn test_edits_around_expanded_insertion_hunks(
     });
     executor.run_until_parked();
 
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         use some::mod1;
         use some::mod2;
@@ -12411,7 +12396,7 @@ async fn test_edits_around_expanded_insertion_hunks(
         const A: u32 = 42;
       + const B: u32 = 42;
       + const C: u32 = 42;
-      +
+      + ˇ
 
         fn main() {
             println!("hello");
@@ -12425,7 +12410,7 @@ async fn test_edits_around_expanded_insertion_hunks(
     cx.update_editor(|editor, cx| editor.handle_input("const D: u32 = 42;\n", cx));
     executor.run_until_parked();
 
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         use some::mod1;
         use some::mod2;
@@ -12434,7 +12419,7 @@ async fn test_edits_around_expanded_insertion_hunks(
       + const B: u32 = 42;
       + const C: u32 = 42;
       + const D: u32 = 42;
-      +
+      + ˇ
 
         fn main() {
             println!("hello");
@@ -12448,7 +12433,7 @@ async fn test_edits_around_expanded_insertion_hunks(
     cx.update_editor(|editor, cx| editor.handle_input("const E: u32 = 42;\n", cx));
     executor.run_until_parked();
 
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         use some::mod1;
         use some::mod2;
@@ -12458,7 +12443,7 @@ async fn test_edits_around_expanded_insertion_hunks(
       + const C: u32 = 42;
       + const D: u32 = 42;
       + const E: u32 = 42;
-      +
+      + ˇ
 
         fn main() {
             println!("hello");
@@ -12474,7 +12459,7 @@ async fn test_edits_around_expanded_insertion_hunks(
     });
     executor.run_until_parked();
 
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         use some::mod1;
         use some::mod2;
@@ -12484,32 +12469,6 @@ async fn test_edits_around_expanded_insertion_hunks(
       + const C: u32 = 42;
       + const D: u32 = 42;
       + const E: u32 = 42;
-
-        fn main() {
-            println!("hello");
-
-            println!("world");
-        }
-        "#
-        .unindent(),
-    );
-
-    cx.update_editor(|editor, cx| {
-        editor.move_up(&MoveUp, cx);
-        editor.delete_line(&DeleteLine, cx);
-        editor.move_up(&MoveUp, cx);
-        editor.delete_line(&DeleteLine, cx);
-        editor.move_up(&MoveUp, cx);
-        editor.delete_line(&DeleteLine, cx);
-    });
-    executor.run_until_parked();
-    cx.assert_editor_state(
-        &r#"
-        use some::mod1;
-        use some::mod2;
-
-        const A: u32 = 42;
-        const B: u32 = 42;
         ˇ
         fn main() {
             println!("hello");
@@ -12520,14 +12479,23 @@ async fn test_edits_around_expanded_insertion_hunks(
         .unindent(),
     );
 
-    cx.assert_diff_hunks(
+    cx.update_editor(|editor, cx| {
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
         r#"
         use some::mod1;
         use some::mod2;
 
         const A: u32 = 42;
       + const B: u32 = 42;
-
+        ˇ
         fn main() {
             println!("hello");
 
@@ -12542,13 +12510,13 @@ async fn test_edits_around_expanded_insertion_hunks(
         editor.delete_line(&DeleteLine, cx);
     });
     executor.run_until_parked();
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         use some::mod1;
       - use some::mod2;
       -
       - const A: u32 = 42;
-
+        ˇ
         fn main() {
             println!("hello");
 
@@ -12611,13 +12579,13 @@ async fn test_edits_around_expanded_deletion_hunks(
     });
     executor.run_until_parked();
 
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         use some::mod1;
         use some::mod2;
 
       - const A: u32 = 42;
-        const B: u32 = 42;
+        ˇconst B: u32 = 42;
         const C: u32 = 42;
 
 
@@ -12634,11 +12602,13 @@ async fn test_edits_around_expanded_deletion_hunks(
         editor.delete_line(&DeleteLine, cx);
     });
     executor.run_until_parked();
-    cx.assert_editor_state(
-        &r#"
+    cx.assert_state_with_diff(
+        r#"
         use some::mod1;
         use some::mod2;
 
+      - const A: u32 = 42;
+      - const B: u32 = 42;
         ˇconst C: u32 = 42;
 
 
@@ -12650,45 +12620,12 @@ async fn test_edits_around_expanded_deletion_hunks(
         "#
         .unindent(),
     );
-    cx.assert_diff_hunks(
-        r#"
-        use some::mod1;
-        use some::mod2;
-
-      - const A: u32 = 42;
-      - const B: u32 = 42;
-        const C: u32 = 42;
-
-
-        fn main() {
-            println!("hello");
-
-            println!("world");
-        }
-        "#
-        .unindent(),
-    );
 
     cx.update_editor(|editor, cx| {
         editor.delete_line(&DeleteLine, cx);
     });
     executor.run_until_parked();
-    cx.assert_editor_state(
-        &r#"
-        use some::mod1;
-        use some::mod2;
-
-        ˇ
-
-        fn main() {
-            println!("hello");
-
-            println!("world");
-        }
-        "#
-        .unindent(),
-    );
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         use some::mod1;
         use some::mod2;
@@ -12696,7 +12633,7 @@ async fn test_edits_around_expanded_deletion_hunks(
       - const A: u32 = 42;
       - const B: u32 = 42;
       - const C: u32 = 42;
-
+        ˇ
 
         fn main() {
             println!("hello");
@@ -12711,22 +12648,7 @@ async fn test_edits_around_expanded_deletion_hunks(
         editor.handle_input("replacement", cx);
     });
     executor.run_until_parked();
-    cx.assert_editor_state(
-        &r#"
-        use some::mod1;
-        use some::mod2;
-
-        replacementˇ
-
-        fn main() {
-            println!("hello");
-
-            println!("world");
-        }
-        "#
-        .unindent(),
-    );
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         use some::mod1;
         use some::mod2;
@@ -12735,7 +12657,7 @@ async fn test_edits_around_expanded_deletion_hunks(
       - const B: u32 = 42;
       - const C: u32 = 42;
       -
-      + replacement
+      + replacementˇ
 
         fn main() {
             println!("hello");
@@ -12799,7 +12721,7 @@ async fn test_edit_after_expanded_modification_hunk(
     });
     executor.run_until_parked();
 
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         use some::mod1;
         use some::mod2;
@@ -12807,7 +12729,7 @@ async fn test_edit_after_expanded_modification_hunk(
         const A: u32 = 42;
         const B: u32 = 42;
       - const C: u32 = 42;
-      + const C: u32 = 43
+      + const C: u32 = 43ˇ
         const D: u32 = 42;
 
 
@@ -12824,7 +12746,7 @@ async fn test_edit_after_expanded_modification_hunk(
     });
     executor.run_until_parked();
 
-    cx.assert_diff_hunks(
+    cx.assert_state_with_diff(
         r#"
         use some::mod1;
         use some::mod2;
@@ -12834,7 +12756,7 @@ async fn test_edit_after_expanded_modification_hunk(
       - const C: u32 = 42;
       + const C: u32 = 43
       + new_line
-      +
+      + ˇ
         const D: u32 = 42;
 
 

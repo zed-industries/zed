@@ -35,7 +35,7 @@ pub(super) struct HoveredHunk {
 }
 
 #[derive(Default)]
-pub(super) struct ExpandedHunks {
+pub(super) struct DiffMap {
     pub(crate) hunks: Vec<ExpandedHunk>,
     pub(crate) diff_bases: HashMap<BufferId, DiffBaseState>,
     pub(crate) snapshot: DiffMapSnapshot,
@@ -75,7 +75,7 @@ pub enum DisplayDiffHunk {
     },
 }
 
-impl ExpandedHunks {
+impl DiffMap {
     pub fn snapshot(&self) -> DiffMapSnapshot {
         self.snapshot.clone()
     }
@@ -86,17 +86,21 @@ impl ExpandedHunks {
         cx: &mut ViewContext<Editor>,
     ) {
         let buffer_id = change_set.read(cx).buffer_id;
+        self.snapshot
+            .0
+            .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
+        Editor::sync_expanded_diff_hunks(self, buffer_id, cx);
         self.diff_bases.insert(
             buffer_id,
             DiffBaseState {
                 last_version: None,
                 _subscription: cx.observe(&change_set, move |editor, change_set, cx| {
                     editor
-                        .expanded_hunks
+                        .diff_map
                         .snapshot
                         .0
                         .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
-                    editor.sync_expanded_diff_hunks(buffer_id, cx);
+                    Editor::sync_expanded_diff_hunks(&mut editor.diff_map, buffer_id, cx);
                 }),
                 change_set,
             },
@@ -197,7 +201,7 @@ impl DiffMapSnapshot {
 
 impl Editor {
     pub fn set_expand_all_diff_hunks(&mut self) {
-        self.expanded_hunks.expand_all = true;
+        self.diff_map.expand_all = true;
     }
 
     pub(super) fn toggle_hovered_hunk(
@@ -221,7 +225,7 @@ impl Editor {
     pub fn expand_all_hunk_diffs(&mut self, _: &ExpandAllHunkDiffs, cx: &mut ViewContext<Self>) {
         let snapshot = self.snapshot(cx);
         let display_rows_with_expanded_hunks = self
-            .expanded_hunks
+            .diff_map
             .hunks(false)
             .map(|hunk| &hunk.hunk_range)
             .map(|anchor_range| {
@@ -238,7 +242,7 @@ impl Editor {
             })
             .collect::<HashMap<_, _>>();
         let hunks = self
-            .expanded_hunks
+            .diff_map
             .snapshot
             .diff_hunks(&snapshot.display_snapshot.buffer_snapshot)
             .filter(|hunk| {
@@ -258,11 +262,11 @@ impl Editor {
         hunks_to_toggle: Vec<MultiBufferDiffHunk>,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.expanded_hunks.expand_all {
+        if self.diff_map.expand_all {
             return;
         }
 
-        let previous_toggle_task = self.expanded_hunks.hunk_update_tasks.remove(&None);
+        let previous_toggle_task = self.diff_map.hunk_update_tasks.remove(&None);
         let new_toggle_task = cx.spawn(move |editor, mut cx| async move {
             if let Some(task) = previous_toggle_task {
                 task.await;
@@ -272,11 +276,10 @@ impl Editor {
                 .update(&mut cx, |editor, cx| {
                     let snapshot = editor.snapshot(cx);
                     let mut hunks_to_toggle = hunks_to_toggle.into_iter().fuse().peekable();
-                    let mut highlights_to_remove =
-                        Vec::with_capacity(editor.expanded_hunks.hunks.len());
+                    let mut highlights_to_remove = Vec::with_capacity(editor.diff_map.hunks.len());
                     let mut blocks_to_remove = HashSet::default();
                     let mut hunks_to_expand = Vec::new();
-                    editor.expanded_hunks.hunks.retain(|expanded_hunk| {
+                    editor.diff_map.hunks.retain(|expanded_hunk| {
                         if expanded_hunk.folded {
                             return true;
                         }
@@ -356,7 +359,7 @@ impl Editor {
                 .ok();
         });
 
-        self.expanded_hunks
+        self.diff_map
             .hunk_update_tasks
             .insert(None, cx.background_executor().spawn(new_toggle_task));
     }
@@ -372,7 +375,7 @@ impl Editor {
         let hunk_range = hunk.multi_buffer_range.clone();
         let buffer_id = hunk_range.start.buffer_id?;
         let diff_base_buffer = diff_base_buffer.or_else(|| {
-            self.expanded_hunks
+            self.diff_map
                 .diff_bases
                 .get(&buffer_id)?
                 .change_set
@@ -389,7 +392,7 @@ impl Editor {
         let deleted_text_lines = diff_end_row - diff_start_row;
 
         let block_insert_index = self
-            .expanded_hunks
+            .diff_map
             .hunks
             .binary_search_by(|probe| {
                 probe
@@ -437,7 +440,7 @@ impl Editor {
                 );
             }
         };
-        self.expanded_hunks.hunks.insert(
+        self.diff_map.hunks.insert(
             block_insert_index,
             ExpandedHunk {
                 blocks,
@@ -856,13 +859,13 @@ impl Editor {
     }
 
     pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) -> bool {
-        if self.expanded_hunks.expand_all {
+        if self.diff_map.expand_all {
             return false;
         }
-        self.expanded_hunks.hunk_update_tasks.clear();
+        self.diff_map.hunk_update_tasks.clear();
         self.clear_row_highlights::<DiffRowHighlight>();
         let to_remove = self
-            .expanded_hunks
+            .diff_map
             .hunks
             .drain(..)
             .flat_map(|expanded_hunk| expanded_hunk.blocks.into_iter())
@@ -876,11 +879,11 @@ impl Editor {
     }
 
     pub(super) fn sync_expanded_diff_hunks(
-        &mut self,
+        diff_map: &mut DiffMap,
         buffer_id: BufferId,
         cx: &mut ViewContext<'_, Self>,
     ) {
-        let diff_base_state = self.expanded_hunks.diff_bases.get_mut(&buffer_id);
+        let diff_base_state = diff_map.diff_bases.get_mut(&buffer_id);
         let mut diff_base_buffer = None;
         let mut diff_base_buffer_unchanged = true;
         if let Some(diff_base_state) = diff_base_state {
@@ -893,9 +896,7 @@ impl Editor {
             })
         }
 
-        self.expanded_hunks
-            .hunk_update_tasks
-            .remove(&Some(buffer_id));
+        diff_map.hunk_update_tasks.remove(&Some(buffer_id));
 
         let new_sync_task = cx.spawn(move |editor, mut cx| async move {
             editor
@@ -907,12 +908,10 @@ impl Editor {
                         .filter(|hunk| hunk.buffer_id == buffer_id)
                         .fuse()
                         .peekable();
-                    let mut highlights_to_remove =
-                        Vec::with_capacity(editor.expanded_hunks.hunks.len());
+                    let mut highlights_to_remove = Vec::with_capacity(editor.diff_map.hunks.len());
                     let mut blocks_to_remove = HashSet::default();
-                    let mut hunks_to_reexpand =
-                        Vec::with_capacity(editor.expanded_hunks.hunks.len());
-                    editor.expanded_hunks.hunks.retain_mut(|expanded_hunk| {
+                    let mut hunks_to_reexpand = Vec::with_capacity(editor.diff_map.hunks.len());
+                    editor.diff_map.hunks.retain_mut(|expanded_hunk| {
                         if expanded_hunk.hunk_range.start.buffer_id != Some(buffer_id) {
                             return true;
                         };
@@ -962,7 +961,7 @@ impl Editor {
                                             > hunk_display_range.end
                                         {
                                             recalculated_hunks.next();
-                                            if editor.expanded_hunks.expand_all {
+                                            if editor.diff_map.expand_all {
                                                 hunks_to_reexpand.push(HoveredHunk {
                                                     status,
                                                     multi_buffer_range,
@@ -987,11 +986,11 @@ impl Editor {
                                             recalculated_hunks.next();
                                             retain = true;
                                         } else {
-                                            hunks_to_reexpand.push(HoveredHunk {
+                                            hunks_to_reexpand.push(dbg!(HoveredHunk {
                                                 status,
                                                 multi_buffer_range,
                                                 diff_base_byte_range,
-                                            });
+                                            }));
                                         }
                                         break;
                                     }
@@ -1005,7 +1004,7 @@ impl Editor {
                         retain
                     });
 
-                    if editor.expanded_hunks.expand_all {
+                    if editor.diff_map.expand_all {
                         for hunk in recalculated_hunks {
                             match diff_hunk_to_display(&hunk, &snapshot) {
                                 DisplayDiffHunk::Folded { .. } => {}
@@ -1039,7 +1038,7 @@ impl Editor {
                 .ok();
         });
 
-        self.expanded_hunks.hunk_update_tasks.insert(
+        diff_map.hunk_update_tasks.insert(
             Some(buffer_id),
             cx.background_executor().spawn(new_sync_task),
         );
@@ -1409,7 +1408,7 @@ mod tests {
                     let change_set = cx.new_model(|cx| {
                         BufferChangeSet::new(Some(diff_base.to_string()), buffer, cx)
                     });
-                    editor.expanded_hunks.add_change_set(change_set, cx)
+                    editor.diff_map.add_change_set(change_set, cx)
                 }
             })
             .unwrap();

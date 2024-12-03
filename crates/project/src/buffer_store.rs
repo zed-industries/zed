@@ -2075,7 +2075,8 @@ impl BufferChangeSet {
         buffer_snapshot: text::BufferSnapshot,
         cx: &mut ModelContext<Self>,
     ) {
-        if let Some(base_text) = base_text {
+        if let Some(mut base_text) = base_text {
+            LineEnding::normalize(&mut base_text);
             self.recalculate_diff_internal(base_text, buffer_snapshot, true, cx);
         } else if self.base_text.is_some() {
             self.base_text = None;

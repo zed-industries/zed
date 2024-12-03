@@ -1326,7 +1326,7 @@ impl EditorElement {
             .unwrap_or_default();
 
         self.editor.update(cx, |editor, cx| {
-            let expanded_hunks = &editor.expanded_hunks.hunks;
+            let expanded_hunks = &editor.diff_map.hunks;
             let expanded_hunks_start_ix = expanded_hunks
                 .binary_search_by(|hunk| {
                     hunk.hunk_range
@@ -1338,7 +1338,7 @@ impl EditorElement {
             let mut expanded_hunks = expanded_hunks[expanded_hunks_start_ix..].iter().peekable();
 
             let mut display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)> = editor
-                .expanded_hunks
+                .diff_map
                 .snapshot
                 .diff_hunks_in_range(buffer_start..buffer_end, &buffer_snapshot)
                 .filter_map(|hunk| {
@@ -5436,7 +5436,7 @@ impl Element for EditorElement {
 
                     let expanded_add_hunks_by_rows = self.editor.update(cx, |editor, _| {
                         editor
-                            .expanded_hunks
+                            .diff_map
                             .hunks(false)
                             .filter(|hunk| hunk.status == DiffHunkStatus::Added)
                             .map(|expanded_hunk| {

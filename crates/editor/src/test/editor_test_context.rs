@@ -65,6 +65,8 @@ impl EditorTestContext {
             editor
         });
         let editor_view = editor.root_view(cx).unwrap();
+
+        cx.run_until_parked();
         Self {
             cx: VisualTestContext::from_window(*editor.deref(), cx),
             window: editor.into(),
@@ -281,7 +283,7 @@ impl EditorTestContext {
             let buffer = editor.buffer.read(cx).as_singleton().unwrap();
             let change_set =
                 cx.new_model(|cx| BufferChangeSet::new(diff_base.map(str::to_string), buffer, cx));
-            editor.expanded_hunks.add_change_set(change_set, cx)
+            editor.diff_map.add_change_set(change_set, cx)
         });
     }
 
@@ -324,10 +326,12 @@ impl EditorTestContext {
         state_context
     }
 
+    /// Assert about the text of the editor, the selections, and the expanded
+    /// diff hunks.
+    ///
+    /// Diff hunks are indicated by lines starting with `+` and `-`.
     #[track_caller]
-    pub fn assert_diff_hunks(&mut self, expected_diff: String) {
-        // Normalize the expected diff. If it has no diff markers, then insert blank markers
-        // before each line. Strip any whitespace-only lines.
+    pub fn assert_state_with_diff(&mut self, expected_diff: String) {
         let has_diff_markers = expected_diff
             .lines()
             .any(|line| line.starts_with("+") || line.starts_with("-"));
@@ -345,11 +349,14 @@ impl EditorTestContext {
             })
             .join("\n");
 
+        let actual_selections = self.editor_selections();
+        let actual_marked_text =
+            generate_marked_text(&self.buffer_text(), &actual_selections, true);
+
         // Read the actual diff from the editor's row highlights and block
         // decorations.
         let actual_diff = self.editor.update(&mut self.cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
-            let text = editor.text(cx);
             let insertions = editor
                 .highlighted_rows::<DiffRowHighlight>()
                 .map(|(range, _)| {
@@ -359,7 +366,7 @@ impl EditorTestContext {
                 })
                 .collect::<Vec<_>>();
             let deletions = editor
-                .expanded_hunks
+                .diff_map
                 .hunks
                 .iter()
                 .filter_map(|hunk| {
@@ -378,7 +385,7 @@ impl EditorTestContext {
                         .expect("no excerpt for expanded buffer's hunk start");
                     let buffer_id = buffer.read(cx).remote_id();
                     let change_set = &editor
-                        .expanded_hunks
+                        .diff_map
                         .diff_bases
                         .get(&buffer_id)
                         .expect("should have a diff base for expanded hunk")
@@ -399,7 +406,7 @@ impl EditorTestContext {
                     }
                 })
                 .collect::<Vec<_>>();
-            format_diff(text, deletions, insertions)
+            format_diff(actual_marked_text, deletions, insertions)
         });
 
         pretty_assertions::assert_eq!(actual_diff, expected_diff_text, "unexpected diff state");

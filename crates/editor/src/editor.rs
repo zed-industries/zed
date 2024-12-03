@@ -83,7 +83,7 @@ use gpui::{
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 pub(crate) use hunk_diff::HoveredHunk;
-use hunk_diff::{diff_hunk_to_display, DiffMapSnapshot, ExpandedHunks};
+use hunk_diff::{diff_hunk_to_display, DiffMap, DiffMapSnapshot};
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion::Direction;
@@ -625,7 +625,7 @@ pub struct Editor {
     enable_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     inlay_hint_cache: InlayHintCache,
-    expanded_hunks: ExpandedHunks,
+    diff_map: DiffMap,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
@@ -2078,7 +2078,7 @@ impl Editor {
                 this.update(&mut cx, |this, cx| {
                     for change_set in change_sets {
                         if let Some(change_set) = change_set.log_err() {
-                            this.expanded_hunks.add_change_set(change_set, cx);
+                            this.diff_map.add_change_set(change_set, cx);
                         }
                     }
                 })
@@ -2169,7 +2169,7 @@ impl Editor {
             inline_completion_provider: None,
             active_inline_completion: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
-            expanded_hunks: ExpandedHunks::default(),
+            diff_map: DiffMap::default(),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
@@ -2429,7 +2429,7 @@ impl Editor {
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
-            diff_map: self.expanded_hunks.snapshot(),
+            diff_map: self.diff_map.snapshot(),
             is_focused: self.focus_handle.is_focused(cx),
             current_line_highlight: self
                 .current_line_highlight
@@ -6645,11 +6645,7 @@ impl Editor {
     ) -> Option<()> {
         let buffer = self.buffer.read(cx).buffer(hunk.buffer_id)?;
         let buffer = buffer.read(cx);
-        let change_set = &self
-            .expanded_hunks
-            .diff_bases
-            .get(&hunk.buffer_id)?
-            .change_set;
+        let change_set = &self.diff_map.diff_bases.get(&hunk.buffer_id)?.change_set;
         let original_text = change_set
             .read(cx)
             .base_text
@@ -9848,11 +9844,11 @@ impl Editor {
         position: Point,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        for position in [position, Point::zero()] {
+        for (ix, position) in [position, Point::zero()].into_iter().enumerate() {
             if let Some(hunk) = self.go_to_next_hunk_in_direction(
                 snapshot,
                 position,
-                false,
+                ix > 0,
                 snapshot.diff_map.diff_hunks_in_range(
                     position + Point::new(1, 0)..snapshot.buffer_snapshot.max_point(),
                     &snapshot.buffer_snapshot,
@@ -9877,11 +9873,14 @@ impl Editor {
         position: Point,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        for position in [position, snapshot.buffer_snapshot.max_point()] {
+        for (ix, position) in [position, snapshot.buffer_snapshot.max_point()]
+            .into_iter()
+            .enumerate()
+        {
             if let Some(hunk) = self.go_to_next_hunk_in_direction(
                 snapshot,
                 position,
-                false,
+                ix > 0,
                 snapshot
                     .diff_map
                     .diff_hunks_in_range_rev(Point::zero()..position, &snapshot.buffer_snapshot),
@@ -11327,7 +11326,7 @@ impl Editor {
         }
 
         for buffer_id in buffers_affected {
-            self.sync_expanded_diff_hunks(buffer_id, cx);
+            Self::sync_expanded_diff_hunks(&mut self.diff_map, buffer_id, cx);
         }
 
         cx.notify();
@@ -11399,7 +11398,7 @@ impl Editor {
         }
 
         for buffer_id in buffers_affected {
-            self.sync_expanded_diff_hunks(buffer_id, cx);
+            Self::sync_expanded_diff_hunks(&mut self.diff_map, buffer_id, cx);
         }
 
         cx.notify();
@@ -13584,19 +13583,10 @@ fn hunks_for_selections(
     snapshot: &EditorSnapshot,
     selections: &[Selection<Point>],
 ) -> Vec<MultiBufferDiffHunk> {
-    let buffer_rows_for_selections = selections.iter().map(|selection| {
-        let head = selection.head();
-        let tail = selection.tail();
-        let start = tail.to_point(&snapshot.buffer_snapshot);
-        let end = head.to_point(&snapshot.buffer_snapshot);
-        if start > end {
-            end..start
-        } else {
-            start..end
-        }
-    });
-
-    hunks_for_ranges(buffer_rows_for_selections, snapshot)
+    hunks_for_ranges(
+        selections.iter().map(|selection| selection.range()),
+        snapshot,
+    )
 }
 
 pub fn hunks_for_ranges(
@@ -13609,10 +13599,10 @@ pub fn hunks_for_ranges(
     for query_range in ranges {
         let query_rows =
             MultiBufferRow(query_range.start.row)..MultiBufferRow(query_range.end.row + 1);
-        for hunk in snapshot
-            .diff_map
-            .diff_hunks_in_range(query_range, &snapshot.buffer_snapshot)
-        {
+        for hunk in snapshot.diff_map.diff_hunks_in_range(
+            Point::new(query_rows.start.0, 0)..Point::new(query_rows.end.0, 0),
+            &snapshot.buffer_snapshot,
+        ) {
             // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
             // when the caret is just above or just below the deleted hunk.
             let allow_adjacent = hunk_status(&hunk) == DiffHunkStatus::Removed;
