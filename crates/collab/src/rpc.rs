@@ -1212,7 +1212,7 @@ async fn create_room(
 ) -> Result<()> {
     let livekit_room = nanoid::nanoid!(30);
 
-    let livekit_connection_info = util::maybe!(async {
+    let live_kit_connection_info = util::maybe!(async {
         let live_kit = session.app_state.livekit_client.as_ref();
         let live_kit = live_kit?;
         let user_id = session.user_id().to_string();
@@ -1237,7 +1237,7 @@ async fn create_room(
 
     response.send(proto::CreateRoomResponse {
         room: Some(room.clone()),
-        livekit_connection_info,
+        live_kit_connection_info,
     })?;
 
     update_user_contacts(session.user_id(), &session).await?;
@@ -1284,7 +1284,7 @@ async fn join_room(
             .trace_err();
     }
 
-    let livekit_connection_info = if let Some(live_kit) = session.app_state.livekit_client.as_ref()
+    let live_kit_connection_info = if let Some(live_kit) = session.app_state.livekit_client.as_ref()
     {
         live_kit
             .room_token(
@@ -1304,7 +1304,7 @@ async fn join_room(
     response.send(proto::JoinRoomResponse {
         room: Some(joined_room.room),
         channel_id: None,
-        livekit_connection_info,
+        live_kit_connection_info,
     })?;
 
     update_user_contacts(session.user_id(), &session).await?;
@@ -3088,7 +3088,7 @@ async fn join_channel_internal(
             .join_channel(channel_id, session.user_id(), session.connection_id)
             .await?;
 
-        let livekit_connection_info =
+        let live_kit_connection_info =
             session
                 .app_state
                 .livekit_client
@@ -3129,7 +3129,7 @@ async fn join_channel_internal(
                 .channel
                 .as_ref()
                 .map(|channel| channel.id.to_proto()),
-            livekit_connection_info,
+            live_kit_connection_info,
         })?;
 
         let mut connection_pool = session.connection_pool().await;

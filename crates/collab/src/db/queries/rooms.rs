@@ -107,7 +107,7 @@ impl Database {
     ) -> Result<proto::Room> {
         self.transaction(|tx| async move {
             let room = room::ActiveModel {
-                livekit_room: ActiveValue::set(livekit_room.into()),
+                live_kit_room: ActiveValue::set(livekit_room.into()),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -1316,7 +1316,7 @@ impl Database {
             channel,
             proto::Room {
                 id: db_room.id.to_proto(),
-                livekit_room: db_room.livekit_room,
+                livekit_room: db_room.live_kit_room,
                 participants: participants.into_values().collect(),
                 pending_participants,
                 followers,

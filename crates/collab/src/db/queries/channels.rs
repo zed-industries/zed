@@ -909,7 +909,7 @@ impl Database {
         } else {
             let result = room::Entity::insert(room::ActiveModel {
                 channel_id: ActiveValue::Set(Some(channel_id)),
-                livekit_room: ActiveValue::Set(livekit_room.to_string()),
+                live_kit_room: ActiveValue::Set(livekit_room.to_string()),
                 ..Default::default()
             })
             .exec(tx)

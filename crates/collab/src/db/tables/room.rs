@@ -6,7 +6,7 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: RoomId,
-    pub livekit_room: String,
+    pub live_kit_room: String,
     pub channel_id: Option<ChannelId>,
 }
 
