@@ -113,6 +113,8 @@ pub enum Motion {
     NextMethodEnd,
     PreviousMethodStart,
     PreviousMethodEnd,
+    NextComment,
+    PreviousComment,
 
     // we don't have a good way to run a search synchronously, so
     // we handle search motions by running the search async and then
@@ -286,6 +288,8 @@ actions!(
         NextMethodEnd,
         PreviousMethodStart,
         PreviousMethodEnd,
+        NextComment,
+        PreviousComment,
     ]
 );
 
@@ -496,6 +500,12 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, &NextMethodEnd, cx| {
         vim.motion(Motion::NextMethodEnd, cx)
     });
+    Vim::action(editor, cx, |vim, &NextComment, cx| {
+        vim.motion(Motion::NextComment, cx)
+    });
+    Vim::action(editor, cx, |vim, &PreviousComment, cx| {
+        vim.motion(Motion::PreviousComment, cx)
+    });
 }
 
 impl Vim {
@@ -586,6 +596,8 @@ impl Motion {
             | NextMethodEnd
             | PreviousMethodStart
             | PreviousMethodEnd
+            | NextComment
+            | PreviousComment
             | Jump { line: true, .. } => true,
             EndOfLine { .. }
             | Matching
@@ -665,6 +677,8 @@ impl Motion {
             | NextMethodEnd
             | PreviousMethodStart
             | PreviousMethodEnd
+            | NextComment
+            | PreviousComment
             | Jump { .. } => false,
         }
     }
@@ -718,6 +732,8 @@ impl Motion {
             | NextMethodEnd
             | PreviousMethodStart
             | PreviousMethodEnd
+            | NextComment
+            | PreviousComment
             | ZedSearchResult { .. } => false,
             RepeatFind { last_find: motion } | RepeatFindReversed { last_find: motion } => {
                 motion.inclusive()
@@ -964,6 +980,14 @@ impl Motion {
             ),
             PreviousMethodEnd => (
                 method_motion(map, point, times, Direction::Prev, false),
+                SelectionGoal::None,
+            ),
+            NextComment => (
+                comment_motion(map, point, times, Direction::Next),
+                SelectionGoal::None,
+            ),
+            PreviousComment => (
+                comment_motion(map, point, times, Direction::Prev),
                 SelectionGoal::None,
             ),
         };
@@ -2258,7 +2282,7 @@ fn method_motion(
                 let relevant = if is_start { range.start } else { range.end };
                 if direction == Direction::Prev && relevant < offset {
                     Some(relevant)
-                } else if direction == Direction::Next && relevant > offset {
+                } else if direction == Direction::Next && relevant > offset + 1 {
                     Some(relevant)
                 } else {
                     None
@@ -2276,6 +2300,61 @@ fn method_motion(
         }
         display_point = new_point;
     }
+    display_point
+}
+
+fn comment_motion(
+    map: &DisplaySnapshot,
+    mut display_point: DisplayPoint,
+    times: usize,
+    direction: Direction,
+) -> DisplayPoint {
+    let Some((_, _, buffer)) = map.buffer_snapshot.as_singleton() else {
+        return display_point;
+    };
+
+    for _ in 0..times {
+        let point = map.display_point_to_point(display_point, Bias::Left);
+        let offset = point.to_offset(&map.buffer_snapshot);
+        let range = if direction == Direction::Prev {
+            0..offset
+        } else {
+            offset..buffer.len()
+        };
+
+        let possibilities = buffer
+            .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(6))
+            .filter_map(|(range, object)| {
+                if !matches!(object, language::TextObject::AroundComment) {
+                    return None;
+                }
+
+                let relevant = if direction == Direction::Prev {
+                    range.start
+                } else {
+                    range.end
+                };
+                if direction == Direction::Prev && relevant < offset {
+                    Some(relevant)
+                } else if direction == Direction::Next && relevant > offset + 1 {
+                    Some(relevant)
+                } else {
+                    None
+                }
+            });
+
+        let dest = if direction == Direction::Prev {
+            possibilities.max().unwrap_or(offset)
+        } else {
+            possibilities.min().unwrap_or(offset)
+        };
+        let new_point = map.clip_point(dest.to_display_point(&map), Bias::Left);
+        if new_point == display_point {
+            break;
+        }
+        display_point = new_point;
+    }
+
     display_point
 }
 
@@ -2320,7 +2399,7 @@ fn section_motion(
                 let relevant = if is_start { range.start } else { range.end };
                 if direction == Direction::Prev && relevant < offset {
                     Some(relevant)
-                } else if direction == Direction::Next && relevant > offset {
+                } else if direction == Direction::Next && relevant > offset + 1 {
                     Some(relevant)
                 } else {
                     None

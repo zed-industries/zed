@@ -3416,11 +3416,6 @@ impl BufferSnapshot {
                     continue;
                 };
                 let text_object = config.text_objects_by_capture_ix[ix].1;
-                if text_object != TextObject::AroundClass
-                    && text_object != TextObject::AroundFunction
-                {
-                    continue;
-                }
                 let byte_range = capture.node.byte_range();
 
                 let mut found = false;

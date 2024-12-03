@@ -880,8 +880,6 @@ pub enum TextObject {
     AroundFunction,
     InsideClass,
     AroundClass,
-    InsideParameter,
-    AroundParameter,
     InsideComment,
     AroundComment,
 }
@@ -893,12 +891,17 @@ impl TextObject {
             "function.around" => Some(TextObject::AroundFunction),
             "class.inside" => Some(TextObject::InsideClass),
             "class.around" => Some(TextObject::AroundClass),
-            "parameter.inside" => Some(TextObject::InsideParameter),
-            "parameter.around" => Some(TextObject::AroundParameter),
-            "entry.inside" => Some(TextObject::InsideParameter),
-            "entry.around" => Some(TextObject::AroundParameter),
             "comment.inside" => Some(TextObject::InsideComment),
             "comment.around" => Some(TextObject::AroundComment),
+            _ => None,
+        }
+    }
+
+    pub fn around(&self) -> Option<Self> {
+        match self {
+            TextObject::InsideFunction => Some(TextObject::AroundFunction),
+            TextObject::InsideClass => Some(TextObject::AroundClass),
+            TextObject::InsideComment => Some(TextObject::AroundComment),
             _ => None,
         }
     }

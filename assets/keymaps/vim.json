@@ -41,6 +41,10 @@
       "] M": "vim::NextMethodEnd",
       "[ m": "vim::PreviousMethodStart",
       "[ M": "vim::PreviousMethodEnd",
+      "[ *": "vim::PreviousComment",
+      "[ /": "vim::PreviousComment",
+      "] *": "vim::NextComment",
+      "] /": "vim::NextComment",
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
@@ -63,10 +67,10 @@
       "n": "vim::MoveToNextMatch",
       "shift-n": "vim::MoveToPrevMatch",
       "%": "vim::Matching",
-      "] }": ["vim::UnmatchedForward", { "char": "}" } ],
-      "[ {": ["vim::UnmatchedBackward", { "char": "{" } ],
-      "] )": ["vim::UnmatchedForward", { "char": ")" } ],
-      "[ (": ["vim::UnmatchedBackward", { "char": "(" } ],
+      "] }": ["vim::UnmatchedForward", { "char": "}" }],
+      "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
+      "] )": ["vim::UnmatchedForward", { "char": ")" }],
+      "[ (": ["vim::UnmatchedBackward", { "char": "(" }],
       "f": ["vim::PushOperator", { "FindForward": { "before": false } }],
       "t": ["vim::PushOperator", { "FindForward": { "before": true } }],
       "shift-f": ["vim::PushOperator", { "FindBackward": { "after": false } }],
@@ -395,7 +399,10 @@
       ">": "vim::AngleBrackets",
       "a": "vim::Argument",
       "i": "vim::IndentObj",
-      "shift-i": ["vim::IndentObj", { "includeBelow": true }]
+      "shift-i": ["vim::IndentObj", { "includeBelow": true }],
+      "m": "vim::Method",
+      "c": "vim::Class",
+      "g c": "vim::Comment"
     }
   },
   {

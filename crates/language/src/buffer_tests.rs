@@ -921,7 +921,7 @@ fn test_text_objects(cx: &mut AppContext) {
     let (text, ranges) = marked_text_ranges(
         indoc! {r#"
             impl Hello {
-                fn say(&seˇlf, name: &str) { }
+                fn say() -> u8 { return /* ˇhi */ 1 }
             }"#
         },
         false,
@@ -939,8 +939,12 @@ fn test_text_objects(cx: &mut AppContext) {
     assert_eq!(
         matches,
         &[
-            ("&self", TextObject::InsideParameter),
-            ("&self,", TextObject::AroundParameter),
+            ("/* hi */", TextObject::AroundComment),
+            ("return /* hi */ 1", TextObject::InsideFunction),
+            (
+                "fn say() -> u8 { return /* hi */ 1 }",
+                TextObject::AroundFunction
+            ),
         ],
     )
 }
@@ -3214,11 +3218,15 @@ fn rust_lang() -> Language {
     .unwrap()
     .with_text_object_query(
         r#"
-        (arguments
-          ((_) @parameter.inside . ","? @parameter.around) @parameter.around)
+        (function_item
+            body: (_
+                "{"
+                (_)* @function.inside
+                "}" )) @function.around
 
-        (parameters
-          ((_) @parameter.inside . ","? @parameter.around) @parameter.around)
+        (line_comment)+ @comment.around
+
+        (block_comment) @comment.around
         "#,
     )
     .unwrap()
