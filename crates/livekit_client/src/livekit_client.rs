@@ -402,6 +402,10 @@ fn start_output_stream(
                 move |data, _info| {
                     let mut buffer = buffer.lock();
                     if buffer.len() < data.len() {
+                        // Instead of partially filling a buffer, output silence. If a partial
+                        // buffer was outputted then this could lead to a perpetual state of
+                        // outputting partial buffers as it never gets filled enough for a full
+                        // frame.
                         data.fill(0);
                     } else {
                         // SAFETY: We know that buffer has at least data.len() values in it.
