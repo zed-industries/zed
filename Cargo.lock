@@ -15768,7 +15768,7 @@ dependencies = [
 
 [[package]]
 name = "zed_erlang"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -15802,7 +15802,7 @@ dependencies = [
 
 [[package]]
 name = "zed_haskell"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -15816,28 +15816,28 @@ dependencies = [
 
 [[package]]
 name = "zed_lua"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_php"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_prisma"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_proto"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -15880,7 +15880,7 @@ dependencies = [
 
 [[package]]
 name = "zed_toml"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -15894,7 +15894,7 @@ dependencies = [
 
 [[package]]
 name = "zed_zig"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
