@@ -12836,26 +12836,34 @@ impl Editor {
                     // Handle file-less buffers separately: those are not really the project items, so won't have a paroject path or entity id,
                     // so `workspace.open_project_item` will never find them, always opening a new editor.
                     // Instead, we try to activate the existing editor in the pane first.
-                    if buffer.read(cx).file().is_none() {
+                    let editor = if buffer.read(cx).file().is_none() {
                         let pane_item_index =
                             pane.read(cx).items().enumerate().find_map(|(i, item)| {
                                 let editor = item.downcast::<Editor>()?;
                                 let singleton_buffer =
                                     editor.read(cx).buffer().read(cx).as_singleton()?;
                                 if singleton_buffer == buffer {
-                                    Some(i)
+                                    Some((editor, i))
                                 } else {
                                     None
                                 }
                             });
-                        if let Some(index) = pane_item_index {
+                        if let Some((editor, index)) = pane_item_index {
                             pane.update(cx, |pane, cx| pane.activate_item(index, true, true, cx));
-                            continue;
+                            editor
+                        } else {
+                            workspace.open_project_item::<Self>(
+                                pane.clone(),
+                                buffer,
+                                true,
+                                true,
+                                cx,
+                            )
                         }
-                    }
+                    } else {
+                        workspace.open_project_item::<Self>(pane.clone(), buffer, true, true, cx)
+                    };
 
-                    let editor =
-                        workspace.open_project_item::<Self>(pane.clone(), buffer, true, true, cx);
                     editor.update(cx, |editor, cx| {
                         let autoscroll = match scroll_offset {
                             Some(scroll_offset) => Autoscroll::top_relative(scroll_offset as usize),
