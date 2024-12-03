@@ -10,7 +10,7 @@ use gpui::{Model, ModelContext, Subscription, Task};
 use http_client::HttpClient;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
 use multi_buffer::MultiBufferRow;
-use project::{Item, Project};
+use project::{Project, ProjectItem};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
 use url::Url;

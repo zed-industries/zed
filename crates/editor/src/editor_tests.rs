@@ -31,9 +31,10 @@ use project::{
     project_settings::{LspSettings, ProjectSettings},
 };
 use serde_json::{self, json};
-use std::sync::atomic;
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{self, AtomicBool};
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
+use test::editor_lsp_test_context::rust_lang;
 use unindent::Unindent;
 use util::{
     assert_set_eq,
@@ -5458,7 +5459,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
+async fn test_autoindent(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let language = Arc::new(
@@ -5518,6 +5519,89 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
             ]
         );
     });
+}
+
+#[gpui::test]
+async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    {
+        let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
+        cx.set_state(indoc! {"
+            impl A {
+
+                fn b() {}
+
+            «fn c() {
+
+            }ˇ»
+            }
+        "});
+
+        cx.update_editor(|editor, cx| {
+            editor.autoindent(&Default::default(), cx);
+        });
+
+        cx.assert_editor_state(indoc! {"
+            impl A {
+
+                fn b() {}
+
+                «fn c() {
+
+                }ˇ»
+            }
+        "});
+    }
+
+    {
+        let mut cx = EditorTestContext::new_multibuffer(
+            cx,
+            [indoc! { "
+                impl A {
+                «
+                // a
+                fn b(){}
+                »
+                «
+                    }
+                    fn c(){}
+                »
+            "}],
+        );
+
+        let buffer = cx.update_editor(|editor, cx| {
+            let buffer = editor.buffer().update(cx, |buffer, _| {
+                buffer.all_buffers().iter().next().unwrap().clone()
+            });
+            buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+            buffer
+        });
+
+        cx.run_until_parked();
+        cx.update_editor(|editor, cx| {
+            editor.select_all(&Default::default(), cx);
+            editor.autoindent(&Default::default(), cx)
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            pretty_assertions::assert_eq!(
+                buffer.read(cx).text(),
+                indoc! { "
+                    impl A {
+
+                        // a
+                        fn b(){}
+
+
+                    }
+                    fn c(){}
+
+                " }
+            )
+        });
+    }
 }
 
 #[gpui::test]
@@ -10576,6 +10660,94 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
         },
     };
 
+    let resolve_requests_number = Arc::new(AtomicUsize::new(0));
+    let expect_first_item = Arc::new(AtomicBool::new(true));
+    cx.lsp
+        .server
+        .on_request::<lsp::request::ResolveCompletionItem, _, _>({
+            let closure_default_data = default_data.clone();
+            let closure_resolve_requests_number = resolve_requests_number.clone();
+            let closure_expect_first_item = expect_first_item.clone();
+            let closure_default_commit_characters = default_commit_characters.clone();
+            move |item_to_resolve, _| {
+                closure_resolve_requests_number.fetch_add(1, atomic::Ordering::Release);
+                let default_data = closure_default_data.clone();
+                let default_commit_characters = closure_default_commit_characters.clone();
+                let expect_first_item = closure_expect_first_item.clone();
+                async move {
+                    if expect_first_item.load(atomic::Ordering::Acquire) {
+                        assert_eq!(
+                            item_to_resolve.label, "Some(2)",
+                            "Should have selected the first item"
+                        );
+                        assert_eq!(
+                            item_to_resolve.data,
+                            Some(json!({ "very": "special"})),
+                            "First item should bring its own data for resolving"
+                        );
+                        assert_eq!(
+                            item_to_resolve.commit_characters,
+                            Some(default_commit_characters),
+                            "First item had no own commit characters and should inherit the default ones"
+                        );
+                        assert!(
+                            matches!(
+                                item_to_resolve.text_edit,
+                                Some(lsp::CompletionTextEdit::InsertAndReplace { .. })
+                            ),
+                            "First item should bring its own edit range for resolving"
+                        );
+                        assert_eq!(
+                            item_to_resolve.insert_text_format,
+                            Some(default_insert_text_format),
+                            "First item had no own insert text format and should inherit the default one"
+                        );
+                        assert_eq!(
+                            item_to_resolve.insert_text_mode,
+                            Some(lsp::InsertTextMode::ADJUST_INDENTATION),
+                            "First item should bring its own insert text mode for resolving"
+                        );
+                        Ok(item_to_resolve)
+                    } else {
+                        assert_eq!(
+                            item_to_resolve.label, "vec![2]",
+                            "Should have selected the last item"
+                        );
+                        assert_eq!(
+                            item_to_resolve.data,
+                            Some(default_data),
+                            "Last item has no own resolve data and should inherit the default one"
+                        );
+                        assert_eq!(
+                            item_to_resolve.commit_characters,
+                            Some(default_commit_characters),
+                            "Last item had no own commit characters and should inherit the default ones"
+                        );
+                        assert_eq!(
+                            item_to_resolve.text_edit,
+                            Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: default_edit_range,
+                                new_text: "vec![2]".to_string()
+                            })),
+                            "Last item had no own edit range and should inherit the default one"
+                        );
+                        assert_eq!(
+                            item_to_resolve.insert_text_format,
+                            Some(lsp::InsertTextFormat::PLAIN_TEXT),
+                            "Last item should bring its own insert text format for resolving"
+                        );
+                        assert_eq!(
+                            item_to_resolve.insert_text_mode,
+                            Some(default_insert_text_mode),
+                            "Last item had no own insert text mode and should inherit the default one"
+                        );
+
+                        Ok(item_to_resolve)
+                    }
+                }
+            }
+        }).detach();
+
     let completion_data = default_data.clone();
     let completion_characters = default_commit_characters.clone();
     cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
@@ -10623,7 +10795,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
 
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
-
+    cx.run_until_parked();
     cx.update_editor(|editor, _| {
         let menu = editor.context_menu.read();
         match menu.as_ref().expect("should have the completions menu") {
@@ -10640,99 +10812,32 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
             ContextMenu::CodeActions(_) => panic!("Expected to have the completions menu"),
         }
     });
+    assert_eq!(
+        resolve_requests_number.load(atomic::Ordering::Acquire),
+        1,
+        "While there are 2 items in the completion list, only 1 resolve request should have been sent, for the selected item"
+    );
 
     cx.update_editor(|editor, cx| {
         editor.context_menu_first(&ContextMenuFirst, cx);
     });
-    let first_item_resolve_characters = default_commit_characters.clone();
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, item_to_resolve, _| {
-        let default_commit_characters = first_item_resolve_characters.clone();
+    cx.run_until_parked();
+    assert_eq!(
+        resolve_requests_number.load(atomic::Ordering::Acquire),
+        2,
+        "After re-selecting the first item, another resolve request should have been sent"
+    );
 
-        async move {
-            assert_eq!(
-                item_to_resolve.label, "Some(2)",
-                "Should have selected the first item"
-            );
-            assert_eq!(
-                item_to_resolve.data,
-                Some(json!({ "very": "special"})),
-                "First item should bring its own data for resolving"
-            );
-            assert_eq!(
-                item_to_resolve.commit_characters,
-                Some(default_commit_characters),
-                "First item had no own commit characters and should inherit the default ones"
-            );
-            assert!(
-                matches!(
-                    item_to_resolve.text_edit,
-                    Some(lsp::CompletionTextEdit::InsertAndReplace { .. })
-                ),
-                "First item should bring its own edit range for resolving"
-            );
-            assert_eq!(
-                item_to_resolve.insert_text_format,
-                Some(default_insert_text_format),
-                "First item had no own insert text format and should inherit the default one"
-            );
-            assert_eq!(
-                item_to_resolve.insert_text_mode,
-                Some(lsp::InsertTextMode::ADJUST_INDENTATION),
-                "First item should bring its own insert text mode for resolving"
-            );
-            Ok(item_to_resolve)
-        }
-    })
-    .next()
-    .await
-    .unwrap();
-
+    expect_first_item.store(false, atomic::Ordering::Release);
     cx.update_editor(|editor, cx| {
         editor.context_menu_last(&ContextMenuLast, cx);
     });
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, item_to_resolve, _| {
-        let default_data = default_data.clone();
-        let default_commit_characters = default_commit_characters.clone();
-        async move {
-            assert_eq!(
-                item_to_resolve.label, "vec![2]",
-                "Should have selected the last item"
-            );
-            assert_eq!(
-                item_to_resolve.data,
-                Some(default_data),
-                "Last item has no own resolve data and should inherit the default one"
-            );
-            assert_eq!(
-                item_to_resolve.commit_characters,
-                Some(default_commit_characters),
-                "Last item had no own commit characters and should inherit the default ones"
-            );
-            assert_eq!(
-                item_to_resolve.text_edit,
-                Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                    range: default_edit_range,
-                    new_text: "vec![2]".to_string()
-                })),
-                "Last item had no own edit range and should inherit the default one"
-            );
-            assert_eq!(
-                item_to_resolve.insert_text_format,
-                Some(lsp::InsertTextFormat::PLAIN_TEXT),
-                "Last item should bring its own insert text format for resolving"
-            );
-            assert_eq!(
-                item_to_resolve.insert_text_mode,
-                Some(default_insert_text_mode),
-                "Last item had no own insert text mode and should inherit the default one"
-            );
-
-            Ok(item_to_resolve)
-        }
-    })
-    .next()
-    .await
-    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        resolve_requests_number.load(atomic::Ordering::Acquire),
+        3,
+        "After selecting the other item, another resolve request should have been sent"
+    );
 }
 
 #[gpui::test]
@@ -13910,20 +14015,6 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
     });
 
     update_test_language_settings(cx, f);
-}
-
-pub(crate) fn rust_lang() -> Arc<Language> {
-    Arc::new(Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    ))
 }
 
 #[track_caller]

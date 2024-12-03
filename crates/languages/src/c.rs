@@ -4,10 +4,11 @@ use futures::StreamExt;
 use gpui::AsyncAppContext;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
+use serde_json::json;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
 
 pub struct CLspAdapter;
 
@@ -256,6 +257,26 @@ impl super::LspAdapter for CLspAdapter {
             text: text[display_range].to_string(),
             filter_range,
         })
+    }
+
+    fn prepare_initialize_params(
+        &self,
+        mut original: InitializeParams,
+    ) -> Result<InitializeParams> {
+        // enable clangd's dot-to-arrow feature.
+        let experimental = json!({
+            "textDocument": {
+                "completion" : {
+                    "editsNearCursor": true
+                }
+            }
+        });
+        if let Some(ref mut original_experimental) = original.capabilities.experimental {
+            merge_json_value_into(experimental, original_experimental);
+        } else {
+            original.capabilities.experimental = Some(experimental);
+        }
+        Ok(original)
     }
 }
 

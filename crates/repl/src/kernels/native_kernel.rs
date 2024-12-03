@@ -6,9 +6,12 @@ use futures::{
     AsyncBufReadExt as _, SinkExt as _,
 };
 use gpui::{EntityId, Task, View, WindowContext};
-use jupyter_protocol::{JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply};
+use jupyter_protocol::{
+    connection_info::{ConnectionInfo, Transport},
+    ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
+};
 use project::Fs;
-use runtimelib::{dirs, ConnectionInfo, ExecutionState};
+use runtimelib::dirs;
 use smol::{net::TcpListener, process::Command};
 use std::{
     env,
@@ -119,7 +122,7 @@ impl NativeRunningKernel {
             let ports = peek_ports(ip).await?;
 
             let connection_info = ConnectionInfo {
-                transport: "tcp".to_string(),
+                transport: Transport::TCP,
                 ip: ip.to_string(),
                 stdin_port: ports[0],
                 control_port: ports[1],

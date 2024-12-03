@@ -133,6 +133,16 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Autoscroll on Clicks
+
+- Description: Whether to scroll when clicking near the edge of the visible text area.
+- Setting: `autoscroll_on_clicks`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Auto Update
 
 - Description: Whether or not to automatically check for updates.
@@ -624,7 +634,8 @@ List of `string` values
   "close_position": "right",
   "file_icons": false,
   "git_status": false,
-  "activate_on_close": "history"
+  "activate_on_close": "history",
+  "always_show_close_button": false
 },
 ```
 
@@ -687,6 +698,12 @@ List of `string` values
   "activate_on_close": "neighbour"
 }
 ```
+
+### Always show the close button
+
+- Description: Whether to always show the close button on tabs.
+- Setting: `always_show_close_button`
+- Default: `false`
 
 ## Editor Toolbar
 

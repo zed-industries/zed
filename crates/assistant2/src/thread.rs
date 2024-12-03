@@ -5,12 +5,13 @@ use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
-use gpui::{AppContext, EventEmitter, ModelContext, Task};
+use gpui::{AppContext, EventEmitter, ModelContext, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolResult, LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
     StopReason,
 };
+use language_models::provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError};
 use serde::{Deserialize, Serialize};
 use util::post_inc;
 
@@ -210,29 +211,28 @@ impl Thread {
             let result = stream_completion.await;
 
             thread
-                .update(&mut cx, |_thread, cx| {
-                    let error_message = if let Some(error) = result.as_ref().err() {
-                        let error_message = error
-                            .chain()
-                            .map(|err| err.to_string())
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        Some(error_message)
-                    } else {
-                        None
-                    };
-
-                    if let Some(error_message) = error_message {
-                        eprintln!("Completion failed: {error_message:?}");
-                    }
-
-                    if let Ok(stop_reason) = result {
-                        match stop_reason {
-                            StopReason::ToolUse => {
-                                cx.emit(ThreadEvent::UsePendingTools);
-                            }
-                            StopReason::EndTurn => {}
-                            StopReason::MaxTokens => {}
+                .update(&mut cx, |_thread, cx| match result.as_ref() {
+                    Ok(stop_reason) => match stop_reason {
+                        StopReason::ToolUse => {
+                            cx.emit(ThreadEvent::UsePendingTools);
+                        }
+                        StopReason::EndTurn => {}
+                        StopReason::MaxTokens => {}
+                    },
+                    Err(error) => {
+                        if error.is::<PaymentRequiredError>() {
+                            cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
+                        } else if error.is::<MaxMonthlySpendReachedError>() {
+                            cx.emit(ThreadEvent::ShowError(ThreadError::MaxMonthlySpendReached));
+                        } else {
+                            let error_message = error
+                                .chain()
+                                .map(|err| err.to_string())
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            cx.emit(ThreadEvent::ShowError(ThreadError::Message(
+                                SharedString::from(error_message.clone()),
+                            )));
                         }
                     }
                 })
@@ -306,7 +306,15 @@ impl Thread {
 }
 
 #[derive(Debug, Clone)]
+pub enum ThreadError {
+    PaymentRequired,
+    MaxMonthlySpendReached,
+    Message(SharedString),
+}
+
+#[derive(Debug, Clone)]
 pub enum ThreadEvent {
+    ShowError(ThreadError),
     StreamedCompletion,
     UsePendingTools,
     ToolFinished {

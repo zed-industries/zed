@@ -10,7 +10,7 @@ use crate::{
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
-    CodeAction, Completion, CoreCompletion, Hover, InlayHint, Item as _, ProjectPath,
+    CodeAction, Completion, CoreCompletion, Hover, InlayHint, ProjectItem as _, ProjectPath,
     ProjectTransaction, ResolveState, Symbol, ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -5673,8 +5673,6 @@ impl LspStore {
                             .initialization_options(&(delegate))
                             .await?;
 
-                        Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
-
                         match (&mut initialization_options, override_options) {
                             (Some(initialization_options), Some(override_options)) => {
                                 merge_json_value_into(override_options, initialization_options);
@@ -5683,8 +5681,18 @@ impl LspStore {
                             _ => {}
                         }
 
+                        let initialization_params = cx.update(|cx| {
+                            let mut params = language_server.default_initialize_params(cx);
+                            params.initialization_options = initialization_options;
+                            adapter.adapter.prepare_initialize_params(params)
+                        })??;
+
+                        Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
+
                         let language_server = cx
-                            .update(|cx| language_server.initialize(initialization_options, cx))?
+                            .update(|cx| {
+                                language_server.initialize(Some(initialization_params), cx)
+                            })?
                             .await
                             .inspect_err(|_| {
                                 if let Some(this) = this.upgrade() {

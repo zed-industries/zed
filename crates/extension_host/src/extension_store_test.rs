@@ -203,6 +203,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     extension: "zed-ruby".into(),
                     path: "languages/erb".into(),
                     grammar: Some("embedded_template".into()),
+                    hidden: false,
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["erb".into()],
                         first_line_pattern: None,
@@ -215,6 +216,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     extension: "zed-ruby".into(),
                     path: "languages/ruby".into(),
                     grammar: Some("ruby".into()),
+                    hidden: false,
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["rb".into()],
                         first_line_pattern: None,
