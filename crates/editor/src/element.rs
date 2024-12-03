@@ -2824,7 +2824,8 @@ impl EditorElement {
             text, additions, ..
         } = edit
         {
-            let row = &line_layouts[upper_left.row().minus(visible_row_range.start) as usize];
+            let row = &line_layouts
+                [upper_left.row().0.saturating_sub(visible_row_range.start.0) as usize];
             let origin = text_bounds.origin
                 + point(
                     row.width + px(X_OFFSET) - scroll_pixel_position.x,
