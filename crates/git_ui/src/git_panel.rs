@@ -857,14 +857,14 @@ impl GitPanel {
         }
     }
 
-    fn update_composer(&mut self, cx: &mut ViewContext<Self>) -> &mut Self {
-        let commit_message = self.state.read(cx).commit_message.clone();
+    // fn update_composer(&mut self, cx: &mut ViewContext<Self>) -> &mut Self {
+    //     let commit_message = self.state.read(cx).commit_message.clone();
 
-        self.commit_composer.update(cx, |editor, cx| {
-            editor.set_text(commit_message.unwrap_or_default(), cx);
-        });
-        self
-    }
+    //     self.commit_composer.update(cx, |editor, cx| {
+    //         editor.set_text(commit_message.unwrap_or_default(), cx);
+    //     });
+    //     self
+    // }
 
     fn update_list_if_needed(&mut self, cx: &mut ViewContext<Self>) {
         let model = self.state.clone();
@@ -1051,8 +1051,6 @@ impl GitPanel {
             .size(ButtonSize::Compact)
             .disabled(commit_button_disabled)
             .on_click(move |_, cx| {
-                let staged_files = staged_files.clone();
-                let commit_message = commit_message.clone();
                 model.update(cx, |state, cx| {
                     state.commit_message = None;
                     state.files.retain(|_, file| !file.staged);
@@ -1068,29 +1066,23 @@ impl GitPanel {
             .relative()
             .w_full()
             .h(px(140.))
-            .overflow_hidden()
             .m_2()
+            .px_3()
+            .py_2()
+            .bg(cx.theme().colors().editor_background)
+            .child(self.commit_composer.clone())
             .border_1()
             .border_color(cx.theme().colors().border)
-            .rounded_sm()
-            .gap(px(8.))
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .w_full()
-                    .h_full()
-                    .mx_3()
-                    .my_2_5()
-                    .child(self.commit_composer.clone()),
-            )
-            .child(
-                h_flex()
-                    .absolute()
-                    .bottom_2()
-                    .right_2()
-                    .child(commit_button),
-            )
+            // .child(
+            //     div()
+            //         .flex()
+            //         .flex_1()
+            //         .w_full()
+            //         .h_full()
+            //         .mx_3()
+            //         .my_2_5()
+            // )
+            .child(div().absolute().bottom_2().right_2().child(commit_button))
             .into_any_element()
     }
 }
