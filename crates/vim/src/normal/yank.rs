@@ -4,13 +4,14 @@ use crate::{
     motion::Motion,
     object::Object,
     state::{Mode, Register},
-    Vim,
+    Vim, VimSettings,
 };
 use collections::HashMap;
 use editor::{ClipboardSelection, Editor};
 use gpui::ViewContext;
 use language::Point;
 use multi_buffer::MultiBufferRow;
+use settings::Settings;
 
 struct HighlightOnYank;
 
@@ -195,7 +196,9 @@ impl Vim {
             )
         });
 
-        if !is_yank || self.mode == Mode::Visual {
+        let highlight = VimSettings::get_global(cx).highlight_on_copy;
+
+        if !is_yank || self.mode == Mode::Visual || !highlight {
             return;
         }
 
