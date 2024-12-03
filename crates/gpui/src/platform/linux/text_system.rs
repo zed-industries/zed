@@ -376,8 +376,7 @@ impl CosmicTextSystemState {
             );
             offs += run.len;
         }
-        let mut line = ShapeLine::new_in_buffer(
-            &mut self.scratch,
+        let mut line = ShapeLine::new(
             &mut self.font_system,
             text,
             &attrs_list,
