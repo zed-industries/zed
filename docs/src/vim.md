@@ -91,20 +91,20 @@ Treesitter is a powerful tool that Zed uses to understand the structure of your 
 | Select a larger syntax node     | `[ x`                       |
 | Select a larger syntax node     | `[ x`                       |
 
-| Text Objects                     | Default Shortcut |
-| -------------------------------- | ---------------- |
-| Around a class, definition, etc. | `a c`            |
-| Inside a class, definition, etc. | `i c`            |
-| Around a function, method etc.   | `a f`            |
-| Inside a function, method, etc.  | `i f`            |
-| A comment                        | `g c`            |
-| An argument, or list item, etc.  | `i a` |
-| An argument, or list item, etc. (including trailing comma)  | `a a` |
-| Around an HTML-like tag                 | `i a`            |
-| Inside an HTML-like tag                 | `i a`            |
-| The current indent level, and one line before and after | `a I` |
-| The current indent level, and one line before | `a i` |
-| The current indent level         | `i i`            |
+| Text Objects                                               | Default Shortcut |
+| ---------------------------------------------------------- | ---------------- |
+| Around a class, definition, etc.                           | `a c`            |
+| Inside a class, definition, etc.                           | `i c`            |
+| Around a function, method etc.                             | `a f`            |
+| Inside a function, method, etc.                            | `i f`            |
+| A comment                                                  | `g c`            |
+| An argument, or list item, etc.                            | `i a`            |
+| An argument, or list item, etc. (including trailing comma) | `a a`            |
+| Around an HTML-like tag                                    | `i a`            |
+| Inside an HTML-like tag                                    | `i a`            |
+| The current indent level, and one line before and after    | `a I`            |
+| The current indent level, and one line before              | `a i`            |
+| The current indent level                                   | `i i`            |
 
 Note that the definitions for the targets of the `[m` family of motions are the same as the
 boundaries defined by `af`. The targets of the `[[` are the same as those defined by `ac`, though
