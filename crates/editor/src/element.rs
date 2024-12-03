@@ -2251,11 +2251,20 @@ impl EditorElement {
                                                 .map(|header| {
                                                     let editor = self.editor.clone();
                                                     let multi_buffer_snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-                                                    // TODO kb all wrong
-                                                    let fold_start = prev_excerpt.as_ref()
-                                                        .and_then(|e| multi_buffer_snapshot.anchor_in_excerpt(e.id, e.range.context.end)).unwrap_or_else(|| Anchor::min());
-                                                    let fold_end = multi_buffer_snapshot.anchor_in_excerpt(next_excerpt.id, next_excerpt.range.context.start).unwrap_or_else(|| Anchor::max());
+                                                    let current_excerpt_id = next_excerpt.id;
+                                                    let related_excerpts = multi_buffer_snapshot.excerpts().skip_while(|&(excerpt_id, ..)| excerpt_id != current_excerpt_id).take_while(|&(excerpt_id, ..)| excerpt_id == current_excerpt_id).collect::<Vec<_>>();
 
+                                                    let fold_start = related_excerpts.first().and_then(|(excerpt_id, _, excerpt_range)| {
+                                                        multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, excerpt_range.context.start)
+                                                    });
+                                                    let fold_end = related_excerpts.last().and_then(|(excerpt_id, _, excerpt_range)| {
+                                                        multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, excerpt_range.context.end)
+                                                    });
+                                                    let Some((fold_start, fold_end)) = fold_start.zip(fold_end) else {
+                                                        return header;
+                                                    };
+
+                                                    // TODO kb remove gutter elements (excerpt expand controls + line numbers + whatever else)
                                                     match editor
                                                         .read(cx)
                                                         .folded_excerpts
@@ -2269,7 +2278,8 @@ impl EditorElement {
                                                                     cx.stop_propagation();
                                                                 }
                                                             )),
-                                                            None => header.child(Button::new("fold-file", "Fold").on_click(
+                                                            None => {
+                                                                header.child(Button::new("fold-file", "Fold").on_click(
                                                                 move |_, cx| {
                                                                     editor.update(cx, |editor, cx| {
                                                                         let mut block_ids = editor.insert_blocks(
@@ -2281,10 +2291,7 @@ impl EditorElement {
                                                                                 height: 1,
                                                                                 style: BlockStyle::Flex,
                                                                                 priority: 0,
-                                                                                render: Arc::new(|_| {
-                                                                                    Label::new("folded?????")
-                                                                                        .into_any_element()
-                                                                                }),
+                                                                                render: Arc::new(|_| div().into_any()),
                                                                             }),
                                                                             None,
                                                                             cx,
@@ -2295,7 +2302,7 @@ impl EditorElement {
                                                                     });
                                                                     cx.stop_propagation();
                                                                 }
-                                                            )),
+                                                            ))},
                                                         }
                                                 })
                                                 .child(
