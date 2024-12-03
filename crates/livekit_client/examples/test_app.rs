@@ -66,9 +66,9 @@ fn main() {
             }],
         }]);
 
-        let livekit_url = std::env::var("livekit_URL").unwrap_or("http://localhost:7880".into());
-        let livekit_key = std::env::var("livekit_KEY").unwrap_or("devkey".into());
-        let livekit_secret = std::env::var("livekit_SECRET").unwrap_or("secret".into());
+        let livekit_url = std::env::var("LIVEKIT_URL").unwrap_or("http://localhost:7880".into());
+        let livekit_key = std::env::var("LIVEKIT_KEY").unwrap_or("devkey".into());
+        let livekit_secret = std::env::var("LIVEKIT_SECRET").unwrap_or("secret".into());
         let height = px(800.);
         let width = px(800.);
 

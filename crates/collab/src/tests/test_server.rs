@@ -79,7 +79,7 @@ pub struct ContactsSummary {
 
 impl TestServer {
     pub async fn start(deterministic: BackgroundExecutor) -> Self {
-        static NEXT_livekit_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
+        static NEXT_LIVEKIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
 
         let use_postgres = env::var("USE_POSTGRES").ok();
         let use_postgres = use_postgres.as_deref();
@@ -88,7 +88,7 @@ impl TestServer {
         } else {
             TestDb::sqlite(deterministic.clone())
         };
-        let livekit_server_id = NEXT_livekit_SERVER_ID.fetch_add(1, SeqCst);
+        let livekit_server_id = NEXT_LIVEKIT_SERVER_ID.fetch_add(1, SeqCst);
         let livekit_server = livekit_client::test::TestServer::create(
             format!("http://livekit.{}.test", livekit_server_id),
             format!("devkey-{}", livekit_server_id),

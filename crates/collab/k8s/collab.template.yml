@@ -109,7 +109,7 @@ spec:
                 secretKeyRef:
                   name: zed-client
                   key: checksum-seed
-            - name: livekit_SERVER
+            - name: LIVEKIT_SERVER
               valueFrom:
                 secretKeyRef:
                   name: livekit
