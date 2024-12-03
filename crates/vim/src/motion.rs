@@ -11,6 +11,7 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 use std::ops::Range;
+use workspace::searchable::Direction;
 
 use crate::{
     normal::mark,
@@ -104,6 +105,16 @@ pub enum Motion {
     WindowTop,
     WindowMiddle,
     WindowBottom,
+    NextSectionStart,
+    NextSectionEnd,
+    PreviousSectionStart,
+    PreviousSectionEnd,
+    NextMethodStart,
+    NextMethodEnd,
+    PreviousMethodStart,
+    PreviousMethodEnd,
+    NextComment,
+    PreviousComment,
 
     // we don't have a good way to run a search synchronously, so
     // we handle search motions by running the search async and then
@@ -269,6 +280,16 @@ actions!(
         WindowTop,
         WindowMiddle,
         WindowBottom,
+        NextSectionStart,
+        NextSectionEnd,
+        PreviousSectionStart,
+        PreviousSectionEnd,
+        NextMethodStart,
+        NextMethodEnd,
+        PreviousMethodStart,
+        PreviousMethodEnd,
+        NextComment,
+        PreviousComment,
     ]
 );
 
@@ -454,6 +475,37 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, &WindowBottom, cx| {
         vim.motion(Motion::WindowBottom, cx)
     });
+
+    Vim::action(editor, cx, |vim, &PreviousSectionStart, cx| {
+        vim.motion(Motion::PreviousSectionStart, cx)
+    });
+    Vim::action(editor, cx, |vim, &NextSectionStart, cx| {
+        vim.motion(Motion::NextSectionStart, cx)
+    });
+    Vim::action(editor, cx, |vim, &PreviousSectionEnd, cx| {
+        vim.motion(Motion::PreviousSectionEnd, cx)
+    });
+    Vim::action(editor, cx, |vim, &NextSectionEnd, cx| {
+        vim.motion(Motion::NextSectionEnd, cx)
+    });
+    Vim::action(editor, cx, |vim, &PreviousMethodStart, cx| {
+        vim.motion(Motion::PreviousMethodStart, cx)
+    });
+    Vim::action(editor, cx, |vim, &NextMethodStart, cx| {
+        vim.motion(Motion::NextMethodStart, cx)
+    });
+    Vim::action(editor, cx, |vim, &PreviousMethodEnd, cx| {
+        vim.motion(Motion::PreviousMethodEnd, cx)
+    });
+    Vim::action(editor, cx, |vim, &NextMethodEnd, cx| {
+        vim.motion(Motion::NextMethodEnd, cx)
+    });
+    Vim::action(editor, cx, |vim, &NextComment, cx| {
+        vim.motion(Motion::NextComment, cx)
+    });
+    Vim::action(editor, cx, |vim, &PreviousComment, cx| {
+        vim.motion(Motion::PreviousComment, cx)
+    });
 }
 
 impl Vim {
@@ -536,6 +588,16 @@ impl Motion {
             | WindowTop
             | WindowMiddle
             | WindowBottom
+            | NextSectionStart
+            | NextSectionEnd
+            | PreviousSectionStart
+            | PreviousSectionEnd
+            | NextMethodStart
+            | NextMethodEnd
+            | PreviousMethodStart
+            | PreviousMethodEnd
+            | NextComment
+            | PreviousComment
             | Jump { line: true, .. } => true,
             EndOfLine { .. }
             | Matching
@@ -607,6 +669,16 @@ impl Motion {
             | NextLineStart
             | PreviousLineStart
             | ZedSearchResult { .. }
+            | NextSectionStart
+            | NextSectionEnd
+            | PreviousSectionStart
+            | PreviousSectionEnd
+            | NextMethodStart
+            | NextMethodEnd
+            | PreviousMethodStart
+            | PreviousMethodEnd
+            | NextComment
+            | PreviousComment
             | Jump { .. } => false,
         }
     }
@@ -652,6 +724,16 @@ impl Motion {
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
             | Jump { .. }
+            | NextSectionStart
+            | NextSectionEnd
+            | PreviousSectionStart
+            | PreviousSectionEnd
+            | NextMethodStart
+            | NextMethodEnd
+            | PreviousMethodStart
+            | PreviousMethodEnd
+            | NextComment
+            | PreviousComment
             | ZedSearchResult { .. } => false,
             RepeatFind { last_find: motion } | RepeatFindReversed { last_find: motion } => {
                 motion.inclusive()
@@ -867,6 +949,47 @@ impl Motion {
                     return None;
                 }
             }
+            NextSectionStart => (
+                section_motion(map, point, times, Direction::Next, true),
+                SelectionGoal::None,
+            ),
+            NextSectionEnd => (
+                section_motion(map, point, times, Direction::Next, false),
+                SelectionGoal::None,
+            ),
+            PreviousSectionStart => (
+                section_motion(map, point, times, Direction::Prev, true),
+                SelectionGoal::None,
+            ),
+            PreviousSectionEnd => (
+                section_motion(map, point, times, Direction::Prev, false),
+                SelectionGoal::None,
+            ),
+
+            NextMethodStart => (
+                method_motion(map, point, times, Direction::Next, true),
+                SelectionGoal::None,
+            ),
+            NextMethodEnd => (
+                method_motion(map, point, times, Direction::Next, false),
+                SelectionGoal::None,
+            ),
+            PreviousMethodStart => (
+                method_motion(map, point, times, Direction::Prev, true),
+                SelectionGoal::None,
+            ),
+            PreviousMethodEnd => (
+                method_motion(map, point, times, Direction::Prev, false),
+                SelectionGoal::None,
+            ),
+            NextComment => (
+                comment_motion(map, point, times, Direction::Next),
+                SelectionGoal::None,
+            ),
+            PreviousComment => (
+                comment_motion(map, point, times, Direction::Prev),
+                SelectionGoal::None,
+            ),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -2127,6 +2250,231 @@ fn window_bottom(
     } else {
         (point, SelectionGoal::None)
     }
+}
+
+fn method_motion(
+    map: &DisplaySnapshot,
+    mut display_point: DisplayPoint,
+    times: usize,
+    direction: Direction,
+    is_start: bool,
+) -> DisplayPoint {
+    let Some((_, _, buffer)) = map.buffer_snapshot.as_singleton() else {
+        return display_point;
+    };
+
+    for _ in 0..times {
+        let point = map.display_point_to_point(display_point, Bias::Left);
+        let offset = point.to_offset(&map.buffer_snapshot);
+        let range = if direction == Direction::Prev {
+            0..offset
+        } else {
+            offset..buffer.len()
+        };
+
+        let possibilities = buffer
+            .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(4))
+            .filter_map(|(range, object)| {
+                if !matches!(object, language::TextObject::AroundFunction) {
+                    return None;
+                }
+
+                let relevant = if is_start { range.start } else { range.end };
+                if direction == Direction::Prev && relevant < offset {
+                    Some(relevant)
+                } else if direction == Direction::Next && relevant > offset + 1 {
+                    Some(relevant)
+                } else {
+                    None
+                }
+            });
+
+        let dest = if direction == Direction::Prev {
+            possibilities.max().unwrap_or(offset)
+        } else {
+            possibilities.min().unwrap_or(offset)
+        };
+        let new_point = map.clip_point(dest.to_display_point(&map), Bias::Left);
+        if new_point == display_point {
+            break;
+        }
+        display_point = new_point;
+    }
+    display_point
+}
+
+fn comment_motion(
+    map: &DisplaySnapshot,
+    mut display_point: DisplayPoint,
+    times: usize,
+    direction: Direction,
+) -> DisplayPoint {
+    let Some((_, _, buffer)) = map.buffer_snapshot.as_singleton() else {
+        return display_point;
+    };
+
+    for _ in 0..times {
+        let point = map.display_point_to_point(display_point, Bias::Left);
+        let offset = point.to_offset(&map.buffer_snapshot);
+        let range = if direction == Direction::Prev {
+            0..offset
+        } else {
+            offset..buffer.len()
+        };
+
+        let possibilities = buffer
+            .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(6))
+            .filter_map(|(range, object)| {
+                if !matches!(object, language::TextObject::AroundComment) {
+                    return None;
+                }
+
+                let relevant = if direction == Direction::Prev {
+                    range.start
+                } else {
+                    range.end
+                };
+                if direction == Direction::Prev && relevant < offset {
+                    Some(relevant)
+                } else if direction == Direction::Next && relevant > offset + 1 {
+                    Some(relevant)
+                } else {
+                    None
+                }
+            });
+
+        let dest = if direction == Direction::Prev {
+            possibilities.max().unwrap_or(offset)
+        } else {
+            possibilities.min().unwrap_or(offset)
+        };
+        let new_point = map.clip_point(dest.to_display_point(&map), Bias::Left);
+        if new_point == display_point {
+            break;
+        }
+        display_point = new_point;
+    }
+
+    display_point
+}
+
+fn section_motion(
+    map: &DisplaySnapshot,
+    mut display_point: DisplayPoint,
+    times: usize,
+    direction: Direction,
+    is_start: bool,
+) -> DisplayPoint {
+    if let Some((_, _, buffer)) = map.buffer_snapshot.as_singleton() {
+        for _ in 0..times {
+            let offset = map
+                .display_point_to_point(display_point, Bias::Left)
+                .to_offset(&map.buffer_snapshot);
+            let range = if direction == Direction::Prev {
+                0..offset
+            } else {
+                offset..buffer.len()
+            };
+
+            // we set a max start depth here because we want a section to only be "top level"
+            // similar to vim's default of '{' in the first column.
+            // (and without it, ]] at the start of editor.rs is -very- slow)
+            let mut possibilities = buffer
+                .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(3))
+                .filter(|(_, object)| {
+                    matches!(
+                        object,
+                        language::TextObject::AroundClass | language::TextObject::AroundFunction
+                    )
+                })
+                .collect::<Vec<_>>();
+            possibilities.sort_by_key(|(range_a, _)| range_a.start);
+            let mut prev_end = None;
+            let possibilities = possibilities.into_iter().filter_map(|(range, t)| {
+                if t == language::TextObject::AroundFunction
+                    && prev_end.is_some_and(|prev_end| prev_end > range.start)
+                {
+                    return None;
+                }
+                prev_end = Some(range.end);
+
+                let relevant = if is_start { range.start } else { range.end };
+                if direction == Direction::Prev && relevant < offset {
+                    Some(relevant)
+                } else if direction == Direction::Next && relevant > offset + 1 {
+                    Some(relevant)
+                } else {
+                    None
+                }
+            });
+
+            let offset = if direction == Direction::Prev {
+                possibilities.max().unwrap_or(0)
+            } else {
+                possibilities.min().unwrap_or(buffer.len())
+            };
+
+            let new_point = map.clip_point(offset.to_display_point(&map), Bias::Left);
+            if new_point == display_point {
+                break;
+            }
+            display_point = new_point;
+        }
+        return display_point;
+    };
+
+    for _ in 0..times {
+        let point = map.display_point_to_point(display_point, Bias::Left);
+        let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
+            return display_point;
+        };
+        let next_point = match (direction, is_start) {
+            (Direction::Prev, true) => {
+                let mut start = excerpt.start_anchor().to_display_point(&map);
+                if start >= display_point && start.row() > DisplayRow(0) {
+                    let Some(excerpt) = map.buffer_snapshot.excerpt_before(excerpt.id()) else {
+                        return display_point;
+                    };
+                    start = excerpt.start_anchor().to_display_point(&map);
+                }
+                start
+            }
+            (Direction::Prev, false) => {
+                let mut start = excerpt.start_anchor().to_display_point(&map);
+                if start.row() > DisplayRow(0) {
+                    *start.row_mut() -= 1;
+                }
+                map.clip_point(start, Bias::Left)
+            }
+            (Direction::Next, true) => {
+                let mut end = excerpt.end_anchor().to_display_point(&map);
+                *end.row_mut() += 1;
+                map.clip_point(end, Bias::Right)
+            }
+            (Direction::Next, false) => {
+                let mut end = excerpt.end_anchor().to_display_point(&map);
+                *end.column_mut() = 0;
+                if end <= display_point {
+                    *end.row_mut() += 1;
+                    let point_end = map.display_point_to_point(end, Bias::Right);
+                    let Some(excerpt) =
+                        map.buffer_snapshot.excerpt_containing(point_end..point_end)
+                    else {
+                        return display_point;
+                    };
+                    end = excerpt.end_anchor().to_display_point(&map);
+                    *end.column_mut() = 0;
+                }
+                end
+            }
+        };
+        if next_point == display_point {
+            break;
+        }
+        display_point = next_point;
+    }
+
+    display_point
 }
 
 #[cfg(test)]

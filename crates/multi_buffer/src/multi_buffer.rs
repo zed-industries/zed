@@ -3441,6 +3441,30 @@ impl MultiBufferSnapshot {
         })
     }
 
+    pub fn excerpt_before(&self, id: ExcerptId) -> Option<MultiBufferExcerpt<'_>> {
+        let start_locator = self.excerpt_locator_for_id(id);
+        let mut cursor = self.excerpts.cursor::<Option<&Locator>>(&());
+        cursor.seek(&Some(start_locator), Bias::Left, &());
+        cursor.prev(&());
+        let excerpt = cursor.item()?;
+        Some(MultiBufferExcerpt {
+            excerpt,
+            excerpt_offset: 0,
+        })
+    }
+
+    pub fn excerpt_after(&self, id: ExcerptId) -> Option<MultiBufferExcerpt<'_>> {
+        let start_locator = self.excerpt_locator_for_id(id);
+        let mut cursor = self.excerpts.cursor::<Option<&Locator>>(&());
+        cursor.seek(&Some(start_locator), Bias::Left, &());
+        cursor.next(&());
+        let excerpt = cursor.item()?;
+        Some(MultiBufferExcerpt {
+            excerpt,
+            excerpt_offset: 0,
+        })
+    }
+
     pub fn excerpt_boundaries_in_range<R, T>(
         &self,
         range: R,
@@ -4686,6 +4710,26 @@ impl<'a> MultiBufferExcerpt<'a> {
         MultiBufferExcerpt {
             excerpt,
             excerpt_offset,
+        }
+    }
+
+    pub fn id(&self) -> ExcerptId {
+        self.excerpt.id
+    }
+
+    pub fn start_anchor(&self) -> Anchor {
+        Anchor {
+            buffer_id: Some(self.excerpt.buffer_id),
+            excerpt_id: self.excerpt.id,
+            text_anchor: self.excerpt.range.context.start,
+        }
+    }
+
+    pub fn end_anchor(&self) -> Anchor {
+        Anchor {
+            buffer_id: Some(self.excerpt.buffer_id),
+            excerpt_id: self.excerpt.id,
+            text_anchor: self.excerpt.range.context.end,
         }
     }
 

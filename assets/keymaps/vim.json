@@ -33,6 +33,18 @@
       "(": "vim::SentenceBackward",
       ")": "vim::SentenceForward",
       "|": "vim::GoToColumn",
+      "] ]": "vim::NextSectionStart",
+      "] [": "vim::NextSectionEnd",
+      "[ [": "vim::PreviousSectionStart",
+      "[ ]": "vim::PreviousSectionEnd",
+      "] m": "vim::NextMethodStart",
+      "] M": "vim::NextMethodEnd",
+      "[ m": "vim::PreviousMethodStart",
+      "[ M": "vim::PreviousMethodEnd",
+      "[ *": "vim::PreviousComment",
+      "[ /": "vim::PreviousComment",
+      "] *": "vim::NextComment",
+      "] /": "vim::NextComment",
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
@@ -360,7 +372,8 @@
     "bindings": {
       "escape": "vim::ClearOperators",
       "ctrl-c": "vim::ClearOperators",
-      "ctrl-[": "vim::ClearOperators"
+      "ctrl-[": "vim::ClearOperators",
+      "g c": "vim::Comment"
     }
   },
   {
@@ -389,7 +402,9 @@
       ">": "vim::AngleBrackets",
       "a": "vim::Argument",
       "i": "vim::IndentObj",
-      "shift-i": ["vim::IndentObj", { "includeBelow": true }]
+      "shift-i": ["vim::IndentObj", { "includeBelow": true }],
+      "f": "vim::Method",
+      "c": "vim::Class"
     }
   },
   {
