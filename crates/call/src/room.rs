@@ -178,7 +178,7 @@ impl Room {
                 let mut room = Self::new(
                     room_proto.id,
                     None,
-                    response.livekit_connection_info,
+                    response.live_kit_connection_info,
                     client,
                     user_store,
                     cx,
@@ -283,7 +283,7 @@ impl Room {
             Self::new(
                 room_proto.id,
                 response.channel_id.map(ChannelId),
-                response.livekit_connection_info,
+                response.live_kit_connection_info,
                 client,
                 user_store,
                 cx,
