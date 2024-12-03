@@ -178,7 +178,7 @@ impl MarkdownExample {
         cx: &mut WindowContext,
     ) -> Self {
         let markdown =
-            cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), cx, None));
+            cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), None, cx));
         Self { markdown }
     }
 }

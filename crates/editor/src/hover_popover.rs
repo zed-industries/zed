@@ -593,8 +593,8 @@ async fn parse_blocks(
                 combined_text,
                 markdown_style.clone(),
                 Some(language_registry.clone()),
-                cx,
                 fallback_language_name,
+                cx,
             )
         })
         .ok();

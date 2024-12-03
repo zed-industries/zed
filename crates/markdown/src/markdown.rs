@@ -71,8 +71,8 @@ impl Markdown {
         source: String,
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
-        cx: &ViewContext<Self>,
         fallback_code_block_language: Option<String>,
+        cx: &ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
