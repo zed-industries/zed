@@ -12833,6 +12833,27 @@ impl Editor {
                 };
 
                 for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {
+                    // Handle file-less buffers separately: those are not really the project items, so won't have a paroject path or entity id,
+                    // so `workspace.open_project_item` will never find them, always opening a new editor.
+                    // Instead, we try to activate the existing editor in the pane first.
+                    if buffer.read(cx).file().is_none() {
+                        let pane_item_index =
+                            pane.read(cx).items().enumerate().find_map(|(i, item)| {
+                                let editor = item.downcast::<Editor>()?;
+                                let singleton_buffer =
+                                    editor.read(cx).buffer().read(cx).as_singleton()?;
+                                if singleton_buffer == buffer {
+                                    Some(i)
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(index) = pane_item_index {
+                            pane.update(cx, |pane, cx| pane.activate_item(index, true, true, cx));
+                            continue;
+                        }
+                    }
+
                     let editor =
                         workspace.open_project_item::<Self>(pane.clone(), buffer, true, true, cx);
                     editor.update(cx, |editor, cx| {
