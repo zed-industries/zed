@@ -65,8 +65,6 @@ pub struct ThemeFamilyContent {
 /// The content of a serialized theme.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeContent {
-    #[serde(rename = "$schema")]
-    pub schema: String,
     pub name: String,
     pub appearance: AppearanceContent,
     pub style: ThemeStyleContent,
