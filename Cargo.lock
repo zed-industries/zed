@@ -7110,6 +7110,7 @@ dependencies = [
  "gpui",
  "http 0.2.12",
  "http_client",
+ "image",
  "live_kit_server",
  "livekit",
  "log",
@@ -7121,6 +7122,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "simplelog",
+ "smallvec",
  "util",
 ]
 

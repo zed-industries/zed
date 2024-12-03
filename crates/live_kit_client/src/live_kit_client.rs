@@ -427,23 +427,18 @@ fn start_output_stream(
     (receive_task, thread)
 }
 
-#[cfg(target_os = "windows")]
 pub fn play_remote_video_track(
     track: &track::RemoteVideoTrack,
-) -> impl Stream<Item = ScreenCaptureFrame> {
-    futures::stream::empty()
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn play_remote_video_track(
-    track: &track::RemoteVideoTrack,
-) -> impl Stream<Item = ScreenCaptureFrame> {
+) -> impl Stream<Item = RemoteVideoFrame> {
     NativeVideoStream::new(track.rtc_track())
         .filter_map(|frame| async move { video_frame_buffer_from_webrtc(frame.buffer) })
 }
 
 #[cfg(target_os = "macos")]
-fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<ScreenCaptureFrame> {
+pub type RemoteVideoFrame = media::core_video::CVImageBuffer;
+
+#[cfg(target_os = "macos")]
+fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<RemoteVideoFrame> {
     use core_foundation::base::TCFType as _;
     use media::core_video::CVImageBuffer;
 
@@ -453,16 +448,50 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Screen
         return None;
     }
 
-    unsafe {
-        Some(ScreenCaptureFrame(CVImageBuffer::wrap_under_get_rule(
-            pixel_buffer as _,
-        )))
-    }
+    unsafe { Some(CVImageBuffer::wrap_under_get_rule(pixel_buffer as _)) }
 }
 
+#[cfg(not(target_os = "macos"))]
+pub type RemoteVideoFrame = Arc<gpui::RenderImage>;
+
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn video_frame_buffer_from_webrtc(_buffer: Box<dyn VideoBuffer>) -> Option<ScreenCaptureFrame> {
-    None
+fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<RemoteVideoFrame> {
+    use gpui::RenderImage;
+    use image::{Frame, RgbaImage};
+    use livekit::webrtc::prelude::VideoFormatType;
+    use smallvec::SmallVec;
+    use std::alloc::{alloc, Layout};
+
+    let width = buffer.width();
+    let height = buffer.height();
+    let stride = width * 4;
+    let byte_len = (stride * height) as usize;
+    let bgra_frame_vec = unsafe {
+        // Motivation for this unsafe code is to avoid initializing the frame data, since to_argb
+        // will write all bytes anyway.
+        let start_ptr = alloc(Layout::array::<u8>(byte_len).log_err()?);
+        if start_ptr.is_null() {
+            return None;
+        }
+        let bgra_frame_slice = std::slice::from_raw_parts_mut(start_ptr, byte_len);
+        buffer.to_argb(
+            VideoFormatType::BGRA,
+            bgra_frame_slice,
+            stride,
+            width as i32,
+            height as i32,
+        );
+        Vec::from_raw_parts(start_ptr, byte_len, byte_len)
+    };
+
+    Some(Arc::new(RenderImage::new(SmallVec::from_elem(
+        Frame::new(
+            RgbaImage::from_raw(width, height, bgra_frame_vec)
+                .with_context(|| "Bug: not enough bytes allocated for image.")
+                .log_err()?,
+        ),
+        1,
+    ))))
 }
 
 #[cfg(target_os = "macos")]
