@@ -378,7 +378,7 @@ fn show_hover(
                             },
                             ..Default::default()
                         };
-                        Markdown::new_text(text, markdown_style.clone(), None, cx, None)
+                        Markdown::new_text(text, markdown_style.clone(), None, None, cx)
                     })
                     .ok();
 
