@@ -370,7 +370,8 @@
     "bindings": {
       "escape": "vim::ClearOperators",
       "ctrl-c": "vim::ClearOperators",
-      "ctrl-[": "vim::ClearOperators"
+      "ctrl-[": "vim::ClearOperators",
+      "g c": "vim::Comment"
     }
   },
   {
@@ -401,8 +402,7 @@
       "i": "vim::IndentObj",
       "shift-i": ["vim::IndentObj", { "includeBelow": true }],
       "m": "vim::Method",
-      "c": "vim::Class",
-      "g c": "vim::Comment"
+      "c": "vim::Class"
     }
   },
   {

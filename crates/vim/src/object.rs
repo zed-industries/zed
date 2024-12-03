@@ -1,6 +1,10 @@
 use std::ops::Range;
 
-use crate::{motion::right, state::Mode, Vim};
+use crate::{
+    motion::right,
+    state::{Mode, Operator},
+    Vim,
+};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
@@ -120,6 +124,9 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.object(Object::Class, cx)
     });
     Vim::action(editor, cx, |vim, _: &Comment, cx| {
+        if !matches!(vim.active_operator(), Some(Operator::Object { .. })) {
+            vim.push_operator(Operator::Object { around: true }, cx);
+        }
         vim.object(Object::Comment, cx)
     });
     Vim::action(
@@ -276,15 +283,7 @@ impl Object {
                     TextObject::InsideFunction
                 },
             ),
-            Object::Comment => text_object(
-                map,
-                relative_to,
-                if around {
-                    TextObject::AroundComment
-                } else {
-                    TextObject::InsideComment
-                },
-            ),
+            Object::Comment => comment_object(map, relative_to),
             Object::Class => text_object(
                 map,
                 relative_to,
@@ -495,6 +494,16 @@ fn around_next_word(
     });
 
     Some(start..end)
+}
+
+fn comment_object(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    target: TextObject,
+) -> Option<Range<DisplayPoint>> {
+    let snapshot = &map.buffer_snapshot;
+    let offset = relative_to.to_offset(map, Bias::Left);
+    snapshot.range_for_syntax_ancestor(range)
 }
 
 fn text_object(
