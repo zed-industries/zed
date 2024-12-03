@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakView};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger};
+use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip};
 
 use crate::assistant_panel::ContextEditor;
 use crate::SlashCommandWorkingSet;
@@ -177,11 +177,17 @@ impl PickerDelegate for SlashCommandDelegate {
                     .inset(true)
                     .spacing(ListItemSpacing::Dense)
                     .selected(selected)
+                    .tooltip({
+                        let description = info.description.clone();
+                        move |cx| cx.new_view(|_| Tooltip::new(description.clone())).into()
+                    })
                     .child(
                         v_flex()
                             .group(format!("command-entry-label-{ix}"))
                             .w_full()
                             .min_w(px(250.))
+                            .max_w(px(400.))
+                            .overflow_hidden()
                             .child(
                                 h_flex()
                                     .gap_1p5()
