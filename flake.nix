@@ -2,6 +2,7 @@
   description = "High-performance, multiplayer code editor from the creators of Atom and Tree-sitter";
 
   inputs = {
+    systems.url = "github:nix-systems/default";
     nixpkgs.url = "github:NixOS/nixpkgs?ref=nixos-unstable";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -16,16 +17,10 @@
       nixpkgs,
       rust-overlay,
       crane,
+      systems,
       ...
     }:
     let
-      systems = [
-        "x86_64-linux"
-        "x86_64-darwin"
-        "aarch64-linux"
-        "aarch64-darwin"
-      ];
-
       overlays = {
         rust-overlay = rust-overlay.overlays.default;
         rust-toolchain = final: prev: {
@@ -46,7 +41,7 @@
           overlays = builtins.attrValues overlays;
         };
 
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (mkPkgs system));
+      forAllSystems = f: nixpkgs.lib.genAttrs (import systems) (system: f (mkPkgs system));
     in
     {
       packages = forAllSystems (pkgs: {
