@@ -473,11 +473,12 @@ impl Editor {
                                 .child(
                                     h_flex()
                                         .gap_1()
-                                        .when(!is_branch_buffer && has_multiple_hunks, |row| {
+                                        .when(!is_branch_buffer, |row| {
                                             row.child(
                                                 IconButton::new("next-hunk", IconName::ArrowDown)
                                                     .shape(IconButtonShape::Square)
                                                     .icon_size(IconSize::Small)
+                                                    .disabled(!has_multiple_hunks)
                                                     .tooltip({
                                                         let focus_handle = editor.focus_handle(cx);
                                                         move |cx| {
@@ -506,6 +507,7 @@ impl Editor {
                                                 IconButton::new("prev-hunk", IconName::ArrowUp)
                                                     .shape(IconButtonShape::Square)
                                                     .icon_size(IconSize::Small)
+                                                    .disabled(!has_multiple_hunks)
                                                     .tooltip({
                                                         let focus_handle = editor.focus_handle(cx);
                                                         move |cx| {
