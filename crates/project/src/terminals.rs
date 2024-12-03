@@ -257,7 +257,7 @@ impl Project {
                     completion_tx,
                     cx,
                 )
-                .and_then(|builder| {
+                .map(|builder| {
                     let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));
 
                     this.terminals
@@ -285,7 +285,7 @@ impl Project {
                             cx,
                         );
                     }
-                    Ok(terminal_handle)
+                    terminal_handle
                 })
             })?;
 
