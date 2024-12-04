@@ -238,6 +238,10 @@ impl GitPanelState {
         self.staged_count() == 0
     }
 
+    fn no_changes(&self) -> bool {
+        self.changed_file_count() == 0
+    }
+
     fn all_staged(&self) -> bool {
         self.unstaged_count() == 0
     }
@@ -392,6 +396,7 @@ impl RenderOnce for ChangedFileItem {
             .group("")
             .rounded_sm()
             .pl(px(12. + (self.indent_level as f32 * 12.)))
+            .pr(px(12.))
             .h(px(28.))
             .child(
                 h_flex()
@@ -1240,17 +1245,38 @@ impl Render for GitPanel {
                 .into_any_element()
             })
             .child(div().flex_1())
-            .when(!is_list_view, |this| {
+            .when(is_list_view, |this| {
                 this.child(
                     h_flex()
                         .items_center()
+                        .px(px(12.))
                         .child(Label::new("Staged & Unstaged"))
                         .child(div().flex_1())
                         .child(
                             h_flex()
                                 .gap_1()
-                                .child(Button::new("discard-all", "Discard All"))
-                                .child(Button::new("stage-all", "Stage All")),
+                                .child(
+                                    Button::new("discard-all", "Discard All")
+                                        .style(ButtonStyle::Filled)
+                                        .size(ButtonSize::Compact)
+                                        .label_size(LabelSize::Small)
+                                        .layer(ui::ElevationIndex::ModalSurface)
+                                        .disabled(state.no_changes())
+                                        .on_click(move |_, cx| {
+                                            cx.dispatch_action(Box::new(DiscardAll))
+                                        }),
+                                )
+                                .child(
+                                    Button::new("stage-all", "Stage All")
+                                        .style(ButtonStyle::Filled)
+                                        .size(ButtonSize::Compact)
+                                        .label_size(LabelSize::Small)
+                                        .layer(ui::ElevationIndex::ModalSurface)
+                                        .disabled(state.no_changes() || state.all_staged())
+                                        .on_click(move |_, cx| {
+                                            cx.dispatch_action(Box::new(StageAll))
+                                        }),
+                                ),
                         ),
                 )
             })
