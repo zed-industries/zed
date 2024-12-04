@@ -1255,7 +1255,20 @@ impl Render for GitPanel {
                     h_flex()
                         .items_center()
                         .px(px(12.))
-                        .child(Label::new("Staged & Unstaged"))
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .child(
+                                    Label::new("Staged & Unstaged")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Icon::new(IconName::ChevronDown)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
                         .child(div().flex_1())
                         .child(
                             h_flex()
