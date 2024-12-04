@@ -34,6 +34,7 @@ use serde_json::{self, json};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{self, AtomicBool};
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
+use test::editor_lsp_test_context::rust_lang;
 use unindent::Unindent;
 use util::{
     assert_set_eq,
@@ -5458,7 +5459,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
+async fn test_autoindent(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let language = Arc::new(
@@ -5518,6 +5519,89 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
             ]
         );
     });
+}
+
+#[gpui::test]
+async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    {
+        let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
+        cx.set_state(indoc! {"
+            impl A {
+
+                fn b() {}
+
+            «fn c() {
+
+            }ˇ»
+            }
+        "});
+
+        cx.update_editor(|editor, cx| {
+            editor.autoindent(&Default::default(), cx);
+        });
+
+        cx.assert_editor_state(indoc! {"
+            impl A {
+
+                fn b() {}
+
+                «fn c() {
+
+                }ˇ»
+            }
+        "});
+    }
+
+    {
+        let mut cx = EditorTestContext::new_multibuffer(
+            cx,
+            [indoc! { "
+                impl A {
+                «
+                // a
+                fn b(){}
+                »
+                «
+                    }
+                    fn c(){}
+                »
+            "}],
+        );
+
+        let buffer = cx.update_editor(|editor, cx| {
+            let buffer = editor.buffer().update(cx, |buffer, _| {
+                buffer.all_buffers().iter().next().unwrap().clone()
+            });
+            buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+            buffer
+        });
+
+        cx.run_until_parked();
+        cx.update_editor(|editor, cx| {
+            editor.select_all(&Default::default(), cx);
+            editor.autoindent(&Default::default(), cx)
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            pretty_assertions::assert_eq!(
+                buffer.read(cx).text(),
+                indoc! { "
+                    impl A {
+
+                        // a
+                        fn b(){}
+
+
+                    }
+                    fn c(){}
+
+                " }
+            )
+        });
+    }
 }
 
 #[gpui::test]
@@ -11483,7 +11567,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
+async fn test_multibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let cols = 4;
@@ -11721,7 +11805,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
 
     multi_buffer_editor.update(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::Next), cx, |s| {
-            s.select_ranges(Some(60..70))
+            s.select_ranges(Some(70..70))
         });
         editor.open_excerpts(&OpenExcerpts, cx);
     });
@@ -11770,6 +11854,74 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
             assert!(!active_item.is_singleton(cx));
         })
         .unwrap();
+}
+
+#[gpui::test]
+async fn test_multibuffer_unfold_on_jump(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let texts = ["{\n\tx\n}".to_owned(), "y".to_owned()];
+    let buffers = texts
+        .clone()
+        .map(|txt| cx.new_model(|cx| Buffer::local(txt, cx)));
+    let multi_buffer = cx.new_model(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        for i in 0..2 {
+            multi_buffer.push_excerpts(
+                buffers[i].clone(),
+                [ExcerptRange {
+                    context: 0..texts[i].len(),
+                    primary: None,
+                }],
+                cx,
+            );
+        }
+        multi_buffer
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            "x": &texts[0],
+            "y": &texts[1],
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+
+    let multi_buffer_editor = cx.new_view(|cx| {
+        Editor::for_multibuffer(multi_buffer.clone(), Some(project.clone()), true, cx)
+    });
+    let buffer_editor =
+        cx.new_view(|cx| Editor::for_buffer(buffers[0].clone(), Some(project.clone()), cx));
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(multi_buffer_editor.clone()),
+                None,
+                true,
+                cx,
+            );
+            workspace.add_item_to_active_pane(Box::new(buffer_editor.clone()), None, false, cx);
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    buffer_editor.update(cx, |buffer_editor, cx| {
+        buffer_editor.fold_at_level(&FoldAtLevel { level: 1 }, cx);
+        assert!(buffer_editor.snapshot(cx).fold_count() == 1);
+    });
+    cx.executor().run_until_parked();
+    multi_buffer_editor.update(cx, |multi_buffer_editor, cx| {
+        multi_buffer_editor.change_selections(None, cx, |s| s.select_ranges([3..4]));
+        multi_buffer_editor.open_excerpts(&OpenExcerpts, cx);
+    });
+    cx.executor().run_until_parked();
+    buffer_editor.update(cx, |buffer_editor, cx| {
+        assert!(buffer_editor.snapshot(cx).fold_count() == 0);
+    });
 }
 
 #[gpui::test]
@@ -13931,20 +14083,6 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
     });
 
     update_test_language_settings(cx, f);
-}
-
-pub(crate) fn rust_lang() -> Arc<Language> {
-    Arc::new(Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    ))
 }
 
 #[track_caller]

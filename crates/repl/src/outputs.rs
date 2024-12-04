@@ -334,9 +334,11 @@ impl ExecutionView {
                 result.transient.as_ref().and_then(|t| t.display_id.clone()),
                 cx,
             ),
-            JupyterMessageContent::DisplayData(result) => {
-                Output::new(&result.data, result.transient.display_id.clone(), cx)
-            }
+            JupyterMessageContent::DisplayData(result) => Output::new(
+                &result.data,
+                result.transient.as_ref().and_then(|t| t.display_id.clone()),
+                cx,
+            ),
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
                 if let Some(new_terminal) = self.apply_terminal_text(&result.text, cx) {

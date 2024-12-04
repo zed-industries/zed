@@ -399,6 +399,12 @@ impl Editor {
         }
     }
 
+    fn has_multiple_hunks(&self, cx: &AppContext) -> bool {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut hunks = snapshot.git_diff_hunks_in_range(MultiBufferRow::MIN..MultiBufferRow::MAX);
+        hunks.nth(1).is_some()
+    }
+
     fn hunk_header_block(
         &self,
         hunk: &HoveredHunk,
@@ -428,6 +434,7 @@ impl Editor {
             render: Arc::new({
                 let editor = cx.view().clone();
                 let hunk = hunk.clone();
+                let has_multiple_hunks = self.has_multiple_hunks(cx);
 
                 move |cx| {
                     let hunk_controls_menu_handle =
@@ -471,6 +478,7 @@ impl Editor {
                                                 IconButton::new("next-hunk", IconName::ArrowDown)
                                                     .shape(IconButtonShape::Square)
                                                     .icon_size(IconSize::Small)
+                                                    .disabled(!has_multiple_hunks)
                                                     .tooltip({
                                                         let focus_handle = editor.focus_handle(cx);
                                                         move |cx| {
@@ -499,6 +507,7 @@ impl Editor {
                                                 IconButton::new("prev-hunk", IconName::ArrowUp)
                                                     .shape(IconButtonShape::Square)
                                                     .icon_size(IconSize::Small)
+                                                    .disabled(!has_multiple_hunks)
                                                     .tooltip({
                                                         let focus_handle = editor.focus_handle(cx);
                                                         move |cx| {

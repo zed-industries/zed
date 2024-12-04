@@ -4098,8 +4098,10 @@ impl Editor {
 
                         if buffer.contains_str_at(selection.start, &pair.end) {
                             let pair_start_len = pair.start.len();
-                            if buffer.contains_str_at(selection.start - pair_start_len, &pair.start)
-                            {
+                            if buffer.contains_str_at(
+                                selection.start.saturating_sub(pair_start_len),
+                                &pair.start,
+                            ) {
                                 selection.start -= pair_start_len;
                                 selection.end += pair.end.len();
 
@@ -6291,6 +6293,25 @@ impl Editor {
                     None,
                     cx,
                 );
+            });
+            let selections = this.selections.all::<usize>(cx);
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+        });
+    }
+
+    pub fn autoindent(&mut self, _: &AutoIndent, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+        let selections = self
+            .selections
+            .all::<usize>(cx)
+            .into_iter()
+            .map(|s| s.range());
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.autoindent_ranges(selections, cx);
             });
             let selections = this.selections.all::<usize>(cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
@@ -11076,6 +11097,23 @@ impl Editor {
         self.fold_creases(fold_ranges, true, cx);
     }
 
+    pub fn fold_function_bodies(
+        &mut self,
+        _: &actions::FoldFunctionBodies,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some((_, _, buffer)) = snapshot.as_singleton() else {
+            return;
+        };
+        let creases = buffer
+            .function_body_fold_ranges(0..buffer.len())
+            .map(|range| Crease::simple(range, self.display_map.read(cx).fold_placeholder.clone()))
+            .collect();
+
+        self.fold_creases(creases, true, cx);
+    }
+
     pub fn fold_recursive(&mut self, _: &actions::FoldRecursive, cx: &mut ViewContext<Self>) {
         let mut to_fold = Vec::new();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -12814,14 +12852,48 @@ impl Editor {
                 };
 
                 for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {
-                    let editor =
-                        workspace.open_project_item::<Self>(pane.clone(), buffer, true, true, cx);
+                    let editor = buffer
+                        .read(cx)
+                        .file()
+                        .is_none()
+                        .then(|| {
+                            // Handle file-less buffers separately: those are not really the project items, so won't have a paroject path or entity id,
+                            // so `workspace.open_project_item` will never find them, always opening a new editor.
+                            // Instead, we try to activate the existing editor in the pane first.
+                            let (editor, pane_item_index) =
+                                pane.read(cx).items().enumerate().find_map(|(i, item)| {
+                                    let editor = item.downcast::<Editor>()?;
+                                    let singleton_buffer =
+                                        editor.read(cx).buffer().read(cx).as_singleton()?;
+                                    if singleton_buffer == buffer {
+                                        Some((editor, i))
+                                    } else {
+                                        None
+                                    }
+                                })?;
+                            pane.update(cx, |pane, cx| {
+                                pane.activate_item(pane_item_index, true, true, cx)
+                            });
+                            Some(editor)
+                        })
+                        .flatten()
+                        .unwrap_or_else(|| {
+                            workspace.open_project_item::<Self>(
+                                pane.clone(),
+                                buffer,
+                                true,
+                                true,
+                                cx,
+                            )
+                        });
+
                     editor.update(cx, |editor, cx| {
                         let autoscroll = match scroll_offset {
                             Some(scroll_offset) => Autoscroll::top_relative(scroll_offset as usize),
                             None => Autoscroll::newest(),
                         };
                         let nav_history = editor.nav_history.take();
+                        editor.unfold_ranges(&ranges, false, true, cx);
                         editor.change_selections(Some(autoscroll), cx, |s| {
                             s.select_ranges(ranges);
                         });
