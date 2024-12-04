@@ -22,6 +22,7 @@ gpui.workspace = true
 http_client.workspace = true
 log.workspace = true
 parking_lot.workspace = true
+regex.workspace = true
 rope.workspace = true
 serde.workspace = true
 smol.workspace = true
@@ -30,7 +31,6 @@ text.workspace = true
 time.workspace = true
 url.workspace = true
 util.workspace = true
-regex.workspace = true
 
 [dev-dependencies]
 unindent.workspace = true
