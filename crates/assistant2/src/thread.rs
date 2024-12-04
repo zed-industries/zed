@@ -14,10 +14,26 @@ use language_model::{
 use language_models::provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError};
 use serde::{Deserialize, Serialize};
 use util::post_inc;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
     Chat,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct ThreadId(Arc<str>);
+
+impl ThreadId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+impl std::fmt::Display for ThreadId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -39,6 +55,7 @@ pub struct Message {
 
 /// A thread of conversation with the LLM.
 pub struct Thread {
+    id: ThreadId,
     messages: Vec<Message>,
     next_message_id: MessageId,
     completion_count: usize,
@@ -52,6 +69,7 @@ pub struct Thread {
 impl Thread {
     pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut ModelContext<Self>) -> Self {
         Self {
+            id: ThreadId::new(),
             messages: Vec::new(),
             next_message_id: MessageId(0),
             completion_count: 0,
@@ -63,8 +81,16 @@ impl Thread {
         }
     }
 
+    pub fn id(&self) -> &ThreadId {
+        &self.id
+    }
+
     pub fn message(&self, id: MessageId) -> Option<&Message> {
         self.messages.iter().find(|message| message.id == id)
+    }
+
+    pub fn messages(&self) -> impl Iterator<Item = &Message> {
+        self.messages.iter()
     }
 
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
@@ -76,10 +102,19 @@ impl Thread {
     }
 
     pub fn insert_user_message(&mut self, text: impl Into<String>, cx: &mut ModelContext<Self>) {
+        self.insert_message(Role::User, text, cx)
+    }
+
+    pub fn insert_message(
+        &mut self,
+        role: Role,
+        text: impl Into<String>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let id = self.next_message_id.post_inc();
         self.messages.push(Message {
             id,
-            role: Role::User,
+            role,
             text: text.into(),
         });
         cx.emit(ThreadEvent::MessageAdded(id));

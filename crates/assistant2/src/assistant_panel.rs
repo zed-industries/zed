@@ -21,7 +21,7 @@ use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
 use crate::message_editor::MessageEditor;
-use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
+use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent, ThreadId};
 use crate::thread_store::ThreadStore;
 use crate::{NewThread, OpenHistory, ToggleFocus, ToggleModelSelector};
 
@@ -77,7 +77,7 @@ impl AssistantPanel {
         tools: Arc<ToolWorkingSet>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let thread = cx.new_model(|cx| Thread::new(tools.clone(), cx));
+        let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let subscriptions = vec![
             cx.observe(&thread, |_, _, cx| cx.notify()),
             cx.subscribe(&thread, Self::handle_thread_event),
@@ -105,8 +105,27 @@ impl AssistantPanel {
     }
 
     fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
-        let tools = self.thread.read(cx).tools().clone();
-        let thread = cx.new_model(|cx| Thread::new(tools, cx));
+        let thread = self
+            .thread_store
+            .update(cx, |this, cx| this.create_thread(cx));
+        self.reset_thread(thread, cx);
+    }
+
+    fn open_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
+        let Some(thread) = self
+            .thread_store
+            .update(cx, |this, cx| this.open_thread(thread_id, cx))
+        else {
+            return;
+        };
+        self.reset_thread(thread.clone(), cx);
+
+        for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
+            self.push_message(&message.id, message.text.clone(), cx);
+        }
+    }
+
+    fn reset_thread(&mut self, thread: Model<Thread>, cx: &mut ViewContext<Self>) {
         let subscriptions = vec![
             cx.observe(&thread, |_, _, cx| cx.notify()),
             cx.subscribe(&thread, Self::handle_thread_event),
@@ -120,6 +139,56 @@ impl AssistantPanel {
         self._subscriptions = subscriptions;
 
         self.message_editor.focus_handle(cx).focus(cx);
+    }
+
+    fn push_message(&mut self, id: &MessageId, text: String, cx: &mut ViewContext<Self>) {
+        let old_len = self.thread_messages.len();
+        self.thread_messages.push(*id);
+        self.thread_list_state.splice(old_len..old_len, 1);
+
+        let theme_settings = ThemeSettings::get_global(cx);
+        let ui_font_size = TextSize::Default.rems(cx);
+        let buffer_font_size = theme_settings.buffer_font_size;
+
+        let mut text_style = cx.text_style();
+        text_style.refine(&TextStyleRefinement {
+            font_family: Some(theme_settings.ui_font.family.clone()),
+            font_size: Some(ui_font_size.into()),
+            color: Some(cx.theme().colors().text),
+            ..Default::default()
+        });
+
+        let markdown_style = MarkdownStyle {
+            base_text_style: text_style,
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: cx.theme().players().local().selection,
+            code_block: StyleRefinement {
+                text: Some(TextStyleRefinement {
+                    font_family: Some(theme_settings.buffer_font.family.clone()),
+                    font_size: Some(buffer_font_size.into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            inline_code: TextStyleRefinement {
+                font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_size: Some(ui_font_size.into()),
+                background_color: Some(cx.theme().colors().editor_background),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let markdown = cx.new_view(|cx| {
+            Markdown::new(
+                text,
+                markdown_style,
+                Some(self.language_registry.clone()),
+                None,
+                cx,
+            )
+        });
+        self.rendered_messages_by_id.insert(*id, markdown);
     }
 
     fn handle_thread_event(
@@ -141,59 +210,13 @@ impl AssistantPanel {
                 }
             }
             ThreadEvent::MessageAdded(message_id) => {
-                let old_len = self.thread_messages.len();
-                self.thread_messages.push(*message_id);
-                self.thread_list_state.splice(old_len..old_len, 1);
-
                 if let Some(message_text) = self
                     .thread
                     .read(cx)
                     .message(*message_id)
                     .map(|message| message.text.clone())
                 {
-                    let theme_settings = ThemeSettings::get_global(cx);
-                    let ui_font_size = TextSize::Default.rems(cx);
-                    let buffer_font_size = theme_settings.buffer_font_size;
-
-                    let mut text_style = cx.text_style();
-                    text_style.refine(&TextStyleRefinement {
-                        font_family: Some(theme_settings.ui_font.family.clone()),
-                        font_size: Some(ui_font_size.into()),
-                        color: Some(cx.theme().colors().text),
-                        ..Default::default()
-                    });
-
-                    let markdown_style = MarkdownStyle {
-                        base_text_style: text_style,
-                        syntax: cx.theme().syntax().clone(),
-                        selection_background_color: cx.theme().players().local().selection,
-                        code_block: StyleRefinement {
-                            text: Some(TextStyleRefinement {
-                                font_family: Some(theme_settings.buffer_font.family.clone()),
-                                font_size: Some(buffer_font_size.into()),
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        },
-                        inline_code: TextStyleRefinement {
-                            font_family: Some(theme_settings.buffer_font.family.clone()),
-                            font_size: Some(ui_font_size.into()),
-                            background_color: Some(cx.theme().colors().editor_background),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    };
-
-                    let markdown = cx.new_view(|cx| {
-                        Markdown::new(
-                            message_text,
-                            markdown_style,
-                            Some(self.language_registry.clone()),
-                            None,
-                            cx,
-                        )
-                    });
-                    self.rendered_messages_by_id.insert(*message_id, markdown);
+                    self.push_message(message_id, message_text, cx);
                 }
 
                 cx.notify();
@@ -401,8 +424,9 @@ impl AssistantPanel {
 
     fn render_message_list(&self, cx: &mut ViewContext<Self>) -> AnyElement {
         if self.thread_messages.is_empty() {
-            #[allow(clippy::useless_vec)]
-            let recent_threads = vec![1, 2, 3];
+            let recent_threads = self
+                .thread_store
+                .update(cx, |this, cx| this.recent_threads(3, cx));
 
             return v_flex()
                 .gap_2()
@@ -467,8 +491,8 @@ impl AssistantPanel {
                 .child(
                     v_flex().gap_2().children(
                         recent_threads
-                            .iter()
-                            .map(|_thread| self.render_past_thread(cx)),
+                            .into_iter()
+                            .map(|thread| self.render_past_thread(thread, cx)),
                     ),
                 )
                 .child(
@@ -534,10 +558,16 @@ impl AssistantPanel {
             .into_any()
     }
 
-    fn render_past_thread(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        ListItem::new("temp")
+    fn render_past_thread(
+        &self,
+        thread: Model<Thread>,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let id = thread.read(cx).id().clone();
+
+        ListItem::new(("past-thread", thread.entity_id()))
             .start_slot(Icon::new(IconName::MessageBubbles))
-            .child(Label::new("Some Thread Title"))
+            .child(Label::new(format!("Thread {id}")))
             .end_slot(
                 h_flex()
                     .gap_2()
@@ -548,6 +578,9 @@ impl AssistantPanel {
                             .icon_size(IconSize::Small),
                     ),
             )
+            .on_click(cx.listener(move |this, _event, cx| {
+                this.open_thread(&id, cx);
+            }))
     }
 
     fn render_last_error(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
