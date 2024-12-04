@@ -85,6 +85,10 @@ impl Thread {
         &self.id
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+
     pub fn message(&self, id: MessageId) -> Option<&Message> {
         self.messages.iter().find(|message| message.id == id)
     }
