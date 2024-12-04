@@ -478,7 +478,9 @@ dependencies = [
  "smol",
  "theme",
  "ui",
+ "unindent",
  "util",
+ "uuid",
  "workspace",
 ]
 
@@ -3788,6 +3790,7 @@ dependencies = [
  "db",
  "emojis",
  "env_logger 0.11.5",
+ "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.31",
@@ -3821,6 +3824,7 @@ dependencies = [
  "snippet",
  "sum_tree",
  "task",
+ "tempfile",
  "text",
  "theme",
  "time",

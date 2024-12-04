@@ -327,6 +327,7 @@ pub fn init(cx: &mut AppContext) {
             .detach();
         }
     });
+    git::project_diff::init(cx);
 }
 
 pub struct SearchWithinRange;
@@ -1181,9 +1182,9 @@ impl CompletionsMenu {
         let delay = Duration::from_millis(delay_ms);
 
         completion_resolve.lock().fire_new(delay, cx, |_, cx| {
-            cx.spawn(move |this, mut cx| async move {
+            cx.spawn(move |editor, mut cx| async move {
                 if let Some(true) = resolve_task.await.log_err() {
-                    this.update(&mut cx, |_, cx| cx.notify()).ok();
+                    editor.update(&mut cx, |_, cx| cx.notify()).ok();
                 }
             })
         });
@@ -13096,6 +13097,12 @@ impl Editor {
         cx.write_to_clipboard(ClipboardItem::new_string(lines));
     }
 
+    pub fn open_context_menu(&mut self, _: &OpenContextMenu, cx: &mut ViewContext<Self>) {
+        self.request_autoscroll(Autoscroll::newest(), cx);
+        let position = self.selections.newest_display(cx).start;
+        mouse_context_menu::deploy_context_menu(self, None, position, cx);
+    }
+
     pub fn inlay_hint_cache(&self) -> &InlayHintCache {
         &self.inlay_hint_cache
     }
@@ -13316,6 +13323,23 @@ impl Editor {
         self.addons
             .get(&type_id)
             .and_then(|item| item.to_any().downcast_ref::<T>())
+    }
+
+    fn character_size(&self, cx: &mut ViewContext<Self>) -> gpui::Point<Pixels> {
+        let text_layout_details = self.text_layout_details(cx);
+        let style = &text_layout_details.editor_style;
+        let font_id = cx.text_system().resolve_font(&style.text.font());
+        let font_size = style.text.font_size.to_pixels(cx.rem_size());
+        let line_height = style.text.line_height_in_pixels(cx.rem_size());
+
+        let em_width = cx
+            .text_system()
+            .typographic_bounds(font_id, font_size, 'm')
+            .unwrap()
+            .size
+            .width;
+
+        gpui::Point::new(em_width, line_height)
     }
 }
 
@@ -14737,17 +14761,10 @@ impl ViewInputHandler for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Option<gpui::Bounds<Pixels>> {
         let text_layout_details = self.text_layout_details(cx);
-        let style = &text_layout_details.editor_style;
-        let font_id = cx.text_system().resolve_font(&style.text.font());
-        let font_size = style.text.font_size.to_pixels(cx.rem_size());
-        let line_height = style.text.line_height_in_pixels(cx.rem_size());
-
-        let em_width = cx
-            .text_system()
-            .typographic_bounds(font_id, font_size, 'm')
-            .unwrap()
-            .size
-            .width;
+        let gpui::Point {
+            x: em_width,
+            y: line_height,
+        } = self.character_size(cx);
 
         let snapshot = self.snapshot(cx);
         let scroll_position = snapshot.scroll_position();

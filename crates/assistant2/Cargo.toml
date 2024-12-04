@@ -37,5 +37,7 @@ settings.workspace = true
 smol.workspace = true
 theme.workspace = true
 ui.workspace = true
+unindent.workspace = true
 util.workspace = true
+uuid.workspace = true
 workspace.workspace = true

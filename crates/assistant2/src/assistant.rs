@@ -1,3 +1,4 @@
+mod active_thread;
 mod assistant_panel;
 mod message_editor;
 mod thread;
