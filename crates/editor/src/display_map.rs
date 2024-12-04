@@ -1112,7 +1112,7 @@ impl DisplaySnapshot {
         let (buffer, range) = self
             .buffer_snapshot
             .buffer_line_for_row(buffer_row)
-            .expect(&format!("Should have had indent for {buffer_row:?}"));
+            .unwrap();
 
         buffer.line_indent_for_row(range.start.row)
     }
