@@ -169,6 +169,7 @@ impl EditorElement {
 
         crate::rust_analyzer_ext::apply_related_actions(view, cx);
         crate::clangd_ext::apply_related_actions(view, cx);
+        register_action(view, cx, Editor::open_context_menu);
         register_action(view, cx, Editor::move_left);
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
@@ -595,7 +596,7 @@ impl EditorElement {
             position_map.point_for_position(text_hitbox.bounds, event.position);
         mouse_context_menu::deploy_context_menu(
             editor,
-            event.position,
+            Some(event.position),
             point_for_position.previous_valid,
             cx,
         );
@@ -2730,6 +2731,7 @@ impl EditorElement {
         &self,
         editor_snapshot: &EditorSnapshot,
         visible_range: Range<DisplayRow>,
+        content_origin: gpui::Point<Pixels>,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         let position = self.editor.update(cx, |editor, cx| {
@@ -2747,16 +2749,11 @@ impl EditorElement {
             let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
             let (source_display_point, position) = match mouse_context_menu.position {
                 MenuPosition::PinnedToScreen(point) => (None, point),
-                MenuPosition::PinnedToEditor {
-                    source,
-                    offset_x,
-                    offset_y,
-                } => {
+                MenuPosition::PinnedToEditor { source, offset } => {
                     let source_display_point = source.to_display_point(editor_snapshot);
-                    let mut source_point = editor.to_pixel_point(source, editor_snapshot, cx)?;
-                    source_point.x += offset_x;
-                    source_point.y += offset_y;
-                    (Some(source_display_point), source_point)
+                    let source_point = editor.to_pixel_point(source, editor_snapshot, cx)?;
+                    let position = content_origin + source_point + offset;
+                    (Some(source_display_point), position)
                 }
             };
 
@@ -4325,8 +4322,8 @@ fn deploy_blame_entry_context_menu(
     });
 
     editor.update(cx, move |editor, cx| {
-        editor.mouse_context_menu = Some(MouseContextMenu::pinned_to_screen(
-            position,
+        editor.mouse_context_menu = Some(MouseContextMenu::new(
+            MenuPosition::PinnedToScreen(position),
             context_menu,
             cx,
         ));
@@ -5578,8 +5575,12 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let mouse_context_menu =
-                        self.layout_mouse_context_menu(&snapshot, start_row..end_row, cx);
+                    let mouse_context_menu = self.layout_mouse_context_menu(
+                        &snapshot,
+                        start_row..end_row,
+                        content_origin,
+                        cx,
+                    );
 
                     cx.with_element_namespace("crease_toggles", |cx| {
                         self.prepaint_crease_toggles(

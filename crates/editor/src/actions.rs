@@ -296,6 +296,7 @@ gpui::actions!(
         NewlineBelow,
         NextInlineCompletion,
         NextScreen,
+        OpenContextMenu,
         OpenExcerpts,
         OpenExcerptsSplit,
         OpenProposedChangesEditor,
