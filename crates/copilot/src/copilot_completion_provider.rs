@@ -494,7 +494,7 @@ mod tests {
             assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
             // AcceptInlineCompletion when there is an active suggestion inserts it.
-            editor.accept_inline_completion(&Default::default(), cx);
+            editor.accept_prediction(&Default::default(), cx);
             assert!(!editor.has_active_prediction(cx));
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
@@ -552,7 +552,7 @@ mod tests {
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
 
             // Using AcceptInlineCompletion again accepts the suggestion.
-            editor.accept_inline_completion(&Default::default(), cx);
+            editor.accept_prediction(&Default::default(), cx);
             assert!(!editor.has_active_prediction(cx));
             assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");

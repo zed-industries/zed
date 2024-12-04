@@ -320,7 +320,7 @@ impl Zeta {
 
     pub fn accept_inline_completion(
         &mut self,
-        _completion: InlineCompletion,
+        _completion: &InlineCompletion,
         cx: &mut ModelContext<Self>,
     ) {
         cx.notify();
@@ -328,7 +328,7 @@ impl Zeta {
 
     pub fn reject_inline_completion(
         &mut self,
-        _completion: InlineCompletion,
+        _completion: &InlineCompletion,
         cx: &mut ModelContext<Self>,
     ) {
         cx.notify();
@@ -584,7 +584,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     }
 
     fn accept(&mut self, cx: &mut ModelContext<Self>) {
-        if let Some(completion) = self.current_completion.take() {
+        if let Some(completion) = self.current_completion.as_ref() {
             self.zeta
                 .update(cx, |zeta, cx| zeta.accept_inline_completion(completion, cx));
         }
@@ -596,8 +596,9 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(completion) = self.current_completion.take() {
-            self.zeta
-                .update(cx, |zeta, cx| zeta.reject_inline_completion(completion, cx));
+            self.zeta.update(cx, |zeta, cx| {
+                zeta.reject_inline_completion(&completion, cx)
+            });
         }
     }
 
