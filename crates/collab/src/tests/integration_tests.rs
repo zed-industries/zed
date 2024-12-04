@@ -2744,7 +2744,7 @@ async fn test_git_diff_base_change(
     });
 
     change_set_remote_b.read_with(cx_b, |change_set, cx| {
-        let buffer = buffer_local_b.read(cx);
+        let buffer = buffer_remote_b.read(cx);
         assert_eq!(
             change_set.base_text_string(cx).as_deref(),
             Some(new_diff_base.as_str())

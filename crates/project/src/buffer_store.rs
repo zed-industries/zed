@@ -97,6 +97,23 @@ pub struct ProjectTransaction(pub HashMap<Model<Buffer>, language::Transaction>)
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl RemoteBufferStore {
+    fn load_staged_text(
+        &self,
+        buffer_id: BufferId,
+        cx: &AppContext,
+    ) -> Task<Result<Option<String>>> {
+        let project_id = self.project_id;
+        let client = self.upstream_client.clone();
+        cx.background_executor().spawn(async move {
+            Ok(client
+                .request(proto::GetStagedText {
+                    project_id,
+                    buffer_id: buffer_id.to_proto(),
+                })
+                .await?
+                .staged_text)
+        })
+    }
     pub fn wait_for_remote_buffer(
         &mut self,
         id: BufferId,
@@ -364,6 +381,27 @@ impl RemoteBufferStore {
 }
 
 impl LocalBufferStore {
+    fn load_staged_text(
+        &self,
+        buffer: &Model<Buffer>,
+        cx: &AppContext,
+    ) -> Task<Result<Option<String>>> {
+        let Some(file) = buffer.read(cx).file() else {
+            return Task::ready(Err(anyhow!("buffer has no file")));
+        };
+        let worktree_id = file.worktree_id(cx);
+        let path = file.path().clone();
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+        else {
+            return Task::ready(Err(anyhow!("no such worktree")));
+        };
+
+        worktree.read(cx).load_staged_file(path.as_ref(), cx)
+    }
+
     fn save_local_buffer(
         &self,
         buffer_handle: Model<Buffer>,
@@ -508,7 +546,6 @@ impl LocalBufferStore {
         cx.spawn(move |this, mut cx| async move {
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
-            let worktree_id = snapshot.id().to_proto();
             let diff_bases_by_buffer = cx
                 .background_executor()
                 .spawn(async move {
@@ -518,28 +555,27 @@ impl LocalBufferStore {
                             let (repo_entry, local_repo_entry) = snapshot.repo_for_path(&path)?;
                             let relative_path = repo_entry.relativize(&snapshot, &path).ok()?;
                             let base_text = local_repo_entry.repo().load_index_text(&relative_path);
-                            Some((change_set, path, buffer_snapshot, base_text))
+                            Some((change_set, buffer_snapshot, base_text))
                         })
                         .collect::<Vec<_>>()
                 })
                 .await;
 
             this.update(&mut cx, |this, cx| {
-                for (change_set, path, buffer_snapshot, staged_text) in diff_bases_by_buffer {
+                for (change_set, buffer_snapshot, staged_text) in diff_bases_by_buffer {
+                    change_set.update(cx, |change_set, cx| {
+                        change_set.set_base_text(staged_text.clone(), buffer_snapshot.clone(), cx);
+                    });
+
                     if let Some((client, project_id)) = &this.downstream_client.clone() {
                         client
-                            .send(proto::UpdateStagedText {
+                            .send(proto::UpdateDiffBase {
                                 project_id: *project_id,
-                                worktree_id,
-                                path: path.to_string_lossy().to_string(),
-                                staged_text: staged_text.clone(),
+                                buffer_id: buffer_snapshot.remote_id().to_proto(),
+                                staged_text,
                             })
                             .log_err();
                     }
-
-                    change_set.update(cx, |change_set, cx| {
-                        change_set.set_base_text(staged_text, buffer_snapshot, cx);
-                    });
                 }
             })
         })
@@ -845,6 +881,8 @@ impl BufferStore {
         client.add_model_request_handler(Self::handle_blame_buffer);
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_get_permalink_to_line);
+        client.add_model_request_handler(Self::handle_get_staged_text);
+        client.add_model_message_handler(Self::handle_update_diff_base);
     }
 
     /// Creates a buffer store, optionally retaining its buffers.
@@ -974,22 +1012,10 @@ impl BufferStore {
         let task = match self.loading_change_sets.entry(buffer_id) {
             hash_map::Entry::Occupied(e) => e.get().clone(),
             hash_map::Entry::Vacant(entry) => {
-                let Some(file) = buffer.read(cx).file() else {
-                    return Task::ready(Err(anyhow!("buffer has no file")));
+                let load = match &self.state {
+                    BufferStoreState::Local(this) => this.load_staged_text(&buffer, cx),
+                    BufferStoreState::Remote(this) => this.load_staged_text(buffer_id, cx),
                 };
-                let worktree_id = file.worktree_id(cx);
-                let path = file.path().clone();
-                let Some(worktree) = self
-                    .worktree_store
-                    .read(cx)
-                    .worktree_for_id(worktree_id, cx)
-                else {
-                    return Task::ready(Err(anyhow!("no such worktree")));
-                };
-
-                let load = worktree.update(cx, |worktree, cx| {
-                    worktree.load_staged_file(path.as_ref(), cx)
-                });
 
                 entry
                     .insert(
@@ -1820,6 +1846,58 @@ impl BufferStore {
         Ok(proto::GetPermalinkToLineResponse {
             permalink: permalink.to_string(),
         })
+    }
+
+    pub async fn handle_get_staged_text(
+        this: Model<Self>,
+        request: TypedEnvelope<proto::GetStagedText>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::GetStagedTextResponse> {
+        let buffer_id = BufferId::new(request.payload.buffer_id)?;
+        let change_set = this
+            .update(&mut cx, |this, cx| {
+                let buffer = this.get(buffer_id)?;
+                Some(this.open_unstaged_changes(buffer, cx))
+            })?
+            .ok_or_else(|| anyhow!("no such buffer"))?
+            .await?;
+        let staged_text = change_set.read_with(&cx, |change_set, cx| {
+            change_set
+                .base_text
+                .as_ref()
+                .map(|buffer| buffer.read(cx).text())
+        })?;
+        Ok(proto::GetStagedTextResponse { staged_text })
+    }
+
+    pub async fn handle_update_diff_base(
+        this: Model<Self>,
+        request: TypedEnvelope<proto::UpdateDiffBase>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let buffer_id = BufferId::new(request.payload.buffer_id)?;
+        let Some((buffer, change_set)) = this.update(&mut cx, |this, _| {
+            if let OpenBuffer::Complete {
+                unstaged_changes,
+                buffer,
+            } = this.opened_buffers.get(&buffer_id)?
+            {
+                Some((buffer.upgrade()?, unstaged_changes.as_ref()?.upgrade()?))
+            } else {
+                None
+            }
+        })?
+        else {
+            return Ok(());
+        };
+        change_set.update(&mut cx, |change_set, cx| {
+            change_set.set_base_text(
+                request.payload.staged_text,
+                buffer.read(cx).text_snapshot(),
+                cx,
+            )
+        })?;
+        Ok(())
     }
 
     pub fn reload_buffers(

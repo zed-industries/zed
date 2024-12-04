@@ -706,28 +706,26 @@ impl Worktree {
         }
     }
 
-    pub fn load_staged_file(
-        &self,
-        path: &Path,
-        cx: &ModelContext<Worktree>,
-    ) -> Task<Result<Option<String>>> {
+    pub fn load_staged_file(&self, path: &Path, cx: &AppContext) -> Task<Result<Option<String>>> {
         match self {
-            Worktree::Local(this) => this.load_staged_file(path, cx),
-            Worktree::Remote(this) => {
-                let project_id = this.project_id;
-                let worktree_id = this.id.to_proto();
-                let path = path.to_string_lossy().to_string();
-                let client = this.client.clone();
+            Worktree::Local(this) => {
+                let path = Arc::from(path);
+                let snapshot = this.snapshot();
                 cx.background_executor().spawn(async move {
-                    Ok(client
-                        .request(proto::GetStagedText {
-                            project_id,
-                            worktree_id,
-                            path,
-                        })
-                        .await?
-                        .staged_text)
+                    if let Some(repo) = snapshot.repository_for_path(&path) {
+                        if let Some(repo_path) = repo.relativize(&snapshot, &path).log_err() {
+                            if let Some(git_repo) =
+                                snapshot.git_repositories.get(&*repo.work_directory)
+                            {
+                                return Ok(git_repo.repo_ptr.load_index_text(&repo_path));
+                            }
+                        }
+                    }
+                    Ok(None)
                 })
+            }
+            Worktree::Remote(_) => {
+                Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
             }
         }
     }
@@ -1042,19 +1040,6 @@ impl Worktree {
             entry: task.await?.as_ref().map(|e| e.into()),
             worktree_scan_id: scan_id as u64,
         })
-    }
-
-    pub async fn handle_get_staged_text(
-        this: Model<Self>,
-        request: proto::GetStagedText,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::GetStagedTextResponse> {
-        let staged_text = this
-            .update(&mut cx, |this, cx| {
-                this.load_staged_file(Path::new(&request.path), cx)
-            })?
-            .await?;
-        Ok(proto::GetStagedTextResponse { staged_text })
     }
 }
 
@@ -1433,38 +1418,6 @@ impl LocalWorktree {
             };
 
             Ok(LoadedFile { file, text })
-        })
-    }
-
-    fn load_staged_file(
-        &self,
-        path: &Path,
-        cx: &ModelContext<Worktree>,
-    ) -> Task<Result<Option<String>>> {
-        let path = Arc::from(path);
-
-        cx.spawn(|this, mut cx| async move {
-            let mut index_task = None;
-            let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
-            if let Some(repo) = snapshot.repository_for_path(&path) {
-                if let Some(repo_path) = repo.relativize(&snapshot, &path).log_err() {
-                    if let Some(git_repo) = snapshot.git_repositories.get(&*repo.work_directory) {
-                        let git_repo = git_repo.repo_ptr.clone();
-                        index_task = Some(
-                            cx.background_executor()
-                                .spawn(async move { git_repo.load_index_text(&repo_path) }),
-                        );
-                    }
-                }
-            }
-
-            let diff_base = if let Some(index_task) = index_task {
-                index_task.await
-            } else {
-                None
-            };
-
-            Ok(diff_base)
         })
     }
 
