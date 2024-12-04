@@ -455,6 +455,26 @@ impl RenderOnce for ChangedFileItem {
     }
 }
 
+fn render_lines_changed(added: Option<usize>, removed: Option<usize>) -> impl IntoElement {
+    h_flex()
+        .gap_1()
+        .text_size(px(9.))
+        .when(added.is_some(), |this| {
+            this.child(
+                Label::new(format!("+{}", added.unwrap()))
+                    .color(Color::Custom(ADDED_COLOR))
+                    .size(LabelSize::Small),
+            )
+        })
+        .when(removed.is_some(), |this| {
+            this.child(
+                Label::new(format!("-{}", removed.unwrap()))
+                    .color(Color::Custom(REMOVED_COLOR))
+                    .size(LabelSize::Small),
+            )
+        })
+}
+
 #[derive(IntoElement)]
 pub struct DirectoryItem {
     id: ElementId,
@@ -565,6 +585,41 @@ impl ProjectOverviewItem {
     }
 }
 
+impl ProjectOverviewItem {
+    fn render_switch_button(
+        &self,
+        id: impl Into<ElementId>,
+        icon_name: IconName,
+        is_list_button: bool,
+        cx: &mut WindowContext,
+    ) -> IconButton {
+        let model = self.model.clone();
+        let is_list_view = self.model.read(cx).show_list;
+
+        IconButton::new(id, icon_name)
+            .style(if is_list_view == is_list_button {
+                ButtonStyle::Filled
+            } else {
+                ButtonStyle::Transparent
+            })
+            .size(ButtonSize::Default)
+            .icon_size(IconSize::XSmall)
+            .icon_color(if is_list_view == is_list_button {
+                Color::Default
+            } else {
+                Color::Muted
+            })
+            .selected(is_list_view == is_list_button)
+            .on_click(move |_, cx| {
+                model.update(cx, |state, cx| {
+                    state.show_list = is_list_button;
+                    state.needs_update = true;
+                    cx.notify();
+                });
+            })
+    }
+}
+
 impl RenderOnce for ProjectOverviewItem {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let changed_files: SharedString = format!("{} Changes", self.changed_file_count).into();
@@ -574,9 +629,10 @@ impl RenderOnce for ProjectOverviewItem {
         let removed_label: Option<SharedString> = (self.lines_changed.removed > 0)
             .then(|| format!("-{}", self.lines_changed.removed).into());
 
-        let model = self.model.read(cx);
-        let all_staged = model.all_staged();
-        let all_unstaged = model.all_unstaged();
+        let model = self.model.clone();
+        let state = model.read(cx);
+        let all_staged = state.all_staged();
+        let all_unstaged = state.all_unstaged();
 
         let checkbox_selection = match (all_staged, all_unstaged) {
             (true, false) => Selection::Selected,
@@ -584,11 +640,20 @@ impl RenderOnce for ProjectOverviewItem {
             _ => Selection::Indeterminate,
         };
 
+        let fake_segemented_switch = h_flex()
+            .overflow_hidden()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .child(self.render_switch_button("list-view", IconName::Quote, true, cx))
+            .child(div().h_full().w_px().bg(cx.theme().colors().border))
+            .child(self.render_switch_button("split-view", IconName::Split, false, cx));
+
         h_flex()
             .id(self.id.clone())
             .w_full()
             .bg(cx.theme().colors().elevated_surface_background)
-            .pl(px(12.))
+            .px(px(12.))
             .h(px(28.))
             .gap_2()
             .child(
@@ -624,6 +689,8 @@ impl RenderOnce for ProjectOverviewItem {
                             }),
                     ),
             )
+            .child(div().flex_1())
+            .child(fake_segemented_switch)
     }
 }
 
@@ -1083,27 +1150,40 @@ impl GitPanel {
                 });
             });
 
-        v_flex()
+        h_flex()
             .relative()
+            .p_2()
             .w_full()
-            .h(px(140.))
-            .m_2()
-            .px_3()
-            .py_2()
-            .bg(cx.theme().colors().editor_background)
-            .child(self.commit_composer.clone())
-            .border_1()
-            .border_color(cx.theme().colors().border)
-            // .child(
-            //     div()
-            //         .flex()
-            //         .flex_1()
-            //         .w_full()
-            //         .h_full()
-            //         .mx_3()
-            //         .my_2_5()
-            // )
-            .child(div().absolute().bottom_2().right_2().child(commit_button))
+            .child(
+                v_flex()
+                    .relative()
+                    .w_full()
+                    .h(px(140.))
+                    .px_3()
+                    .py_2()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(self.commit_composer.clone())
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    // .child(
+                    //     div()
+                    //         .flex()
+                    //         .flex_1()
+                    //         .w_full()
+                    //         .h_full()
+                    //         .mx_3()
+                    //         .my_2_5()
+                    // )
+                    .child(
+                        h_flex()
+                            .absolute()
+                            .bottom_2()
+                            .right_2()
+                            // spacer
+                            .child(div().flex_1().occlude())
+                            .child(commit_button),
+                    ),
+            )
             .into_any_element()
     }
 }
@@ -1116,6 +1196,7 @@ impl Render for GitPanel {
         let items_count = state.total_item_count();
         let view = cx.view().clone();
         let scroll_handle = self.scroll_handle.clone();
+        let is_list_view = state.show_list;
 
         v_flex()
             .font_buffer(cx)
@@ -1157,6 +1238,26 @@ impl Render for GitPanel {
                     .into_any_element(),
             )
             .child(div().flex_1())
+            .child(
+                h_flex()
+                    .items_center()
+                    .child(Label::new("Staged & Unstaged"))
+                    .child(div().flex_1())
+                    .when(!is_list_view, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_1()
+                                .child(Button::new("discard-all", "Discard All"))
+                                .child(Button::new("stage-all", "Stage All")),
+                        )
+                    }),
+            )
+            .child(
+                h_flex()
+                    .items_center()
+                    .h(px(8.))
+                    .child(Divider::horizontal_dashed().color(DividerColor::Border)),
+            )
             .child(self.render_commit_composer(cx))
     }
 }
