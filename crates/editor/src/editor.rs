@@ -13782,7 +13782,7 @@ fn snippet_completions(
         };
         let lsp_end = to_lsp(&buffer_position);
 
-        let candidates: Vec<StringMatchCandidate> = snippets
+        let candidates = snippets
             .iter()
             .enumerate()
             .flat_map(|(ix, snippet)| {
@@ -13791,7 +13791,7 @@ fn snippet_completions(
                     .iter()
                     .map(move |prefix| StringMatchCandidate::new(ix, prefix.clone()))
             })
-            .collect();
+            .collect::<Vec<StringMatchCandidate>>();
 
         let mut matches = fuzzy::match_strings(
             &candidates,
@@ -13817,7 +13817,7 @@ fn snippet_completions(
             });
         }
 
-        let matched_strings: HashSet<_> = matches.iter().map(|m| m.string.clone()).collect();
+        let matched_strings = matches.into_iter().map(|m| m.string).collect::<HashSet<_>>();
 
         let result: Vec<Completion> = snippets
             .into_iter()
