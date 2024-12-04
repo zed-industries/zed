@@ -420,24 +420,11 @@ impl RenderOnce for ChangedFileItem {
                                 Color::Default
                             }),
                     )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .when(self.file.lines_added > 0, |this| {
-                                this.child(
-                                    Label::new(format!("+{}", self.file.lines_added))
-                                        .color(Color::Custom(ADDED_COLOR))
-                                        .size(LabelSize::Small),
-                                )
-                            })
-                            .when(self.file.lines_removed > 0, |this| {
-                                this.child(
-                                    Label::new(format!("-{}", self.file.lines_removed))
-                                        .color(Color::Custom(REMOVED_COLOR))
-                                        .size(LabelSize::Small),
-                                )
-                            }),
-                    ),
+                    .child(render_lines_changed(
+                        self.file.lines_added,
+                        self.file.lines_removed,
+                        cx,
+                    )),
             )
             .child(
                 h_flex()
@@ -455,22 +442,19 @@ impl RenderOnce for ChangedFileItem {
     }
 }
 
-fn render_lines_changed(added: Option<usize>, removed: Option<usize>) -> impl IntoElement {
+fn render_lines_changed(added: usize, removed: usize, cx: &WindowContext) -> impl IntoElement {
     h_flex()
         .gap_1()
-        .text_size(px(9.))
-        .when(added.is_some(), |this| {
-            this.child(
-                Label::new(format!("+{}", added.unwrap()))
-                    .color(Color::Custom(ADDED_COLOR))
-                    .size(LabelSize::Small),
-            )
+        .text_size(px(10.))
+        .font_buffer(cx)
+        .when(added > 0, |this| {
+            this.child(div().text_color(ADDED_COLOR).child(format!("+{}", added)))
         })
-        .when(removed.is_some(), |this| {
+        .when(removed > 0, |this| {
             this.child(
-                Label::new(format!("-{}", removed.unwrap()))
-                    .color(Color::Custom(REMOVED_COLOR))
-                    .size(LabelSize::Small),
+                div()
+                    .text_color(REMOVED_COLOR)
+                    .child(format!("-{}", removed)),
             )
         })
 }
@@ -624,11 +608,6 @@ impl RenderOnce for ProjectOverviewItem {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let changed_files: SharedString = format!("{} Changes", self.changed_file_count).into();
 
-        let added_label: Option<SharedString> =
-            (self.lines_changed.added > 0).then(|| format!("+{}", self.lines_changed.added).into());
-        let removed_label: Option<SharedString> = (self.lines_changed.removed > 0)
-            .then(|| format!("-{}", self.lines_changed.removed).into());
-
         let model = self.model.clone();
         let state = model.read(cx);
         let all_staged = state.all_staged();
@@ -670,24 +649,11 @@ impl RenderOnce for ProjectOverviewItem {
                         }
                     }))
                     .child(Label::new(changed_files).size(LabelSize::Small))
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .when(added_label.is_some(), |this| {
-                                this.child(
-                                    Label::new(added_label.unwrap())
-                                        .color(Color::Custom(ADDED_COLOR))
-                                        .size(LabelSize::Small),
-                                )
-                            })
-                            .when(removed_label.is_some(), |this| {
-                                this.child(
-                                    Label::new(removed_label.unwrap())
-                                        .color(Color::Custom(REMOVED_COLOR))
-                                        .size(LabelSize::Small),
-                                )
-                            }),
-                    ),
+                    .child(render_lines_changed(
+                        self.lines_changed.added,
+                        self.lines_changed.removed,
+                        cx,
+                    )),
             )
             .child(div().flex_1())
             .child(fake_segemented_switch)
