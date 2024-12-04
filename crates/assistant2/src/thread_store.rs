@@ -52,8 +52,13 @@ impl ThreadStore {
         })
     }
 
-    pub fn recent_threads(&self, limit: usize, _cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
-        self.threads.iter().take(limit).cloned().collect()
+    pub fn recent_threads(&self, limit: usize, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
+        self.threads
+            .iter()
+            .filter(|thread| !thread.read(cx).is_empty())
+            .take(limit)
+            .cloned()
+            .collect()
     }
 
     pub fn create_thread(&mut self, cx: &mut ModelContext<Self>) -> Model<Thread> {
