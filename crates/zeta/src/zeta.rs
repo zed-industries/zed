@@ -16,6 +16,7 @@ use std::{
     mem,
     ops::Range,
     path::Path,
+    str::pattern::Pattern,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -52,8 +53,54 @@ pub struct InlineCompletion {
     id: InlineCompletionId,
     path: Arc<Path>,
     edits: Vec<(Range<Anchor>, String)>,
-    _snapshot: BufferSnapshot,
+    snapshot: BufferSnapshot,
     _raw_response: String,
+}
+
+impl InlineCompletion {
+    fn update(&mut self, new_snapshot: BufferSnapshot) -> Result<()> {
+        let mut model_edits = self.edits.iter_mut().peekable();
+
+        for user_edit in new_snapshot.edits_since::<usize>(&self.snapshot.version) {
+            while model_edits.peek().map_or(false, |(model_old_range, _)| {
+                let model_old_range = model_old_range.to_offset(&self.snapshot);
+                user_edit.old.start > model_old_range.end
+            }) {
+                model_edits.next();
+            }
+
+            if let Some((model_old_range, model_new_text)) = model_edits.peek_mut() {
+                let model_old_offset_range = model_old_range.to_offset(&self.snapshot);
+
+                let both_insertions = model_old_offset_range.is_empty() && user_edit.old.is_empty();
+
+                let user_edit_text = new_snapshot
+                    .text_for_range(user_edit.new)
+                    .collect::<String>();
+
+                if let Some(stripped_model_text) = model_new_text.strip_prefix(&user_edit_text) {
+                    if both_insertions && model_old_offset_range.start == user_edit.old.start {
+                        let new_start_offset = model_old_offset_range.start + user_edit_text.len();
+                        let start = self.snapshot.anchor_before(new_start_offset);
+                        let end = self.snapshot.anchor_before(model_old_offset_range.end);
+
+                        *model_old_range = start..end;
+                        *model_new_text = stripped_model_text.to_string();
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+
+        todo!()
+        // (3..3, "hello")
+        // (3..3, "he")
+
+        // line 1: this is line 1
+        // line 2: this is line 2
+        // line 3: this is l[{ine} three]
+    }
 }
 
 impl std::fmt::Debug for InlineCompletion {
@@ -608,11 +655,14 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         cursor_position: language::Anchor,
         cx: &mut ModelContext<Self>,
     ) -> Option<inline_completion::Prediction> {
-        let completion = self.current_completion.as_ref()?;
-
+        let completion = self.current_completion.as_mut()?;
         // todo!(update edits)
 
         let buffer = buffer.read(cx);
+        if completion.update(buffer.snapshot()).is_err() {
+            self.discard(false, cx);
+            return None;
+        }
 
         let cursor_row = cursor_position.to_point(buffer).row;
         let (closest_edit_ix, (closest_edit_range, _)) = completion
