@@ -11051,6 +11051,10 @@ impl Editor {
     }
 
     fn fold_at_level(&mut self, fold_at: &FoldAtLevel, cx: &mut ViewContext<Self>) {
+        if !self.buffer.read(cx).is_singleton() {
+            return;
+        }
+
         let fold_at_level = fold_at.level;
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut to_fold = Vec::new();
@@ -11083,6 +11087,10 @@ impl Editor {
     }
 
     pub fn fold_all(&mut self, _: &actions::FoldAll, cx: &mut ViewContext<Self>) {
+        if !self.buffer.read(cx).is_singleton() {
+            return;
+        }
+
         let mut fold_ranges = Vec::new();
         let snapshot = self.buffer.read(cx).snapshot(cx);
 
