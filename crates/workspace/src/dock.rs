@@ -165,6 +165,7 @@ pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,
     is_open: bool,
+    use_full_width: bool,
     active_panel_index: usize,
     focus_handle: FocusHandle,
     pub(crate) serialized_dock: Option<DockData>,
@@ -233,6 +234,7 @@ impl Dock {
                 panel_entries: Default::default(),
                 active_panel_index: 0,
                 is_open: false,
+                use_full_width: false,
                 focus_handle: focus_handle.clone(),
                 _subscriptions: [focus_subscription, zoom_subscription],
                 serialized_dock: None,
@@ -291,6 +293,15 @@ impl Dock {
 
     pub fn is_open(&self) -> bool {
         self.is_open
+    }
+
+    pub fn set_use_full_width(&mut self, use_full_width: bool, cx: &mut ViewContext<Self>) {
+        self.use_full_width = use_full_width;
+        cx.notify();
+    }
+
+    pub fn is_using_full_width(&self) -> bool {
+        self.use_full_width
     }
 
     pub fn panel<T: Panel>(&self) -> Option<View<T>> {
