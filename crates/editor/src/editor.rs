@@ -327,6 +327,7 @@ pub fn init(cx: &mut AppContext) {
             .detach();
         }
     });
+    git::project_diff::init(cx);
 }
 
 pub struct SearchWithinRange;

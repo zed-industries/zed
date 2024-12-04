@@ -240,11 +240,11 @@ pub enum Event {
     LanguageNotFound(Model<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
-    WorktreeAdded,
+    WorktreeAdded(WorktreeId),
     WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
-    WorktreeUpdatedGitRepositories,
+    WorktreeUpdatedGitRepositories(WorktreeId),
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -259,7 +259,7 @@ pub enum Event {
     DisconnectedFromHost,
     DisconnectedFromSshRemote,
     Closed,
-    DeletedEntry(ProjectEntryId),
+    DeletedEntry(WorktreeId, ProjectEntryId),
     CollaboratorUpdated {
         old_peer_id: proto::PeerId,
         new_peer_id: proto::PeerId,
@@ -1504,6 +1504,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
+        cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
         worktree.update(cx, |worktree, cx| {
             worktree.delete_entry(entry_id, trash, cx)
         })
@@ -2204,7 +2205,7 @@ impl Project {
         match event {
             WorktreeStoreEvent::WorktreeAdded(worktree) => {
                 self.on_worktree_added(worktree, cx);
-                cx.emit(Event::WorktreeAdded);
+                cx.emit(Event::WorktreeAdded(worktree.read(cx).id()));
             }
             WorktreeStoreEvent::WorktreeRemoved(_, id) => {
                 cx.emit(Event::WorktreeRemoved(*id));
@@ -2225,23 +2226,25 @@ impl Project {
             }
         }
         cx.observe(worktree, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(worktree, |project, worktree, event, cx| match event {
-            worktree::Event::UpdatedEntries(changes) => {
-                cx.emit(Event::WorktreeUpdatedEntries(
-                    worktree.read(cx).id(),
-                    changes.clone(),
-                ));
+        cx.subscribe(worktree, |project, worktree, event, cx| {
+            let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+            match event {
+                worktree::Event::UpdatedEntries(changes) => {
+                    cx.emit(Event::WorktreeUpdatedEntries(
+                        worktree.read(cx).id(),
+                        changes.clone(),
+                    ));
 
-                let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
-                project
-                    .client()
-                    .telemetry()
-                    .report_discovered_project_events(worktree_id, changes);
+                    project
+                        .client()
+                        .telemetry()
+                        .report_discovered_project_events(worktree_id, changes);
+                }
+                worktree::Event::UpdatedGitRepositories(_) => {
+                    cx.emit(Event::WorktreeUpdatedGitRepositories(worktree_id));
+                }
+                worktree::Event::DeletedEntry(id) => cx.emit(Event::DeletedEntry(worktree_id, *id)),
             }
-            worktree::Event::UpdatedGitRepositories(_) => {
-                cx.emit(Event::WorktreeUpdatedGitRepositories);
-            }
-            worktree::Event::DeletedEntry(id) => cx.emit(Event::DeletedEntry(*id)),
         })
         .detach();
         cx.notify();
