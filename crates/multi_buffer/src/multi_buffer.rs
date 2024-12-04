@@ -2556,7 +2556,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn widest_line_number(&self) -> u32 {
-        self.excerpts.summary().widest_line_number
+        self.excerpts.summary().widest_line_number + 1
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -4827,7 +4827,7 @@ impl sum_tree::Item for Excerpt {
         ExcerptSummary {
             excerpt_id: self.id,
             excerpt_locator: self.locator.clone(),
-            widest_line_number: self.max_buffer_row + 1,
+            widest_line_number: self.max_buffer_row,
             text,
         }
     }
@@ -6386,8 +6386,8 @@ mod tests {
             }
 
             assert_eq!(
-                snapshot.max_point().row,
-                expected_buffer_rows.into_iter().flatten().max().unwrap()
+                snapshot.widest_line_number(),
+                expected_buffer_rows.into_iter().flatten().max().unwrap() + 1
             );
 
             let mut excerpt_starts = excerpt_starts.into_iter();
