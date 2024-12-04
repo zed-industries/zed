@@ -2788,7 +2788,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.5",
  "fuzzy",
- "go_to_line",
+ "go_to",
  "gpui",
  "language",
  "menu",
@@ -5085,7 +5085,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "go_to_line"
+name = "go_to"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -15630,7 +15630,7 @@ dependencies = [
  "futures 0.3.31",
  "git",
  "git_hosting_providers",
- "go_to_line",
+ "go_to",
  "gpui",
  "http_client",
  "image_viewer",

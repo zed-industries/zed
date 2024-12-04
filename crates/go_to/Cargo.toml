@@ -1,5 +1,5 @@
 [package]
-name = "go_to_line"
+name = "go_to"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/go_to_line.rs"
+path = "src/lib.rs"
 doctest = false
 
 [dependencies]

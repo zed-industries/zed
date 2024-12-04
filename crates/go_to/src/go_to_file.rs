@@ -1,24 +1,15 @@
-pub mod cursor_position;
-
-use cursor_position::LineIndicatorFormat;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
 };
-use settings::Settings;
 use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::ModalView;
 
-pub fn init(cx: &mut AppContext) {
-    LineIndicatorFormat::register(cx);
-    cx.observe_new_views(GoToLine::register).detach();
-}
-
-pub struct GoToLine {
+pub struct GoToFile {
     line_editor: View<Editor>,
     active_editor: View<Editor>,
     current_text: SharedString,
@@ -26,22 +17,22 @@ pub struct GoToLine {
     _subscriptions: Vec<Subscription>,
 }
 
-impl ModalView for GoToLine {}
+impl ModalView for GoToFile {}
 
-impl FocusableView for GoToLine {
+impl FocusableView for GoToFile {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.line_editor.focus_handle(cx)
     }
 }
-impl EventEmitter<DismissEvent> for GoToLine {}
+impl EventEmitter<DismissEvent> for GoToFile {}
 
-enum GoToLineRowHighlights {}
+enum GoToFileRowHighlights {}
 
-impl GoToLine {
-    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+impl GoToFile {
+    pub fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         let handle = cx.view().downgrade();
         editor
-            .register_action(move |_: &editor::actions::ToggleGoToLine, cx| {
+            .register_action(move |_: &editor::actions::ToggleGoToFile, cx| {
                 let Some(editor) = handle.upgrade() else {
                     return;
                 };
@@ -49,7 +40,7 @@ impl GoToLine {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
+                    workspace.toggle_modal(cx, move |cx| GoToFile::new(editor, cx));
                 })
             })
             .detach();
@@ -89,7 +80,7 @@ impl GoToLine {
             .update(cx, |_, cx| {
                 let scroll_position = self.prev_scroll_position.take();
                 self.active_editor.update(cx, |editor, cx| {
-                    editor.clear_row_highlights::<GoToLineRowHighlights>();
+                    editor.clear_row_highlights::<GoToFileRowHighlights>();
                     if let Some(scroll_position) = scroll_position {
                         editor.set_scroll_position(scroll_position, cx);
                     }
@@ -120,8 +111,8 @@ impl GoToLine {
                 let end = start + Point::new(1, 0);
                 let start = snapshot.buffer_snapshot.anchor_before(start);
                 let end = snapshot.buffer_snapshot.anchor_after(end);
-                active_editor.clear_row_highlights::<GoToLineRowHighlights>();
-                active_editor.highlight_rows::<GoToLineRowHighlights>(
+                active_editor.clear_row_highlights::<GoToFileRowHighlights>();
+                active_editor.highlight_rows::<GoToFileRowHighlights>(
                     start..end,
                     cx.theme().colors().editor_highlighted_line_background,
                     true,
@@ -174,22 +165,22 @@ impl GoToLine {
     }
 }
 
-impl Render for GoToLine {
+impl Render for GoToFile {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut help_text = self.current_text.clone();
         let query = self.line_column_from_query(cx);
         if let Some(line) = query.0 {
             if let Some(column) = query.1 {
-                help_text = format!("Go to line {line}, column {column}").into();
+                help_text = format!("Go to file {line}, column {column}").into();
             } else {
-                help_text = format!("Go to line {line}").into();
+                help_text = format!("Go to file {line}").into();
             }
         }
 
         v_flex()
             .w(rems(24.))
             .elevation_2(cx)
-            .key_context("GoToLine")
+            .key_context("GoToFile")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .child(
@@ -213,6 +204,8 @@ impl Render for GoToLine {
 
 #[cfg(test)]
 mod tests {
+    use crate::cursor_position;
+
     use super::*;
     use cursor_position::{CursorPosition, SelectionStats};
     use editor::actions::SelectAll;
@@ -412,10 +405,10 @@ mod tests {
     fn open_go_to_line_view(
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
-    ) -> View<GoToLine> {
-        cx.dispatch_action(editor::actions::ToggleGoToLine);
+    ) -> View<GoToFile> {
+        cx.dispatch_action(editor::actions::ToggleGoToFile);
         workspace.update(cx, |workspace, cx| {
-            workspace.active_modal::<GoToLine>(cx).unwrap().clone()
+            workspace.active_modal::<GoToFile>(cx).unwrap().clone()
         })
     }
 

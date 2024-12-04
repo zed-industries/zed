@@ -8,7 +8,7 @@
   {
     "context": "Editor",
     "bindings": {
-      "cmd-l": "go_to_line::Toggle",
+      "cmd-l": "go_to::Toggle",
       "ctrl-shift-d": "editor::DuplicateLineDown",
       "cmd-b": "editor::GoToDefinition",
       "cmd-j": "editor::ScrollCursorCenter",

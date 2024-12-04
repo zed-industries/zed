@@ -35,6 +35,7 @@ use project::{
     WorktreeId,
 };
 use project_panel_settings::{
+    FileLineNumberSettings, FileLineNumberSettingsContent, FileLineNumberStyle,
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
 };
 use serde::{Deserialize, Serialize};
@@ -60,7 +61,7 @@ use util::{maybe, paths::compare_paths, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
-    DraggedSelection, OpenInTerminal, PreviewTabsSettings, SelectedEntry, Workspace,
+    DraggedSelection, OpenInTerminal, PreviewTabsSettings, SelectedEntry, Workspace, WorkspaceId,
 };
 use worktree::CreatedEntry;
 
@@ -165,7 +166,13 @@ struct Trash {
     pub skip_prompt: bool,
 }
 
-impl_actions!(project_panel, [Delete, Trash]);
+#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+struct OpenNumberedFile {
+    #[serde(default)]
+    pub file_number: usize,
+}
+
+impl_actions!(project_panel, [Delete, Trash, OpenNumberedFile]);
 
 actions!(
     project_panel,
@@ -2793,6 +2800,8 @@ impl ProjectPanel {
             _ => (item_colors.default, item_colors.default),
         };
 
+        let line_number = self.get_line_number(worktree_id, entry_id, true);
+
         div()
             .id(entry_id.to_proto() as usize)
             .when(is_local, |div| {
@@ -2942,159 +2951,189 @@ impl ProjectPanel {
             .bg(bg_color)
             .border_color(border_color)
             .child(
-                ListItem::new(entry_id.to_proto() as usize)
-                    .indent_level(depth)
-                    .indent_step_size(px(settings.indent_size))
-                    .selectable(false)
-                    .when_some(canonical_path, |this, path| {
-                        this.end_slot::<AnyElement>(
-                            div()
-                                .id("symlink_icon")
-                                .pr_3()
-                                .tooltip(move |cx| {
-                                    Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
-                                })
-                                .child(
-                                    Icon::new(IconName::ArrowUpRight)
-                                        .size(IconSize::Indicator)
-                                        .color(filename_text_color),
-                                )
-                                .into_any_element(),
-                        )
-                    })
-                    .child(if let Some(icon) = &icon {
-                        // Check if there's a diagnostic severity and get the decoration color
-                        if let Some((_, decoration_color)) =
-                            entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
-                        {
-                            // Determine if the diagnostic is a warning
-                            let is_warning = diagnostic_severity
-                                .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
-                                .unwrap_or(false);
-                            div().child(
-                                DecoratedIcon::new(
-                                    Icon::from_path(icon.clone()).color(Color::Muted),
-                                    Some(
-                                        IconDecoration::new(
-                                            if kind.is_file() {
-                                                if is_warning {
-                                                    IconDecorationKind::Triangle
-                                                } else {
-                                                    IconDecorationKind::X
-                                                }
-                                            } else {
-                                                IconDecorationKind::Dot
-                                            },
-                                            bg_color,
-                                            cx,
-                                        )
-                                        .color(decoration_color.color(cx))
-                                        .position(Point {
-                                            x: px(-2.),
-                                            y: px(-2.),
-                                        }),
-                                    ),
-                                )
-                                .into_any_element(),
-                            )
-                        } else {
-                            h_flex().child(Icon::from_path(icon.to_string()).color(Color::Muted))
-                        }
-                    } else {
-                        if let Some((icon_name, color)) =
-                            entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
-                        {
-                            h_flex()
-                                .size(IconSize::default().rems())
-                                .child(Icon::new(icon_name).color(color).size(IconSize::Small))
-                        } else {
-                            h_flex()
-                                .size(IconSize::default().rems())
-                                .invisible()
-                                .flex_none()
-                        }
-                    })
+                h_flex()
                     .child(
-                        if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
-                            h_flex().h_6().w_full().child(editor.clone())
-                        } else {
-                            h_flex().h_6().map(|mut this| {
-                                if let Some(folded_ancestors) = self.ancestors.get(&entry_id) {
-                                    let components = Path::new(&file_name)
-                                        .components()
-                                        .map(|comp| {
-                                            let comp_str =
-                                                comp.as_os_str().to_string_lossy().into_owned();
-                                            comp_str
+                        div().px(px(8.)).w(px(40.)).child(
+                            Label::new(format!("{}", line_number.unwrap_or(0)))
+                                .color(filename_text_color),
+                        ),
+                    )
+                    .child(
+                        ListItem::new(entry_id.to_proto() as usize)
+                            .indent_level(depth)
+                            .indent_step_size(px(settings.indent_size))
+                            .selectable(false)
+                            .when_some(canonical_path, |this, path| {
+                                this.end_slot::<AnyElement>(
+                                    div()
+                                        .id("symlink_icon")
+                                        .pr_3()
+                                        .tooltip(move |cx| {
+                                            Tooltip::with_meta(
+                                                path.to_string(),
+                                                None,
+                                                "Symbolic Link",
+                                                cx,
+                                            )
                                         })
-                                        .collect::<Vec<_>>();
-
-                                    let components_len = components.len();
-                                    let active_index = components_len
-                                        - 1
-                                        - folded_ancestors.current_ancestor_depth;
-                                    const DELIMITER: SharedString =
-                                        SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
-                                    for (index, component) in components.into_iter().enumerate() {
-                                        if index != 0 {
-                                            this = this.child(
-                                                Label::new(DELIMITER.clone())
-                                                    .single_line()
-                                                    .color(filename_text_color),
-                                            );
-                                        }
-                                        let id = SharedString::from(format!(
-                                            "project_panel_path_component_{}_{index}",
-                                            entry_id.to_usize()
-                                        ));
-                                        let label = div()
-                                            .id(id)
-                                            .on_click(cx.listener(move |this, _, cx| {
-                                                if index != active_index {
-                                                    if let Some(folds) =
-                                                        this.ancestors.get_mut(&entry_id)
-                                                    {
-                                                        folds.current_ancestor_depth =
-                                                            components_len - 1 - index;
-                                                        cx.notify();
-                                                    }
-                                                }
-                                            }))
-                                            .child(
-                                                Label::new(component)
-                                                    .single_line()
-                                                    .color(filename_text_color)
-                                                    .when(
-                                                        index == active_index
-                                                            && (is_active || is_marked),
-                                                        |this| this.underline(true),
-                                                    ),
-                                            );
-
-                                        this = this.child(label);
-                                    }
-
-                                    this
+                                        .child(
+                                            Icon::new(IconName::ArrowUpRight)
+                                                .size(IconSize::Indicator)
+                                                .color(filename_text_color),
+                                        )
+                                        .into_any_element(),
+                                )
+                            })
+                            .child(if let Some(icon) = &icon {
+                                // Check if there's a diagnostic severity and get the decoration color
+                                if let Some((_, decoration_color)) =
+                                    entry_diagnostic_aware_icon_decoration_and_color(
+                                        diagnostic_severity,
+                                    )
+                                {
+                                    // Determine if the diagnostic is a warning
+                                    let is_warning = diagnostic_severity
+                                        .map(|severity| {
+                                            matches!(severity, DiagnosticSeverity::WARNING)
+                                        })
+                                        .unwrap_or(false);
+                                    div().child(
+                                        DecoratedIcon::new(
+                                            Icon::from_path(icon.clone()).color(Color::Muted),
+                                            Some(
+                                                IconDecoration::new(
+                                                    if kind.is_file() {
+                                                        if is_warning {
+                                                            IconDecorationKind::Triangle
+                                                        } else {
+                                                            IconDecorationKind::X
+                                                        }
+                                                    } else {
+                                                        IconDecorationKind::Dot
+                                                    },
+                                                    bg_color,
+                                                    cx,
+                                                )
+                                                .color(decoration_color.color(cx))
+                                                .position(Point {
+                                                    x: px(-2.),
+                                                    y: px(-2.),
+                                                }),
+                                            ),
+                                        )
+                                        .into_any_element(),
+                                    )
                                 } else {
-                                    this.child(
-                                        Label::new(file_name)
-                                            .single_line()
-                                            .color(filename_text_color),
+                                    h_flex().child(
+                                        Icon::from_path(icon.to_string()).color(Color::Muted),
                                     )
                                 }
+                            } else {
+                                if let Some((icon_name, color)) =
+                                    entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
+                                {
+                                    h_flex().size(IconSize::default().rems()).child(
+                                        Icon::new(icon_name).color(color).size(IconSize::Small),
+                                    )
+                                } else {
+                                    h_flex()
+                                        .size(IconSize::default().rems())
+                                        .invisible()
+                                        .flex_none()
+                                }
                             })
-                        }
-                        .ml_1(),
-                    )
-                    .on_secondary_mouse_down(cx.listener(
-                        move |this, event: &MouseDownEvent, cx| {
-                            // Stop propagation to prevent the catch-all context menu for the project
-                            // panel from being deployed.
-                            cx.stop_propagation();
-                            this.deploy_context_menu(event.position, entry_id, cx);
-                        },
-                    ))
-                    .overflow_x(),
+                            .child(
+                                if let (Some(editor), true) =
+                                    (Some(&self.filename_editor), show_editor)
+                                {
+                                    h_flex().h_6().w_full().child(editor.clone())
+                                } else {
+                                    h_flex().h_6().map(|mut this| {
+                                        if let Some(folded_ancestors) =
+                                            self.ancestors.get(&entry_id)
+                                        {
+                                            let components = Path::new(&file_name)
+                                                .components()
+                                                .map(|comp| {
+                                                    let comp_str = comp
+                                                        .as_os_str()
+                                                        .to_string_lossy()
+                                                        .into_owned();
+                                                    comp_str
+                                                })
+                                                .collect::<Vec<_>>();
+
+                                            let components_len = components.len();
+                                            let active_index = components_len
+                                                - 1
+                                                - folded_ancestors.current_ancestor_depth;
+                                            const DELIMITER: SharedString =
+                                                SharedString::new_static(
+                                                    std::path::MAIN_SEPARATOR_STR,
+                                                );
+                                            for (index, component) in
+                                                components.into_iter().enumerate()
+                                            {
+                                                if index != 0 {
+                                                    this = this.child(
+                                                        Label::new(DELIMITER.clone())
+                                                            .single_line()
+                                                            .color(filename_text_color),
+                                                    );
+                                                }
+                                                let id = SharedString::from(format!(
+                                                    "project_panel_path_component_{}_{index}",
+                                                    entry_id.to_usize()
+                                                ));
+                                                let label = div()
+                                                    .id(id)
+                                                    .on_click(cx.listener(move |this, _, cx| {
+                                                        if index != active_index {
+                                                            if let Some(folds) =
+                                                                this.ancestors.get_mut(&entry_id)
+                                                            {
+                                                                folds.current_ancestor_depth =
+                                                                    components_len - 1 - index;
+                                                                cx.notify();
+                                                            }
+                                                        }
+                                                    }))
+                                                    .child(
+                                                        Label::new(component)
+                                                            .single_line()
+                                                            .color(filename_text_color)
+                                                            .when(
+                                                                index == active_index
+                                                                    && (is_active || is_marked),
+                                                                |this| this.underline(true),
+                                                            ),
+                                                    );
+
+                                                this = this.child(label);
+                                            }
+
+                                            this
+                                        } else {
+                                            this.child(
+                                                Label::new(file_name)
+                                                    .single_line()
+                                                    .color(filename_text_color),
+                                            )
+                                        }
+                                    })
+                                }
+                                .ml_1(),
+                            )
+                            .on_secondary_mouse_down(cx.listener(
+                                move |this, event: &MouseDownEvent, cx| {
+                                    // Stop propagation to prevent the catch-all context menu for the project
+                                    // panel from being deployed.
+                                    cx.stop_propagation();
+                                    this.deploy_context_menu(event.position, entry_id, cx);
+                                },
+                            ))
+                            .overflow_x(),
+                    ),
             )
             .border_1()
             .border_r_2()
@@ -3377,6 +3416,65 @@ impl ProjectPanel {
         }
         None
     }
+
+    fn get_line_number(
+        &self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        relative: bool,
+    ) -> Option<usize> {
+        let entry_line_number = self
+            .index_for_entry(entry_id, worktree_id)
+            .unwrap_or_default()
+            .2;
+        if relative {
+            let selection_line_number = if let Some(selection) = self.selection {
+                self.index_for_selection(selection).unwrap_or_default().2
+            } else {
+                0
+            };
+            return Some(
+                selection_line_number.max(entry_line_number)
+                    - selection_line_number.min(entry_line_number),
+            );
+        } else {
+            return Some(entry_line_number);
+        }
+    }
+
+    fn open_numbered_file(&mut self, action: &OpenNumberedFile, cx: &mut ViewContext<Self>) {
+        let number = action.file_number;
+
+        // Line numbers start at 1 in the UI
+        if number == 0 {
+            return;
+        }
+
+        // Calculate total entries and validate input
+        let total_entries: usize = self
+            .visible_entries
+            .iter()
+            .map(|(_, entries, _)| entries.len())
+            .sum();
+
+        if number > total_entries {
+            return;
+        }
+
+        // Get the entry at the specified index (subtract 1 because UI numbers start at 1)
+        if let Some((worktree_id, entry)) = self.entry_at_index(number - 1) {
+            if entry.kind.is_file() {
+                // Open the file
+                self.open_entry(entry.id, true, false, cx);
+
+                // Ensure the entry is visible in the project panel
+                self.autoscroll(cx);
+                cx.notify();
+            } else {
+            }
+        } else {
+        }
+    }
 }
 
 fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {
@@ -3495,6 +3593,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
+                .on_action(cx.listener(Self::open_numbered_file))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -3599,7 +3698,8 @@ impl Render for ProjectPanel {
                             .with_render_fn(
                                 cx.view().clone(),
                                 move |this, params, cx| {
-                                    const LEFT_OFFSET: f32 = 14.;
+                                    const LINE_NUMBER_WIDTH: f32 = 34.;
+                                    const LEFT_OFFSET: f32 = 14. + LINE_NUMBER_WIDTH;
                                     const PADDING_Y: f32 = 4.;
                                     const HITBOX_OVERDRAW: f32 = 3.;
 

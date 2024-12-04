@@ -7,7 +7,7 @@
     "context": "Editor",
     "bindings": {
       "ctrl-g": "editor::Cancel",
-      "ctrl-shift-g": "go_to_line::Toggle",
+      "ctrl-shift-g": "go_to::Toggle",
       //"ctrl-space": "editor::SetMark",
       "ctrl-x u": "editor::Undo",
       "ctrl-x ctrl-u": "editor::Redo",
