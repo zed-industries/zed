@@ -56,7 +56,7 @@ impl MessageEditor {
         });
 
         self.thread.update(cx, |thread, cx| {
-            thread.insert_user_message(user_message);
+            thread.insert_user_message(user_message, cx);
             let mut request = thread.to_completion_request(request_kind, cx);
 
             if self.use_tools {

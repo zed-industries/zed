@@ -3253,6 +3253,14 @@ impl BufferSnapshot {
         })
     }
 
+    pub fn function_body_fold_ranges<T: ToOffset>(
+        &self,
+        within: Range<T>,
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
+        self.text_object_ranges(within, TreeSitterOptions::default())
+            .filter_map(|(range, obj)| (obj == TextObject::InsideFunction).then_some(range))
+    }
+
     /// For each grammar in the language, runs the provided
     /// [`tree_sitter::Query`] against the given range.
     pub fn matches(
@@ -4489,7 +4497,7 @@ impl CharClassifier {
         self.kind(c) == CharKind::Punctuation
     }
 
-    pub fn kind(&self, c: char) -> CharKind {
+    pub fn kind_with(&self, c: char, ignore_punctuation: bool) -> CharKind {
         if c.is_whitespace() {
             return CharKind::Whitespace;
         } else if c.is_alphanumeric() || c == '_' {
@@ -4499,7 +4507,7 @@ impl CharClassifier {
         if let Some(scope) = &self.scope {
             if let Some(characters) = scope.word_characters() {
                 if characters.contains(&c) {
-                    if c == '-' && !self.for_completion && !self.ignore_punctuation {
+                    if c == '-' && !self.for_completion && !ignore_punctuation {
                         return CharKind::Punctuation;
                     }
                     return CharKind::Word;
@@ -4507,11 +4515,15 @@ impl CharClassifier {
             }
         }
 
-        if self.ignore_punctuation {
+        if ignore_punctuation {
             CharKind::Word
         } else {
             CharKind::Punctuation
         }
+    }
+
+    pub fn kind(&self, c: char) -> CharKind {
+        self.kind_with(c, self.ignore_punctuation)
     }
 }
 
