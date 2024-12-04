@@ -13746,19 +13746,19 @@ impl CodeActionProvider for Model<Project> {
     }
 }
 
-fn snippet_completions(
+async fn snippet_completions(
     project: &Project,
     buffer: &Model<Buffer>,
     buffer_position: text::Anchor,
     cx: &mut AppContext,
-) -> Vec<Completion> {
+) -> Task<Result<Vec<Completion>>> {
     let language = buffer.read(cx).language_at(buffer_position);
     let language_name = language.as_ref().map(|language| language.lsp_id());
     let snippet_store = project.snippets().read(cx);
     let snippets = snippet_store.snippets_for(language_name, cx);
 
     if snippets.is_empty() {
-        return vec![];
+        return Task::ready(Ok(vec![]));
     }
     let snapshot = buffer.read(cx).text_snapshot();
     let chars = snapshot.reversed_chars_for_range(text::Anchor::MIN..buffer_position);
@@ -13769,19 +13769,58 @@ fn snippet_completions(
         .take_while(|c| classifier.is_word(*c))
         .collect::<String>();
     last_word = last_word.chars().rev().collect();
+    println!("last_word: {}", last_word);
     let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
     let to_lsp = |point: &text::Anchor| {
         let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
         point_to_lsp(end)
     };
     let lsp_end = to_lsp(&buffer_position);
-    snippets
-        .into_iter()
-        .filter_map(|snippet| {
-            let matching_prefix = snippet
+
+    let candidates: Vec<StringMatchCandidate> = snippets
+        .iter()
+        .enumerate()
+        .flat_map(|(ix, snippet)| {
+            snippet
                 .prefix
                 .iter()
-                .find(|prefix| prefix.starts_with(&last_word))?;
+                .map(move |prefix| StringMatchCandidate::new(ix, prefix.clone()))
+        })
+        .collect();
+
+    let matches = fuzzy::match_strings(
+        &candidates,
+        &last_word,
+        last_word.chars().any(|c| c.is_uppercase()),
+        100,
+        &Default::default(),
+        cx.background_executor().clone(),
+    )
+    .await;
+
+    // Remove all candidates where the query's start does not match the start of any word in the candidate
+    if let Some(query_start) = last_word.chars().next() {
+        matches.retain(|string_match| {
+            split_words(&string_match.string).any(|word| {
+                // Check that the first codepoint of the word as lowercase matches the first
+                // codepoint of the query as lowercase
+                word.chars()
+                    .flat_map(|codepoint| codepoint.to_lowercase())
+                    .zip(query_start.to_lowercase())
+                    .all(|(word_cp, query_cp)| word_cp == query_cp)
+            })
+        });
+    }
+
+    let result: Vec<Completion> = matches
+        .into_iter()
+        .filter_map(|m| {
+            let snippet = ?????;
+            // let matching_prefix = snippet
+            //     .prefix
+            //     .iter()
+            //     .find(|prefix| prefix.starts_with(&last_word))?;
+            let matching_prefix = snippet.string;
             let start = as_offset - last_word.len();
             let start = snapshot.anchor_before(start);
             let range = start..buffer_position;
@@ -13824,7 +13863,9 @@ fn snippet_completions(
                 confirm: None,
             })
         })
-        .collect()
+        .collect();
+
+    Task::ready(Ok(result))
 }
 
 impl CompletionProvider for Model<Project> {
