@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::Context as _;
 use collections::{BTreeMap, HashMap};
+use feature_flags::FeatureFlagAppExt;
 use futures::{stream::FuturesUnordered, StreamExt};
 use git::{diff::DiffHunk, repository::GitFileStatus};
 use gpui::{
@@ -61,8 +62,10 @@ struct Changes {
 }
 
 impl ProjectDiffEditor {
-    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(Self::deploy);
+    fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+        if cx.is_staff() {
+            workspace.register_action(Self::deploy);
+        }
     }
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
@@ -1188,37 +1191,37 @@ mod tests {
             );
         });
     }
-}
 
-fn run_git(path: &Path, args: &[&str]) -> String {
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(path)
-        .output()
-        .expect("git commit failed");
+    fn run_git(path: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .expect("git commit failed");
 
-    format!(
-        "Stdout: {}; stderr: {}",
-        String::from_utf8(output.stdout).unwrap(),
-        String::from_utf8(output.stderr).unwrap()
-    )
-}
-
-pub fn init_test(cx: &mut gpui::TestAppContext) {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
+        format!(
+            "Stdout: {}; stderr: {}",
+            String::from_utf8(output.stdout).unwrap(),
+            String::from_utf8(output.stderr).unwrap()
+        )
     }
 
-    cx.update(|cx| {
-        assets::Assets.load_test_fonts(cx);
-        let settings_store = SettingsStore::test(cx);
-        cx.set_global(settings_store);
-        theme::init(theme::LoadThemes::JustBase, cx);
-        release_channel::init(SemanticVersion::default(), cx);
-        client::init_settings(cx);
-        language::init(cx);
-        Project::init_settings(cx);
-        workspace::init_settings(cx);
-        crate::init(cx);
-    });
+    fn init_test(cx: &mut gpui::TestAppContext) {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::try_init().ok();
+        }
+
+        cx.update(|cx| {
+            assets::Assets.load_test_fonts(cx);
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            release_channel::init(SemanticVersion::default(), cx);
+            client::init_settings(cx);
+            language::init(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
+            crate::init(cx);
+        });
+    }
 }
