@@ -601,7 +601,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         }
     }
 
-    fn active_completion_text<'a>(
+    fn predict<'a>(
         &'a self,
         _buffer: &Model<Buffer>,
         _cursor_position: language::Anchor,

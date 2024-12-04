@@ -18,7 +18,7 @@ async fn test_inline_completion_additions_only(cx: &mut gpui::TestAppContext) {
     cx.set_state("let absolute_zero_celsius = ˇ;");
 
     propose_edits(&provider, vec![(28..28, "-273.15")], &mut cx);
-    cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
+    cx.update_editor(|editor, cx| editor.update_visible_prediction(cx));
 
     assert_editor_active_inline_completion(&mut cx, |_, active_completion| {
         if let ComputedCompletionEdit::Insertion { text, .. } =
@@ -45,7 +45,7 @@ async fn test_inline_completion_diff(cx: &mut gpui::TestAppContext) {
     cx.set_state("let pi = ˇ\"foo\";");
 
     propose_edits(&provider, vec![(9..14, "3.14159")], &mut cx);
-    cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
+    cx.update_editor(|editor, cx| editor.update_visible_prediction(cx));
 
     assert_editor_active_inline_completion(&mut cx, |_, active_completion| {
         if let ComputedCompletionEdit::Diff { text, .. } =
@@ -72,7 +72,7 @@ async fn test_reusing_completion(cx: &mut gpui::TestAppContext) {
     cx.set_state("let absolute_zero_celsius = ˇ;");
 
     propose_edits(&provider, vec![(28..28, "-273.15")], &mut cx);
-    cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
+    cx.update_editor(|editor, cx| editor.update_visible_prediction(cx));
 
     assert_editor_active_inline_completion(&mut cx, |_snapshot, active_completion| {
         if let ComputedCompletionEdit::Insertion { text, .. } =
@@ -85,7 +85,7 @@ async fn test_reusing_completion(cx: &mut gpui::TestAppContext) {
     });
 
     cx.simulate_keystroke("-");
-    cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
+    cx.update_editor(|editor, cx| editor.update_visible_prediction(cx));
     assert_editor_active_inline_completion(&mut cx, |snapshot, active_completion| {
         if let ComputedCompletionEdit::Insertion { text, position, .. } =
             active_completion.expect("No active completion")
@@ -108,7 +108,7 @@ fn assert_editor_active_inline_completion(
         assert(
             editor.buffer().read(cx).snapshot(cx),
             editor
-                .active_inline_completion
+                .active_prediction
                 .as_ref()
                 .map(|state| state.active_edit()),
         )
@@ -205,7 +205,7 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
     ) {
     }
 
-    fn active_completion_text<'a>(
+    fn predict<'a>(
         &'a self,
         _buffer: &gpui::Model<language::Buffer>,
         _cursor_position: language::Anchor,

@@ -1,8 +1,6 @@
-use std::ops::Range;
-
 use gpui::{AppContext, Model, ModelContext};
 use language::Buffer;
-use text::Rope;
+use std::ops::Range;
 
 // TODO: Find a better home for `Direction`.
 //
@@ -14,16 +12,21 @@ pub enum Direction {
     Next,
 }
 
-#[derive(Clone)]
-pub struct CompletionProposal {
-    pub edits: Vec<CompletionEdit>,
+pub enum Prediction {
+    Edit(Vec<(Range<language::Anchor>, String)>),
+    Move(language::Anchor),
 }
 
-#[derive(Clone)]
-pub struct CompletionEdit {
-    pub text: Rope,
-    pub range: Range<language::Anchor>,
-}
+// #[derive(Clone)]
+// pub struct CompletionProposal {
+//     pub edits: Vec<CompletionEdit>,
+// }
+
+// #[derive(Clone)]
+// pub struct CompletionEdit {
+//     pub text: Rope,
+//     pub range: Range<language::Anchor>,
+// }
 
 pub trait InlineCompletionProvider: 'static + Sized {
     fn name() -> &'static str;
@@ -49,12 +52,12 @@ pub trait InlineCompletionProvider: 'static + Sized {
     );
     fn accept(&mut self, cx: &mut ModelContext<Self>);
     fn discard(&mut self, should_report_inline_completion_event: bool, cx: &mut ModelContext<Self>);
-    fn active_completion_text<'a>(
+    fn predict<'a>(
         &'a self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<CompletionProposal>;
+    ) -> Option<Prediction>;
 }
 
 pub trait InlineCompletionProviderHandle {
@@ -80,12 +83,12 @@ pub trait InlineCompletionProviderHandle {
     );
     fn accept(&self, cx: &mut AppContext);
     fn discard(&self, should_report_inline_completion_event: bool, cx: &mut AppContext);
-    fn active_completion_text<'a>(
+    fn predict<'a>(
         &'a self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<CompletionProposal>;
+    ) -> Option<Prediction>;
 }
 
 impl<T> InlineCompletionProviderHandle for Model<T>
@@ -135,13 +138,12 @@ where
         })
     }
 
-    fn active_completion_text<'a>(
+    fn predict<'a>(
         &'a self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<CompletionProposal> {
-        self.read(cx)
-            .active_completion_text(buffer, cursor_position, cx)
+    ) -> Option<Prediction> {
+        self.read(cx).predict(buffer, cursor_position, cx)
     }
 }

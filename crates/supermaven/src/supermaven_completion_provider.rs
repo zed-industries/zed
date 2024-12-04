@@ -3,7 +3,9 @@ use anyhow::Result;
 use client::telemetry::Telemetry;
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
-use inline_completion::{CompletionEdit, CompletionProposal, Direction, InlineCompletionProvider};
+use inline_completion::{
+    CompletionEdit, CompletionProposal, Direction, InlineCompletionProvider, Prediction,
+};
 use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
 use std::{
     ops::{AddAssign, Range},
@@ -43,21 +45,21 @@ impl SupermavenCompletionProvider {
     }
 }
 
-// Computes the completion state from the difference between the completion text.
+// Computes the prediction from the difference between the completion text.
 // this is defined by greedily matching the buffer text against the completion text, with any leftover buffer placed at the end.
 // for example, given the completion text "moo cows are cool" and the buffer text "cowsre pool", the completion state would be
 // the inlays "moo ", " a", and "cool" which will render as "[moo ]cows[ a]re [cool]pool" in the editor.
-fn completion_state_from_diff(
+fn prediction_from_diff(
     snapshot: BufferSnapshot,
     completion_text: &str,
     position: Anchor,
     delete_range: Range<Anchor>,
-) -> CompletionProposal {
+) -> Prediction {
     let buffer_text = snapshot
         .text_for_range(delete_range.clone())
         .collect::<String>();
 
-    let mut edits: Vec<CompletionEdit> = Vec::new();
+    let mut edits: Vec<(Range<language::Anchor>, String)> = Vec::new();
 
     let completion_graphemes: Vec<&str> = completion_text.graphemes(true).collect();
     let buffer_graphemes: Vec<&str> = buffer_text.graphemes(true).collect();
@@ -76,10 +78,8 @@ fn completion_state_from_diff(
                 if k != 0 {
                     let offset = snapshot.anchor_after(offset);
                     // the range from the current position to item is an inlay.
-                    edits.push(CompletionEdit {
-                        text: completion_graphemes[i..i + k].join("").into(),
-                        range: offset..offset,
-                    });
+                    let edit = (offset..offset, completion_graphemes[i..i + k].join(""));
+                    edits.push(edit);
                 }
                 i += k + 1;
                 j += 1;
@@ -96,13 +96,12 @@ fn completion_state_from_diff(
     if j == buffer_graphemes.len() && i < completion_graphemes.len() {
         let offset = snapshot.anchor_after(offset);
         // there is leftover completion text, so drop it as an inlay.
-        edits.push(CompletionEdit {
-            text: completion_graphemes[i..].join("").into(),
-            range: offset..offset,
-        });
+        let edit_range = offset..offset;
+        let edit_text = completion_graphemes[i..].join("");
+        edits.push((edit_range, edit_text));
     }
 
-    CompletionProposal { edits }
+    Prediction::Edit(edits)
 }
 
 impl InlineCompletionProvider for SupermavenCompletionProvider {
@@ -201,12 +200,12 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         self.completion_id = None;
     }
 
-    fn active_completion_text<'a>(
+    fn predict<'a>(
         &'a self,
         buffer: &Model<Buffer>,
         cursor_position: Anchor,
         cx: &'a AppContext,
-    ) -> Option<CompletionProposal> {
+    ) -> Option<Prediction> {
         let completion_text = self
             .supermaven
             .read(cx)
@@ -221,7 +220,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
             let mut point = cursor_position.to_point(&snapshot);
             point.column = snapshot.line_len(point.row);
             let range = cursor_position..snapshot.anchor_after(point);
-            Some(completion_state_from_diff(
+            Some(prediction_from_diff(
                 snapshot,
                 completion_text,
                 cursor_position,

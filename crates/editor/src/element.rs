@@ -16,11 +16,11 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, ChunkReplacement, CodeActionsMenu, ComputedCompletionEdit, CursorShape, CustomBlockId,
-    DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions,
-    HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp,
-    OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
+    BlockId, ChunkReplacement, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint,
+    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
+    EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
+    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp, OpenExcerpts,
+    PageDown, PageUp, Point, Prediction, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
     ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED,
     MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
@@ -445,7 +445,7 @@ impl EditorElement {
         register_action(view, cx, Editor::display_cursor_names);
         register_action(view, cx, Editor::unique_lines_case_insensitive);
         register_action(view, cx, Editor::unique_lines_case_sensitive);
-        register_action(view, cx, Editor::accept_partial_inline_completion);
+        register_action(view, cx, Editor::accept_partial_prediction);
         register_action(view, cx, Editor::accept_inline_completion);
         register_action(view, cx, Editor::revert_file);
         register_action(view, cx, Editor::revert_selected_hunks);
@@ -2740,119 +2740,128 @@ impl EditorElement {
         const X_OFFSET: f32 = 25.;
         const PADDING_Y: f32 = 2.;
 
-        let edit = self
-            .editor
-            .read(cx)
-            .active_inline_completion
-            .as_ref()?
-            .active_edit();
+        let active_prediction = self.editor.read(cx).active_prediction.as_ref()?;
 
-        let show_go_to_edit_hint = self
-            .editor
-            .read(cx)
-            .cursor_needs_repositioning_for_inline_completion(cx)
-            .is_some();
-
-        let upper_left = edit.position().to_display_point(editor_snapshot);
-        let is_visible = visible_row_range.contains(&upper_left.row());
-
-        let container_element = div()
-            .bg(cx.theme().colors().editor_background)
-            .border_1()
-            .border_color(cx.theme().colors().border)
-            .rounded_md()
-            .px_1();
-
-        let (origin, mut element) = if show_go_to_edit_hint {
-            if is_visible {
-                let element = container_element
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .children(ui::KeyBinding::for_action_in(
-                                &crate::AcceptInlineCompletion,
-                                &self.editor.focus_handle(cx),
-                                cx,
-                            ))
-                            .child(Label::new("jump to edit")),
-                    )
-                    .into_any();
-
-                let len = editor_snapshot.line_len(upper_left.row());
-                let popup_position = DisplayPoint::new(upper_left.row(), len);
-                let origin = self.editor.update(cx, |editor, cx| {
-                    editor.display_to_pixel_point(popup_position, editor_snapshot, cx)
-                })?;
-                (
-                    text_bounds.origin + origin + point(px(X_OFFSET), px(0.)),
-                    element,
-                )
-            } else {
-                let is_above = visible_row_range.start > upper_left.row();
-
-                let mut element = container_element
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .children(ui::KeyBinding::for_action_in(
-                                &crate::AcceptInlineCompletion,
-                                &self.editor.focus_handle(cx),
-                                cx,
-                            ))
-                            .child(Label::new("jump to edit"))
-                            .child(Icon::new(if is_above {
-                                IconName::ArrowUp
-                            } else {
-                                IconName::ArrowDown
-                            })),
-                    )
-                    .into_any();
-
-                let size = element.layout_as_root(AvailableSpace::min_size(), cx);
-
-                let offset_y = if is_above {
-                    px(PADDING_Y)
+        match active_prediction.prediction {
+            Prediction::Move(target_position) => {
+                let target_display_point = target_position.to_display_point(editor_snapshot);
+                if target_display_point.row() < visible_row_range.start {
+                    // show this "go up" at top of screen
+                } else if target_display_point.row() > visible_row_range.end {
+                    // show this "go down" at bottom of screen
                 } else {
-                    text_bounds.size.height - size.height - px(PADDING_Y)
-                };
-
-                let origin = text_bounds.origin
-                    + point((text_bounds.size.width - size.width) / 2., offset_y);
-                (origin, element)
+                    // show "tab" next to target position
+                }
             }
-        } else if let ComputedCompletionEdit::Diff {
-            text, additions, ..
-        } = edit
-        {
-            let row = &line_layouts
-                [upper_left.row().0.saturating_sub(visible_row_range.start.0) as usize];
-            let origin = text_bounds.origin
-                + point(
-                    row.width + px(X_OFFSET) - scroll_pixel_position.x,
-                    upper_left.row().as_f32() * line_height - scroll_pixel_position.y,
-                );
+            Prediction::Edit(edits) => todo!(),
+        }
 
-            let text = gpui::StyledText::new(text.to_string()).with_highlights(
-                text_style,
-                additions.iter().map(|range| {
-                    (
-                        range.clone(),
-                        HighlightStyle {
-                            background_color: Some(cx.theme().status().created_background),
-                            ..Default::default()
-                        },
-                    )
-                }),
-            );
+        // let show_go_to_edit_hint = self
+        //     .editor
+        //     .read(cx)
+        //     .cursor_needs_repositioning_for_inline_completion(cx)
+        //     .is_some();
 
-            let element = container_element.child(text).into_any();
-            (origin, element)
-        } else {
-            return None;
-        };
+        // let upper_left = edit.position().to_display_point(editor_snapshot);
+        // let is_visible = visible_row_range.contains(&upper_left.row());
 
-        element.prepaint_as_root(origin, AvailableSpace::min_size(), cx);
-        Some(element)
+        // let container_element = div()
+        //     .bg(cx.theme().colors().editor_background)
+        //     .border_1()
+        //     .border_color(cx.theme().colors().border)
+        //     .rounded_md()
+        //     .px_1();
+
+        // let (origin, mut element) = match active_prediction.prediction {
+        //     if is_visible {
+        //         let element = container_element
+        //             .child(
+        //                 h_flex()
+        //                     .gap_1()
+        //                     .children(ui::KeyBinding::for_action_in(
+        //                         &crate::AcceptInlineCompletion,
+        //                         &self.editor.focus_handle(cx),
+        //                         cx,
+        //                     ))
+        //                     .child(Label::new("jump to edit")),
+        //             )
+        //             .into_any();
+
+        //         let len = editor_snapshot.line_len(upper_left.row());
+        //         let popup_position = DisplayPoint::new(upper_left.row(), len);
+        //         let origin = self.editor.update(cx, |editor, cx| {
+        //             editor.display_to_pixel_point(popup_position, editor_snapshot, cx)
+        //         })?;
+        //         (
+        //             text_bounds.origin + origin + point(px(X_OFFSET), px(0.)),
+        //             element,
+        //         )
+        //     } else {
+        //         let is_above = visible_row_range.start > upper_left.row();
+
+        //         let mut element = container_element
+        //             .child(
+        //                 h_flex()
+        //                     .gap_1()
+        //                     .children(ui::KeyBinding::for_action_in(
+        //                         &crate::AcceptInlineCompletion,
+        //                         &self.editor.focus_handle(cx),
+        //                         cx,
+        //                     ))
+        //                     .child(Label::new("jump to edit"))
+        //                     .child(Icon::new(if is_above {
+        //                         IconName::ArrowUp
+        //                     } else {
+        //                         IconName::ArrowDown
+        //                     })),
+        //             )
+        //             .into_any();
+
+        //         let size = element.layout_as_root(AvailableSpace::min_size(), cx);
+
+        //         let offset_y = if is_above {
+        //             px(PADDING_Y)
+        //         } else {
+        //             text_bounds.size.height - size.height - px(PADDING_Y)
+        //         };
+
+        //         let origin = text_bounds.origin
+        //             + point((text_bounds.size.width - size.width) / 2., offset_y);
+        //         (origin, element)
+        //     }
+        // } else if let ComputedCompletionEdit::Diff {
+        //     text, additions, ..
+        // } = edit
+        // {
+        //     let row = &line_layouts
+        //         [upper_left.row().0.saturating_sub(visible_row_range.start.0) as usize];
+        //     let origin = text_bounds.origin
+        //         + point(
+        //             row.width + px(X_OFFSET) - scroll_pixel_position.x,
+        //             upper_left.row().as_f32() * line_height - scroll_pixel_position.y,
+        //         );
+
+        //     let text = gpui::StyledText::new(text.to_string()).with_highlights(
+        //         text_style,
+        //         additions.iter().map(|range| {
+        //             (
+        //                 range.clone(),
+        //                 HighlightStyle {
+        //                     background_color: Some(cx.theme().status().created_background),
+        //                     ..Default::default()
+        //                 },
+        //             )
+        //         }),
+        //     );
+
+        //     let element = container_element.child(text).into_any();
+        //     (origin, element)
+        // } else {
+        //     return None;
+        // };
+
+        // element.prepaint_as_root(origin, AvailableSpace::min_size(), cx);
+        // Some(element)
     }
 
     fn layout_mouse_context_menu(

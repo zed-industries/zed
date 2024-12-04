@@ -439,116 +439,17 @@ pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
 
 type CompletionId = usize;
 
-struct CompletionState {
-    proposal: inline_completion::CompletionProposal,
-    active_edit: (usize, ComputedCompletionEdit),
+enum Prediction {
+    Edit(Vec<(Range<Anchor>, String)>),
+    Move(Anchor),
 }
 
-impl CompletionState {
-    pub fn active_edit(&self) -> &ComputedCompletionEdit {
-        &self.active_edit.1
-    }
-
-    pub fn advance(
-        self,
-        excerpt_id: ExcerptId,
-        snapshot: &MultiBufferSnapshot,
-    ) -> (ComputedCompletionEdit, Option<Self>) {
-        let (curr_ix, old_computed_edit) = self.active_edit;
-        let next_ix = curr_ix + 1;
-
-        let mut this = None;
-        if next_ix < self.proposal.edits.len() {
-            if let Some(computed_edit) = ComputedCompletionEdit::from_edit(
-                &self.proposal.edits[next_ix],
-                excerpt_id,
-                snapshot,
-            ) {
-                this = Some(Self {
-                    proposal: self.proposal,
-                    active_edit: (next_ix, computed_edit),
-                });
-            }
-        }
-
-        (old_computed_edit, this)
-    }
+struct PredictionState {
+    inlay_ids: Vec<InlayId>,
+    prediction: Prediction,
 }
 
-struct CompletionEditDeletion;
-
-enum ComputedCompletionEdit {
-    Insertion {
-        text: Rope,
-        position: multi_buffer::Anchor,
-        render_inlay_ids: Vec<InlayId>,
-    },
-    Diff {
-        text: Rope,
-        range: Range<multi_buffer::Anchor>,
-        additions: Vec<Range<usize>>,
-        deletions: Vec<Range<multi_buffer::Anchor>>,
-    },
-}
-
-impl ComputedCompletionEdit {
-    fn from_edit(
-        edit: &inline_completion::CompletionEdit,
-        excerpt_id: ExcerptId,
-        snapshot: &MultiBufferSnapshot,
-    ) -> Option<Self> {
-        let text = edit.text.clone();
-
-        let start = snapshot.anchor_in_excerpt(excerpt_id, edit.range.start)?;
-        let end = snapshot.anchor_in_excerpt(excerpt_id, edit.range.end)?;
-
-        let old_text = snapshot.text_for_range(start..end).collect::<String>();
-
-        if old_text.is_empty() {
-            Some(Self::Insertion {
-                position: start,
-                text,
-                render_inlay_ids: Vec::new(),
-            })
-        } else {
-            let new_text = edit.text.to_string();
-            let diff = similar::TextDiff::from_chars(&old_text, &new_text);
-
-            let start_offset = start.to_offset(snapshot);
-
-            let mut deletions = Vec::new();
-            let mut additions = Vec::new();
-            for op in diff.ops() {
-                let (change, old, new) = op.as_tag_tuple();
-                let old = cmp::min(old.start + start_offset, snapshot.len())
-                    ..cmp::min(old.end + start_offset, snapshot.len());
-                match change {
-                    similar::DiffTag::Equal => continue,
-                    similar::DiffTag::Delete => deletions.push(old.to_anchors(snapshot)),
-                    similar::DiffTag::Insert => additions.push(new),
-                    similar::DiffTag::Replace => {
-                        deletions.push(old.to_anchors(snapshot));
-                        additions.push(new);
-                    }
-                }
-            }
-
-            Some(Self::Diff {
-                text,
-                range: start..end,
-                additions,
-                deletions,
-            })
-        }
-    }
-
-    pub fn position(&self) -> Anchor {
-        match self {
-            ComputedCompletionEdit::Insertion { position, .. } => *position,
-            ComputedCompletionEdit::Diff { range, .. } => range.start,
-        }
-    }
-}
+enum PredictionHighlight {}
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
 struct EditorActionId(usize);
@@ -715,7 +616,7 @@ pub struct Editor {
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
     code_action_providers: Vec<Arc<dyn CodeActionProvider>>,
-    active_inline_completion: Option<CompletionState>,
+    active_prediction: Option<PredictionState>,
     // enable_inline_completions is a switch that Vim can use to disable
     // inline completions based on its mode.
     enable_inline_completions: bool,
@@ -2197,7 +2098,7 @@ impl Editor {
             hover_state: Default::default(),
             hovered_link_state: Default::default(),
             inline_completion_provider: None,
-            active_inline_completion: None,
+            active_prediction: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             expanded_hunks: ExpandedHunks::default(),
             gutter_hovered: false,
@@ -2327,7 +2228,7 @@ impl Editor {
             key_context.set("extension", extension.to_string());
         }
 
-        if self.has_active_inline_completion(cx) {
+        if self.has_active_prediction(cx) {
             key_context.add("copilot_suggestion");
             key_context.add("inline_completion");
         }
@@ -2531,12 +2432,12 @@ impl Editor {
             provider.map(|provider| RegisteredInlineCompletionProvider {
                 _subscription: cx.observe(&provider, |this, _, cx| {
                     if this.focus_handle.is_focused(cx) {
-                        this.update_visible_inline_completion(cx);
+                        this.update_visible_prediction(cx);
                     }
                 }),
                 provider: Arc::new(provider),
             });
-        self.refresh_inline_completion(false, false, cx);
+        self.refresh_prediction(false, false, cx);
     }
 
     pub fn placeholder_text(&self, _cx: &WindowContext) -> Option<&str> {
@@ -2650,7 +2551,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.show_inline_completions_override = show_inline_completions;
-        self.refresh_inline_completion(false, true, cx);
+        self.refresh_prediction(false, true, cx);
     }
 
     fn should_show_inline_completions(
@@ -3355,7 +3256,7 @@ impl Editor {
             return true;
         }
 
-        if self.discard_inline_completion(should_report_inline_completion_event, cx) {
+        if self.discard_prediction(should_report_inline_completion_event, cx) {
             return true;
         }
 
@@ -3728,7 +3629,7 @@ impl Editor {
                 );
             }
 
-            let had_active_inline_completion = this.has_active_inline_completion(cx);
+            let had_active_inline_completion = this.has_active_prediction(cx);
             this.change_selections_inner(Some(Autoscroll::fit()), false, cx, |s| {
                 s.select(new_selections)
             });
@@ -3752,7 +3653,7 @@ impl Editor {
             let trigger_in_words = !had_active_inline_completion;
             this.trigger_completion_on_input(&text, trigger_in_words, cx);
             linked_editing_ranges::refresh_linked_ranges(this, cx);
-            this.refresh_inline_completion(true, false, cx);
+            this.refresh_prediction(true, false, cx);
         });
     }
 
@@ -3938,7 +3839,7 @@ impl Editor {
                 .collect();
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
-            this.refresh_inline_completion(true, false, cx);
+            this.refresh_prediction(true, false, cx);
         });
     }
 
@@ -4461,7 +4362,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.display_map.update(cx, |display_map, cx| {
-            display_map.splice_inlays(to_remove, to_insert, cx);
+            display_map.splice_inlays(to_remove, to_insert, cx)
         });
         cx.notify();
     }
@@ -4622,7 +4523,7 @@ impl Editor {
                         menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
                         *context_menu = Some(ContextMenu::Completions(menu));
                         drop(context_menu);
-                        editor.discard_inline_completion(false, cx);
+                        editor.discard_prediction(false, cx);
                         cx.notify();
                     } else if editor.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
@@ -4630,7 +4531,7 @@ impl Editor {
                         // also show the copilot completion when available.
                         drop(context_menu);
                         if editor.hide_context_menu(cx).is_none() {
-                            editor.update_visible_inline_completion(cx);
+                            editor.update_visible_prediction(cx);
                         }
                     }
                 })?;
@@ -4810,7 +4711,7 @@ impl Editor {
                 })
             }
 
-            this.refresh_inline_completion(true, false, cx);
+            this.refresh_prediction(true, false, cx);
         });
 
         let show_new_completions_on_confirm = completion
@@ -4907,7 +4808,7 @@ impl Editor {
                     }
 
                     editor.completion_tasks.clear();
-                    editor.discard_inline_completion(false, cx);
+                    editor.discard_prediction(false, cx);
                     let task_context =
                         tasks
                             .as_ref()
@@ -5305,7 +5206,7 @@ impl Editor {
         None
     }
 
-    pub fn refresh_inline_completion(
+    pub fn refresh_prediction(
         &mut self,
         debounce: bool,
         user_requested: bool,
@@ -5321,11 +5222,11 @@ impl Editor {
                 || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
                 || !self.is_focused(cx))
         {
-            self.discard_inline_completion(false, cx);
+            self.discard_prediction(false, cx);
             return None;
         }
 
-        self.update_visible_inline_completion(cx);
+        self.update_visible_prediction(cx);
         provider.refresh(buffer, cursor_buffer_position, debounce, cx);
         Some(())
     }
@@ -5346,18 +5247,18 @@ impl Editor {
         }
 
         provider.cycle(buffer, cursor_buffer_position, direction, cx);
-        self.update_visible_inline_completion(cx);
+        self.update_visible_prediction(cx);
 
         Some(())
     }
 
     pub fn show_inline_completion(&mut self, _: &ShowInlineCompletion, cx: &mut ViewContext<Self>) {
-        if !self.has_active_inline_completion(cx) {
-            self.refresh_inline_completion(false, true, cx);
+        if !self.has_active_prediction(cx) {
+            self.refresh_prediction(false, true, cx);
             return;
         }
 
-        self.update_visible_inline_completion(cx);
+        self.update_visible_prediction(cx);
     }
 
     pub fn display_cursor_names(&mut self, _: &DisplayCursorNames, cx: &mut ViewContext<Self>) {
@@ -5379,10 +5280,10 @@ impl Editor {
     }
 
     pub fn next_inline_completion(&mut self, _: &NextInlineCompletion, cx: &mut ViewContext<Self>) {
-        if self.has_active_inline_completion(cx) {
+        if self.has_active_prediction(cx) {
             self.cycle_inline_completion(Direction::Next, cx);
         } else {
-            let is_copilot_disabled = self.refresh_inline_completion(false, true, cx).is_none();
+            let is_copilot_disabled = self.refresh_prediction(false, true, cx).is_none();
             if is_copilot_disabled {
                 cx.propagate();
             }
@@ -5394,10 +5295,10 @@ impl Editor {
         _: &PreviousInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.has_active_inline_completion(cx) {
+        if self.has_active_prediction(cx) {
             self.cycle_inline_completion(Direction::Prev, cx);
         } else {
-            let is_copilot_disabled = self.refresh_inline_completion(false, true, cx).is_none();
+            let is_copilot_disabled = self.refresh_prediction(false, true, cx).is_none();
             if is_copilot_disabled {
                 cx.propagate();
             }
@@ -5409,44 +5310,60 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.move_to_active_inline_completion(cx) {
-            return;
-        }
-        let Some(completion_edit) = self.take_active_inline_completion(false, cx) else {
+        let Some(prediction) = self.take_active_prediction(cx) else {
             return;
         };
         if let Some(provider) = self.inline_completion_provider() {
             provider.accept(cx);
         }
 
-        let (selection_range, text) = match completion_edit {
-            ComputedCompletionEdit::Insertion { position, text, .. } => (position..position, text),
-            ComputedCompletionEdit::Diff { range, text, .. } => (range, text),
-        };
+        match prediction {
+            Prediction::Move(position) => {
+                self.change_selections(Some(Autoscroll::newest()), cx, |selections| {
+                    selections.select_anchor_ranges([position..position]);
+                });
+            }
+            Prediction::Edit(edits) => {
+                let last_edit_end = edits.last().unwrap().0.end;
+                self.buffer
+                    .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+                self.change_selections(None, cx, |s| {
+                    s.select_anchor_ranges([last_edit_end..last_edit_end])
+                });
 
-        self.change_selections(None, cx, |s| s.select_ranges([selection_range]));
-        cx.emit(EditorEvent::InputHandled {
-            utf16_range_to_replace: None,
-            text: text.to_string().into(),
-        });
-        self.insert_with_autoindent_mode(&text.to_string(), None, cx);
-        self.refresh_inline_completion(true, true, cx);
-        cx.notify();
+                // todo!("verify that this is needed")
+                // cx.emit(EditorEvent::InputHandled {
+                //     utf16_range_to_replace: None,
+                //     text: text.to_string().into(),
+                // });
+                self.refresh_prediction(true, true, cx);
+                cx.notify();
+            }
+        }
     }
 
-    pub fn accept_partial_inline_completion(
+    pub fn accept_partial_prediction(
         &mut self,
         _: &AcceptPartialInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.move_to_active_inline_completion(cx) {
+        let Some(active_prediction) = self.active_prediction.as_ref() else {
+            return;
+        };
+        if self.selections.count() != 1 {
             return;
         }
 
-        if self.selections.count() == 1 && self.has_active_inline_completion(cx) {
-            let mut is_insertion = false;
-            if let Some(state) = &self.active_inline_completion {
-                if let ComputedCompletionEdit::Insertion { text, .. } = state.active_edit() {
+        match &active_prediction.prediction {
+            Prediction::Move(position) => {
+                let position = *position;
+                self.change_selections(Some(Autoscroll::newest()), cx, |selections| {
+                    selections.select_anchor_ranges([position..position]);
+                });
+            }
+            Prediction::Edit(edits) => {
+                if edits.len() == 1 && edits[0].0.start == edits[0].0.end {
+                    let text = edits[0].1.as_str();
                     let mut partial_completion = text
                         .chars()
                         .by_ref()
@@ -5467,19 +5384,14 @@ impl Editor {
 
                     self.insert_with_autoindent_mode(&partial_completion, None, cx);
 
-                    self.refresh_inline_completion(true, true, cx);
-                    is_insertion = true;
+                    self.refresh_prediction(true, true, cx);
                     cx.notify();
                 }
-            }
-
-            if is_insertion {
-                self.take_active_inline_completion(false, cx);
             }
         }
     }
 
-    fn discard_inline_completion(
+    fn discard_prediction(
         &mut self,
         should_report_inline_completion_event: bool,
         cx: &mut ViewContext<Self>,
@@ -5488,149 +5400,94 @@ impl Editor {
             provider.discard(should_report_inline_completion_event, cx);
         }
 
-        self.take_active_inline_completion(true, cx).is_some()
+        self.take_active_prediction(cx).is_some()
     }
 
-    pub fn has_active_inline_completion(&self, cx: &AppContext) -> bool {
-        if let Some(completion) = self.active_inline_completion.as_ref() {
-            let buffer = self.buffer.read(cx).read(cx);
-            completion.active_edit().position().is_valid(&buffer)
-        } else {
-            false
-        }
+    pub fn has_active_prediction(&self, _cx: &AppContext) -> bool {
+        self.active_prediction.is_some()
     }
 
-    fn move_to_active_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(target) = self.cursor_needs_repositioning_for_inline_completion(cx) {
-            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.select_ranges(vec![target..target])
-            });
-            true
-        } else {
-            false
-        }
+    fn take_active_prediction(&mut self, cx: &mut ViewContext<Self>) -> Option<Prediction> {
+        let active_prediction = self.active_prediction.take()?;
+        self.splice_inlays(active_prediction.inlay_ids, Default::default(), cx);
+        self.clear_highlights::<PredictionHighlight>(cx);
+        Some(active_prediction.prediction)
     }
 
-    fn cursor_needs_repositioning_for_inline_completion(&self, cx: &AppContext) -> Option<Anchor> {
-        let completion = self.active_inline_completion.as_ref()?;
+    fn update_visible_prediction(&mut self, cx: &mut ViewContext<Self>) {
+        self.take_active_prediction(cx);
 
-        let cursor_position = self.selections.newest_anchor().head();
-        let active_edit_position = completion.active_edit().position();
-
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-
-        // TODO: Decide which approach we want to use to determine if we should move cursor to completion:
-        // - Check if cursor is on the same line as completion
-        // - Evaluate if cursor is within N rows of completion
-        if cursor_position.to_point(&snapshot).row == active_edit_position.to_point(&snapshot).row {
-            return None;
-        }
-        Some(active_edit_position)
-    }
-
-    fn take_active_inline_completion(
-        &mut self,
-        discard_subsequent_edits: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<ComputedCompletionEdit> {
-        let state = self.active_inline_completion.take()?;
-        let cursor = self.selections.newest_anchor().head();
-        let excerpt_id = cursor.excerpt_id;
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-
-        let (edit, state) = if discard_subsequent_edits {
-            (state.active_edit.1, None)
-        } else {
-            state.advance(excerpt_id, &snapshot)
-        };
-        match &edit {
-            ComputedCompletionEdit::Insertion {
-                render_inlay_ids, ..
-            } => {
-                self.display_map.update(cx, |map, cx| {
-                    map.splice_inlays(render_inlay_ids.clone(), Default::default(), cx);
-                });
-            }
-            ComputedCompletionEdit::Diff { .. } => {
-                self.clear_highlights::<CompletionEditDeletion>(cx);
-            }
-        }
-        self.active_inline_completion = state;
-        Some(edit)
-    }
-
-    fn update_visible_inline_completion(&mut self, cx: &mut ViewContext<Self>) {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
 
         let excerpt_id = cursor.excerpt_id;
-
         if self.context_menu.read().is_none()
             && self.completion_tasks.is_empty()
             && selection.start == selection.end
         {
-            if self.active_inline_completion.is_none() {
-                if let Some(provider) = self.inline_completion_provider() {
-                    if let Some((buffer, cursor_buffer_position)) =
-                        self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+            if let Some(provider) = self.inline_completion_provider() {
+                if let Some((buffer, cursor_buffer_position)) =
+                    self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+                {
+                    if let Some(prediction) = provider.predict(&buffer, cursor_buffer_position, cx)
                     {
-                        if let Some(proposal) =
-                            provider.active_completion_text(&buffer, cursor_buffer_position, cx)
-                        {
-                            let snapshot = self.buffer.read(cx).snapshot(cx);
-                            if let Some(edit) = proposal.edits.get(0) {
-                                if let Some(computed) =
-                                    ComputedCompletionEdit::from_edit(edit, excerpt_id, &snapshot)
-                                {
-                                    self.active_inline_completion = Some(CompletionState {
-                                        proposal,
-                                        active_edit: (0, computed),
-                                    });
-                                }
+                        let multibuffer = self.buffer.read(cx).snapshot(cx);
+                        let prediction = match prediction {
+                            inline_completion::Prediction::Move(position) => Prediction::Move(
+                                multibuffer.anchor_in_excerpt(excerpt_id, position).unwrap(),
+                            ),
+                            inline_completion::Prediction::Edit(edits) => {
+                                // todo!("ensure we have at least one edit")
+                                let edits = edits
+                                    .into_iter()
+                                    .map(|(range, new_text)| {
+                                        (
+                                            multibuffer
+                                                .anchor_in_excerpt(excerpt_id, range.start)
+                                                .unwrap()
+                                                ..multibuffer
+                                                    .anchor_in_excerpt(excerpt_id, range.end)
+                                                    .unwrap(),
+                                            new_text,
+                                        )
+                                    })
+                                    .collect::<Vec<_>>();
+                                Prediction::Edit(edits)
                             }
-                        }
-                    }
-                }
-            }
+                        };
 
-            if let Some(state) = self.active_inline_completion.as_mut() {
-                let edit = &mut state.active_edit.1;
-                match edit {
-                    ComputedCompletionEdit::Insertion {
-                        position,
-                        text,
-                        render_inlay_ids,
-                        ..
-                    } => {
-                        let id = post_inc(&mut self.next_inlay_id);
-                        let new_inlays = vec![Inlay::suggestion(id, *position, text.clone())];
-                        let new_inlay_ids: Vec<_> = new_inlays.iter().map(|i| i.id).collect();
-                        self.display_map.update(cx, {
-                            let old_inlay_ids = render_inlay_ids.clone();
-                            move |map, cx| map.splice_inlays(old_inlay_ids, new_inlays.clone(), cx)
-                        });
-                        *render_inlay_ids = new_inlay_ids;
+                        let mut inlay_ids = Vec::new();
+                        if let Prediction::Edit(edits) = &prediction {
+                            if edits.iter().all(|(range, _)| range.start == range.end) {
+                                let mut inlays = Vec::new();
+                                for (range, new_text) in edits {
+                                    let inlay = Inlay::suggestion(
+                                        post_inc(&mut self.next_inlay_id),
+                                        range.start,
+                                        new_text.as_str(),
+                                    );
+                                    inlay_ids.push(inlay.id);
+                                    inlays.push(inlay);
+                                }
 
-                        cx.notify();
-                        return;
-                    }
-                    ComputedCompletionEdit::Diff { deletions, .. } => {
-                        self.display_map.update(cx, {
-                            let deletions = deletions.clone();
-                            move |map, cx| {
-                                map.highlight_text(
-                                    TypeId::of::<CompletionEditDeletion>(),
-                                    deletions,
+                                self.splice_inlays(vec![], inlays, cx);
+                            } else {
+                                self.highlight_text::<PredictionHighlight>(
+                                    edits.iter().map(|(range, _)| range.clone()).collect(),
                                     HighlightStyle {
-                                        background_color: Some(
-                                            cx.theme().status().deleted_background,
-                                        ),
+                                        // todo!(use theme)
+                                        background_color: Some(gpui::red()),
                                         ..Default::default()
                                     },
-                                )
+                                    cx,
+                                );
                             }
-                        });
+                        }
 
+                        self.active_prediction = Some(PredictionState {
+                            inlay_ids,
+                            prediction,
+                        });
                         cx.notify();
                         return;
                     }
@@ -5638,7 +5495,7 @@ impl Editor {
             }
         }
 
-        self.discard_inline_completion(false, cx);
+        self.discard_prediction(false, cx);
     }
 
     fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
@@ -5877,7 +5734,7 @@ impl Editor {
         self.completion_tasks.clear();
         let context_menu = self.context_menu.write().take();
         if context_menu.is_some() {
-            self.update_visible_inline_completion(cx);
+            self.update_visible_prediction(cx);
         }
         context_menu
     }
@@ -6180,7 +6037,7 @@ impl Editor {
                     this.edit(edits, None, cx);
                 })
             }
-            this.refresh_inline_completion(true, false, cx);
+            this.refresh_prediction(true, false, cx);
             linked_editing_ranges::refresh_linked_ranges(this, cx);
         });
     }
@@ -6199,7 +6056,7 @@ impl Editor {
                 })
             });
             this.insert("", cx);
-            this.refresh_inline_completion(true, false, cx);
+            this.refresh_prediction(true, false, cx);
         });
     }
 
@@ -6286,7 +6143,7 @@ impl Editor {
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
-            this.refresh_inline_completion(true, false, cx);
+            this.refresh_prediction(true, false, cx);
         });
     }
 
@@ -7706,7 +7563,7 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
-            self.refresh_inline_completion(true, false, cx);
+            self.refresh_prediction(true, false, cx);
             cx.emit(EditorEvent::Edited { transaction_id });
             cx.emit(EditorEvent::TransactionUndone { transaction_id });
         }
@@ -7727,7 +7584,7 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
-            self.refresh_inline_completion(true, false, cx);
+            self.refresh_prediction(true, false, cx);
             cx.emit(EditorEvent::Edited { transaction_id });
         }
     }
@@ -12706,8 +12563,8 @@ impl Editor {
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
-                if self.has_active_inline_completion(cx) {
-                    self.update_visible_inline_completion(cx);
+                if self.has_active_prediction(cx) {
+                    self.update_visible_prediction(cx);
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
@@ -12814,7 +12671,7 @@ impl Editor {
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         self.tasks_update_task = Some(self.refresh_runnables(cx));
-        self.refresh_inline_completion(true, false, cx);
+        self.refresh_prediction(true, false, cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
                 self.selections.newest_anchor().head(),
