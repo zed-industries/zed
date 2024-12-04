@@ -401,6 +401,7 @@ impl AssistantPanel {
 
     fn render_message_list(&self, cx: &mut ViewContext<Self>) -> AnyElement {
         if self.thread_messages.is_empty() {
+            #[allow(clippy::useless_vec)]
             let recent_threads = vec![1, 2, 3];
 
             return v_flex()
