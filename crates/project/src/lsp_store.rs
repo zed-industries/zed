@@ -2300,7 +2300,7 @@ impl LspStore {
             let documentation = language::prepare_completion_documentation(
                 lsp_documentation,
                 &language_registry,
-                None, // TODO: Try to reasonably work out which language the completion is for
+                snapshot.language().cloned(),
             )
             .await;
 
