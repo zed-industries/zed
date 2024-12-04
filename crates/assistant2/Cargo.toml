@@ -29,6 +29,7 @@ language_model_selector.workspace = true
 language_models.workspace = true
 log.workspace = true
 markdown.workspace = true
+picker.workspace = true
 project.workspace = true
 proto.workspace = true
 serde.workspace = true

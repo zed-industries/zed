@@ -1,5 +1,6 @@
 mod active_thread;
 mod assistant_panel;
+mod context_picker;
 mod message_editor;
 mod thread;
 mod thread_store;

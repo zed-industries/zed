@@ -470,6 +470,7 @@ dependencies = [
  "language_models",
  "log",
  "markdown",
+ "picker",
  "project",
  "proto",
  "serde",
