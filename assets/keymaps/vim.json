@@ -327,6 +327,22 @@
     }
   },
   {
+    "context": "vim_mode == helix_normal",
+    "bindings": {
+      "i": "vim::InsertBefore",
+      "a": "vim::InsertAfter",
+      "w": "vim::NextWordStart",
+      "e": "vim::NextWordEnd",
+      "b": "vim::PreviousWordStart",
+
+      "h": "vim::Left",
+      "j": "vim::Down",
+      "k": "vim::Up",
+      "l": "vim::Right"
+    }
+  },
+
+  {
     "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
     "use_layout_keys": true,
     "bindings": {

@@ -529,6 +529,8 @@ impl Vim {
                         return;
                     }
                 }
+
+                Mode::HelixNormal => {}
             }
         }
 
@@ -558,6 +560,8 @@ impl Vim {
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 self.visual_motion(motion.clone(), count, cx)
             }
+
+            Mode::HelixNormal => self.helix_normal_motion(motion.clone(), count, cx),
         }
         self.clear_operator(cx);
         if let Some(operator) = waiting_operator {

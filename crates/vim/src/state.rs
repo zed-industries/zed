@@ -26,6 +26,7 @@ pub enum Mode {
     Visual,
     VisualLine,
     VisualBlock,
+    HelixNormal,
 }
 
 impl Display for Mode {
@@ -37,6 +38,7 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
+            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
         }
     }
 }
@@ -46,6 +48,7 @@ impl Mode {
         match self {
             Mode::Normal | Mode::Insert | Mode::Replace => false,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
+            Mode::HelixNormal => false,
         }
     }
 }

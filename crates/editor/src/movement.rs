@@ -488,6 +488,101 @@ pub fn find_boundary_point(
     map.clip_point(offset.to_display_point(map), Bias::Right)
 }
 
+pub fn find_preceding_boundary_trail(
+    map: &DisplaySnapshot,
+    head: DisplayPoint,
+    mut is_boundary: impl FnMut(char, char) -> bool,
+) -> (Option<DisplayPoint>, DisplayPoint) {
+    let mut offset = head.to_offset(map, Bias::Left);
+    let mut trail_offset = None;
+
+    let mut prev_ch = map.buffer_snapshot.chars_at(offset).next();
+    let mut forward = map.buffer_snapshot.reversed_chars_at(offset).peekable();
+
+    // Skip newlines
+    while let Some(&ch) = forward.peek() {
+        if ch == '\n' {
+            prev_ch = forward.next();
+            offset -= ch.len_utf8();
+            trail_offset = Some(offset);
+        } else {
+            break;
+        }
+    }
+
+    // Find the boundary
+    let start_offset = offset;
+    for ch in forward {
+        if let Some(prev_ch) = prev_ch {
+            if is_boundary(prev_ch, ch) {
+                if start_offset == offset {
+                    trail_offset = Some(offset);
+                } else {
+                    break;
+                }
+            }
+        }
+        offset -= ch.len_utf8();
+        prev_ch = Some(ch);
+    }
+
+    let trail = trail_offset
+        .map(|trail_offset: usize| map.clip_point(trail_offset.to_display_point(map), Bias::Left));
+
+    (
+        trail,
+        map.clip_point(offset.to_display_point(map), Bias::Left),
+    )
+}
+
+/// Finds the location of a boundary
+pub fn find_boundary_trail(
+    map: &DisplaySnapshot,
+    head: DisplayPoint,
+    mut is_boundary: impl FnMut(char, char) -> bool,
+) -> (Option<DisplayPoint>, DisplayPoint) {
+    let mut offset = head.to_offset(map, Bias::Right);
+    let mut trail_offset = None;
+
+    let mut prev_ch = map.buffer_snapshot.reversed_chars_at(offset).next();
+    let mut forward = map.buffer_snapshot.chars_at(offset).peekable();
+
+    // Skip newlines
+    while let Some(&ch) = forward.peek() {
+        if ch == '\n' {
+            prev_ch = forward.next();
+            offset += ch.len_utf8();
+            trail_offset = Some(offset);
+        } else {
+            break;
+        }
+    }
+
+    // Find the boundary
+    let start_offset = offset;
+    for ch in forward {
+        if let Some(prev_ch) = prev_ch {
+            if is_boundary(prev_ch, ch) {
+                if start_offset == offset {
+                    trail_offset = Some(offset);
+                } else {
+                    break;
+                }
+            }
+        }
+        offset += ch.len_utf8();
+        prev_ch = Some(ch);
+    }
+
+    let trail = trail_offset
+        .map(|trail_offset: usize| map.clip_point(trail_offset.to_display_point(map), Bias::Right));
+
+    (
+        trail,
+        map.clip_point(offset.to_display_point(map), Bias::Right),
+    )
+}
+
 pub fn find_boundary(
     map: &DisplaySnapshot,
     from: DisplayPoint,

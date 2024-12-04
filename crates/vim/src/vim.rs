@@ -6,6 +6,7 @@ mod test;
 mod change_list;
 mod command;
 mod digraph;
+mod helix;
 mod indent;
 mod insert;
 mod mode_indicator;
@@ -337,6 +338,7 @@ impl Vim {
 
             normal::register(editor, cx);
             insert::register(editor, cx);
+            helix::register(editor, cx);
             motion::register(editor, cx);
             command::register(editor, cx);
             replace::register(editor, cx);
@@ -631,7 +633,9 @@ impl Vim {
                 }
             }
             Mode::Replace => CursorShape::Underline,
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
+            Mode::HelixNormal | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                CursorShape::Block
+            }
             Mode::Insert => CursorShape::Bar,
         }
     }
@@ -645,9 +649,12 @@ impl Vim {
                     true
                 }
             }
-            Mode::Normal | Mode::Replace | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                false
-            }
+            Mode::Normal
+            | Mode::HelixNormal
+            | Mode::Replace
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock => false,
         }
     }
 
@@ -657,9 +664,12 @@ impl Vim {
 
     pub fn clip_at_line_ends(&self) -> bool {
         match self.mode {
-            Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::Replace => {
-                false
-            }
+            Mode::Insert
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock
+            | Mode::Replace
+            | Mode::HelixNormal => false,
             Mode::Normal => true,
         }
     }
@@ -670,6 +680,7 @@ impl Vim {
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
             Mode::Insert => "insert",
             Mode::Replace => "replace",
+            Mode::HelixNormal => "helix_normal",
         }
         .to_string();
 
@@ -998,7 +1009,7 @@ impl Vim {
                     })
                 });
             }
-            Mode::Insert | Mode::Replace => {}
+            Mode::Insert | Mode::Replace | Mode::HelixNormal => {}
         }
     }
 
