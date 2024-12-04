@@ -7,7 +7,10 @@ use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use gpui::{prelude::*, AppContext, Model, ModelContext, Task};
 use project::Project;
+use unindent::Unindent;
 use util::ResultExt as _;
+
+use crate::thread::{Thread, ThreadId};
 
 pub struct ThreadStore {
     #[allow(unused)]
@@ -15,6 +18,7 @@ pub struct ThreadStore {
     tools: Arc<ToolWorkingSet>,
     context_server_manager: Model<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
+    threads: Vec<Model<Thread>>,
 }
 
 impl ThreadStore {
@@ -31,12 +35,14 @@ impl ThreadStore {
                     ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
                 });
 
-                let this = Self {
+                let mut this = Self {
                     project,
                     tools,
                     context_server_manager,
                     context_server_tool_ids: HashMap::default(),
+                    threads: Vec::new(),
                 };
+                this.mock_recent_threads(cx);
                 this.register_context_server_handlers(cx);
 
                 this
@@ -44,6 +50,23 @@ impl ThreadStore {
 
             Ok(this)
         })
+    }
+
+    pub fn recent_threads(&self, limit: usize, _cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
+        self.threads.iter().take(limit).cloned().collect()
+    }
+
+    pub fn create_thread(&mut self, cx: &mut ModelContext<Self>) -> Model<Thread> {
+        let thread = cx.new_model(|cx| Thread::new(self.tools.clone(), cx));
+        self.threads.push(thread.clone());
+        thread
+    }
+
+    pub fn open_thread(&self, id: &ThreadId, cx: &mut ModelContext<Self>) -> Option<Model<Thread>> {
+        self.threads
+            .iter()
+            .find(|thread| thread.read(cx).id() == id)
+            .cloned()
     }
 
     fn register_context_server_handlers(&self, cx: &mut ModelContext<Self>) {
@@ -110,5 +133,93 @@ impl ThreadStore {
                 }
             }
         }
+    }
+}
+
+impl ThreadStore {
+    /// Creates some mocked recent threads for testing purposes.
+    fn mock_recent_threads(&mut self, cx: &mut ModelContext<Self>) {
+        use language_model::Role;
+
+        self.threads.push(cx.new_model(|cx| {
+            let mut thread = Thread::new(self.tools.clone(), cx);
+            thread.insert_user_message("Hello! Can you help me understand quantum computing?", cx);
+            thread.insert_message(Role::Assistant, "Of course! I'd be happy to help you understand quantum computing. Quantum computing is a fascinating field that uses the principles of quantum mechanics to process information. Unlike classical computers that use bits (0s and 1s), quantum computers use quantum bits or 'qubits'. These qubits can exist in multiple states simultaneously, a property called superposition. This allows quantum computers to perform certain calculations much faster than classical computers. What specific aspect of quantum computing would you like to know more about?", cx);
+            thread.insert_user_message("That's interesting! Can you explain how quantum entanglement is used in quantum computing?", cx);
+            thread.insert_message(Role::Assistant, "Certainly! Quantum entanglement is a key principle used in quantum computing. When two qubits become entangled, the state of one qubit is directly related to the state of the other, regardless of the distance between them. This property is used in quantum computing to create complex quantum states and to perform operations on multiple qubits simultaneously. Entanglement allows quantum computers to process information in ways that classical computers cannot, potentially solving certain problems much more efficiently. For example, it's crucial in quantum error correction and in algorithms like quantum teleportation, which is important for quantum communication.", cx);
+            thread
+        }));
+
+        self.threads.push(cx.new_model(|cx| {
+            let mut thread = Thread::new(self.tools.clone(), cx);
+            thread.insert_user_message("Can you show me an example of Rust code for a simple web server?", cx);
+            thread.insert_message(Role::Assistant, "Certainly! Here's an example of a simple web server in Rust using the `actix-web` framework:
+
+        ```rust
+        use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+
+        async fn hello() -> impl Responder {
+            HttpResponse::Ok().body(\"Hello, World!\")
+        }
+
+        #[actix_web::main]
+        async fn main() -> std::io::Result<()> {
+            HttpServer::new(|| {
+                App::new()
+                    .route(\"/\", web::get().to(hello))
+            })
+            .bind(\"127.0.0.1:8080\")?
+            .run()
+            .await
+        }
+        ```
+
+        This code creates a basic web server that responds with 'Hello, World!' when you access the root URL. Here's a breakdown of what's happening:
+
+        1. We import necessary items from the `actix-web` crate.
+        2. We define an async `hello` function that returns a simple HTTP response.
+        3. In the `main` function, we set up the server to listen on `127.0.0.1:8080`.
+        4. We configure the app to respond to GET requests on the root path with our `hello` function.
+
+        To run this, you'd need to add `actix-web` to your `Cargo.toml` dependencies:
+
+        ```toml
+        [dependencies]
+        actix-web = \"4.0\"
+        ```
+
+        Then you can run the server with `cargo run` and access it at `http://localhost:8080`.".unindent(), cx);
+            thread.insert_user_message("That's great! Can you explain more about async functions in Rust?", cx);
+            thread.insert_message(Role::Assistant, "Certainly! Async functions are a key feature in Rust for writing efficient, non-blocking code, especially for I/O-bound operations. Here's an overview:
+
+        1. **Syntax**: Async functions are declared using the `async` keyword:
+
+           ```rust
+           async fn my_async_function() -> Result<(), Error> {
+               // Asynchronous code here
+           }
+           ```
+
+        2. **Futures**: Async functions return a `Future`. A `Future` represents a value that may not be available yet but will be at some point.
+
+        3. **Await**: Inside an async function, you can use the `.await` syntax to wait for other async operations to complete:
+
+           ```rust
+           async fn fetch_data() -> Result<String, Error> {
+               let response = make_http_request().await?;
+               let data = process_response(response).await?;
+               Ok(data)
+           }
+           ```
+
+        4. **Non-blocking**: Async functions allow the runtime to work on other tasks while waiting for I/O or other operations to complete, making efficient use of system resources.
+
+        5. **Runtime**: To execute async code, you need a runtime like `tokio` or `async-std`. Actix-web, which we used in the previous example, includes its own runtime.
+
+        6. **Error Handling**: Async functions work well with Rust's `?` operator for error handling.
+
+        Async programming in Rust provides a powerful way to write concurrent code that's both safe and efficient. It's particularly useful for servers, network programming, and any application that deals with many concurrent operations.".unindent(), cx);
+            thread
+        }));
     }
 }
