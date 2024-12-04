@@ -4,7 +4,7 @@ use futures::{channel::mpsc, future::join_all};
 use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription, Task, View};
 use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
-use project::Project;
+use project::{buffer_store::BufferChangeSet, Project};
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
@@ -96,12 +96,14 @@ impl ProposedChangesEditor {
                         }
                     }
 
-                    let tasks = this
+                    let recalculate_diff_futures = this
                         .update(&mut cx, |this, cx| {
                             buffers_to_diff
                                 .drain()
                                 .filter_map(|buffer| {
-                                    let buffer = buffer.read(cx).text_snapshot();
+                                    let buffer = buffer.read(cx);
+                                    let base_buffer = buffer.base_buffer()?;
+                                    let buffer = buffer.text_snapshot();
                                     let change_set = this.editor.update(cx, |editor, _| {
                                         Some(
                                             editor
@@ -113,14 +115,18 @@ impl ProposedChangesEditor {
                                         )
                                     })?;
                                     Some(change_set.update(cx, |change_set, cx| {
-                                        change_set.recalculate_diff(buffer, cx)
+                                        change_set.set_base_text(
+                                            base_buffer.read(cx).text(),
+                                            buffer,
+                                            cx,
+                                        )
                                     }))
                                 })
                                 .collect::<Vec<_>>()
                         })
                         .ok()?;
 
-                    join_all(tasks).await;
+                    join_all(recalculate_diff_futures).await;
                 }
                 None
             }),
@@ -173,6 +179,7 @@ impl ProposedChangesEditor {
         });
 
         let mut buffer_entries = Vec::new();
+        let mut new_change_sets = Vec::new();
         for location in locations {
             let branch_buffer;
             if let Some(ix) = self
@@ -185,6 +192,15 @@ impl ProposedChangesEditor {
                 buffer_entries.push(entry);
             } else {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
+                new_change_sets.push(cx.new_model(|cx| {
+                    let mut change_set = BufferChangeSet::new(branch_buffer.read(cx));
+                    let _ = change_set.set_base_text(
+                        location.buffer.read(cx).text(),
+                        branch_buffer.read(cx).text_snapshot(),
+                        cx,
+                    );
+                    change_set
+                }));
                 buffer_entries.push(BufferEntry {
                     branch: branch_buffer.clone(),
                     base: location.buffer.clone(),
@@ -206,7 +222,10 @@ impl ProposedChangesEditor {
 
         self.buffer_entries = buffer_entries;
         self.editor.update(cx, |editor, cx| {
-            editor.change_selections(None, cx, |selections| selections.refresh())
+            editor.change_selections(None, cx, |selections| selections.refresh());
+            for change_set in new_change_sets {
+                editor.diff_map.add_change_set(change_set, cx)
+            }
         });
     }
 
