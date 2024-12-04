@@ -342,6 +342,7 @@ impl EditorElement {
         register_action(view, cx, Editor::fold);
         register_action(view, cx, Editor::fold_at_level);
         register_action(view, cx, Editor::fold_all);
+        register_action(view, cx, Editor::fold_function_bodies);
         register_action(view, cx, Editor::fold_at);
         register_action(view, cx, Editor::fold_recursive);
         register_action(view, cx, Editor::toggle_fold);
