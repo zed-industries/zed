@@ -40,6 +40,7 @@ pub fn fallback_prompt_renderer(
                     base_text_style.refine(&TextStyleRefinement {
                         font_family: Some(settings.ui_font.family.clone()),
                         font_size: Some(settings.ui_font_size.into()),
+                        color: Some(ui::Color::Muted.color(cx)),
                         ..Default::default()
                     });
                     let markdown_style = MarkdownStyle {
@@ -129,13 +130,11 @@ impl Render for FallbackPromptRenderer {
                     .child(self.message.clone())
                     .text_color(ui::Color::Default.color(cx)),
             )
-            .children(self.detail.clone().map(|detail| {
-                div()
-                    .w_full()
-                    .text_xs()
-                    .text_color(ui::Color::Muted.color(cx))
-                    .child(detail)
-            }))
+            .children(
+                self.detail
+                    .clone()
+                    .map(|detail| div().w_full().text_xs().child(detail)),
+            )
             .child(h_flex().justify_end().gap_2().children(
                 self.actions.iter().enumerate().rev().map(|(ix, action)| {
                     ui::Button::new(ix, action.clone())
