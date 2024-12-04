@@ -624,10 +624,16 @@ impl Vim {
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
             Mode::Normal => {
-                if self.operator_stack.is_empty() {
-                    CursorShape::Block
+                if let Some(operator) = self.operator_stack.last() {
+                    match operator {
+                        Operator::Change
+                        | Operator::Delete
+                        | Operator::Yank
+                        | Operator::Replace => CursorShape::Underline,
+                        _ => CursorShape::Block,
+                    }
                 } else {
-                    CursorShape::Underline
+                    CursorShape::Block
                 }
             }
             Mode::Replace => CursorShape::Underline,
