@@ -1,10 +1,9 @@
-use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     div, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
     IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Render,
     RenderablePromptHandle, Styled, TextStyle, View, ViewContext, VisualContext, WindowContext,
 };
-use language::CursorShape;
+use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
@@ -35,11 +34,21 @@ pub fn fallback_prompt_renderer(
             active_action_id: 0,
             detail: detail.filter(|text| !text.is_empty()).map(|text| {
                 cx.new_view(|cx| {
-                    let mut editor = Editor::auto_height(3, cx);
-                    editor.set_input_enabled(false);
-                    editor.set_text(text, cx);
-                    editor.set_cursor_shape(CursorShape::Transparent, cx);
-                    editor
+                    let settings = ThemeSettings::get_global(cx);
+                    let markdown_style = MarkdownStyle {
+                        base_text_style: TextStyle {
+                            color: ui::Color::Muted.color(cx),
+                            font_family: settings.ui_font.family.clone(),
+                            font_features: settings.ui_font.features.clone(),
+                            font_fallbacks: settings.ui_font.fallbacks.clone(),
+                            font_weight: settings.ui_font.weight,
+                            font_size: ui::rems(0.75).into(),
+                            ..Default::default()
+                        },
+                        selection_background_color: { cx.theme().players().local().selection },
+                        ..Default::default()
+                    };
+                    Markdown::new_text(text.to_string(), markdown_style, None, cx, None)
                 })
             }),
         }
@@ -55,7 +64,7 @@ pub struct FallbackPromptRenderer {
     actions: Vec<String>,
     focus: FocusHandle,
     active_action_id: usize,
-    detail: Option<View<Editor>>,
+    detail: Option<View<Markdown>>,
 }
 
 impl FallbackPromptRenderer {
@@ -92,27 +101,6 @@ impl FallbackPromptRenderer {
         self.active_action_id = (self.active_action_id + 1) % self.actions.len();
         cx.notify();
     }
-
-    fn render_detail(&self, detail: &View<Editor>, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: ui::Color::Muted.color(cx),
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_weight: settings.ui_font.weight,
-            font_size: ui::rems(0.75).into(),
-            ..Default::default()
-        };
-        EditorElement::new(
-            detail,
-            EditorStyle {
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
 }
 
 impl Render for FallbackPromptRenderer {
@@ -143,7 +131,7 @@ impl Render for FallbackPromptRenderer {
                     .text_color(ui::Color::Default.color(cx)),
             )
             .when_some(self.detail.as_ref(), |div, detail| {
-                div.child(self.render_detail(detail, cx))
+                div.child(detail.clone())
             })
             .child(h_flex().justify_end().gap_2().children(
                 self.actions.iter().enumerate().rev().map(|(ix, action)| {

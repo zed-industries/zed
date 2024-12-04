@@ -186,8 +186,6 @@ pub enum CursorShape {
     Underline,
     /// A box drawn around the following character
     Hollow,
-    /// An invisible cursor
-    Transparent,
 }
 
 #[derive(Clone, Debug)]
