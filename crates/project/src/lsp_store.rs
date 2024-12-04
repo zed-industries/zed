@@ -2241,17 +2241,23 @@ impl LspStore {
                         (server_id, completion)
                     };
 
-                    let server = this
-                        .read_with(&cx, |this, _| this.language_server_for_id(server_id))
+                    let server_and_adapter = this
+                        .read_with(&cx, |lsp_store, _| {
+                            let server = lsp_store.language_server_for_id(server_id)?;
+                            let adapter =
+                                lsp_store.language_server_adapter_for_id(server.server_id())?;
+                            Some((server, adapter))
+                        })
                         .ok()
                         .flatten();
-                    let Some(server) = server else {
+                    let Some((server, adapter)) = server_and_adapter else {
                         continue;
                     };
 
                     did_resolve = true;
                     Self::resolve_completion_local(
                         server,
+                        adapter,
                         &buffer_snapshot,
                         completions.clone(),
                         completion_index,
@@ -2268,6 +2274,7 @@ impl LspStore {
 
     async fn resolve_completion_local(
         server: Arc<lsp::LanguageServer>,
+        adapter: Arc<CachedLspAdapter>,
         snapshot: &BufferSnapshot,
         completions: Arc<RwLock<Box<[Completion]>>>,
         completion_index: usize,
@@ -2332,9 +2339,23 @@ impl LspStore {
             }
         }
 
+        let new_label = match snapshot.language() {
+            Some(language) => adapter
+                .labels_for_completions(&[completion_item.clone()], language)
+                .await
+                .log_err()
+                .unwrap_or_default(),
+            None => Vec::new(),
+        }
+        .pop()
+        .flatten();
+
         let mut completions = completions.write();
         let completion = &mut completions[completion_index];
         completion.lsp_completion = completion_item;
+        if let Some(new_label) = new_label {
+            completion.label = new_label;
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
