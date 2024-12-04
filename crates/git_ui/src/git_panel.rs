@@ -683,7 +683,7 @@ pub struct StagingHeaderItem {
     count: usize,
     is_selected: bool,
     is_expanded: bool,
-    no_changes: bool,
+    model: Model<GitPanelState>,
 }
 
 impl StagingHeaderItem {
@@ -694,6 +694,7 @@ impl StagingHeaderItem {
         is_selected: bool,
         is_expanded: bool,
         no_changes: bool,
+        model: Model<GitPanelState>,
     ) -> Self {
         Self {
             id: id.into(),
@@ -701,7 +702,7 @@ impl StagingHeaderItem {
             count,
             is_selected,
             is_expanded,
-            no_changes,
+            model,
         }
     }
 }
@@ -711,6 +712,8 @@ impl RenderOnce for StagingHeaderItem {
         let staging_type = if self.is_staged { "Staged" } else { "Unstaged" };
         let label: SharedString = format!("{} Changes", staging_type).into();
         let selected_color = cx.theme().status().info.opacity(0.1);
+        let model = self.model.clone();
+        let state = model.read(cx);
 
         h_flex()
             .id(self.id.clone())
@@ -749,7 +752,7 @@ impl RenderOnce for StagingHeaderItem {
                         .size(ButtonSize::Compact)
                         .label_size(LabelSize::Small)
                         .layer(ui::ElevationIndex::ModalSurface)
-                        .disabled(self.no_changes)
+                        .disabled(state.no_changes() || state.all_staged())
                         .on_click(move |_, cx| cx.dispatch_action(Box::new(StageAll))),
                     )
                 } else {
@@ -762,7 +765,7 @@ impl RenderOnce for StagingHeaderItem {
                         .size(ButtonSize::Compact)
                         .label_size(LabelSize::Small)
                         .layer(ui::ElevationIndex::ModalSurface)
-                        .disabled(self.no_changes)
+                        .disabled(state.no_changes())
                         .on_click(move |_, cx| cx.dispatch_action(Box::new(UnstageAll))),
                     )
                 }
@@ -836,6 +839,7 @@ fn update_list(model: Model<GitPanelState>, cx: &mut WindowContext) -> ListState
                         state.selected_index == ix,
                         true, // Always expanded for now
                         count == 0,
+                        model.clone(),
                     )
                     .into_any_element()
                 }
@@ -1086,6 +1090,7 @@ impl GitPanel {
                             state.selected_index == ix,
                             true, // Always expanded for now
                             count == 0,
+                            model.clone(),
                         )
                         .into_any_element()
                     }
