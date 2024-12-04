@@ -282,9 +282,10 @@ impl EditorTestContext {
         self.cx.run_until_parked();
         let fs = self
             .update_editor(|editor, cx| editor.project.as_ref().unwrap().read(cx).fs().as_fake());
+        let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         fs.set_index_for_repo(
             &Self::root_path().join(".git"),
-            &[(Path::new("file"), diff_base.to_string())],
+            &[(path.as_ref(), diff_base.to_string())],
         );
         self.cx.run_until_parked();
     }

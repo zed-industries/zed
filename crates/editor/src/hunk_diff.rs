@@ -144,14 +144,12 @@ impl DiffMapSnapshot {
                 Some(
                     diff.hunks_intersecting_range(buffer_range, excerpt.buffer())
                         .map(move |hunk| {
-                            let start_row = excerpt
-                                .map_point_from_buffer(Point::new(hunk.row_range.start, 0))
-                                .row;
-                            let end_row = excerpt
-                                .map_point_from_buffer(Point::new(hunk.row_range.end, 0))
-                                .row;
+                            let start =
+                                excerpt.map_point_from_buffer(Point::new(hunk.row_range.start, 0));
+                            let end =
+                                excerpt.map_point_from_buffer(Point::new(hunk.row_range.end, 0));
                             MultiBufferDiffHunk {
-                                row_range: MultiBufferRow(start_row)..MultiBufferRow(end_row),
+                                row_range: MultiBufferRow(start.row)..MultiBufferRow(end.row),
                                 buffer_id,
                                 buffer_range: hunk.buffer_range.clone(),
                                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
@@ -1407,7 +1405,7 @@ mod tests {
             multibuffer
         });
 
-        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, cx));
+        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, false, cx));
         editor
             .update(cx, |editor, cx| {
                 for (buffer, diff_base) in [
@@ -1426,7 +1424,7 @@ mod tests {
         let snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
 
         assert_eq!(
-            snapshot.text(),
+            snapshot.buffer_snapshot.text(),
             "
                 1.zero
                 1.ONE
