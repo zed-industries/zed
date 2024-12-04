@@ -1181,9 +1181,9 @@ impl CompletionsMenu {
         let delay = Duration::from_millis(delay_ms);
 
         completion_resolve.lock().fire_new(delay, cx, |_, cx| {
-            cx.spawn(move |this, mut cx| async move {
+            cx.spawn(move |editor, mut cx| async move {
                 if let Some(true) = resolve_task.await.log_err() {
-                    this.update(&mut cx, |_, cx| cx.notify()).ok();
+                    editor.update(&mut cx, |_, cx| cx.notify()).ok();
                 }
             })
         });
