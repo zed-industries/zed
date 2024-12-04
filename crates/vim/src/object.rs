@@ -724,7 +724,7 @@ fn indent(
 
     // Loop forwards until we find a non-blank line with less indent
     let mut end_row = row;
-    let max_rows = map.max_buffer_row().0;
+    let max_rows = map.buffer_snapshot.max_row().0;
     for next_row in (row + 1)..=max_rows {
         let indent = map.line_indent_for_buffer_row(MultiBufferRow(next_row));
         if indent.is_line_empty() {
@@ -958,13 +958,13 @@ pub fn start_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) ->
 /// The trailing newline is excluded from the paragraph.
 pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
     let point = display_point.to_point(map);
-    if point.row == map.max_buffer_row().0 {
+    if point.row == map.buffer_snapshot.max_row().0 {
         return map.max_point();
     }
 
     let is_current_line_blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
 
-    for row in point.row + 1..map.max_buffer_row().0 + 1 {
+    for row in point.row + 1..map.buffer_snapshot.max_row().0 + 1 {
         let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
         if blank != is_current_line_blank {
             let previous_row = row - 1;

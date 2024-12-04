@@ -2,7 +2,7 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, RowExt, ToOffset, ToPoint};
+use crate::{scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, ToOffset, ToPoint};
 use gpui::{Pixels, WindowTextSystem};
 use language::Point;
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
@@ -382,12 +382,12 @@ pub fn end_of_paragraph(
     mut count: usize,
 ) -> DisplayPoint {
     let point = display_point.to_point(map);
-    if point.row == map.max_buffer_row().0 {
+    if point.row == map.buffer_snapshot.max_row().0 {
         return map.max_point();
     }
 
     let mut found_non_blank_line = false;
-    for row in point.row..map.max_buffer_row().next_row().0 {
+    for row in point.row..=map.buffer_snapshot.max_row().0 {
         let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
         if found_non_blank_line && blank {
             if count <= 1 {
