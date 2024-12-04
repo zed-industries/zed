@@ -1866,7 +1866,7 @@ fn end_of_document(
     let new_row = if let Some(line) = line {
         (line - 1) as u32
     } else {
-        map.max_buffer_row().0
+        map.buffer_snapshot.max_row().0
     };
 
     let new_point = Point::new(new_row, point.column());

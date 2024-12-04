@@ -6502,7 +6502,7 @@ impl Editor {
         let mut revert_changes = HashMap::default();
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         for hunk in hunks_for_rows(
-            Some(MultiBufferRow(0)..multi_buffer_snapshot.max_buffer_row()).into_iter(),
+            Some(MultiBufferRow(0)..multi_buffer_snapshot.max_row()).into_iter(),
             &multi_buffer_snapshot,
         ) {
             Self::prepare_revert_change(&mut revert_changes, self.buffer(), &hunk, cx);
@@ -11051,10 +11051,14 @@ impl Editor {
     }
 
     fn fold_at_level(&mut self, fold_at: &FoldAtLevel, cx: &mut ViewContext<Self>) {
+        if !self.buffer.read(cx).is_singleton() {
+            return;
+        }
+
         let fold_at_level = fold_at.level;
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut to_fold = Vec::new();
-        let mut stack = vec![(0, snapshot.max_buffer_row().0, 1)];
+        let mut stack = vec![(0, snapshot.max_row().0, 1)];
 
         while let Some((mut start_row, end_row, current_level)) = stack.pop() {
             while start_row < end_row {
@@ -11083,10 +11087,14 @@ impl Editor {
     }
 
     pub fn fold_all(&mut self, _: &actions::FoldAll, cx: &mut ViewContext<Self>) {
+        if !self.buffer.read(cx).is_singleton() {
+            return;
+        }
+
         let mut fold_ranges = Vec::new();
         let snapshot = self.buffer.read(cx).snapshot(cx);
 
-        for row in 0..snapshot.max_buffer_row().0 {
+        for row in 0..snapshot.max_row().0 {
             if let Some(foldable_range) =
                 self.snapshot(cx).crease_for_buffer_row(MultiBufferRow(row))
             {

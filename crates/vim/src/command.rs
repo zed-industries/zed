@@ -136,7 +136,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.update_editor(cx, |vim, editor, cx| {
             let snapshot = editor.snapshot(cx);
             if let Ok(range) = action.range.buffer_range(vim, editor, cx) {
-                let end = if range.end < snapshot.max_buffer_row() {
+                let end = if range.end < snapshot.buffer_snapshot.max_row() {
                     Point::new(range.end.0 + 1, 0)
                 } else {
                     snapshot.buffer_snapshot.max_point()
@@ -436,9 +436,11 @@ impl Position {
                     .row
                     .saturating_add_signed(*offset)
             }
-            Position::LastLine { offset } => {
-                snapshot.max_buffer_row().0.saturating_add_signed(*offset)
-            }
+            Position::LastLine { offset } => snapshot
+                .buffer_snapshot
+                .max_row()
+                .0
+                .saturating_add_signed(*offset),
             Position::CurrentLine { offset } => editor
                 .selections
                 .newest_anchor()
@@ -448,7 +450,7 @@ impl Position {
                 .saturating_add_signed(*offset),
         };
 
-        Ok(MultiBufferRow(target).min(snapshot.max_buffer_row()))
+        Ok(MultiBufferRow(target).min(snapshot.buffer_snapshot.max_row()))
     }
 }
 

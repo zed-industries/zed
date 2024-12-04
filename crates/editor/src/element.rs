@@ -4141,13 +4141,7 @@ impl EditorElement {
     }
 
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
-        let digit_count = snapshot
-            .max_buffer_row()
-            .next_row()
-            .as_f32()
-            .log10()
-            .floor() as usize
-            + 1;
+        let digit_count = (snapshot.widest_line_number() as f32).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
     }
 }

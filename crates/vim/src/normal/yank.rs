@@ -154,9 +154,9 @@ impl Vim {
                 // contains a newline (so that delete works as expected). We undo that change
                 // here.
                 let is_last_line = linewise
-                    && end.row == buffer.max_buffer_row().0
+                    && end.row == buffer.max_row().0
                     && buffer.max_point().column > 0
-                    && start.row < buffer.max_buffer_row().0
+                    && start.row < buffer.max_row().0
                     && start == Point::new(start.row, buffer.line_len(MultiBufferRow(start.row)));
 
                 if is_last_line {

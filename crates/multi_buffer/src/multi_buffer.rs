@@ -281,8 +281,7 @@ pub struct ExcerptSummary {
     excerpt_id: ExcerptId,
     /// The location of the last [`Excerpt`] being summarized
     excerpt_locator: Locator,
-    /// The maximum row of the [`Excerpt`]s being summarized
-    max_buffer_row: MultiBufferRow,
+    widest_line_number: u32,
     text: TextSummary,
 }
 
@@ -2556,8 +2555,8 @@ impl MultiBufferSnapshot {
         self.excerpts.summary().text.len == 0
     }
 
-    pub fn max_buffer_row(&self) -> MultiBufferRow {
-        self.excerpts.summary().max_buffer_row
+    pub fn widest_line_number(&self) -> u32 {
+        self.excerpts.summary().widest_line_number + 1
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -3024,6 +3023,10 @@ impl MultiBufferSnapshot {
 
     pub fn max_point(&self) -> Point {
         self.text_summary().lines
+    }
+
+    pub fn max_row(&self) -> MultiBufferRow {
+        MultiBufferRow(self.text_summary().lines.row)
     }
 
     pub fn text_summary(&self) -> TextSummary {
@@ -4824,7 +4827,7 @@ impl sum_tree::Item for Excerpt {
         ExcerptSummary {
             excerpt_id: self.id,
             excerpt_locator: self.locator.clone(),
-            max_buffer_row: MultiBufferRow(self.max_buffer_row),
+            widest_line_number: self.max_buffer_row,
             text,
         }
     }
@@ -4869,7 +4872,7 @@ impl sum_tree::Summary for ExcerptSummary {
         debug_assert!(summary.excerpt_locator > self.excerpt_locator);
         self.excerpt_locator = summary.excerpt_locator.clone();
         self.text.add_summary(&summary.text, &());
-        self.max_buffer_row = cmp::max(self.max_buffer_row, summary.max_buffer_row);
+        self.widest_line_number = cmp::max(self.widest_line_number, summary.widest_line_number);
     }
 }
 
@@ -6383,8 +6386,8 @@ mod tests {
             }
 
             assert_eq!(
-                snapshot.max_buffer_row().0,
-                expected_buffer_rows.into_iter().flatten().max().unwrap()
+                snapshot.widest_line_number(),
+                expected_buffer_rows.into_iter().flatten().max().unwrap() + 1
             );
 
             let mut excerpt_starts = excerpt_starts.into_iter();
