@@ -58,6 +58,7 @@ impl Prettier {
         "prettier.config.js",
         "prettier.config.cjs",
         ".editorconfig",
+        ".prettierignore",
     ];
 
     pub async fn locate_prettier_installation(
@@ -136,7 +137,7 @@ impl Prettier {
 
     pub async fn locate_prettier_ignore(
         fs: &dyn Fs,
-        prettier_ignores: &HashSet<Option<PathBuf>>,
+        prettier_ignores: &HashSet<PathBuf>,
         locate_from: &Path,
     ) -> anyhow::Result<ControlFlow<(), Option<PathBuf>>> {
         let mut path_to_check = locate_from
@@ -161,7 +162,7 @@ impl Prettier {
 
         let mut closest_package_json_path = None;
         loop {
-            if prettier_ignores.contains(&Some(path_to_check.clone())) {
+            if prettier_ignores.contains(&path_to_check) {
                 log::debug!("Found prettier ignore at {path_to_check:?}");
                 return Ok(ControlFlow::Continue(Some(path_to_check)));
             } else if let Some(package_json_contents) =
@@ -979,7 +980,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_prettier_ignore_in_monorepo_child(cx: &mut gpui::TestAppContext) {
+    async fn test_prettier_ignore_in_monorepo_with_only_child_ignore(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
@@ -1040,11 +1043,11 @@ mod tests {
                             "index.js": "// Dummy prettier package file",
                         }
                     },
-                    ".prettierignore": "*.test.js",
+                    ".prettierignore": "main.js",
                     "packages": {
                         "web": {
                             "src": {
-                                "index.js": "// index.js contents",
+                                "main.js": "// this should not be ignored",
                                 "ignored.js": "// this should be ignored",
                             },
                             ".prettierignore": "ignored.js",
@@ -1063,6 +1066,18 @@ mod tests {
             }),
         )
         .await;
+
+        assert_eq!(
+            Prettier::locate_prettier_ignore(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/monorepo/packages/web/src/main.js"),
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(Some(PathBuf::from("/root/monorepo/packages/web"))),
+            "Should find child package prettierignore first"
+        );
 
         assert_eq!(
             Prettier::locate_prettier_ignore(

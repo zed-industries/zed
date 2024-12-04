@@ -36,7 +36,7 @@ pub struct PrettierStore {
     worktree_store: Model<WorktreeStore>,
     default_prettier: DefaultPrettier,
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
-    prettier_ignores_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
+    prettier_ignores_per_worktree: HashMap<WorktreeId, HashSet<PathBuf>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
 }
 
@@ -224,7 +224,6 @@ impl PrettierStore {
         if buffer.language().is_none() {
             return Task::ready(None);
         }
-
         match File::from_dyn(buffer_file).map(|file| (file.worktree_id(cx), file.abs_path(cx))) {
             Some((worktree_id, buffer_path)) => {
                 let fs = Arc::clone(&self.fs);
@@ -247,10 +246,7 @@ impl PrettierStore {
                         .await
                     {
                         Ok(ControlFlow::Break(())) => None,
-                        Ok(ControlFlow::Continue(None)) => {
-                            log::debug!("No prettier ignore found for buffer");
-                            None
-                        }
+                        Ok(ControlFlow::Continue(None)) => None,
                         Ok(ControlFlow::Continue(Some(ignore_dir))) => {
                             log::debug!("Found prettier ignore in {ignore_dir:?}");
                             lsp_store
@@ -259,7 +255,7 @@ impl PrettierStore {
                                         .prettier_ignores_per_worktree
                                         .entry(worktree_id)
                                         .or_default()
-                                        .insert(Some(ignore_dir.clone()));
+                                        .insert(ignore_dir.clone());
                                 })
                                 .ok();
                             Some(ignore_dir)
