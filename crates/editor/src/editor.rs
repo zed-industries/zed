@@ -11097,6 +11097,23 @@ impl Editor {
         self.fold_creases(fold_ranges, true, cx);
     }
 
+    pub fn fold_function_bodies(
+        &mut self,
+        _: &actions::FoldFunctionBodies,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some((_, _, buffer)) = snapshot.as_singleton() else {
+            return;
+        };
+        let creases = buffer
+            .function_body_fold_ranges(0..buffer.len())
+            .map(|range| Crease::simple(range, self.display_map.read(cx).fold_placeholder.clone()))
+            .collect();
+
+        self.fold_creases(creases, true, cx);
+    }
+
     pub fn fold_recursive(&mut self, _: &actions::FoldRecursive, cx: &mut ViewContext<Self>) {
         let mut to_fold = Vec::new();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));

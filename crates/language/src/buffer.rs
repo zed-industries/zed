@@ -3355,6 +3355,14 @@ impl BufferSnapshot {
         })
     }
 
+    pub fn function_body_fold_ranges<T: ToOffset>(
+        &self,
+        within: Range<T>,
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
+        self.text_object_ranges(within, TreeSitterOptions::default())
+            .filter_map(|(range, obj)| (obj == TextObject::InsideFunction).then_some(range))
+    }
+
     /// For each grammar in the language, runs the provided
     /// [`tree_sitter::Query`] against the given range.
     pub fn matches(
