@@ -219,7 +219,11 @@ impl GitPanelState {
     }
 
     fn total_item_count(&self) -> usize {
-        self.changed_file_count() + 2 // +2 for the two headers
+        if self.show_list {
+            self.changed_file_count()
+        } else {
+            self.changed_file_count() + 2 // +2 for the two headers
+        }
     }
 
     fn no_unstaged(&self) -> bool {
@@ -369,22 +373,26 @@ impl RenderOnce for ChangedFileItem {
 
         let is_deleted = self.file.status == GitFileStatus::Conflict;
 
+        let selected_color = cx.theme().status().info.opacity(0.1);
+
         h_flex()
             .id(self.id.clone())
             .items_center()
             .justify_between()
             .w_full()
-            .when(!self.is_selected, |this| {
-                this.hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
+            .map(|this| {
+                if self.is_selected {
+                    this.bg(selected_color)
+                } else {
+                    this.bg(cx.theme().colors().elevated_surface_background)
+                }
             })
+            .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
             .cursor(CursorStyle::PointingHand)
-            .when(self.is_selected, |this| {
-                this.bg(cx.theme().colors().ghost_element_active)
-            })
             .group("")
             .rounded_sm()
             .pl(px(12. + (self.indent_level as f32 * 12.)))
-            .h(px(24.))
+            .h(px(28.))
             .child(
                 h_flex()
                     .gap(px(8.))
@@ -494,21 +502,24 @@ impl DirectoryItem {
 
 impl RenderOnce for DirectoryItem {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let selected_color = cx.theme().status().info.opacity(0.1);
+
         h_flex()
             .id(self.id.clone())
             .items_center()
             .justify_between()
             .w_full()
-            .when(!self.is_selected, |this| {
-                this.hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
-            })
             .cursor(CursorStyle::PointingHand)
-            .when(self.is_selected, |this| {
-                this.bg(cx.theme().colors().ghost_element_active)
+            .map(|this| {
+                if self.is_selected {
+                    this.bg(selected_color)
+                } else {
+                    this.bg(cx.theme().colors().elevated_surface_background)
+                }
             })
             .group("")
             .rounded_sm()
-            .h(px(24.))
+            .h(px(28.))
             .child(
                 h_flex()
                     .pl(px(12.) + px(self.indent_level as f32 * 12.))
@@ -698,7 +709,6 @@ impl RenderOnce for StagingHeaderItem {
 
         h_flex()
             .id(self.id.clone())
-            .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
             .justify_between()
             .w_full()
             .map(|this| {
@@ -708,6 +718,7 @@ impl RenderOnce for StagingHeaderItem {
                     this.bg(cx.theme().colors().elevated_surface_background)
                 }
             })
+            .hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
             .h(px(28.))
             .pl(px(12.))
             .pr_2()
