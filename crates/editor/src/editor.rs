@@ -447,6 +447,7 @@ enum Prediction {
 struct PredictionState {
     inlay_ids: Vec<InlayId>,
     prediction: Prediction,
+    invalidation_range: Range<Anchor>,
 }
 
 enum PredictionHighlight {}
@@ -2737,8 +2738,7 @@ impl Editor {
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
-            // TODO: Figure out how to make this work for old providers
-            // self.discard_inline_completion(false, cx);
+            self.update_visible_prediction(cx);
             linked_editing_ranges::refresh_linked_ranges(self, cx);
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(cx);
@@ -5310,25 +5310,21 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(prediction) = self.take_active_prediction(cx) else {
+        let Some(active_prediction) = self.active_prediction.as_ref() else {
             return;
         };
-        if let Some(provider) = self.inline_completion_provider() {
-            provider.accept(cx);
-        }
 
-        match prediction {
+        match &active_prediction.prediction {
             Prediction::Move(position) => {
+                let position = *position;
                 self.change_selections(Some(Autoscroll::newest()), cx, |selections| {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
             Prediction::Edit(edits) => {
                 let last_edit_end = edits.last().unwrap().0.end;
-                self.buffer
-                    .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
-                self.change_selections(None, cx, |s| {
-                    s.select_anchor_ranges([last_edit_end..last_edit_end])
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.edit(edits.iter().cloned(), None, cx)
                 });
 
                 // todo!("verify that this is needed")
@@ -5336,7 +5332,19 @@ impl Editor {
                 //     utf16_range_to_replace: None,
                 //     text: text.to_string().into(),
                 // });
-                self.refresh_prediction(true, true, cx);
+
+                self.change_selections(None, cx, |s| {
+                    s.select_anchor_ranges([last_edit_end..last_edit_end])
+                });
+
+                self.update_visible_prediction(cx);
+                if self.active_prediction.is_none() {
+                    if let Some(provider) = self.inline_completion_provider() {
+                        provider.accept(cx);
+                    }
+                    self.refresh_prediction(true, true, cx);
+                }
+
                 cx.notify();
             }
         }
@@ -5415,15 +5423,18 @@ impl Editor {
     }
 
     fn update_visible_prediction(&mut self, cx: &mut ViewContext<Self>) {
-        self.take_active_prediction(cx);
-
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
+        let multibuffer = self.buffer.read(cx).snapshot(cx);
 
         let excerpt_id = cursor.excerpt_id;
         if self.context_menu.read().is_none()
             && self.completion_tasks.is_empty()
             && selection.start == selection.end
+            && self.active_prediction.as_ref().map_or(true, |prediction| {
+                let invalidation_range = prediction.invalidation_range.to_offset(&multibuffer);
+                invalidation_range.contains(&cursor.to_offset(&multibuffer))
+            })
         {
             if let Some(provider) = self.inline_completion_provider() {
                 if let Some((buffer, cursor_buffer_position)) =
@@ -5431,65 +5442,95 @@ impl Editor {
                 {
                     if let Some(prediction) = provider.predict(&buffer, cursor_buffer_position, cx)
                     {
-                        let multibuffer = self.buffer.read(cx).snapshot(cx);
-                        let prediction = match prediction {
-                            inline_completion::Prediction::Move(position) => Prediction::Move(
-                                multibuffer.anchor_in_excerpt(excerpt_id, position).unwrap(),
-                            ),
-                            inline_completion::Prediction::Edit(edits) => {
-                                // todo!("ensure we have at least one edit")
-                                let edits = edits
-                                    .into_iter()
-                                    .map(|(range, new_text)| {
-                                        (
-                                            multibuffer
-                                                .anchor_in_excerpt(excerpt_id, range.start)
-                                                .unwrap()
-                                                ..multibuffer
-                                                    .anchor_in_excerpt(excerpt_id, range.end)
-                                                    .unwrap(),
-                                            new_text,
-                                        )
-                                    })
-                                    .collect::<Vec<_>>();
-                                Prediction::Edit(edits)
-                            }
-                        };
+                        let edits = prediction
+                            .edits
+                            .into_iter()
+                            .map(|(range, new_text)| {
+                                (
+                                    multibuffer
+                                        .anchor_in_excerpt(excerpt_id, range.start)
+                                        .unwrap()
+                                        ..multibuffer
+                                            .anchor_in_excerpt(excerpt_id, range.end)
+                                            .unwrap(),
+                                    new_text,
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        if !edits.is_empty() {
+                            let first_edit_start = edits.first().unwrap().0.start;
+                            let edit_start_row = first_edit_start
+                                .to_point(&multibuffer)
+                                .row
+                                .saturating_sub(2);
 
-                        let mut inlay_ids = Vec::new();
-                        if let Prediction::Edit(edits) = &prediction {
-                            if edits.iter().all(|(range, _)| range.start == range.end) {
-                                let mut inlays = Vec::new();
-                                for (range, new_text) in edits {
-                                    let inlay = Inlay::suggestion(
-                                        post_inc(&mut self.next_inlay_id),
-                                        range.start,
-                                        new_text.as_str(),
+                            let last_edit_end = edits.last().unwrap().0.end;
+                            let edit_end_row = cmp::min(
+                                multibuffer.max_point().row,
+                                last_edit_end.to_point(&multibuffer).row + 2,
+                            );
+
+                            let cursor_row = cursor.to_point(&multibuffer).row;
+
+                            let mut inlay_ids = Vec::new();
+                            let invalidation_row_range;
+                            let prediction;
+                            if cursor_row > edit_end_row {
+                                invalidation_row_range = edit_start_row..cursor_row;
+                                prediction = Prediction::Move(first_edit_start);
+                            } else if cursor_row < edit_start_row {
+                                invalidation_row_range = cursor_row..edit_end_row;
+                                prediction = Prediction::Move(first_edit_start);
+                            } else {
+                                if edits
+                                    .iter()
+                                    .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
+                                {
+                                    let mut inlays = Vec::new();
+                                    for (range, new_text) in &edits {
+                                        let inlay = Inlay::suggestion(
+                                            post_inc(&mut self.next_inlay_id),
+                                            range.start,
+                                            new_text.as_str(),
+                                        );
+                                        inlay_ids.push(inlay.id);
+                                        inlays.push(inlay);
+                                    }
+
+                                    self.splice_inlays(vec![], inlays, cx);
+                                } else {
+                                    self.highlight_text::<PredictionHighlight>(
+                                        edits.iter().map(|(range, _)| range.clone()).collect(),
+                                        HighlightStyle {
+                                            // todo!(use theme)
+                                            background_color: Some(gpui::red()),
+                                            ..Default::default()
+                                        },
+                                        cx,
                                     );
-                                    inlay_ids.push(inlay.id);
-                                    inlays.push(inlay);
                                 }
 
-                                self.splice_inlays(vec![], inlays, cx);
-                            } else {
-                                self.highlight_text::<PredictionHighlight>(
-                                    edits.iter().map(|(range, _)| range.clone()).collect(),
-                                    HighlightStyle {
-                                        // todo!(use theme)
-                                        background_color: Some(gpui::red()),
-                                        ..Default::default()
-                                    },
-                                    cx,
-                                );
-                            }
-                        }
+                                invalidation_row_range = edit_start_row..edit_end_row;
+                                prediction = Prediction::Edit(edits);
+                            };
 
-                        self.active_prediction = Some(PredictionState {
-                            inlay_ids,
-                            prediction,
-                        });
-                        cx.notify();
-                        return;
+                            let invalidation_range = multibuffer
+                                .anchor_before(Point::new(invalidation_row_range.start, 0))
+                                ..multibuffer.anchor_after(Point::new(
+                                    invalidation_row_range.end,
+                                    multibuffer
+                                        .line_len(MultiBufferRow(invalidation_row_range.end)),
+                                ));
+
+                            self.take_active_prediction(cx);
+                            self.active_prediction = Some(PredictionState {
+                                inlay_ids,
+                                prediction,
+                                invalidation_range,
+                            });
+                            cx.notify();
+                            return;
+                        }
                     }
                 }
             }

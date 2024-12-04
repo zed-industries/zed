@@ -47,7 +47,9 @@ use language::{
     ChunkRendererContext,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{Anchor, ExcerptId, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow};
+use multi_buffer::{
+    Anchor, AnchorRangeExt, ExcerptId, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
+};
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -2737,131 +2739,135 @@ impl EditorElement {
         text_style: &gpui::TextStyle,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
-        const X_OFFSET: f32 = 25.;
-        const PADDING_Y: f32 = 2.;
+        const PADDING_X: Pixels = Pixels(25.);
+        const PADDING_Y: Pixels = Pixels(2.);
 
         let active_prediction = self.editor.read(cx).active_prediction.as_ref()?;
 
-        match active_prediction.prediction {
+        match &active_prediction.prediction {
             Prediction::Move(target_position) => {
                 let target_display_point = target_position.to_display_point(editor_snapshot);
                 if target_display_point.row() < visible_row_range.start {
-                    // show this "go up" at top of screen
+                    let mut element = h_flex()
+                        .gap_1()
+                        .children(ui::KeyBinding::for_action_in(
+                            &crate::AcceptInlineCompletion,
+                            &self.editor.focus_handle(cx),
+                            cx,
+                        ))
+                        .child(Label::new("Jump to edit"))
+                        .child(Icon::new(IconName::ArrowUp))
+                        .into_any();
+                    let size = element.layout_as_root(AvailableSpace::min_size(), cx);
+                    let offset = point(
+                        text_bounds.origin.x + (text_bounds.size.width - size.width) / 2.,
+                        PADDING_Y,
+                    );
+                    element.prepaint_at(text_bounds.origin + offset, cx);
+                    Some(element)
                 } else if target_display_point.row() > visible_row_range.end {
-                    // show this "go down" at bottom of screen
+                    let mut element = h_flex()
+                        .gap_1()
+                        .children(ui::KeyBinding::for_action_in(
+                            &crate::AcceptInlineCompletion,
+                            &self.editor.focus_handle(cx),
+                            cx,
+                        ))
+                        .child(Label::new("Jump to edit"))
+                        .child(Icon::new(IconName::ArrowDown))
+                        .into_any();
+                    let size = element.layout_as_root(AvailableSpace::min_size(), cx);
+                    let offset = point(
+                        text_bounds.origin.x + (text_bounds.size.width - size.width) / 2.,
+                        text_bounds.size.height - size.height - PADDING_Y,
+                    );
+                    element.prepaint_at(text_bounds.origin + offset, cx);
+                    Some(element)
                 } else {
-                    // show "tab" next to target position
+                    let mut element = h_flex()
+                        .gap_1()
+                        .children(ui::KeyBinding::for_action_in(
+                            &crate::AcceptInlineCompletion,
+                            &self.editor.focus_handle(cx),
+                            cx,
+                        ))
+                        .child(Label::new("Jump to edit"))
+                        .into_any();
+
+                    let target_line_end = DisplayPoint::new(
+                        target_display_point.row(),
+                        editor_snapshot.line_len(target_display_point.row()),
+                    );
+                    let origin = self.editor.update(cx, |editor, cx| {
+                        editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
+                    })?;
+                    element.prepaint_as_root(
+                        text_bounds.origin + origin,
+                        AvailableSpace::min_size(),
+                        cx,
+                    );
+                    Some(element)
                 }
             }
-            Prediction::Edit(edits) => todo!(),
+            Prediction::Edit(edits) => {
+                let edit_start = edits
+                    .first()
+                    .unwrap()
+                    .0
+                    .start
+                    .to_display_point(editor_snapshot);
+
+                if visible_row_range.contains(&edit_start.row())
+                    && edits.iter().any(|(range, new_text)| {
+                        !range.to_offset(&editor_snapshot.buffer_snapshot).is_empty()
+                            && !new_text.is_empty()
+                    })
+                {
+                    let mut text = String::new();
+                    let mut offset = DisplayPoint::new(edit_start.row(), 0)
+                        .to_offset(editor_snapshot, Bias::Left);
+                    let mut highlights = Vec::new();
+                    for (old_range, new_text) in edits {
+                        let old_offset_range =
+                            old_range.to_offset(&editor_snapshot.buffer_snapshot);
+                        text.extend(
+                            editor_snapshot
+                                .buffer_snapshot
+                                .chunks(offset..old_offset_range.start, false)
+                                .map(|chunk| chunk.text),
+                        );
+                        offset = old_offset_range.end;
+
+                        let start = text.len();
+                        text.push_str(new_text);
+                        let end = text.len();
+                        highlights.push((
+                            start..end,
+                            HighlightStyle {
+                                background_color: Some(cx.theme().status().created_background),
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    // todo!("do we wanna show the remainder of the line after offset?")
+                    let mut element = gpui::StyledText::new(text)
+                        .with_highlights(text_style, highlights)
+                        .into_any();
+
+                    let line =
+                        &line_layouts[(edit_start.row().0 - visible_row_range.start.0) as usize];
+                    let origin = text_bounds.origin
+                        + point(
+                            line.width + PADDING_X - scroll_pixel_position.x,
+                            edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
+                        );
+                    element.prepaint_as_root(origin, AvailableSpace::min_size(), cx);
+                    Some(element)
+                } else {
+                    None
+                }
+            }
         }
-
-        // let show_go_to_edit_hint = self
-        //     .editor
-        //     .read(cx)
-        //     .cursor_needs_repositioning_for_inline_completion(cx)
-        //     .is_some();
-
-        // let upper_left = edit.position().to_display_point(editor_snapshot);
-        // let is_visible = visible_row_range.contains(&upper_left.row());
-
-        // let container_element = div()
-        //     .bg(cx.theme().colors().editor_background)
-        //     .border_1()
-        //     .border_color(cx.theme().colors().border)
-        //     .rounded_md()
-        //     .px_1();
-
-        // let (origin, mut element) = match active_prediction.prediction {
-        //     if is_visible {
-        //         let element = container_element
-        //             .child(
-        //                 h_flex()
-        //                     .gap_1()
-        //                     .children(ui::KeyBinding::for_action_in(
-        //                         &crate::AcceptInlineCompletion,
-        //                         &self.editor.focus_handle(cx),
-        //                         cx,
-        //                     ))
-        //                     .child(Label::new("jump to edit")),
-        //             )
-        //             .into_any();
-
-        //         let len = editor_snapshot.line_len(upper_left.row());
-        //         let popup_position = DisplayPoint::new(upper_left.row(), len);
-        //         let origin = self.editor.update(cx, |editor, cx| {
-        //             editor.display_to_pixel_point(popup_position, editor_snapshot, cx)
-        //         })?;
-        //         (
-        //             text_bounds.origin + origin + point(px(X_OFFSET), px(0.)),
-        //             element,
-        //         )
-        //     } else {
-        //         let is_above = visible_row_range.start > upper_left.row();
-
-        //         let mut element = container_element
-        //             .child(
-        //                 h_flex()
-        //                     .gap_1()
-        //                     .children(ui::KeyBinding::for_action_in(
-        //                         &crate::AcceptInlineCompletion,
-        //                         &self.editor.focus_handle(cx),
-        //                         cx,
-        //                     ))
-        //                     .child(Label::new("jump to edit"))
-        //                     .child(Icon::new(if is_above {
-        //                         IconName::ArrowUp
-        //                     } else {
-        //                         IconName::ArrowDown
-        //                     })),
-        //             )
-        //             .into_any();
-
-        //         let size = element.layout_as_root(AvailableSpace::min_size(), cx);
-
-        //         let offset_y = if is_above {
-        //             px(PADDING_Y)
-        //         } else {
-        //             text_bounds.size.height - size.height - px(PADDING_Y)
-        //         };
-
-        //         let origin = text_bounds.origin
-        //             + point((text_bounds.size.width - size.width) / 2., offset_y);
-        //         (origin, element)
-        //     }
-        // } else if let ComputedCompletionEdit::Diff {
-        //     text, additions, ..
-        // } = edit
-        // {
-        //     let row = &line_layouts
-        //         [upper_left.row().0.saturating_sub(visible_row_range.start.0) as usize];
-        //     let origin = text_bounds.origin
-        //         + point(
-        //             row.width + px(X_OFFSET) - scroll_pixel_position.x,
-        //             upper_left.row().as_f32() * line_height - scroll_pixel_position.y,
-        //         );
-
-        //     let text = gpui::StyledText::new(text.to_string()).with_highlights(
-        //         text_style,
-        //         additions.iter().map(|range| {
-        //             (
-        //                 range.clone(),
-        //                 HighlightStyle {
-        //                     background_color: Some(cx.theme().status().created_background),
-        //                     ..Default::default()
-        //                 },
-        //             )
-        //         }),
-        //     );
-
-        //     let element = container_element.child(text).into_any();
-        //     (origin, element)
-        // } else {
-        //     return None;
-        // };
-
-        // element.prepaint_as_root(origin, AvailableSpace::min_size(), cx);
-        // Some(element)
     }
 
     fn layout_mouse_context_menu(

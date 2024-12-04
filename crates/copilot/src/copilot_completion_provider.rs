@@ -268,10 +268,9 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 None
             } else {
                 let position = cursor_position.bias_right(buffer);
-                Some(Prediction::Edit(vec![(
-                    position..position,
-                    completion_text.into(),
-                )]))
+                Some(Prediction {
+                    edits: vec![(position..position, completion_text.into())],
+                })
             }
         } else {
             None

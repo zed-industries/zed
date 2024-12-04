@@ -12,21 +12,9 @@ pub enum Direction {
     Next,
 }
 
-pub enum Prediction {
-    Edit(Vec<(Range<language::Anchor>, String)>),
-    Move(language::Anchor),
+pub struct Prediction {
+    pub edits: Vec<(Range<language::Anchor>, String)>,
 }
-
-// #[derive(Clone)]
-// pub struct CompletionProposal {
-//     pub edits: Vec<CompletionEdit>,
-// }
-
-// #[derive(Clone)]
-// pub struct CompletionEdit {
-//     pub text: Rope,
-//     pub range: Range<language::Anchor>,
-// }
 
 pub trait InlineCompletionProvider: 'static + Sized {
     fn name() -> &'static str;

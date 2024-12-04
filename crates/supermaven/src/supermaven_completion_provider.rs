@@ -3,9 +3,7 @@ use anyhow::Result;
 use client::telemetry::Telemetry;
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
-use inline_completion::{
-    CompletionEdit, CompletionProposal, Direction, InlineCompletionProvider, Prediction,
-};
+use inline_completion::{Direction, InlineCompletionProvider, Prediction};
 use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
 use std::{
     ops::{AddAssign, Range},
@@ -101,7 +99,7 @@ fn prediction_from_diff(
         edits.push((edit_range, edit_text));
     }
 
-    Prediction::Edit(edits)
+    Prediction { edits }
 }
 
 impl InlineCompletionProvider for SupermavenCompletionProvider {

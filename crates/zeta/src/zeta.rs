@@ -243,7 +243,7 @@ impl Zeta {
             let old_text = snapshot
                 .text_for_range(excerpt_range.clone())
                 .collect::<String>();
-            let diff = similar::TextDiff::from_words(old_text.as_str(), new_text);
+            let diff = similar::TextDiff::from_chars(old_text.as_str(), new_text);
 
             let mut edits: Vec<(Range<usize>, String)> = Vec::new();
             let mut old_start = excerpt_range.start;
@@ -603,20 +603,51 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn predict<'a>(
         &'a self,
-        _buffer: &Model<Buffer>,
-        _cursor_position: language::Anchor,
-        _cx: &'a AppContext,
-    ) -> Option<inline_completion::CompletionProposal> {
+        buffer: &Model<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &'a AppContext,
+    ) -> Option<inline_completion::Prediction> {
         let completion = self.current_completion.as_ref()?;
-        Some(inline_completion::CompletionProposal {
-            edits: completion
-                .edits
-                .iter()
-                .map(|(old_range, new_text)| inline_completion::CompletionEdit {
-                    range: old_range.clone(),
-                    text: new_text.as_str().into(),
-                })
-                .collect(),
+
+        // todo!(update edits)
+
+        let buffer = buffer.read(cx);
+
+        let cursor_row = cursor_position.to_point(buffer).row;
+        let (closest_edit_ix, (closest_edit_range, _)) = completion
+            .edits
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (range, _))| {
+                let distance_from_start = cursor_row.abs_diff(range.start.to_point(buffer).row);
+                let distance_from_end = cursor_row.abs_diff(range.end.to_point(buffer).row);
+                cmp::min(distance_from_start, distance_from_end)
+            })?;
+
+        let mut edit_start_ix = closest_edit_ix;
+        for (range, _) in completion.edits[..edit_start_ix].iter().rev() {
+            let distance_from_closest_edit =
+                closest_edit_range.start.to_point(buffer).row - range.end.to_point(buffer).row;
+            if distance_from_closest_edit <= 1 {
+                edit_start_ix -= 1;
+            } else {
+                break;
+            }
+        }
+
+        let mut edit_end_ix = closest_edit_ix + 1;
+        for (range, _) in &completion.edits[edit_end_ix..] {
+            let distance_from_closest_edit =
+                range.start.to_point(buffer).row - closest_edit_range.end.to_point(buffer).row;
+            if distance_from_closest_edit <= 1 {
+                edit_end_ix += 1;
+            } else {
+                break;
+            }
+        }
+
+        Some(inline_completion::Prediction {
+            edits: completion.edits[edit_start_ix..edit_end_ix].to_vec(),
         })
     }
 }
