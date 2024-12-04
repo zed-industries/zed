@@ -40,7 +40,13 @@ pub struct BufferStore {
     worktree_store: Model<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
     downstream_client: Option<(AnyProtoClient, u64)>,
-    shared_buffers: HashMap<proto::PeerId, HashSet<Model<Buffer>>>,
+    shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
+}
+
+#[derive(Hash, Eq, PartialEq, Clone)]
+struct SharedBuffer {
+    buffer: Model<Buffer>,
+    unstaged_changes: Option<Model<BufferChangeSet>>,
 }
 
 pub struct BufferChangeSet {
@@ -564,7 +570,12 @@ impl LocalBufferStore {
             this.update(&mut cx, |this, cx| {
                 for (change_set, buffer_snapshot, staged_text) in diff_bases_by_buffer {
                     change_set.update(cx, |change_set, cx| {
-                        change_set.set_base_text(staged_text.clone(), buffer_snapshot.clone(), cx);
+                        if let Some(staged_text) = staged_text.clone() {
+                            let _ =
+                                change_set.set_base_text(staged_text, buffer_snapshot.clone(), cx);
+                        } else {
+                            change_set.unset_base_text(buffer_snapshot.clone(), cx);
+                        }
                     });
 
                     if let Some((client, project_id)) = &this.downstream_client.clone() {
@@ -1019,23 +1030,10 @@ impl BufferStore {
 
                 entry
                     .insert(
-                        cx.spawn(move |this, mut cx| async move {
-                            let text = load.await;
-                            this.update(&mut cx, |this, cx| {
-                                this.loading_change_sets.remove(&buffer_id);
-                                let text = text?;
-                                let change_set = cx
-                                    .new_model(|cx| BufferChangeSet::new(text, buffer.clone(), cx));
-                                if let Some(OpenBuffer::Complete {
-                                    unstaged_changes, ..
-                                }) = this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
-                                {
-                                    *unstaged_changes = Some(change_set.downgrade());
-                                }
-                                anyhow::Ok(change_set)
-                            })
-                            .and_then(|a| a)
-                            .map_err(Arc::new)
+                        cx.spawn(move |this, cx| async move {
+                            Self::open_unstaged_changes_internal(this, load.await, buffer, cx)
+                                .await
+                                .map_err(Arc::new)
                         })
                         .shared(),
                     )
@@ -1045,6 +1043,51 @@ impl BufferStore {
 
         cx.background_executor()
             .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
+    pub async fn open_unstaged_changes_internal(
+        this: WeakModel<Self>,
+        text: Result<Option<String>>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Model<BufferChangeSet>> {
+        let text = match text {
+            Err(e) => {
+                this.update(&mut cx, |this, cx| {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    this.loading_change_sets.remove(&buffer_id);
+                })?;
+                return Err(e);
+            }
+            Ok(text) => text,
+        };
+
+        let change_set = buffer.update(&mut cx, |buffer, cx| {
+            cx.new_model(|_| BufferChangeSet::new(buffer))
+        })?;
+
+        if let Some(text) = text {
+            change_set
+                .update(&mut cx, |change_set, cx| {
+                    let snapshot = buffer.read(cx).text_snapshot();
+                    change_set.set_base_text(text, snapshot, cx)
+                })?
+                .await
+                .ok();
+        }
+
+        this.update(&mut cx, |this, cx| {
+            let buffer_id = buffer.read(cx).remote_id();
+            this.loading_change_sets.remove(&buffer_id);
+            if let Some(OpenBuffer::Complete {
+                unstaged_changes, ..
+            }) = this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
+            {
+                *unstaged_changes = Some(change_set.downgrade());
+            }
+        })?;
+
+        Ok(change_set)
     }
 
     pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Model<Buffer>>> {
@@ -1306,7 +1349,7 @@ impl BufferStore {
         })
     }
 
-    fn get_unstaged_changes(&self, buffer_id: BufferId) -> Option<Model<BufferChangeSet>> {
+    pub fn get_unstaged_changes(&self, buffer_id: BufferId) -> Option<Model<BufferChangeSet>> {
         if let OpenBuffer::Complete {
             unstaged_changes, ..
         } = self.opened_buffers.get(&buffer_id)?
@@ -1543,7 +1586,11 @@ impl BufferStore {
                 self.shared_buffers
                     .entry(guest_id)
                     .or_default()
-                    .insert(buffer.clone());
+                    .entry(buffer_id)
+                    .or_insert_with(|| SharedBuffer {
+                        buffer: buffer.clone(),
+                        unstaged_changes: None,
+                    });
 
                 let buffer = buffer.read(cx);
                 response.buffers.push(proto::BufferVersion {
@@ -1723,16 +1770,14 @@ impl BufferStore {
         let peer_id = envelope.sender_id;
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         this.update(&mut cx, |this, _| {
-            if let Some(buffer) = this.get(buffer_id) {
-                if let Some(shared) = this.shared_buffers.get_mut(&peer_id) {
-                    if shared.remove(&buffer) {
-                        if shared.is_empty() {
-                            this.shared_buffers.remove(&peer_id);
-                        }
-                        return;
+            if let Some(shared) = this.shared_buffers.get_mut(&peer_id) {
+                if shared.remove(&buffer_id).is_some() {
+                    if shared.is_empty() {
+                        this.shared_buffers.remove(&peer_id);
                     }
+                    return;
                 }
-            };
+            }
             debug_panic!(
                 "peer_id {} closed buffer_id {} which was either not open or already closed",
                 peer_id,
@@ -1861,6 +1906,16 @@ impl BufferStore {
             })?
             .ok_or_else(|| anyhow!("no such buffer"))?
             .await?;
+        this.update(&mut cx, |this, _| {
+            let shared_buffers = this
+                .shared_buffers
+                .entry(request.original_sender_id.unwrap_or(request.sender_id))
+                .or_default();
+            debug_assert!(shared_buffers.contains_key(&buffer_id));
+            if let Some(shared) = shared_buffers.get_mut(&buffer_id) {
+                shared.unstaged_changes = Some(change_set.clone());
+            }
+        })?;
         let staged_text = change_set.read_with(&cx, |change_set, cx| {
             change_set
                 .base_text
@@ -1891,11 +1946,11 @@ impl BufferStore {
             return Ok(());
         };
         change_set.update(&mut cx, |change_set, cx| {
-            change_set.set_base_text(
-                request.payload.staged_text,
-                buffer.read(cx).text_snapshot(),
-                cx,
-            )
+            if let Some(staged_text) = request.payload.staged_text {
+                let _ = change_set.set_base_text(staged_text, buffer.read(cx).text_snapshot(), cx);
+            } else {
+                change_set.unset_base_text(buffer.read(cx).text_snapshot(), cx)
+            }
         })?;
         Ok(())
     }
@@ -1946,14 +2001,17 @@ impl BufferStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if !self
-            .shared_buffers
-            .entry(peer_id)
-            .or_default()
-            .insert(buffer.clone())
-        {
+        let shared_buffers = self.shared_buffers.entry(peer_id).or_default();
+        if shared_buffers.contains_key(&buffer_id) {
             return Task::ready(Ok(()));
         }
+        shared_buffers.insert(
+            buffer_id,
+            SharedBuffer {
+                buffer: buffer.clone(),
+                unstaged_changes: None,
+            },
+        );
 
         let Some((client, project_id)) = self.downstream_client.clone() else {
             return Task::ready(Ok(()));
@@ -2016,8 +2074,8 @@ impl BufferStore {
         }
     }
 
-    pub fn shared_buffers(&self) -> &HashMap<proto::PeerId, HashSet<Model<Buffer>>> {
-        &self.shared_buffers
+    pub fn has_shared_buffers(&self) -> bool {
+        !self.shared_buffers.is_empty()
     }
 
     pub fn create_local_buffer(
@@ -2106,21 +2164,25 @@ impl BufferStore {
 }
 
 impl BufferChangeSet {
-    pub fn new(
-        base_text: Option<String>,
-        buffer: Model<Buffer>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
-        let buffer = buffer.read(cx);
-        let mut this = Self {
+    pub fn new(buffer: &text::BufferSnapshot) -> Self {
+        Self {
             buffer_id: buffer.remote_id(),
             base_text: None,
             diff_to_buffer: git::diff::BufferDiff::new(buffer),
             recalculate_diff_task: None,
             diff_updated_futures: Vec::new(),
             base_text_version: 0,
-        };
-        this.set_base_text(base_text, buffer.text_snapshot(), cx);
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_with_base_text(
+        base_text: String,
+        buffer: text::BufferSnapshot,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        let mut this = Self::new(&buffer);
+        let _ = this.set_base_text(base_text, buffer, cx);
         this
     }
 
@@ -2149,14 +2211,20 @@ impl BufferChangeSet {
 
     pub fn set_base_text(
         &mut self,
-        base_text: Option<String>,
+        mut base_text: String,
+        buffer_snapshot: text::BufferSnapshot,
+        cx: &mut ModelContext<Self>,
+    ) -> oneshot::Receiver<()> {
+        LineEnding::normalize(&mut base_text);
+        self.recalculate_diff_internal(base_text, buffer_snapshot, true, cx)
+    }
+
+    pub fn unset_base_text(
+        &mut self,
         buffer_snapshot: text::BufferSnapshot,
         cx: &mut ModelContext<Self>,
     ) {
-        if let Some(mut base_text) = base_text {
-            LineEnding::normalize(&mut base_text);
-            self.recalculate_diff_internal(base_text, buffer_snapshot, true, cx);
-        } else if self.base_text.is_some() {
+        if self.base_text.is_some() {
             self.base_text = None;
             self.diff_to_buffer = BufferDiff::new(&buffer_snapshot);
             self.recalculate_diff_task.take();
@@ -2169,14 +2237,11 @@ impl BufferChangeSet {
         &mut self,
         buffer_snapshot: text::BufferSnapshot,
         cx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = ()> {
-        let (tx, rx) = oneshot::channel();
-        self.diff_updated_futures.push(tx);
+    ) -> oneshot::Receiver<()> {
         if let Some(base_text) = self.base_text.clone() {
-            self.recalculate_diff_internal(base_text.read(cx).text(), buffer_snapshot, false, cx);
-        }
-        async move {
-            rx.await.ok();
+            self.recalculate_diff_internal(base_text.read(cx).text(), buffer_snapshot, false, cx)
+        } else {
+            oneshot::channel().1
         }
     }
 
@@ -2186,7 +2251,9 @@ impl BufferChangeSet {
         buffer_snapshot: text::BufferSnapshot,
         base_text_changed: bool,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+        self.diff_updated_futures.push(tx);
         self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
             let (base_text, diff) = cx
                 .background_executor()
@@ -2204,11 +2271,14 @@ impl BufferChangeSet {
                 }
                 this.diff_to_buffer = diff;
                 this.recalculate_diff_task.take();
-                this.diff_updated_futures.clear();
+                for tx in this.diff_updated_futures.drain(..) {
+                    tx.send(()).ok();
+                }
                 cx.notify();
             })?;
             Ok(())
         }));
+        rx
     }
 }
 

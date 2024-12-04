@@ -1336,16 +1336,29 @@ impl RandomizedTest for ProjectCollaborationTest {
                         (_, None) => panic!("guest's file is None, hosts's isn't"),
                     }
 
-                    // todo!(max): convert to using buffer change sets
-                    // let host_diff_base = host_buffer
-                    //     .read_with(host_cx, |b, _| b.diff_base().map(ToString::to_string));
-                    // let guest_diff_base = guest_buffer
-                    //     .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
-                    // assert_eq!(
-                    //         guest_diff_base, host_diff_base,
-                    //         "guest {} diff base does not match host's for path {path:?} in project {project_id}",
-                    //         client.username
-                    //     );
+                    let host_diff_base = host_project.read_with(host_cx, |project, cx| {
+                        project
+                            .buffer_store()
+                            .read(cx)
+                            .get_unstaged_changes(host_buffer.read(cx).remote_id())
+                            .unwrap()
+                            .read(cx)
+                            .base_text_string(cx)
+                    });
+                    let guest_diff_base = guest_project.read_with(client_cx, |project, cx| {
+                        project
+                            .buffer_store()
+                            .read(cx)
+                            .get_unstaged_changes(guest_buffer.read(cx).remote_id())
+                            .unwrap()
+                            .read(cx)
+                            .base_text_string(cx)
+                    });
+                    assert_eq!(
+                            guest_diff_base, host_diff_base,
+                            "guest {} diff base does not match host's for path {path:?} in project {project_id}",
+                            client.username
+                        );
 
                     let host_saved_version =
                         host_buffer.read_with(host_cx, |b, _| b.saved_version().clone());

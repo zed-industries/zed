@@ -1413,7 +1413,11 @@ mod tests {
                     (buffer_2.clone(), diff_base_2),
                 ] {
                     let change_set = cx.new_model(|cx| {
-                        BufferChangeSet::new(Some(diff_base.to_string()), buffer, cx)
+                        BufferChangeSet::new_with_base_text(
+                            diff_base.to_string(),
+                            buffer.read(cx).text_snapshot(),
+                            cx,
+                        )
                     });
                     editor.diff_map.add_change_set(change_set, cx)
                 }

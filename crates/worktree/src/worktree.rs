@@ -725,7 +725,7 @@ impl Worktree {
                 })
             }
             Worktree::Remote(_) => {
-                Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
+                Task::ready(Err(anyhow!("remote worktrees can't yet load staged files")))
             }
         }
     }

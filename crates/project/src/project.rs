@@ -4155,6 +4155,10 @@ impl Project {
             .read(cx)
             .language_servers_for_buffer(buffer, cx)
     }
+
+    pub fn buffer_store(&self) -> &Model<BufferStore> {
+        &self.buffer_store
+    }
 }
 
 fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::CodeActionKind> {
