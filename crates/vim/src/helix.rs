@@ -5,10 +5,11 @@ use ui::ViewContext;
 
 use crate::{motion::Motion, state::Mode, Vim};
 
-actions!(vim, [HelixNormalAfter]);
+actions!(vim, [HelixNormalAfter, HelixDelete]);
 
 pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
+    Vim::action(editor, cx, Vim::helix_delete);
 }
 
 impl Vim {
@@ -226,6 +227,27 @@ impl Vim {
             _ => self.helix_move_and_collapse(motion, times, cx),
         }
     }
+
+    pub fn helix_delete(&mut self, _: &HelixDelete, cx: &mut ViewContext<Self>) {
+        self.store_visual_marks(cx);
+        self.update_editor(cx, |vim, editor, cx| {
+            // Fixup selections so they have helix's semantics.
+            // Specifically:
+            //  - Make sure that each cursor acts as a 1 character wide selection
+            editor.transact(cx, |editor, cx| {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_with(|map, selection| {
+                        if selection.is_empty() && !selection.reversed {
+                            selection.end = movement::right(map, selection.end);
+                        }
+                    });
+                });
+            });
+
+            vim.copy_selections_content(editor, false, cx);
+            editor.insert("", cx);
+        });
+    }
 }
 
 #[cfg(test)]
@@ -265,6 +287,86 @@ mod test {
             The quick «brownˇ»
             fox jumps over
             the lazy dog."},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_delete(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // test delete a selection
+        cx.set_state(
+            indoc! {"
+            The qu«ick ˇ»brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("d");
+
+        cx.assert_state(
+            indoc! {"
+            The quˇbrown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        // test deleting a single character
+        cx.simulate_keystrokes("d");
+
+        cx.assert_state(
+            indoc! {"
+            The quˇrown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_delete_character_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            The quick brownˇ
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("d");
+
+        cx.assert_state(
+            indoc! {"
+            The quick brownˇfox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_delete_character_end_of_buffer(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            The quick brown
+            fox jumps over
+            the lazy dog.ˇ"},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("d");
+
+        cx.assert_state(
+            indoc! {"
+            The quick brown
+            fox jumps over
+            the lazy dog.ˇ"},
             Mode::HelixNormal,
         );
     }
