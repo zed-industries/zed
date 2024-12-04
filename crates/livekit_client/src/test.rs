@@ -12,9 +12,9 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
 use gpui::BackgroundExecutor;
-use livekit_server::{proto, token};
 #[cfg(not(windows))]
 use livekit::options::TrackPublishOptions;
+use livekit_server::{proto, token};
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink};
 use std::sync::{
