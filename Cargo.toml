@@ -673,6 +673,7 @@ new_ret_no_self = { level = "allow" }
 # We have a few `next` functions that differ in lifetimes
 # compared to Iterator::next. Yet, clippy complains about those.
 should_implement_trait = { level = "allow" }
+let_underscore_future = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]

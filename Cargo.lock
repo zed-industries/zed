@@ -4995,7 +4995,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "clock",
  "collections",
  "derive_more",
  "git2",
@@ -6534,7 +6533,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
- "git",
  "globset",
  "gpui",
  "http_client",

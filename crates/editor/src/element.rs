@@ -1169,7 +1169,7 @@ impl EditorElement {
                 let editor = self.editor.read(cx);
                 let is_singleton = editor.is_singleton(cx);
                 // Git
-                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
+                (is_singleton && scrollbar_settings.git_diff && !snapshot.diff_map.is_empty())
                     ||
                     // Buffer Search Results
                     (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
@@ -1320,17 +1320,8 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) -> Vec<(DisplayDiffHunk, Option<Hitbox>)> {
         let buffer_snapshot = &snapshot.buffer_snapshot;
-
-        let buffer_start_row = MultiBufferRow(
-            DisplayPoint::new(display_rows.start, 0)
-                .to_point(snapshot)
-                .row,
-        );
-        let buffer_end_row = MultiBufferRow(
-            DisplayPoint::new(display_rows.end, 0)
-                .to_point(snapshot)
-                .row,
-        );
+        let buffer_start = DisplayPoint::new(display_rows.start, 0).to_point(snapshot);
+        let buffer_end = DisplayPoint::new(display_rows.end, 0).to_point(snapshot);
 
         let git_gutter_setting = ProjectSettings::get_global(cx)
             .git
@@ -1338,7 +1329,7 @@ impl EditorElement {
             .unwrap_or_default();
 
         self.editor.update(cx, |editor, cx| {
-            let expanded_hunks = &editor.expanded_hunks.hunks;
+            let expanded_hunks = &editor.diff_map.hunks;
             let expanded_hunks_start_ix = expanded_hunks
                 .binary_search_by(|hunk| {
                     hunk.hunk_range
@@ -1349,8 +1340,10 @@ impl EditorElement {
                 .unwrap_err();
             let mut expanded_hunks = expanded_hunks[expanded_hunks_start_ix..].iter().peekable();
 
-            let display_hunks = buffer_snapshot
-                .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
+            let mut display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)> = editor
+                .diff_map
+                .snapshot
+                .diff_hunks_in_range(buffer_start..buffer_end, &buffer_snapshot)
                 .filter_map(|hunk| {
                     let display_hunk = diff_hunk_to_display(&hunk, snapshot);
 
@@ -1393,25 +1386,23 @@ impl EditorElement {
                     Some(display_hunk)
                 })
                 .dedup()
-                .map(|hunk| match git_gutter_setting {
-                    GitGutterSetting::TrackedFiles => {
-                        let hitbox = match hunk {
-                            DisplayDiffHunk::Unfolded { .. } => {
-                                let hunk_bounds = Self::diff_hunk_bounds(
-                                    snapshot,
-                                    line_height,
-                                    gutter_hitbox.bounds,
-                                    &hunk,
-                                );
-                                Some(cx.insert_hitbox(hunk_bounds, true))
-                            }
-                            DisplayDiffHunk::Folded { .. } => None,
-                        };
-                        (hunk, hitbox)
-                    }
-                    GitGutterSetting::Hide => (hunk, None),
-                })
+                .map(|hunk| (hunk, None))
                 .collect();
+
+            if let GitGutterSetting::TrackedFiles = git_gutter_setting {
+                for (hunk, hitbox) in &mut display_hunks {
+                    if let DisplayDiffHunk::Unfolded { .. } = hunk {
+                        let hunk_bounds = Self::diff_hunk_bounds(
+                            snapshot,
+                            line_height,
+                            gutter_hitbox.bounds,
+                            &hunk,
+                        );
+                        *hitbox = Some(cx.insert_hitbox(hunk_bounds, true));
+                    };
+                }
+            }
+
             display_hunks
         })
     }
@@ -3755,10 +3746,8 @@ impl EditorElement {
                             let mut marker_quads = Vec::new();
                             if scrollbar_settings.git_diff {
                                 let marker_row_ranges = snapshot
-                                    .buffer_snapshot
-                                    .git_diff_hunks_in_range(
-                                        MultiBufferRow::MIN..MultiBufferRow::MAX,
-                                    )
+                                    .diff_map
+                                    .diff_hunks(&snapshot.buffer_snapshot)
                                     .map(|hunk| {
                                         let start_display_row =
                                             MultiBufferPoint::new(hunk.row_range.start.0, 0)
@@ -5440,7 +5429,7 @@ impl Element for EditorElement {
 
                     let expanded_add_hunks_by_rows = self.editor.update(cx, |editor, _| {
                         editor
-                            .expanded_hunks
+                            .diff_map
                             .hunks(false)
                             .filter(|hunk| hunk.status == DiffHunkStatus::Added)
                             .map(|expanded_hunk| {

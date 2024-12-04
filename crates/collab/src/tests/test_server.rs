@@ -585,7 +585,7 @@ impl Deref for TestClient {
 }
 
 impl TestClient {
-    pub fn fs(&self) -> &FakeFs {
+    pub fn fs(&self) -> Arc<FakeFs> {
         self.app_state.fs.as_fake()
     }
 

@@ -64,16 +64,31 @@ impl sum_tree::Summary for DiffHunkSummary {
 
 #[derive(Debug, Clone)]
 pub struct BufferDiff {
-    last_buffer_version: Option<clock::Global>,
     tree: SumTree<InternalDiffHunk>,
 }
 
 impl BufferDiff {
     pub fn new(buffer: &BufferSnapshot) -> BufferDiff {
         BufferDiff {
-            last_buffer_version: None,
             tree: SumTree::new(buffer),
         }
+    }
+
+    pub async fn build(diff_base: &str, buffer: &text::BufferSnapshot) -> Self {
+        let mut tree = SumTree::new(buffer);
+
+        let buffer_text = buffer.as_rope().to_string();
+        let patch = Self::diff(diff_base, &buffer_text);
+
+        if let Some(patch) = patch {
+            let mut divergence = 0;
+            for hunk_index in 0..patch.num_hunks() {
+                let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer, &mut divergence);
+                tree.push(hunk, buffer);
+            }
+        }
+
+        Self { tree }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -168,27 +183,11 @@ impl BufferDiff {
 
     #[cfg(test)]
     fn clear(&mut self, buffer: &text::BufferSnapshot) {
-        self.last_buffer_version = Some(buffer.version().clone());
         self.tree = SumTree::new(buffer);
     }
 
     pub async fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
-        let mut tree = SumTree::new(buffer);
-
-        let diff_base_text = diff_base.to_string();
-        let buffer_text = buffer.as_rope().to_string();
-        let patch = Self::diff(&diff_base_text, &buffer_text);
-
-        if let Some(patch) = patch {
-            let mut divergence = 0;
-            for hunk_index in 0..patch.num_hunks() {
-                let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer, &mut divergence);
-                tree.push(hunk, buffer);
-            }
-        }
-
-        self.tree = tree;
-        self.last_buffer_version = Some(buffer.version().clone());
+        *self = Self::build(&diff_base.to_string(), buffer).await;
     }
 
     #[cfg(test)]

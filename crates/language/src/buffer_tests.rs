@@ -6,7 +6,6 @@ use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
-use git::diff::assert_hunks;
 use gpui::{AppContext, BorrowAppContext, Model};
 use gpui::{Context, TestAppContext};
 use indoc::indoc;
@@ -2608,15 +2607,6 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
         );
     });
 
-    // The branch buffer maintains a diff with respect to its base buffer.
-    start_recalculating_diff(&branch, cx);
-    cx.run_until_parked();
-    assert_diff_hunks(
-        &branch,
-        cx,
-        &[(1..2, "", "1.5\n"), (3..4, "three\n", "THREE\n")],
-    );
-
     // Edits to the base are applied to the branch.
     base.update(cx, |buffer, cx| {
         buffer.edit([(Point::new(0, 0)..Point::new(0, 0), "ZERO\n")], None, cx)
@@ -2625,21 +2615,6 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
         assert_eq!(base.read(cx).text(), "ZERO\none\ntwo\nthree\n");
         assert_eq!(buffer.text(), "ZERO\none\n1.5\ntwo\nTHREE\n");
     });
-
-    // Until the git diff recalculation is complete, the git diff references
-    // the previous content of the base buffer, so that it stays in sync.
-    start_recalculating_diff(&branch, cx);
-    assert_diff_hunks(
-        &branch,
-        cx,
-        &[(2..3, "", "1.5\n"), (4..5, "three\n", "THREE\n")],
-    );
-    cx.run_until_parked();
-    assert_diff_hunks(
-        &branch,
-        cx,
-        &[(2..3, "", "1.5\n"), (4..5, "three\n", "THREE\n")],
-    );
 
     // Edits to any replica of the base are applied to the branch.
     base_replica.update(cx, |buffer, cx| {
@@ -2729,29 +2704,6 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
     });
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
     branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
-}
-
-fn start_recalculating_diff(buffer: &Model<Buffer>, cx: &mut TestAppContext) {
-    buffer
-        .update(cx, |buffer, cx| buffer.recalculate_diff(cx).unwrap())
-        .detach();
-}
-
-#[track_caller]
-fn assert_diff_hunks(
-    buffer: &Model<Buffer>,
-    cx: &mut TestAppContext,
-    expected_hunks: &[(Range<u32>, &str, &str)],
-) {
-    let (snapshot, diff_base) = buffer.read_with(cx, |buffer, _| {
-        (buffer.snapshot(), buffer.diff_base().unwrap().to_string())
-    });
-    assert_hunks(
-        snapshot.git_diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX),
-        &snapshot,
-        &diff_base,
-        expected_hunks,
-    );
 }
 
 #[gpui::test(iterations = 100)]
