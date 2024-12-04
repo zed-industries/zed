@@ -13746,7 +13746,7 @@ impl CodeActionProvider for Model<Project> {
     }
 }
 
-async fn snippet_completions(
+fn snippet_completions(
     project: &Project,
     buffer: &Model<Buffer>,
     buffer_position: text::Anchor,
@@ -13761,111 +13761,117 @@ async fn snippet_completions(
         return Task::ready(Ok(vec![]));
     }
     let snapshot = buffer.read(cx).text_snapshot();
-    let chars = snapshot.reversed_chars_for_range(text::Anchor::MIN..buffer_position);
+    let chars: String = snapshot
+        .reversed_chars_for_range(text::Anchor::MIN..buffer_position)
+        .collect();
 
     let scope = language.map(|language| language.default_scope());
-    let classifier = CharClassifier::new(scope).for_completion(true);
-    let mut last_word = chars
-        .take_while(|c| classifier.is_word(*c))
-        .collect::<String>();
-    last_word = last_word.chars().rev().collect();
-    println!("last_word: {}", last_word);
-    let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
-    let to_lsp = |point: &text::Anchor| {
-        let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
-        point_to_lsp(end)
-    };
-    let lsp_end = to_lsp(&buffer_position);
+    let executor = cx.background_executor().clone();
 
-    let candidates: Vec<StringMatchCandidate> = snippets
-        .iter()
-        .enumerate()
-        .flat_map(|(ix, snippet)| {
-            snippet
-                .prefix
-                .iter()
-                .map(move |prefix| StringMatchCandidate::new(ix, prefix.clone()))
-        })
-        .collect();
+    cx.background_executor().spawn(async move {
+        let classifier = CharClassifier::new(scope).for_completion(true);
+        let mut last_word = chars
+            .chars()
+            .take_while(|c| classifier.is_word(*c))
+            .collect::<String>();
+        last_word = last_word.chars().rev().collect();
+        let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
+        let to_lsp = |point: &text::Anchor| {
+            let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
+            point_to_lsp(end)
+        };
+        let lsp_end = to_lsp(&buffer_position);
 
-    let matches = fuzzy::match_strings(
-        &candidates,
-        &last_word,
-        last_word.chars().any(|c| c.is_uppercase()),
-        100,
-        &Default::default(),
-        cx.background_executor().clone(),
-    )
-    .await;
-
-    // Remove all candidates where the query's start does not match the start of any word in the candidate
-    if let Some(query_start) = last_word.chars().next() {
-        matches.retain(|string_match| {
-            split_words(&string_match.string).any(|word| {
-                // Check that the first codepoint of the word as lowercase matches the first
-                // codepoint of the query as lowercase
-                word.chars()
-                    .flat_map(|codepoint| codepoint.to_lowercase())
-                    .zip(query_start.to_lowercase())
-                    .all(|(word_cp, query_cp)| word_cp == query_cp)
+        let candidates: Vec<StringMatchCandidate> = snippets
+            .iter()
+            .enumerate()
+            .flat_map(|(ix, snippet)| {
+                snippet
+                    .prefix
+                    .iter()
+                    .map(move |prefix| StringMatchCandidate::new(ix, prefix.clone()))
             })
-        });
-    }
+            .collect();
 
-    let result: Vec<Completion> = matches
-        .into_iter()
-        .filter_map(|m| {
-            let snippet = ?????;
-            // let matching_prefix = snippet
-            //     .prefix
-            //     .iter()
-            //     .find(|prefix| prefix.starts_with(&last_word))?;
-            let matching_prefix = snippet.string;
-            let start = as_offset - last_word.len();
-            let start = snapshot.anchor_before(start);
-            let range = start..buffer_position;
-            let lsp_start = to_lsp(&start);
-            let lsp_range = lsp::Range {
-                start: lsp_start,
-                end: lsp_end,
-            };
-            Some(Completion {
-                old_range: range,
-                new_text: snippet.body.clone(),
-                label: CodeLabel {
-                    text: matching_prefix.clone(),
-                    runs: vec![],
-                    filter_range: 0..matching_prefix.len(),
-                },
-                server_id: LanguageServerId(usize::MAX),
-                documentation: snippet.description.clone().map(Documentation::SingleLine),
-                lsp_completion: lsp::CompletionItem {
-                    label: snippet.prefix.first().unwrap().clone(),
-                    kind: Some(CompletionItemKind::SNIPPET),
-                    label_details: snippet.description.as_ref().map(|description| {
-                        lsp::CompletionItemLabelDetails {
-                            detail: Some(description.clone()),
-                            description: None,
-                        }
-                    }),
-                    insert_text_format: Some(InsertTextFormat::SNIPPET),
-                    text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                        lsp::InsertReplaceEdit {
-                            new_text: snippet.body.clone(),
-                            insert: lsp_range,
-                            replace: lsp_range,
-                        },
-                    )),
-                    filter_text: Some(snippet.body.clone()),
-                    sort_text: Some(char::MAX.to_string()),
-                    ..Default::default()
-                },
-                confirm: None,
+        let mut matches = fuzzy::match_strings(
+            &candidates,
+            &last_word,
+            last_word.chars().any(|c| c.is_uppercase()),
+            100,
+            &Default::default(),
+            executor,
+        )
+        .await;
+
+        // Remove all candidates where the query's start does not match the start of any word in the candidate
+        if let Some(query_start) = last_word.chars().next() {
+            matches.retain(|string_match| {
+                split_words(&string_match.string).any(|word| {
+                    // Check that the first codepoint of the word as lowercase matches the first
+                    // codepoint of the query as lowercase
+                    word.chars()
+                        .flat_map(|codepoint| codepoint.to_lowercase())
+                        .zip(query_start.to_lowercase())
+                        .all(|(word_cp, query_cp)| word_cp == query_cp)
+                })
+            });
+        }
+
+        let matched_strings: HashSet<_> = matches.iter().map(|m| m.string.clone()).collect();
+
+        let result: Vec<Completion> = snippets
+            .into_iter()
+            .filter_map(|snippet| {
+                let matching_prefix = snippet
+                    .prefix
+                    .iter()
+                    .find(|prefix| matched_strings.contains(*prefix))?;
+                let start = as_offset - last_word.len();
+                let start = snapshot.anchor_before(start);
+                let range = start..buffer_position;
+                let lsp_start = to_lsp(&start);
+                let lsp_range = lsp::Range {
+                    start: lsp_start,
+                    end: lsp_end,
+                };
+                Some(Completion {
+                    old_range: range,
+                    new_text: snippet.body.clone(),
+                    label: CodeLabel {
+                        text: matching_prefix.clone(),
+                        runs: vec![],
+                        filter_range: 0..matching_prefix.len(),
+                    },
+                    server_id: LanguageServerId(usize::MAX),
+                    documentation: snippet.description.clone().map(Documentation::SingleLine),
+                    lsp_completion: lsp::CompletionItem {
+                        label: snippet.prefix.first().unwrap().clone(),
+                        kind: Some(CompletionItemKind::SNIPPET),
+                        label_details: snippet.description.as_ref().map(|description| {
+                            lsp::CompletionItemLabelDetails {
+                                detail: Some(description.clone()),
+                                description: None,
+                            }
+                        }),
+                        insert_text_format: Some(InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                            lsp::InsertReplaceEdit {
+                                new_text: snippet.body.clone(),
+                                insert: lsp_range,
+                                replace: lsp_range,
+                            },
+                        )),
+                        filter_text: Some(snippet.body.clone()),
+                        sort_text: Some(char::MAX.to_string()),
+                        ..Default::default()
+                    },
+                    confirm: None,
+                })
             })
-        })
-        .collect();
+            .collect();
 
-    Task::ready(Ok(result))
+        Ok(result)
+    })
 }
 
 impl CompletionProvider for Model<Project> {
@@ -13881,8 +13887,8 @@ impl CompletionProvider for Model<Project> {
             let project_completions = project.completions(buffer, buffer_position, options, cx);
             cx.background_executor().spawn(async move {
                 let mut completions = project_completions.await?;
-                //let snippets = snippets.into_iter().;
-                completions.extend(snippets);
+                let snippets_completions = snippets.await?;
+                completions.extend(snippets_completions);
                 Ok(completions)
             })
         })
