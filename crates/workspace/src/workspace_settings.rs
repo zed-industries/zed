@@ -19,6 +19,7 @@ pub struct WorkspaceSettings {
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub use_system_path_prompts: bool,
     pub command_aliases: HashMap<String, String>,
+    pub show_user_picture: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -128,6 +129,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub command_aliases: Option<HashMap<String, String>>,
+    /// Whether to show user avatar in the title bar.
+    ///
+    /// Default: true
+    pub show_user_picture: Option<bool>,
 }
 
 #[derive(Deserialize)]
