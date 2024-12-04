@@ -30,7 +30,6 @@ use livekit_client::{
 
 use livekit_server::token::{self, VideoGrant};
 use log::LevelFilter;
-use postage::stream::Stream as _;
 use simplelog::SimpleLogger;
 
 actions!(livekit_client, [Quit]);

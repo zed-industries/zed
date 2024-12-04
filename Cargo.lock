@@ -2690,6 +2690,7 @@ dependencies = [
  "language",
  "language_model",
  "livekit_client",
+ "livekit_client_macos",
  "livekit_server",
  "log",
  "lsp",

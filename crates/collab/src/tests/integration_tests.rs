@@ -2061,6 +2061,7 @@ async fn test_mute_deafen(
         audio_tracks_playing: Vec<bool>,
     }
 
+    #[cfg(target_os = "linux")]
     fn participant_audio_state(
         room: &Model<Room>,
         cx: &TestAppContext,
@@ -2074,11 +2075,46 @@ async fn test_mute_deafen(
                     audio_tracks_playing: participant
                         .audio_tracks
                         .values()
-                        .map(|(track, _)| track.rtc_track().enabled())
+                        .map(|track| is_audio_track_playing(track))
                         .collect(),
                 })
                 .collect::<Vec<_>>()
         })
+    }
+
+    fn participant_audio_state(
+        room: &Model<Room>,
+        cx: &TestAppContext,
+    ) -> Vec<ParticipantAudioState> {
+        room.read_with(cx, |room, _| {
+            room.remote_participants()
+                .iter()
+                .map(|(user_id, participant)| ParticipantAudioState {
+                    user_id: *user_id,
+                    is_muted: participant.muted,
+                    audio_tracks_playing: participant
+                        .audio_tracks
+                        .values()
+                        .map(|track| is_audio_track_playing(track))
+                        .collect(),
+                })
+                .collect::<Vec<_>>()
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn is_audio_track_playing(track: &call::participant::RemoteAudioTrack) -> bool {
+        track.is_playing()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn is_audio_track_playing(
+        track: (
+            livekit_client::track::RemoteAudioTrack,
+            livekit_client::AudioStream,
+        ),
+    ) -> bool {
+        track.rtc_track().enabled()
     }
 }
 

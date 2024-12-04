@@ -45,9 +45,15 @@ use std::{
 };
 use workspace::{Workspace, WorkspaceStore};
 
+#[cfg(not(target_os = "macos"))]
+use livekit_client::test::TestServer as LivekitTestServer;
+
+#[cfg(target_os = "macos")]
+use livekit_client_macos::TestServer as LivekitTestServer;
+
 pub struct TestServer {
     pub app_state: Arc<AppState>,
-    pub test_livekit_server: Arc<livekit_client::test::TestServer>,
+    pub test_livekit_server: Arc<LivekitTestServer>,
     server: Arc<Server>,
     next_github_user_id: i32,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
@@ -89,7 +95,7 @@ impl TestServer {
             TestDb::sqlite(deterministic.clone())
         };
         let livekit_server_id = NEXT_LIVEKIT_SERVER_ID.fetch_add(1, SeqCst);
-        let livekit_server = livekit_client::test::TestServer::create(
+        let livekit_server = LivekitTestServer::create(
             format!("http://livekit.{}.test", livekit_server_id),
             format!("devkey-{}", livekit_server_id),
             format!("secret-{}", livekit_server_id),
@@ -500,7 +506,7 @@ impl TestServer {
 
     pub async fn build_app_state(
         test_db: &TestDb,
-        livekit_test_server: &livekit_client::test::TestServer,
+        livekit_test_server: &LivekitTestServer,
         executor: Executor,
     ) -> Arc<AppState> {
         Arc::new(AppState {

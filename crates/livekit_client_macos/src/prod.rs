@@ -135,6 +135,7 @@ extern "C" {
     fn LKRemoteVideoTrackGetSid(track: swift::RemoteVideoTrack) -> CFStringRef;
     fn LKRemoteAudioTrackStart(track: swift::RemoteAudioTrack);
     fn LKRemoteAudioTrackStop(track: swift::RemoteAudioTrack);
+    // fn LKRemoteAudioTrackIsPlaying(track: swift::RemoteAudioTrack);
     fn LKVideoTrackAddRenderer(track: swift::RemoteVideoTrack, renderer: *const c_void);
 
     fn LKDisplaySources(
