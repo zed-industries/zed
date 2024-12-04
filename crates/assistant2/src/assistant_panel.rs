@@ -152,11 +152,13 @@ impl AssistantPanel {
                     .map(|message| message.text.clone())
                 {
                     let theme_settings = ThemeSettings::get_global(cx);
+                    let ui_font_size = TextSize::Default.rems(cx);
+                    let buffer_font_size = theme_settings.buffer_font_size;
 
                     let mut text_style = cx.text_style();
                     text_style.refine(&TextStyleRefinement {
                         font_family: Some(theme_settings.ui_font.family.clone()),
-                        font_size: Some(TextSize::Default.rems(cx).into()),
+                        font_size: Some(ui_font_size.into()),
                         color: Some(cx.theme().colors().text),
                         ..Default::default()
                     });
@@ -168,9 +170,15 @@ impl AssistantPanel {
                         code_block: StyleRefinement {
                             text: Some(TextStyleRefinement {
                                 font_family: Some(theme_settings.buffer_font.family.clone()),
-                                font_size: Some(theme_settings.buffer_font_size.into()),
+                                font_size: Some(buffer_font_size.into()),
                                 ..Default::default()
                             }),
+                            ..Default::default()
+                        },
+                        inline_code: TextStyleRefinement {
+                            font_family: Some(theme_settings.buffer_font.family.clone()),
+                            font_size: Some(ui_font_size.into()),
+                            background_color: Some(cx.theme().colors().editor_background),
                             ..Default::default()
                         },
                         ..Default::default()
