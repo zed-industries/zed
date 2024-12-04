@@ -602,11 +602,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         }
     }
 
-    fn predict<'a>(
-        &'a self,
+    fn predict(
+        &mut self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
-        cx: &'a AppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Option<inline_completion::Prediction> {
         let completion = self.current_completion.as_ref()?;
 

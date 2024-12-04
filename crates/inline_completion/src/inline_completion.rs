@@ -40,11 +40,11 @@ pub trait InlineCompletionProvider: 'static + Sized {
     );
     fn accept(&mut self, cx: &mut ModelContext<Self>);
     fn discard(&mut self, should_report_inline_completion_event: bool, cx: &mut ModelContext<Self>);
-    fn predict<'a>(
-        &'a self,
+    fn predict(
+        &mut self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
-        cx: &'a AppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Prediction>;
 }
 
@@ -71,11 +71,11 @@ pub trait InlineCompletionProviderHandle {
     );
     fn accept(&self, cx: &mut AppContext);
     fn discard(&self, should_report_inline_completion_event: bool, cx: &mut AppContext);
-    fn predict<'a>(
-        &'a self,
+    fn predict(
+        &self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
-        cx: &'a AppContext,
+        cx: &mut AppContext,
     ) -> Option<Prediction>;
 }
 
@@ -126,12 +126,12 @@ where
         })
     }
 
-    fn predict<'a>(
-        &'a self,
+    fn predict(
+        &self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
-        cx: &'a AppContext,
+        cx: &mut AppContext,
     ) -> Option<Prediction> {
-        self.read(cx).predict(buffer, cursor_position, cx)
+        self.update(cx, |this, cx| this.predict(buffer, cursor_position, cx))
     }
 }

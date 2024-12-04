@@ -232,11 +232,11 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         }
     }
 
-    fn predict<'a>(
-        &'a self,
+    fn predict(
+        &mut self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
-        cx: &'a AppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Prediction> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);

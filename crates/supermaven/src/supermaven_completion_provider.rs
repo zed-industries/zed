@@ -198,11 +198,11 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         self.completion_id = None;
     }
 
-    fn predict<'a>(
-        &'a self,
+    fn predict(
+        &mut self,
         buffer: &Model<Buffer>,
         cursor_position: Anchor,
-        cx: &'a AppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Prediction> {
         let completion_text = self
             .supermaven
