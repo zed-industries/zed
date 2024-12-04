@@ -3,7 +3,6 @@ use std::{
     cmp::Ordering,
     collections::HashSet,
     ops::Range,
-    path::Path,
     time::Duration,
 };
 
@@ -14,12 +13,11 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use git::{diff::DiffHunk, repository::GitFileStatus};
 use gpui::{
     actions, AnyElement, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, Model, Render, SemanticVersion, Subscription, Task, View, WeakView,
+    InteractiveElement, Model, Render, Subscription, Task, View, WeakView,
 };
 use language::{Buffer, BufferRow, BufferSnapshot};
 use multi_buffer::{ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer};
 use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
-use settings::SettingsStore;
 use text::{OffsetRangeExt, ToPoint};
 use theme::ActiveTheme;
 use ui::{
@@ -56,7 +54,7 @@ struct ProjectDiffEditor {
 }
 
 struct Changes {
-    status: GitFileStatus,
+    _status: GitFileStatus,
     buffer: Model<Buffer>,
     hunks: Vec<DiffHunk>,
 }
@@ -100,7 +98,7 @@ impl ProjectDiffEditor {
                     project::Event::WorktreeRemoved(id) => {
                         project_diff_editor.buffer_changes.remove(id);
                     }
-                    project::Event::WorktreeUpdatedEntries(id, updated_entries) => {
+                    project::Event::WorktreeUpdatedEntries(id, _updated_entries) => {
                         // TODO kb cannot invalidate buffer entries without invalidating the corresponding excerpts and order entries.
                         worktree_to_rescan = Some(*id);
                         // let entry_changes =
@@ -128,7 +126,7 @@ impl ProjectDiffEditor {
                         worktree_to_rescan = Some(*id);
                         // project_diff_editor.buffer_changes.clear();
                     }
-                    project::Event::DeletedEntry(id, entry_id) => {
+                    project::Event::DeletedEntry(id, _entry_id) => {
                         worktree_to_rescan = Some(*id);
                         // if let Some(entries) = project_diff_editor.buffer_changes.get_mut(id) {
                         //     entries.remove(entry_id);
@@ -277,7 +275,7 @@ impl ProjectDiffEditor {
                             new_changes.insert(
                                 entry_id,
                                 Changes {
-                                    status,
+                                    _status: status,
                                     buffer,
                                     hunks: buffer_snapshot
                                         .git_diff_hunks_in_row_range(0..BufferRow::MAX)
@@ -1102,13 +1100,15 @@ impl Render for ProjectDiffEditor {
 
 #[cfg(test)]
 mod tests {
-    use std::{ops::Deref as _, sync::Arc};
+    use std::{ops::Deref as _, path::Path, sync::Arc};
 
     use fs::RealFs;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
+    use settings::SettingsStore;
 
     use super::*;
 
+    // TODO kb finish
     // #[gpui::test]
     // async fn randomized_tests(cx: &mut TestAppContext) {
     //     // Create a new project (how?? temp fs?),
@@ -1172,7 +1172,7 @@ mod tests {
 
         let old_text = file_a_editor.update(cx, |editor, cx| editor.text(cx));
         let change = "an edit after git add";
-        let save_task = file_a_editor
+        file_a_editor
             .update(cx, |file_a_editor, cx| {
                 file_a_editor.insert(change, cx);
                 file_a_editor.save(false, project.clone(), cx)
