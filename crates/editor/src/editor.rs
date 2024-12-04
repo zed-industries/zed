@@ -13817,7 +13817,10 @@ fn snippet_completions(
             });
         }
 
-        let matched_strings = matches.into_iter().map(|m| m.string).collect::<HashSet<_>>();
+        let matched_strings = matches
+            .into_iter()
+            .map(|m| m.string)
+            .collect::<HashSet<_>>();
 
         let result: Vec<Completion> = snippets
             .into_iter()
