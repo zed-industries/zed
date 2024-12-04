@@ -1012,12 +1012,43 @@ impl GitPanel {
         self.set_selected_index(total_count - 1, cx);
     }
 
-    fn render_items(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
+    fn render_unified_items(
+        &mut self,
+        range: Range<usize>,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<AnyElement> {
+        let state = self.state.read(cx);
+        let model = self.state.clone();
+
+        let mut all_items: Vec<(&ChangedFileId, &PanelChangedFile)> = state.files.iter().collect();
+        all_items.sort_by(|a, b| a.1.file_path.cmp(&b.1.file_path));
+
+        range
+            .map(|ix| {
+                if ix < all_items.len() {
+                    let (id, file) = all_items[ix];
+                    changed_file_item(
+                        id.clone(),
+                        file,
+                        state.selected_index == ix,
+                        0, // No indentation in unified view
+                        model.clone(),
+                    )
+                } else {
+                    div().into_any_element() // Placeholder for out-of-range items
+                }
+            })
+            .collect()
+    }
+
+    fn render_split_items(
+        &mut self,
+        range: Range<usize>,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<AnyElement> {
         let state = self.state.read(cx);
         let items = state.generate_git_list_items();
         let model = self.state.clone();
-
-        let unified_list = state.show_list;
 
         range
             .map(|ix| {
@@ -1084,24 +1115,10 @@ impl GitPanel {
     fn render_commit_composer(&self, cx: &mut ViewContext<Self>) -> AnyElement {
         let model = self.state.clone();
         let state = self.state.read(cx);
-        let staged_count = state.staged_count();
-        let staged_files = state
-            .files
-            .values()
-            .filter(|f| f.staged)
-            .map(|f| f.file_path.clone())
-            .collect::<Vec<_>>();
-
-        let staged_files = staged_files.join("\n");
-
-        let commit_message = state.commit_message.clone();
-
-        // let commit_button_disabled = staged_count == 0 || commit_message.is_none();
 
         let commit_button = Button::new("commit-button", "Commit")
             .style(ButtonStyle::Filled)
             .size(ButtonSize::Compact)
-            // .disabled(commit_button_disabled)
             .on_click(move |_, cx| {
                 model.update(cx, |state, cx| {
                     state.commit_message = None;
@@ -1131,15 +1148,6 @@ impl GitPanel {
                     .child(self.commit_composer.clone())
                     .border_1()
                     .border_color(cx.theme().colors().border)
-                    // .child(
-                    //     div()
-                    //         .flex()
-                    //         .flex_1()
-                    //         .w_full()
-                    //         .h_full()
-                    //         .mx_3()
-                    //         .my_2_5()
-                    // )
                     .child(
                         h_flex()
                             .absolute()
@@ -1195,29 +1203,46 @@ impl Render for GitPanel {
                     .h(px(8.))
                     .child(Divider::horizontal_dashed().color(DividerColor::Border)),
             )
-            .child(
-                uniform_list(view, "git-panel-list", items_count, Self::render_items)
-                    .py_1()
-                    .gap(px(2.))
-                    .track_scroll(scroll_handle)
-                    .size_full()
-                    .into_any_element(),
-            )
+            .child(if is_list_view {
+                uniform_list(
+                    view,
+                    "git-panel-list",
+                    items_count,
+                    Self::render_unified_items,
+                )
+                .py_1()
+                .gap(px(2.))
+                .track_scroll(scroll_handle)
+                .size_full()
+                .into_any_element()
+            } else {
+                uniform_list(
+                    view,
+                    "git-panel-list",
+                    items_count,
+                    Self::render_split_items,
+                )
+                .py_1()
+                .gap(px(2.))
+                .track_scroll(scroll_handle)
+                .size_full()
+                .into_any_element()
+            })
             .child(div().flex_1())
-            .child(
-                h_flex()
-                    .items_center()
-                    .child(Label::new("Staged & Unstaged"))
-                    .child(div().flex_1())
-                    .when(!is_list_view, |this| {
-                        this.child(
+            .when(!is_list_view, |this| {
+                this.child(
+                    h_flex()
+                        .items_center()
+                        .child(Label::new("Staged & Unstaged"))
+                        .child(div().flex_1())
+                        .child(
                             h_flex()
                                 .gap_1()
                                 .child(Button::new("discard-all", "Discard All"))
                                 .child(Button::new("stage-all", "Stage All")),
-                        )
-                    }),
-            )
+                        ),
+                )
+            })
             .child(
                 h_flex()
                     .items_center()
