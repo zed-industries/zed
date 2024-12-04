@@ -11,7 +11,13 @@ pub use crate::assistant_panel::AssistantPanel;
 
 actions!(
     assistant2,
-    [ToggleFocus, NewThread, ToggleModelSelector, Chat]
+    [
+        ToggleFocus,
+        NewThread,
+        ToggleModelSelector,
+        OpenHistory,
+        Chat
+    ]
 );
 
 const NAMESPACE: &str = "assistant2";

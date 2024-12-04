@@ -210,7 +210,8 @@
   {
     "context": "AssistantPanel2",
     "bindings": {
-      "cmd-n": "assistant2::NewThread"
+      "cmd-n": "assistant2::NewThread",
+      "cmd-shift-h": "assistant2::OpenHistory"
     }
   },
   {

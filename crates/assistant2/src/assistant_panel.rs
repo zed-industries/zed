@@ -5,8 +5,8 @@ use assistant_tool::ToolWorkingSet;
 use client::zed_urls;
 use collections::HashMap;
 use gpui::{
-    list, prelude::*, px, Action, AnyElement, AppContext, AsyncWindowContext, Empty, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, ListAlignment, ListState, Model, Pixels,
+    list, prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, Empty,
+    EventEmitter, FocusHandle, FocusableView, FontWeight, ListAlignment, ListState, Model, Pixels,
     StyleRefinement, Subscription, Task, TextStyleRefinement, View, ViewContext, WeakView,
     WindowContext,
 };
@@ -16,14 +16,14 @@ use language_model_selector::LanguageModelSelector;
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, Tab, Tooltip};
+use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, KeyBinding, ListItem, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
 use crate::message_editor::MessageEditor;
 use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
-use crate::{NewThread, ToggleFocus, ToggleModelSelector};
+use crate::{NewThread, OpenHistory, ToggleFocus, ToggleModelSelector};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -311,8 +311,8 @@ impl AssistantPanel {
                                     )
                                 }
                             })
-                            .on_click(move |_event, _cx| {
-                                println!("New Thread");
+                            .on_click(move |_event, cx| {
+                                cx.dispatch_action(NewThread.boxed_clone());
                             }),
                     )
                     .child(
@@ -320,9 +320,19 @@ impl AssistantPanel {
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
-                            .tooltip(move |cx| Tooltip::text("Open History", cx))
-                            .on_click(move |_event, _cx| {
-                                println!("Open History");
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Open History",
+                                        &OpenHistory,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click(move |_event, cx| {
+                                cx.dispatch_action(OpenHistory.boxed_clone());
                             }),
                     )
                     .child(
@@ -389,6 +399,99 @@ impl AssistantPanel {
         )
     }
 
+    fn render_message_list(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+        if self.thread_messages.is_empty() {
+            #[allow(clippy::useless_vec)]
+            let recent_threads = vec![1, 2, 3];
+
+            return v_flex()
+                .gap_2()
+                .mx_auto()
+                .child(
+                    v_flex().w_full().child(
+                        svg()
+                            .path("icons/logo_96.svg")
+                            .text_color(cx.theme().colors().text)
+                            .w(px(40.))
+                            .h(px(40.))
+                            .mx_auto()
+                            .mb_4(),
+                    ),
+                )
+                .child(v_flex())
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_center()
+                        .child(Label::new("Context Examples:").size(LabelSize::Small)),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .justify_center()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .p_0p5()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(
+                                    Icon::new(IconName::Terminal)
+                                        .size(IconSize::Small)
+                                        .color(Color::Disabled),
+                                )
+                                .child(Label::new("Terminal").size(LabelSize::Small)),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .p_0p5()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(
+                                    Icon::new(IconName::Folder)
+                                        .size(IconSize::Small)
+                                        .color(Color::Disabled),
+                                )
+                                .child(Label::new("/src/components").size(LabelSize::Small)),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_center()
+                        .child(Label::new("Recent Threads:").size(LabelSize::Small)),
+                )
+                .child(
+                    v_flex().gap_2().children(
+                        recent_threads
+                            .iter()
+                            .map(|_thread| self.render_past_thread(cx)),
+                    ),
+                )
+                .child(
+                    h_flex().w_full().justify_center().child(
+                        Button::new("view-all-past-threads", "View All Past Threads")
+                            .style(ButtonStyle::Subtle)
+                            .label_size(LabelSize::Small)
+                            .key_binding(KeyBinding::for_action_in(
+                                &OpenHistory,
+                                &self.focus_handle(cx),
+                                cx,
+                            ))
+                            .on_click(move |_event, cx| {
+                                cx.dispatch_action(OpenHistory.boxed_clone());
+                            }),
+                    ),
+                )
+                .into_any();
+        }
+
+        list(self.thread_list_state.clone()).flex_1().into_any()
+    }
+
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         let message_id = self.thread_messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
@@ -429,6 +532,22 @@ impl AssistantPanel {
                     .child(v_flex().p_1p5().text_ui(cx).child(markdown.clone())),
             )
             .into_any()
+    }
+
+    fn render_past_thread(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        ListItem::new("temp")
+            .start_slot(Icon::new(IconName::MessageBubbles))
+            .child(Label::new("Some Thread Title"))
+            .end_slot(
+                h_flex()
+                    .gap_2()
+                    .child(Label::new("1 hour ago").color(Color::Disabled))
+                    .child(
+                        IconButton::new("delete", IconName::TrashAlt)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small),
+                    ),
+            )
     }
 
     fn render_last_error(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
@@ -587,8 +706,11 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(|this, _: &NewThread, cx| {
                 this.new_thread(cx);
             }))
+            .on_action(cx.listener(|_this, _: &OpenHistory, _cx| {
+                println!("Open History");
+            }))
             .child(self.render_toolbar(cx))
-            .child(list(self.thread_list_state.clone()).flex_1())
+            .child(self.render_message_list(cx))
             .child(
                 h_flex()
                     .border_t_1()
