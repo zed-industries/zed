@@ -1,7 +1,8 @@
 use gpui::{
     div, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
-    IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Render,
-    RenderablePromptHandle, Styled, TextStyle, View, ViewContext, VisualContext, WindowContext,
+    IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Refineable, Render,
+    RenderablePromptHandle, Styled, TextStyleRefinement, View, ViewContext, VisualContext,
+    WindowContext,
 };
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
@@ -35,20 +36,18 @@ pub fn fallback_prompt_renderer(
             detail: detail.filter(|text| !text.is_empty()).map(|text| {
                 cx.new_view(|cx| {
                     let settings = ThemeSettings::get_global(cx);
+                    let mut base_text_style = cx.text_style();
+                    base_text_style.refine(&TextStyleRefinement {
+                        font_family: Some(settings.ui_font.family.clone()),
+                        font_size: Some(settings.ui_font_size.into()),
+                        ..Default::default()
+                    });
                     let markdown_style = MarkdownStyle {
-                        base_text_style: TextStyle {
-                            color: ui::Color::Muted.color(cx),
-                            font_family: settings.ui_font.family.clone(),
-                            font_features: settings.ui_font.features.clone(),
-                            font_fallbacks: settings.ui_font.fallbacks.clone(),
-                            font_weight: settings.ui_font.weight,
-                            font_size: ui::rems(0.75).into(),
-                            ..Default::default()
-                        },
+                        base_text_style,
                         selection_background_color: { cx.theme().players().local().selection },
                         ..Default::default()
                     };
-                    Markdown::new_text(text.to_string(), markdown_style, None, cx, None)
+                    Markdown::new(text.to_string(), markdown_style, None, cx, None)
                 })
             }),
         }
@@ -131,7 +130,9 @@ impl Render for FallbackPromptRenderer {
                     .text_color(ui::Color::Default.color(cx)),
             )
             .when_some(self.detail.as_ref(), |div, detail| {
-                div.child(detail.clone())
+                div.text_xs()
+                    .text_color(ui::Color::Muted.color(cx))
+                    .child(detail.clone())
             })
             .child(h_flex().justify_end().gap_2().children(
                 self.actions.iter().enumerate().rev().map(|(ix, action)| {
