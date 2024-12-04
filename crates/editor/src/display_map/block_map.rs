@@ -7,7 +7,8 @@ use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, EntityId, Pixels, WindowContext};
 use language::{Chunk, Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBufferRow, MultiBufferSnapshot, ToOffset, ToPoint as _,
+    Anchor, ExcerptId, ExcerptInfo, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
+    ToMultiBufferPoint as _, ToOffset,
 };
 use parking_lot::Mutex;
 use std::{
@@ -738,13 +739,13 @@ impl BlockMap {
                 let wrap_row;
                 if excerpt_boundary.next.is_some() {
                     wrap_row = wrap_snapshot
-                        .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
+                        .make_wrap_point(MultiBufferPoint::new(excerpt_boundary.row, 0), Bias::Left)
                         .row();
                 } else {
                     wrap_row = wrap_snapshot
                         .make_wrap_point(
-                            Point::new(
-                                excerpt_boundary.row.0,
+                            MultiBufferPoint::new(
+                                excerpt_boundary.row,
                                 buffer.line_len(excerpt_boundary.row),
                             ),
                             Bias::Left,
@@ -1366,7 +1367,7 @@ impl BlockSnapshot {
     pub(super) fn is_line_replaced(&self, row: MultiBufferRow) -> bool {
         let wrap_point = self
             .wrap_snapshot
-            .make_wrap_point(Point::new(row.0, 0), Bias::Left);
+            .make_wrap_point(MultiBufferPoint::new(row, 0), Bias::Left);
         let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
         cursor.item().map_or(false, |transform| {
@@ -2511,7 +2512,7 @@ mod tests {
                 let wrap_row = wrap_row as u32;
                 let multibuffer_row = wraps_snapshot
                     .to_point(WrapPoint::new(wrap_row, 0), Bias::Left)
-                    .row;
+                    .row();
 
                 // Create empty lines for the above block
                 while let Some((placement, block)) = sorted_blocks_iter.peek() {
@@ -2543,7 +2544,8 @@ mod tests {
                         is_in_replace_block = true;
 
                         if wrap_row == replace_range.start.0 {
-                            expected_buffer_rows.push(input_buffer_rows[multibuffer_row as usize]);
+                            expected_buffer_rows
+                                .push(input_buffer_rows[multibuffer_row.0 as usize]);
                         }
 
                         if wrap_row == replace_range.end.0 {
@@ -2565,9 +2567,9 @@ mod tests {
                 }
 
                 if is_in_replace_block {
-                    expected_replaced_buffer_rows.insert(MultiBufferRow(multibuffer_row));
+                    expected_replaced_buffer_rows.insert(multibuffer_row);
                 } else {
-                    let buffer_row = input_buffer_rows[multibuffer_row as usize];
+                    let buffer_row = input_buffer_rows[multibuffer_row.0 as usize];
                     let soft_wrapped = wraps_snapshot
                         .to_tab_point(WrapPoint::new(wrap_row, 0))
                         .column()

@@ -23,7 +23,7 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, ToMultiBufferPoint,
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, KeyContext,

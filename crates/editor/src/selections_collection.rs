@@ -15,7 +15,7 @@ use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
     Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
-    ToOffset, ToPoint,
+    ToMultiBufferPoint, ToOffset,
 };
 
 #[derive(Debug, Clone)]
@@ -502,7 +502,13 @@ impl<'a> MutableSelectionsCollection<'a> {
 
     pub fn insert_range<T>(&mut self, range: Range<T>)
     where
-        T: 'a + ToOffset + ToPoint + TextDimension + Ord + Sub<T, Output = T> + std::marker::Copy,
+        T: 'a
+            + ToOffset
+            + ToMultiBufferPoint
+            + TextDimension
+            + Ord
+            + Sub<T, Output = T>
+            + std::marker::Copy,
     {
         let mut selections = self.collection.all(self.cx);
         let mut start = range.start.to_offset(&self.buffer());
@@ -525,7 +531,7 @@ impl<'a> MutableSelectionsCollection<'a> {
 
     pub fn select<T>(&mut self, mut selections: Vec<Selection<T>>)
     where
-        T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
+        T: ToOffset + ToMultiBufferPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
         let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         selections.sort_unstable_by_key(|s| s.start);

@@ -8,7 +8,7 @@ use std::{
 use anyhow::Result;
 use serde_json::json;
 
-use crate::{Editor, ToPoint};
+use crate::{Editor, ToMultiBufferPoint};
 use collections::HashSet;
 use futures::Future;
 use gpui::{View, ViewContext, VisualTestContext};

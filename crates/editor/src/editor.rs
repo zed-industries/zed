@@ -114,8 +114,8 @@ use lsp::{
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
-    ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
+    ToMultiBufferPoint, ToOffset,
 };
 use multi_buffer::{
     ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow, ToOffsetUtf16,
@@ -14703,7 +14703,7 @@ trait SelectionExt {
     ) -> Range<MultiBufferRow>;
 }
 
-impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
+impl<T: ToMultiBufferPoint + ToOffset> SelectionExt for Selection<T> {
     fn display_range(&self, map: &DisplaySnapshot) -> Range<DisplayPoint> {
         let start = self
             .start

@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
-    Editor, ToPoint,
+    Editor, ToMultiBufferPoint,
 };
 use gpui::{actions, impl_actions, Action, AppContext, Global, ViewContext};
 use language::Point;

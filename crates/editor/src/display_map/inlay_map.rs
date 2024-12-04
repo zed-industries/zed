@@ -3,7 +3,8 @@ use collections::{BTreeMap, BTreeSet};
 use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{
-    Anchor, MultiBufferChunks, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, ToOffset,
+    Anchor, MultiBufferChunks, MultiBufferPoint, MultiBufferRow, MultiBufferRows,
+    MultiBufferSnapshot, ToOffset,
 };
 use std::{
     any::TypeId,
@@ -777,7 +778,7 @@ impl InlaySnapshot {
             None => self.len(),
         }
     }
-    pub fn to_buffer_point(&self, point: InlayPoint) -> Point {
+    pub fn to_buffer_point(&self, point: InlayPoint) -> MultiBufferPoint {
         let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>(&());
         cursor.seek(&point, Bias::Right, &());
         match cursor.item() {
@@ -835,7 +836,7 @@ impl InlaySnapshot {
             }
         }
     }
-    pub fn to_inlay_point(&self, point: Point) -> InlayPoint {
+    pub fn to_inlay_point(&self, point: MultiBufferPoint) -> InlayPoint {
         let mut cursor = self.transforms.cursor::<(Point, InlayPoint)>(&());
         cursor.seek(&point, Bias::Left, &());
         loop {

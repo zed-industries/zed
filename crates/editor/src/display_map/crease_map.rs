@@ -1,6 +1,8 @@
 use collections::HashMap;
 use gpui::{AnyElement, IntoElement};
-use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToPoint};
+use multi_buffer::{
+    Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToMultiBufferPoint,
+};
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, fmt::Debug, ops::Range, sync::Arc};
 use sum_tree::{Bias, SeekTarget, SumTree};

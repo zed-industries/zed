@@ -1,4 +1,4 @@
-use editor::{Editor, ToPoint};
+use editor::{Editor, ToMultiBufferPoint};
 use gpui::{AppContext, FocusHandle, FocusableView, Subscription, Task, View, WeakView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

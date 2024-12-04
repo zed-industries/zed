@@ -14,7 +14,7 @@ use editor::{
     },
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
-    ToOffset as _, ToPoint,
+    ToMultiBufferPoint, ToOffset as _,
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;

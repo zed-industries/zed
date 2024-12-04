@@ -3,7 +3,7 @@ use crate::{
     persistence::{SerializedEditor, DB},
     scroll::ScrollAnchor,
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer,
-    MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
+    MultiBufferSnapshot, NavigationData, SearchWithinRange, ToMultiBufferPoint as _,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;

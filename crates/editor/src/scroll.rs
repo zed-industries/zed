@@ -8,7 +8,7 @@ use crate::{
     hover_popover::hide_hover,
     persistence::DB,
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
+    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToMultiBufferPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext};

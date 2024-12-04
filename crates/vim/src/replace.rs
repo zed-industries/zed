@@ -3,7 +3,7 @@ use crate::{
     state::Mode,
     Vim,
 };
-use editor::{display_map::ToDisplayPoint, Bias, Editor, ToPoint};
+use editor::{display_map::ToDisplayPoint, Bias, Editor, ToMultiBufferPoint};
 use gpui::{actions, ViewContext};
 use language::Point;
 use std::ops::Range;

@@ -1,5 +1,7 @@
-use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToOffsetUtf16, ToPoint};
-use language::{OffsetUtf16, Point, TextDimension};
+use crate::MultiBufferPoint;
+
+use super::{ExcerptId, MultiBufferSnapshot, ToMultiBufferPoint, ToOffset, ToOffsetUtf16};
+use language::{OffsetUtf16, TextDimension};
 use std::{
     cmp::Ordering,
     ops::{Range, Sub},
@@ -109,9 +111,9 @@ impl ToOffsetUtf16 for Anchor {
     }
 }
 
-impl ToPoint for Anchor {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
-        self.summary(snapshot)
+impl ToMultiBufferPoint for Anchor {
+    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferPoint {
+        MultiBufferPoint(self.summary(snapshot))
     }
 }
 
@@ -119,7 +121,7 @@ pub trait AnchorRangeExt {
     fn cmp(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Ordering;
     fn overlaps(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize>;
-    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point>;
+    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<MultiBufferPoint>;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -138,7 +140,7 @@ impl AnchorRangeExt for Range<Anchor> {
         self.start.to_offset(content)..self.end.to_offset(content)
     }
 
-    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point> {
+    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<MultiBufferPoint> {
         self.start.to_point(content)..self.end.to_point(content)
     }
 }

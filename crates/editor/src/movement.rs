@@ -2,7 +2,9 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, RowExt, ToOffset, ToPoint};
+use crate::{
+    scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, RowExt, ToMultiBufferPoint, ToOffset,
+};
 use gpui::{Pixels, WindowTextSystem};
 use language::Point;
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};

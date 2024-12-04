@@ -11,7 +11,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
-use multi_buffer::{ExcerptRange, ToPoint};
+use multi_buffer::{ExcerptRange, ToMultiBufferPoint};
 use parking_lot::RwLock;
 use project::{FakeFs, Project};
 use std::{

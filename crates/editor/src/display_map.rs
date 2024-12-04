@@ -51,7 +51,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    ToMultiBufferPoint, ToOffset,
 };
 use serde::Deserialize;
 use std::{
@@ -688,7 +688,10 @@ impl DisplaySnapshot {
         self.buffer_snapshot.max_buffer_row()
     }
 
-    pub fn prev_line_boundary(&self, mut point: MultiBufferPoint) -> (Point, DisplayPoint) {
+    pub fn prev_line_boundary(
+        &self,
+        mut point: MultiBufferPoint,
+    ) -> (MultiBufferPoint, DisplayPoint) {
         loop {
             let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
             let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Left);

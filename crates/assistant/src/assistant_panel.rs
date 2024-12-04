@@ -33,7 +33,7 @@ use editor::{
     },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorEvent, ProposedChangeLocation, ProposedChangesEditor, RowExt,
-    ToOffset as _, ToPoint,
+    ToMultiBufferPoint, ToOffset as _,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;

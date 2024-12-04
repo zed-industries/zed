@@ -14,7 +14,7 @@ use editor::{
         RenderBlock,
     },
     scroll::Autoscroll,
-    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
+    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToMultiBufferPoint,
 };
 use futures::FutureExt as _;
 use gpui::{

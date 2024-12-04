@@ -4,7 +4,7 @@ use gpui::{Action, AnchorCorner, AppContext, CursorStyle, Hsla, Model, MouseButt
 use language::{Buffer, BufferId, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
-    MultiBufferSnapshot, ToPoint,
+    MultiBufferSnapshot, ToMultiBufferPoint,
 };
 use std::{ops::Range, sync::Arc};
 use text::OffsetRangeExt;

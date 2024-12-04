@@ -1380,7 +1380,7 @@ pub type FoldEdit = Edit<FoldOffset>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{display_map::inlay_map::InlayMap, MultiBuffer, ToPoint};
+    use crate::{display_map::inlay_map::InlayMap, MultiBuffer, ToMultiBufferPoint};
     use collections::HashSet;
     use rand::prelude::*;
     use settings::SettingsStore;

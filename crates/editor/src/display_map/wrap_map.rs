@@ -5,7 +5,7 @@ use super::{
 };
 use gpui::{AppContext, Context, Font, LineWrapper, Model, ModelContext, Pixels, Task};
 use language::{Chunk, Point};
-use multi_buffer::MultiBufferSnapshot;
+use multi_buffer::{MultiBufferPoint, MultiBufferSnapshot};
 use smol::future::yield_now;
 use std::sync::LazyLock;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
@@ -747,11 +747,11 @@ impl WrapSnapshot {
         TabPoint(tab_point)
     }
 
-    pub fn to_point(&self, point: WrapPoint, bias: Bias) -> Point {
+    pub fn to_point(&self, point: WrapPoint, bias: Bias) -> MultiBufferPoint {
         self.tab_snapshot.to_point(self.to_tab_point(point), bias)
     }
 
-    pub fn make_wrap_point(&self, point: Point, bias: Bias) -> WrapPoint {
+    pub fn make_wrap_point(&self, point: MultiBufferPoint, bias: Bias) -> WrapPoint {
         self.tab_point_to_wrap_point(self.tab_snapshot.make_tab_point(point, bias))
     }
 

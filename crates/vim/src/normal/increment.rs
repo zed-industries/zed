@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use editor::{scroll::Autoscroll, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
+use editor::{scroll::Autoscroll, Editor, MultiBufferSnapshot, ToMultiBufferPoint, ToOffset};
 use gpui::{impl_actions, ViewContext};
 use language::{Bias, Point};
 use serde::Deserialize;

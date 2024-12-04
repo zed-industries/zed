@@ -3,7 +3,7 @@ use super::{
     Highlights,
 };
 use language::{Chunk, Point};
-use multi_buffer::MultiBufferSnapshot;
+use multi_buffer::{MultiBufferPoint, MultiBufferSnapshot};
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
@@ -316,13 +316,13 @@ impl TabSnapshot {
         )
     }
 
-    pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
+    pub fn make_tab_point(&self, point: MultiBufferPoint, bias: Bias) -> TabPoint {
         let inlay_point = self.fold_snapshot.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
         self.to_tab_point(fold_point)
     }
 
-    pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
+    pub fn to_point(&self, point: TabPoint, bias: Bias) -> MultiBufferPoint {
         let fold_point = self.to_fold_point(point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
         self.fold_snapshot

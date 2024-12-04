@@ -20,9 +20,9 @@ use crate::{
     DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp, OpenExcerpts,
-    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
+    ToMultiBufferPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -84,7 +84,7 @@ struct SelectionLayout {
 }
 
 impl SelectionLayout {
-    fn new<T: ToPoint + ToDisplayPoint + Clone>(
+    fn new<T: ToMultiBufferPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
         cursor_shape: CursorShape,
