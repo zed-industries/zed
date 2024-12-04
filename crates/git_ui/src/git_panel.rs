@@ -1137,10 +1137,15 @@ impl GitPanel {
         let model = self.state.clone();
         let state = self.state.read(cx);
 
+        let editor = self.commit_composer.clone();
+        let editor_2 = self.commit_composer.clone();
+
         let commit_button = Button::new("commit-button", "Commit")
             .style(ButtonStyle::Filled)
             .size(ButtonSize::Compact)
             .on_click(move |_, cx| {
+                editor_2.update(cx, |editor, cx| editor.set_text("", cx));
+
                 model.update(cx, |state, cx| {
                     state.commit_message = None;
                     state.files.retain(|_, file| !file.staged);
@@ -1150,9 +1155,12 @@ impl GitPanel {
                     state.update_lines_changed();
                     state.file_tree = FileTree::new(&state.files);
                     state.needs_update = true;
+
                     cx.notify();
                 });
             });
+
+        let editor = editor.clone();
 
         h_flex()
             .relative()
@@ -1166,7 +1174,7 @@ impl GitPanel {
                     .px_3()
                     .py_2()
                     .bg(cx.theme().colors().editor_background)
-                    .child(self.commit_composer.clone())
+                    .child(editor.clone())
                     .border_1()
                     .border_color(cx.theme().colors().border)
                     .child(
