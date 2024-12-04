@@ -1690,7 +1690,9 @@ impl CodeActionsMenu {
                                     }),
                                 )
                                 // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
-                                .child(SharedString::from(action.lsp_action.title.clone()))
+                                .child(SharedString::from(
+                                    action.lsp_action.title.replace("\n", ""),
+                                ))
                             })
                             .when_some(action.as_task(), |this, task| {
                                 this.on_mouse_down(
@@ -1707,7 +1709,7 @@ impl CodeActionsMenu {
                                         }
                                     }),
                                 )
-                                .child(SharedString::from(task.resolved_label.clone()))
+                                .child(SharedString::from(task.resolved_label.replace("\n", "")))
                             })
                     })
                     .collect()
@@ -4098,8 +4100,10 @@ impl Editor {
 
                         if buffer.contains_str_at(selection.start, &pair.end) {
                             let pair_start_len = pair.start.len();
-                            if buffer.contains_str_at(selection.start - pair_start_len, &pair.start)
-                            {
+                            if buffer.contains_str_at(
+                                selection.start.saturating_sub(pair_start_len),
+                                &pair.start,
+                            ) {
                                 selection.start -= pair_start_len;
                                 selection.end += pair.end.len();
 
@@ -6500,7 +6504,7 @@ impl Editor {
         let mut revert_changes = HashMap::default();
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         for hunk in hunks_for_rows(
-            Some(MultiBufferRow(0)..multi_buffer_snapshot.max_buffer_row()).into_iter(),
+            Some(MultiBufferRow(0)..multi_buffer_snapshot.max_row()).into_iter(),
             &multi_buffer_snapshot,
         ) {
             Self::prepare_revert_change(&mut revert_changes, self.buffer(), &hunk, cx);
@@ -11049,10 +11053,14 @@ impl Editor {
     }
 
     fn fold_at_level(&mut self, fold_at: &FoldAtLevel, cx: &mut ViewContext<Self>) {
+        if !self.buffer.read(cx).is_singleton() {
+            return;
+        }
+
         let fold_at_level = fold_at.level;
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut to_fold = Vec::new();
-        let mut stack = vec![(0, snapshot.max_buffer_row().0, 1)];
+        let mut stack = vec![(0, snapshot.max_row().0, 1)];
 
         while let Some((mut start_row, end_row, current_level)) = stack.pop() {
             while start_row < end_row {
@@ -11081,10 +11089,14 @@ impl Editor {
     }
 
     pub fn fold_all(&mut self, _: &actions::FoldAll, cx: &mut ViewContext<Self>) {
+        if !self.buffer.read(cx).is_singleton() {
+            return;
+        }
+
         let mut fold_ranges = Vec::new();
         let snapshot = self.buffer.read(cx).snapshot(cx);
 
-        for row in 0..snapshot.max_buffer_row().0 {
+        for row in 0..snapshot.max_row().0 {
             if let Some(foldable_range) =
                 self.snapshot(cx).crease_for_buffer_row(MultiBufferRow(row))
             {
@@ -11093,6 +11105,23 @@ impl Editor {
         }
 
         self.fold_creases(fold_ranges, true, cx);
+    }
+
+    pub fn fold_function_bodies(
+        &mut self,
+        _: &actions::FoldFunctionBodies,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some((_, _, buffer)) = snapshot.as_singleton() else {
+            return;
+        };
+        let creases = buffer
+            .function_body_fold_ranges(0..buffer.len())
+            .map(|range| Crease::simple(range, self.display_map.read(cx).fold_placeholder.clone()))
+            .collect();
+
+        self.fold_creases(creases, true, cx);
     }
 
     pub fn fold_recursive(&mut self, _: &actions::FoldRecursive, cx: &mut ViewContext<Self>) {
@@ -12874,6 +12903,7 @@ impl Editor {
                             None => Autoscroll::newest(),
                         };
                         let nav_history = editor.nav_history.take();
+                        editor.unfold_ranges(&ranges, false, true, cx);
                         editor.change_selections(Some(autoscroll), cx, |s| {
                             s.select_ranges(ranges);
                         });
@@ -13784,80 +13814,130 @@ fn snippet_completions(
     buffer: &Model<Buffer>,
     buffer_position: text::Anchor,
     cx: &mut AppContext,
-) -> Vec<Completion> {
+) -> Task<Result<Vec<Completion>>> {
     let language = buffer.read(cx).language_at(buffer_position);
     let language_name = language.as_ref().map(|language| language.lsp_id());
     let snippet_store = project.snippets().read(cx);
     let snippets = snippet_store.snippets_for(language_name, cx);
 
     if snippets.is_empty() {
-        return vec![];
+        return Task::ready(Ok(vec![]));
     }
     let snapshot = buffer.read(cx).text_snapshot();
-    let chars = snapshot.reversed_chars_for_range(text::Anchor::MIN..buffer_position);
+    let chars: String = snapshot
+        .reversed_chars_for_range(text::Anchor::MIN..buffer_position)
+        .collect();
 
     let scope = language.map(|language| language.default_scope());
-    let classifier = CharClassifier::new(scope).for_completion(true);
-    let mut last_word = chars
-        .take_while(|c| classifier.is_word(*c))
-        .collect::<String>();
-    last_word = last_word.chars().rev().collect();
-    let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
-    let to_lsp = |point: &text::Anchor| {
-        let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
-        point_to_lsp(end)
-    };
-    let lsp_end = to_lsp(&buffer_position);
-    snippets
-        .into_iter()
-        .filter_map(|snippet| {
-            let matching_prefix = snippet
-                .prefix
-                .iter()
-                .find(|prefix| prefix.starts_with(&last_word))?;
-            let start = as_offset - last_word.len();
-            let start = snapshot.anchor_before(start);
-            let range = start..buffer_position;
-            let lsp_start = to_lsp(&start);
-            let lsp_range = lsp::Range {
-                start: lsp_start,
-                end: lsp_end,
-            };
-            Some(Completion {
-                old_range: range,
-                new_text: snippet.body.clone(),
-                label: CodeLabel {
-                    text: matching_prefix.clone(),
-                    runs: vec![],
-                    filter_range: 0..matching_prefix.len(),
-                },
-                server_id: LanguageServerId(usize::MAX),
-                documentation: snippet.description.clone().map(Documentation::SingleLine),
-                lsp_completion: lsp::CompletionItem {
-                    label: snippet.prefix.first().unwrap().clone(),
-                    kind: Some(CompletionItemKind::SNIPPET),
-                    label_details: snippet.description.as_ref().map(|description| {
-                        lsp::CompletionItemLabelDetails {
-                            detail: Some(description.clone()),
-                            description: None,
-                        }
-                    }),
-                    insert_text_format: Some(InsertTextFormat::SNIPPET),
-                    text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                        lsp::InsertReplaceEdit {
-                            new_text: snippet.body.clone(),
-                            insert: lsp_range,
-                            replace: lsp_range,
-                        },
-                    )),
-                    filter_text: Some(snippet.body.clone()),
-                    sort_text: Some(char::MAX.to_string()),
-                    ..Default::default()
-                },
-                confirm: None,
+    let executor = cx.background_executor().clone();
+
+    cx.background_executor().spawn(async move {
+        let classifier = CharClassifier::new(scope).for_completion(true);
+        let mut last_word = chars
+            .chars()
+            .take_while(|c| classifier.is_word(*c))
+            .collect::<String>();
+        last_word = last_word.chars().rev().collect();
+        let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
+        let to_lsp = |point: &text::Anchor| {
+            let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
+            point_to_lsp(end)
+        };
+        let lsp_end = to_lsp(&buffer_position);
+
+        let candidates = snippets
+            .iter()
+            .enumerate()
+            .flat_map(|(ix, snippet)| {
+                snippet
+                    .prefix
+                    .iter()
+                    .map(move |prefix| StringMatchCandidate::new(ix, prefix.clone()))
             })
-        })
-        .collect()
+            .collect::<Vec<StringMatchCandidate>>();
+
+        let mut matches = fuzzy::match_strings(
+            &candidates,
+            &last_word,
+            last_word.chars().any(|c| c.is_uppercase()),
+            100,
+            &Default::default(),
+            executor,
+        )
+        .await;
+
+        // Remove all candidates where the query's start does not match the start of any word in the candidate
+        if let Some(query_start) = last_word.chars().next() {
+            matches.retain(|string_match| {
+                split_words(&string_match.string).any(|word| {
+                    // Check that the first codepoint of the word as lowercase matches the first
+                    // codepoint of the query as lowercase
+                    word.chars()
+                        .flat_map(|codepoint| codepoint.to_lowercase())
+                        .zip(query_start.to_lowercase())
+                        .all(|(word_cp, query_cp)| word_cp == query_cp)
+                })
+            });
+        }
+
+        let matched_strings = matches
+            .into_iter()
+            .map(|m| m.string)
+            .collect::<HashSet<_>>();
+
+        let result: Vec<Completion> = snippets
+            .into_iter()
+            .filter_map(|snippet| {
+                let matching_prefix = snippet
+                    .prefix
+                    .iter()
+                    .find(|prefix| matched_strings.contains(*prefix))?;
+                let start = as_offset - last_word.len();
+                let start = snapshot.anchor_before(start);
+                let range = start..buffer_position;
+                let lsp_start = to_lsp(&start);
+                let lsp_range = lsp::Range {
+                    start: lsp_start,
+                    end: lsp_end,
+                };
+                Some(Completion {
+                    old_range: range,
+                    new_text: snippet.body.clone(),
+                    label: CodeLabel {
+                        text: matching_prefix.clone(),
+                        runs: vec![],
+                        filter_range: 0..matching_prefix.len(),
+                    },
+                    server_id: LanguageServerId(usize::MAX),
+                    documentation: snippet.description.clone().map(Documentation::SingleLine),
+                    lsp_completion: lsp::CompletionItem {
+                        label: snippet.prefix.first().unwrap().clone(),
+                        kind: Some(CompletionItemKind::SNIPPET),
+                        label_details: snippet.description.as_ref().map(|description| {
+                            lsp::CompletionItemLabelDetails {
+                                detail: Some(description.clone()),
+                                description: None,
+                            }
+                        }),
+                        insert_text_format: Some(InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                            lsp::InsertReplaceEdit {
+                                new_text: snippet.body.clone(),
+                                insert: lsp_range,
+                                replace: lsp_range,
+                            },
+                        )),
+                        filter_text: Some(snippet.body.clone()),
+                        sort_text: Some(char::MAX.to_string()),
+                        ..Default::default()
+                    },
+                    confirm: None,
+                })
+            })
+            .collect();
+
+        Ok(result)
+    })
 }
 
 impl CompletionProvider for Model<Project> {
@@ -13873,8 +13953,8 @@ impl CompletionProvider for Model<Project> {
             let project_completions = project.completions(buffer, buffer_position, options, cx);
             cx.background_executor().spawn(async move {
                 let mut completions = project_completions.await?;
-                //let snippets = snippets.into_iter().;
-                completions.extend(snippets);
+                let snippets_completions = snippets.await?;
+                completions.extend(snippets_completions);
                 Ok(completions)
             })
         })

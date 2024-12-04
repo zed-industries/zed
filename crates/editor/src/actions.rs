@@ -248,6 +248,7 @@ gpui::actions!(
         FindAllReferences,
         Fold,
         FoldAll,
+        FoldFunctionBodies,
         FoldRecursive,
         FoldSelectedRanges,
         ToggleFold,

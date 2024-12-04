@@ -14,7 +14,8 @@ use crate::{
         SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
-    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
+    TreeSitterOptions,
 };
 use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
@@ -3354,6 +3355,14 @@ impl BufferSnapshot {
         })
     }
 
+    pub fn function_body_fold_ranges<T: ToOffset>(
+        &self,
+        within: Range<T>,
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
+        self.text_object_ranges(within, TreeSitterOptions::default())
+            .filter_map(|(range, obj)| (obj == TextObject::InsideFunction).then_some(range))
+    }
+
     /// For each grammar in the language, runs the provided
     /// [`tree_sitter::Query`] against the given range.
     pub fn matches(
@@ -3409,6 +3418,72 @@ impl BufferSnapshot {
                 return Some((open, close));
             }
             None
+        })
+    }
+
+    pub fn text_object_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        options: TreeSitterOptions,
+    ) -> impl Iterator<Item = (Range<usize>, TextObject)> + '_ {
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
+
+        let mut matches =
+            self.syntax
+                .matches_with_options(range.clone(), &self.text, options, |grammar| {
+                    grammar.text_object_config.as_ref().map(|c| &c.query)
+                });
+
+        let configs = matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.text_object_config.as_ref())
+            .collect::<Vec<_>>();
+
+        let mut captures = Vec::<(Range<usize>, TextObject)>::new();
+
+        iter::from_fn(move || loop {
+            while let Some(capture) = captures.pop() {
+                if capture.0.overlaps(&range) {
+                    return Some(capture);
+                }
+            }
+
+            let mat = matches.peek()?;
+
+            let Some(config) = configs[mat.grammar_index].as_ref() else {
+                matches.advance();
+                continue;
+            };
+
+            for capture in mat.captures {
+                let Some(ix) = config
+                    .text_objects_by_capture_ix
+                    .binary_search_by_key(&capture.index, |e| e.0)
+                    .ok()
+                else {
+                    continue;
+                };
+                let text_object = config.text_objects_by_capture_ix[ix].1;
+                let byte_range = capture.node.byte_range();
+
+                let mut found = false;
+                for (range, existing) in captures.iter_mut() {
+                    if existing == &text_object {
+                        range.start = range.start.min(byte_range.start);
+                        range.end = range.end.max(byte_range.end);
+                        found = true;
+                        break;
+                    }
+                }
+
+                if !found {
+                    captures.push((byte_range, text_object));
+                }
+            }
+
+            matches.advance();
         })
     }
 
@@ -4557,7 +4632,7 @@ impl CharClassifier {
         self.kind(c) == CharKind::Punctuation
     }
 
-    pub fn kind(&self, c: char) -> CharKind {
+    pub fn kind_with(&self, c: char, ignore_punctuation: bool) -> CharKind {
         if c.is_whitespace() {
             return CharKind::Whitespace;
         } else if c.is_alphanumeric() || c == '_' {
@@ -4567,7 +4642,7 @@ impl CharClassifier {
         if let Some(scope) = &self.scope {
             if let Some(characters) = scope.word_characters() {
                 if characters.contains(&c) {
-                    if c == '-' && !self.for_completion && !self.ignore_punctuation {
+                    if c == '-' && !self.for_completion && !ignore_punctuation {
                         return CharKind::Punctuation;
                     }
                     return CharKind::Word;
@@ -4575,11 +4650,15 @@ impl CharClassifier {
             }
         }
 
-        if self.ignore_punctuation {
+        if ignore_punctuation {
             CharKind::Word
         } else {
             CharKind::Punctuation
         }
+    }
+
+    pub fn kind(&self, c: char) -> CharKind {
+        self.kind_with(c, self.ignore_punctuation)
     }
 }
 

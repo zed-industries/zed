@@ -20,6 +20,7 @@ use std::{
     sync::LazyLock,
     time::{Duration, Instant},
 };
+use syntax_map::TreeSitterOptions;
 use text::network::Network;
 use text::{BufferId, LineEnding, LineIndent};
 use text::{Point, ToPoint};
@@ -913,6 +914,39 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
             })
             .collect()
     }
+}
+
+#[gpui::test]
+fn test_text_objects(cx: &mut AppContext) {
+    let (text, ranges) = marked_text_ranges(
+        indoc! {r#"
+            impl Hello {
+                fn say() -> u8 { return /* ˇhi */ 1 }
+            }"#
+        },
+        false,
+    );
+
+    let buffer =
+        cx.new_model(|cx| Buffer::local(text.clone(), cx).with_language(Arc::new(rust_lang()), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    let matches = snapshot
+        .text_object_ranges(ranges[0].clone(), TreeSitterOptions::default())
+        .map(|(range, text_object)| (&text[range], text_object))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        matches,
+        &[
+            ("/* hi */", TextObject::AroundComment),
+            ("return /* hi */ 1", TextObject::InsideFunction),
+            (
+                "fn say() -> u8 { return /* hi */ 1 }",
+                TextObject::AroundFunction
+            ),
+        ],
+    )
 }
 
 #[gpui::test]
@@ -3179,6 +3213,20 @@ fn rust_lang() -> Language {
     .with_brackets_query(
         r#"
         ("{" @open "}" @close)
+        "#,
+    )
+    .unwrap()
+    .with_text_object_query(
+        r#"
+        (function_item
+            body: (_
+                "{"
+                (_)* @function.inside
+                "}" )) @function.around
+
+        (line_comment)+ @comment.around
+
+        (block_comment) @comment.around
         "#,
     )
     .unwrap()

@@ -33,6 +33,18 @@
       "(": "vim::SentenceBackward",
       ")": "vim::SentenceForward",
       "|": "vim::GoToColumn",
+      "] ]": "vim::NextSectionStart",
+      "] [": "vim::NextSectionEnd",
+      "[ [": "vim::PreviousSectionStart",
+      "[ ]": "vim::PreviousSectionEnd",
+      "] m": "vim::NextMethodStart",
+      "] M": "vim::NextMethodEnd",
+      "[ m": "vim::PreviousMethodStart",
+      "[ M": "vim::PreviousMethodEnd",
+      "[ *": "vim::PreviousComment",
+      "[ /": "vim::PreviousComment",
+      "] *": "vim::NextComment",
+      "] /": "vim::NextComment",
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
@@ -315,6 +327,22 @@
     }
   },
   {
+    "context": "vim_mode == helix_normal",
+    "bindings": {
+      "i": "vim::InsertBefore",
+      "a": "vim::InsertAfter",
+      "w": "vim::NextWordStart",
+      "e": "vim::NextWordEnd",
+      "b": "vim::PreviousWordStart",
+
+      "h": "vim::Left",
+      "j": "vim::Down",
+      "k": "vim::Up",
+      "l": "vim::Right"
+    }
+  },
+
+  {
     "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
     "use_layout_keys": true,
     "bindings": {
@@ -360,7 +388,8 @@
     "bindings": {
       "escape": "vim::ClearOperators",
       "ctrl-c": "vim::ClearOperators",
-      "ctrl-[": "vim::ClearOperators"
+      "ctrl-[": "vim::ClearOperators",
+      "g c": "vim::Comment"
     }
   },
   {
@@ -389,7 +418,9 @@
       ">": "vim::AngleBrackets",
       "a": "vim::Argument",
       "i": "vim::IndentObj",
-      "shift-i": ["vim::IndentObj", { "includeBelow": true }]
+      "shift-i": ["vim::IndentObj", { "includeBelow": true }],
+      "f": "vim::Method",
+      "c": "vim::Class"
     }
   },
   {
@@ -472,6 +503,13 @@
     "use_layout_keys": true,
     "bindings": {
       "<": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == eq",
+    "use_layout_keys": true,
+    "bindings": {
+      "=": "vim::CurrentLine"
     }
   },
   {

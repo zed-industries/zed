@@ -1335,19 +1335,19 @@ To override settings for a language, add an entry for that languages name to the
 
 The following settings can be overridden for each specific language:
 
-- `enable_language_server`
-- `ensure_final_newline_on_save`
-- `format_on_save`
-- `formatter`
-- `hard_tabs`
-- `preferred_line_length`
-- `remove_trailing_whitespace_on_save`
-- `show_inline_completions`
-- `show_whitespaces`
-- `soft_wrap`
-- `tab_size`
-- `use_autoclose`
-- `always_treat_brackets_as_autoclosed`
+- [`enable_language_server`](#enable-language-server)
+- [`ensure_final_newline_on_save`](#ensure-final-newline-on-save)
+- [`format_on_save`](#format-on-save)
+- [`formatter`](#formatter)
+- [`hard_tabs`](#hard-tabs)
+- [`preferred_line_length`](#preferred-line-length)
+- [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
+- [`show_inline_completions`](#show-inline-completions)
+- [`show_whitespaces`](#show-whitespaces)
+- [`soft_wrap`](#soft-wrap)
+- [`tab_size`](#tab-size)
+- [`use_autoclose`](#use-autoclose)
+- [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
 
 These values take in the same options as the root-level settings with the same name.
 

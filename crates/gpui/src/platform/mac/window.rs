@@ -1111,10 +1111,16 @@ impl PlatformWindow for MacWindow {
     }
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
-        unsafe {
-            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
-            let _: () = msg_send![input_context, invalidateCharacterCoordinates];
-        }
+        let executor = self.0.lock().executor.clone();
+        executor
+            .spawn(async move {
+                unsafe {
+                    let input_context: id =
+                        msg_send![class!(NSTextInputContext), currentInputContext];
+                    let _: () = msg_send![input_context, invalidateCharacterCoordinates];
+                }
+            })
+            .detach()
     }
 }
 
@@ -1253,7 +1259,10 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     // otherwise we only send to the input handler if we don't have a matching binding.
     // The input handler may call `do_command_by_selector` if it doesn't know how to handle
     // a key. If it does so, it will return YES so we won't send the key twice.
-    if is_composing || event.keystroke.key_char.is_none() {
+    // We also do this for non-printing keys (like arrow keys and escape) as the IME menu
+    // may need them even if there is no marked text;
+    // however we skip keys with control or the input handler adds control-characters to the buffer.
+    if is_composing || (event.keystroke.key_char.is_none() && !event.keystroke.modifiers.control) {
         {
             let mut lock = window_state.as_ref().lock();
             lock.keystroke_for_do_command = Some(event.keystroke.clone());

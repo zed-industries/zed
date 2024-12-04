@@ -3723,7 +3723,7 @@ impl Workspace {
 
             let mut new_item = task.await?;
             pane.update(cx, |pane, cx| {
-                let mut item_ix_to_remove = None;
+                let mut item_to_remove = None;
                 for (ix, item) in pane.items().enumerate() {
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         match new_item.dedup(item.as_ref(), cx) {
@@ -3733,7 +3733,7 @@ impl Workspace {
                                 break;
                             }
                             Some(item::Dedup::ReplaceExisting) => {
-                                item_ix_to_remove = Some(ix);
+                                item_to_remove = Some((ix, item.item_id()));
                                 break;
                             }
                             None => {}
@@ -3741,8 +3741,8 @@ impl Workspace {
                     }
                 }
 
-                if let Some(ix) = item_ix_to_remove {
-                    pane.remove_item(ix, false, false, cx);
+                if let Some((ix, id)) = item_to_remove {
+                    pane.remove_item(id, false, false, cx);
                     pane.add_item(new_item.boxed_clone(), false, false, Some(ix), cx);
                 }
             })?;
