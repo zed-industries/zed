@@ -1,9 +1,9 @@
 pub mod participant;
 pub mod room;
 
+use crate::call_settings::CallSettings;
 use anyhow::{anyhow, Result};
 use audio::Audio;
-use call_settings::CallSettings;
 use client::{proto, ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashSet;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};

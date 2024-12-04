@@ -19,6 +19,8 @@ use livekit_client::{
     track::{LocalTrack, RemoteTrack, RemoteVideoTrack, TrackSource},
     AudioStream, RemoteVideoTrackView, Room, RoomEvent, RoomOptions,
 };
+#[cfg(not(target_os = "windows"))]
+use postage::stream::Stream;
 
 #[cfg(target_os = "windows")]
 use livekit_client::{
