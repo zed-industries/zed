@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use sum_tree::{Bias, Cursor, Item, SumTree};
+use sum_tree::{Bias, Cursor, SumTree};
 use text::{
     locator::Locator,
     subscription::{Subscription, Topic},
@@ -4667,7 +4667,8 @@ impl<'a> MultiBufferExcerpt<'a> {
     /// Map a point within the [`Buffer`] to a point within the [`MultiBuffer`]
     pub fn map_point_from_buffer(&self, buffer_position: Point) -> Point {
         let position_in_excerpt = buffer_position.saturating_sub(self.excerpt.buffer_start_point());
-        let position_in_excerpt = position_in_excerpt.min(self.excerpt.summary(&()).text.lines);
+        let position_in_excerpt =
+            position_in_excerpt.min(self.excerpt.text_summary.lines + Point::new(1, 0));
         self.excerpt_position + position_in_excerpt
     }
 
