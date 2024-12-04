@@ -1,9 +1,7 @@
 use crate::track::RemoteVideoTrack;
 use anyhow::Result;
 use futures::StreamExt as _;
-use gpui::{
-    Empty, EventEmitter, IntoElement, Render, Styled, Task, View, ViewContext, VisualContext as _,
-};
+use gpui::{Empty, EventEmitter, IntoElement, Render, Task, View, ViewContext, VisualContext as _};
 
 pub struct RemoteVideoTrackView {
     track: RemoteVideoTrack,
@@ -79,6 +77,7 @@ impl Render for RemoteVideoTrackView {
 
         #[cfg(not(target_os = "macos"))]
         if let Some(latest_frame) = &self.latest_frame {
+            use gpui::Styled as _;
             if let Some(current_rendered_frame) = self.current_rendered_frame.take() {
                 if let Some(frame) = self.previous_rendered_frame.take() {
                     // Only drop the frame if it's not also the current frame.
