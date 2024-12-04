@@ -1,4 +1,7 @@
 #![cfg_attr(windows, allow(unused))]
+// TODO: For some reason mac build complains about import of postage::stream::Stream, but removal of
+// it causes compile errors.
+#![cfg_attr(target_os = "macos", allow(unused_imports))]
 
 use gpui::{
     actions, bounds, div, point,

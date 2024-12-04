@@ -60,8 +60,5 @@ http_client = { workspace = true, features = ["test-support"] }
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 livekit_client_macos = { workspace = true, features = ["test-support"] }
 
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-livekit_client = { workspace = true, features = ["test-support"] }
-
-[target.'cfg(target_os = "windows")'.dev-dependencies]
+[target.'cfg(not(target_os = "macos"))'.dev-dependencies]
 livekit_client = { workspace = true, features = ["test-support"] }

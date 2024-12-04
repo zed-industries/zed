@@ -114,12 +114,12 @@ spec:
                 secretKeyRef:
                   name: livekit
                   key: server
-            - name: livekit_KEY
+            - name: LIVEKIT_KEY
               valueFrom:
                 secretKeyRef:
                   name: livekit
                   key: key
-            - name: livekit_SECRET
+            - name: LIVEKIT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: livekit
