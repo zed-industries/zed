@@ -1111,10 +1111,16 @@ impl PlatformWindow for MacWindow {
     }
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
-        unsafe {
-            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
-            let _: () = msg_send![input_context, invalidateCharacterCoordinates];
-        }
+        let executor = self.0.lock().executor.clone();
+        executor
+            .spawn(async move {
+                unsafe {
+                    let input_context: id =
+                        msg_send![class!(NSTextInputContext), currentInputContext];
+                    let _: () = msg_send![input_context, invalidateCharacterCoordinates];
+                }
+            })
+            .detach()
     }
 }
 
