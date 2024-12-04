@@ -5,7 +5,7 @@ use crate::command::command_interceptor;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
-use crate::{UseSystemClipboard, Vim, VimSettings};
+use crate::{Vim, VimSettings};
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{Anchor, ClipboardSelection, Editor};
@@ -16,6 +16,7 @@ use language::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use ui::{SharedString, ViewContext};
+use vim_settings::UseSystemClipboard;
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -68,6 +69,8 @@ pub enum Operator {
     Object { around: bool },
     FindForward { before: bool },
     FindBackward { after: bool },
+    Sneak { first_char: Option<char> },
+    SneakBackward { first_char: Option<char> },
     AddSurrounds { target: Option<SurroundsType> },
     ChangeSurrounds { target: Option<Object> },
     DeleteSurrounds,
@@ -460,6 +463,8 @@ impl Operator {
             Operator::Literal { .. } => "^V",
             Operator::FindForward { before: false } => "f",
             Operator::FindForward { before: true } => "t",
+            Operator::Sneak { .. } => "s",
+            Operator::SneakBackward { .. } => "S",
             Operator::FindBackward { after: false } => "F",
             Operator::FindBackward { after: true } => "T",
             Operator::AddSurrounds { .. } => "ys",
@@ -502,6 +507,8 @@ impl Operator {
             | Operator::Mark
             | Operator::Jump { .. }
             | Operator::FindBackward { .. }
+            | Operator::Sneak { .. }
+            | Operator::SneakBackward { .. }
             | Operator::Register
             | Operator::RecordRegister
             | Operator::ReplayRegister

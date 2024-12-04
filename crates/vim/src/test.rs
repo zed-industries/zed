@@ -1293,6 +1293,49 @@ async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_sneak(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.enable_vim_sneak();
+
+    // Sneak forwards multibyte & multiline
+    cx.set_state(
+        indoc! {
+            r#"<labelˇ for="guests">
+                    Počet hostů
+                </label>"#
+        },
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("s t ů");
+    cx.assert_state(
+        indoc! {
+            r#"<label for="guests">
+                Počet hosˇtů
+            </label>"#
+        },
+        Mode::Normal,
+    );
+
+    // Visual sneak backwards multibyte & multiline
+    cx.simulate_keystrokes("v S < l");
+    cx.assert_state(
+        indoc! {
+            r#"«ˇ<label for="guests">
+                Počet host»ů
+            </label>"#
+        },
+        Mode::Visual,
+    );
+
+    // Sneak backwards repeated
+    cx.set_state(r#"11 12 13 ˇ14"#, Mode::Normal);
+    cx.simulate_keystrokes("S space 1");
+    cx.assert_state(r#"11 12ˇ 13 14"#, Mode::Normal);
+    cx.simulate_keystrokes(";");
+    cx.assert_state(r#"11ˇ 12 13 14"#, Mode::Normal);
+}
+
+#[gpui::test]
 async fn test_plus_minus(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 

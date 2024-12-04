@@ -30,7 +30,6 @@ log.workspace = true
 multi_buffer.workspace = true
 nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
 regex.workspace = true
-schemars.workspace = true
 search.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
@@ -40,7 +39,7 @@ theme.workspace = true
 tokio = { version = "1.15", features = ["full"], optional = true }
 ui.workspace = true
 util.workspace = true
-vim_mode_setting.workspace = true
+vim_settings.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 

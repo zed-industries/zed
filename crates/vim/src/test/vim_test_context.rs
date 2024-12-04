@@ -118,6 +118,15 @@ impl VimTestContext {
         })
     }
 
+    pub fn enable_vim_sneak(&mut self) {
+        self.cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<VimSettings>(cx, |s| s.enable_vim_sneak = Some(true));
+            });
+            settings::KeymapFile::load_asset("keymaps/vim-sneak.json", cx).unwrap();
+        })
+    }
+
     pub fn mode(&mut self) -> Mode {
         self.update_editor(|editor, cx| editor.addon::<VimAddon>().unwrap().view.read(cx).mode)
     }
