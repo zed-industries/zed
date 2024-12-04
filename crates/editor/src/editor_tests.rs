@@ -10626,6 +10626,97 @@ async fn test_completions_with_additional_edits(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.simulate_keystroke(".");
+
+    let completion_item = lsp::CompletionItem {
+        label: "unresolved".to_string(),
+        detail: None,
+        documentation: None,
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+            new_text: ".unresolved".to_string(),
+        })),
+        ..lsp::CompletionItem::default()
+    };
+
+    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+        let item = completion_item.clone();
+        async move { Ok(Some(lsp::CompletionResponse::Array(vec![item]))) }
+    })
+    .next()
+    .await;
+
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _| {
+        let context_menu = editor.context_menu.read();
+        let context_menu = context_menu
+            .as_ref()
+            .expect("Should have the context menu deployed");
+        match context_menu {
+            ContextMenu::Completions(completions_menu) => {
+                let completions = completions_menu.completions.read();
+                assert_eq!(completions.len(), 1, "Should have one completion");
+                assert_eq!(completions.get(0).unwrap().label.text, "unresolved");
+            }
+            ContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
+        }
+    });
+
+    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| async move {
+        Ok(lsp::CompletionItem {
+            label: "resolved".to_string(),
+            detail: Some("Now resolved!".to_string()),
+            documentation: Some(lsp::Documentation::String("Docs".to_string())),
+            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+                new_text: ".resolved".to_string(),
+            })),
+            ..lsp::CompletionItem::default()
+        })
+    })
+    .next()
+    .await;
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, _| {
+        let context_menu = editor.context_menu.read();
+        let context_menu = context_menu
+            .as_ref()
+            .expect("Should have the context menu deployed");
+        match context_menu {
+            ContextMenu::Completions(completions_menu) => {
+                let completions = completions_menu.completions.read();
+                assert_eq!(completions.len(), 1, "Should have one completion");
+                assert_eq!(
+                    completions.get(0).unwrap().label.text,
+                    "resolved",
+                    "Should update the completion label after resolving"
+                );
+            }
+            ContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 

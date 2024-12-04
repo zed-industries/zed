@@ -2339,6 +2339,8 @@ impl LspStore {
             }
         }
 
+        // NB: Zed does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
+        // So we have to update the label here anyway...
         let new_label = match snapshot.language() {
             Some(language) => adapter
                 .labels_for_completions(&[completion_item.clone()], language)
@@ -2348,14 +2350,18 @@ impl LspStore {
             None => Vec::new(),
         }
         .pop()
-        .flatten();
+        .flatten()
+        .unwrap_or_else(|| {
+            CodeLabel::plain(
+                completion_item.label.clone(),
+                completion_item.filter_text.as_deref(),
+            )
+        });
 
         let mut completions = completions.write();
         let completion = &mut completions[completion_index];
         completion.lsp_completion = completion_item;
-        if let Some(new_label) = new_label {
-            completion.label = new_label;
-        }
+        completion.label = new_label;
     }
 
     #[allow(clippy::too_many_arguments)]
