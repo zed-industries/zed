@@ -4,13 +4,14 @@ use crate::{
     motion::Motion,
     object::Object,
     state::{Mode, Register},
-    Vim,
+    Vim, VimSettings,
 };
 use collections::HashMap;
 use editor::{ClipboardSelection, Editor};
 use gpui::ViewContext;
 use language::Point;
 use multi_buffer::MultiBufferRow;
+use settings::Settings;
 
 struct HighlightOnYank;
 
@@ -195,7 +196,8 @@ impl Vim {
             )
         });
 
-        if !is_yank || self.mode == Mode::Visual {
+        let highlight_duration = VimSettings::get_global(cx).highlight_on_yank_duration;
+        if !is_yank || self.mode == Mode::Visual || highlight_duration == 0 {
             return;
         }
 
@@ -206,7 +208,7 @@ impl Vim {
         );
         cx.spawn(|this, mut cx| async move {
             cx.background_executor()
-                .timer(Duration::from_millis(200))
+                .timer(Duration::from_millis(highlight_duration))
                 .await;
             this.update(&mut cx, |editor, cx| {
                 editor.clear_background_highlights::<HighlightOnYank>(cx)

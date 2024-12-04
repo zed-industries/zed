@@ -1129,6 +1129,7 @@
     "use_system_clipboard": "always",
     "use_multiline_find": false,
     "use_smartcase_find": false,
+    "highlight_on_yank_duration": 200,
     "custom_digraphs": {}
   },
   // The server to connect to. If the environment variable
