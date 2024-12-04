@@ -2,12 +2,12 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use gpui::{actions, KeyBinding, Menu, MenuItem};
-use live_kit_client::{LocalAudioTrack, LocalVideoTrack, Room, RoomUpdate};
-use live_kit_server::token::{self, VideoGrant};
+use livekit_client_macos::{LocalAudioTrack, LocalVideoTrack, Room, RoomUpdate};
+use livekit_server::token::{self, VideoGrant};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
-actions!(live_kit_client, [Quit]);
+actions!(livekit_client_macos, [Quit]);
 
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");

@@ -2061,6 +2061,7 @@ dependencies = [
  "http_client",
  "language",
  "livekit_client",
+ "livekit_client_macos",
  "log",
  "postage",
  "project",
@@ -7201,6 +7202,29 @@ dependencies = [
  "simplelog",
  "smallvec",
  "util",
+]
+
+[[package]]
+name = "livekit_client_macos"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-broadcast",
+ "async-trait",
+ "collections",
+ "core-foundation 0.9.4",
+ "futures 0.3.31",
+ "gpui",
+ "livekit_server",
+ "log",
+ "media",
+ "nanoid",
+ "parking_lot",
+ "postage",
+ "serde",
+ "serde_json",
+ "sha2",
+ "simplelog",
 ]
 
 [[package]]

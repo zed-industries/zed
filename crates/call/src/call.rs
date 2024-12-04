@@ -18,8 +18,12 @@ use room::Event;
 use settings::Settings;
 use std::sync::Arc;
 
-#[cfg(not(target_os = "windows"))]
-pub use livekit_client::play_remote_video_track;
+#[cfg(target_os = "macos")]
+pub use livekit_client_macos::{
+    track::RemoteVideoTrack, RemoteVideoTrackView, RemoteVideoTrackViewEvent,
+};
+
+#[cfg(not(target_os = "macos"))]
 pub use livekit_client::{
     track::RemoteVideoTrack, RemoteVideoTrackView, RemoteVideoTrackViewEvent,
 };

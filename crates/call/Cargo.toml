@@ -32,8 +32,9 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
-livekit_client.workspace = true
 log.workspace = true
+livekit_client.workspace = true
+livekit_client_macos.workspace = true
 postage.workspace = true
 project.workspace = true
 schemars.workspace = true
@@ -48,7 +49,8 @@ collections = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
-livekit_client = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
+livekit_client = { workspace = true, features = ["test-support"] }
+livekit_client_macos = { workspace = true, features = ["test-support"] }
