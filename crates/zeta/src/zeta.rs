@@ -707,7 +707,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    fn test_inline_completion_interpolation(cx: &mut AppContext) {
+    fn test_inline_completion_basic_interpolation(cx: &mut AppContext) {
         let buffer = cx.new_model(|cx| Buffer::local("Lorem ipsum dolor", cx));
         let completion = InlineCompletion {
             edits: to_completion_edits(
@@ -802,6 +802,37 @@ mod tests {
 
         buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
         assert_eq!(completion.interpolate(buffer.read(cx).snapshot()), None);
+    }
+
+    #[gpui::test]
+    fn test_inline_completion_interpolation_spaces(cx: &mut AppContext) {
+        let buffer = cx.new_model(|cx| Buffer::local("Lorem", cx));
+        let completion = InlineCompletion {
+            edits: to_completion_edits([(5..5, " ipsum".to_string())], &buffer, cx),
+            path: Path::new("").into(),
+            snapshot: buffer.read(cx).snapshot(),
+            id: InlineCompletionId::new(),
+            _raw_response: String::new(),
+        };
+
+        assert_eq!(
+            from_completion_edits(
+                &completion.interpolate(buffer.read(cx).snapshot()).unwrap(),
+                &buffer,
+                cx
+            ),
+            vec![(5..5, " ipsum".to_string())]
+        );
+
+        buffer.update(cx, |buffer, cx| buffer.edit([(5..5, " ")], None, cx));
+        assert_eq!(
+            from_completion_edits(
+                &completion.interpolate(buffer.read(cx).snapshot()).unwrap(),
+                &buffer,
+                cx
+            ),
+            vec![(6..6, "ipsum".to_string())]
+        );
     }
 
     fn to_completion_edits(

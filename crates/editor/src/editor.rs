@@ -2229,7 +2229,7 @@ impl Editor {
             key_context.set("extension", extension.to_string());
         }
 
-        if self.has_active_prediction(cx) {
+        if self.has_active_prediction() {
             key_context.add("copilot_suggestion");
             key_context.add("inline_completion");
         }
@@ -3629,7 +3629,7 @@ impl Editor {
                 );
             }
 
-            let had_active_inline_completion = this.has_active_prediction(cx);
+            let had_active_inline_completion = this.has_active_prediction();
             this.change_selections_inner(Some(Autoscroll::fit()), false, cx, |s| {
                 s.select(new_selections)
             });
@@ -5253,7 +5253,7 @@ impl Editor {
     }
 
     pub fn show_inline_completion(&mut self, _: &ShowInlineCompletion, cx: &mut ViewContext<Self>) {
-        if !self.has_active_prediction(cx) {
+        if !self.has_active_prediction() {
             self.refresh_prediction(false, true, cx);
             return;
         }
@@ -5280,7 +5280,7 @@ impl Editor {
     }
 
     pub fn next_inline_completion(&mut self, _: &NextInlineCompletion, cx: &mut ViewContext<Self>) {
-        if self.has_active_prediction(cx) {
+        if self.has_active_prediction() {
             self.cycle_inline_completion(Direction::Next, cx);
         } else {
             let is_copilot_disabled = self.refresh_prediction(false, true, cx).is_none();
@@ -5295,7 +5295,7 @@ impl Editor {
         _: &PreviousInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.has_active_prediction(cx) {
+        if self.has_active_prediction() {
             self.cycle_inline_completion(Direction::Prev, cx);
         } else {
             let is_copilot_disabled = self.refresh_prediction(false, true, cx).is_none();
@@ -5409,7 +5409,7 @@ impl Editor {
         self.take_active_prediction(cx).is_some()
     }
 
-    pub fn has_active_prediction(&self, _cx: &AppContext) -> bool {
+    pub fn has_active_prediction(&self) -> bool {
         self.active_prediction.is_some()
     }
 
@@ -5424,13 +5424,16 @@ impl Editor {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
         let multibuffer = self.buffer.read(cx).snapshot(cx);
+        let offset_selection = selection.map(|endpoint| endpoint.to_offset(&multibuffer));
         let excerpt_id = cursor.excerpt_id;
+
         if self.context_menu.read().is_some()
-            || !self.completion_tasks.is_empty()
-            || selection.start != selection.end
+            || (!self.completion_tasks.is_empty() && !self.has_active_prediction())
+            || !offset_selection.is_empty()
             || self.active_prediction.as_ref().map_or(false, |prediction| {
                 let invalidation_range = prediction.invalidation_range.to_offset(&multibuffer);
-                !invalidation_range.contains(&cursor.to_offset(&multibuffer))
+                let invalidation_range = invalidation_range.start..=invalidation_range.end;
+                !invalidation_range.contains(&offset_selection.head())
             })
         {
             self.discard_prediction(false, cx);
@@ -12601,7 +12604,7 @@ impl Editor {
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
-                if self.has_active_prediction(cx) {
+                if self.has_active_prediction() {
                     self.update_visible_prediction(cx);
                 }
                 cx.emit(EditorEvent::BufferEdited);
