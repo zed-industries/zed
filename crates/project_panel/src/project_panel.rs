@@ -261,6 +261,7 @@ struct ItemColors {
     hover: Hsla,
     drag_over: Hsla,
     marked_active: Hsla,
+    focused: Hsla,
 }
 
 fn get_item_color(cx: &ViewContext<ProjectPanel>) -> ItemColors {
@@ -271,6 +272,7 @@ fn get_item_color(cx: &ViewContext<ProjectPanel>) -> ItemColors {
         hover: colors.ghost_element_hover,
         drag_over: colors.drop_target_background,
         marked_active: colors.ghost_element_selected,
+        focused: colors.panel_focused_border,
     }
 }
 
@@ -3504,7 +3506,7 @@ impl ProjectPanel {
             .rounded_none()
             .when(
                 !self.mouse_down && is_active && self.focus_handle.contains_focused(cx),
-                |this| this.border_color(Color::Selected.color(cx)),
+                |this| this.border_color(item_colors.focused),
             )
     }
 
