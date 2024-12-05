@@ -62,13 +62,15 @@ struct Changes {
 }
 
 impl ProjectDiffEditor {
-    fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        if cx.is_staff() {
-            workspace.register_action(Self::deploy);
-        }
+    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+        workspace.register_action(Self::deploy);
     }
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
+        if !cx.is_staff() {
+            return;
+        }
+
         if let Some(existing) = workspace.item_of_type::<Self>(cx) {
             workspace.activate_item(&existing, true, true, cx);
         } else {
