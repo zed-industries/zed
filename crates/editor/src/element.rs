@@ -2746,17 +2746,30 @@ impl EditorElement {
 
         match &active_prediction.prediction {
             Prediction::Move(target_position) => {
+                let container_element = div()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_md()
+                    .px_1();
+
                 let target_display_point = target_position.to_display_point(editor_snapshot);
+
+                let keybinding = ui::KeyBinding::for_action_in(
+                    &crate::AcceptInlineCompletion,
+                    &self.editor.focus_handle(cx),
+                    cx,
+                );
+
                 if target_display_point.row() < visible_row_range.start {
-                    let mut element = h_flex()
-                        .gap_1()
-                        .children(ui::KeyBinding::for_action_in(
-                            &crate::AcceptInlineCompletion,
-                            &self.editor.focus_handle(cx),
-                            cx,
-                        ))
-                        .child(Label::new("Jump to edit"))
-                        .child(Icon::new(IconName::ArrowUp))
+                    let mut element = container_element
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .children(keybinding)
+                                .child(Label::new("Jump to edit"))
+                                .child(Icon::new(IconName::ArrowUp)),
+                        )
                         .into_any();
                     let size = element.layout_as_root(AvailableSpace::min_size(), cx);
                     let offset = point(
@@ -2766,15 +2779,14 @@ impl EditorElement {
                     element.prepaint_at(text_bounds.origin + offset, cx);
                     Some(element)
                 } else if target_display_point.row() > visible_row_range.end {
-                    let mut element = h_flex()
-                        .gap_1()
-                        .children(ui::KeyBinding::for_action_in(
-                            &crate::AcceptInlineCompletion,
-                            &self.editor.focus_handle(cx),
-                            cx,
-                        ))
-                        .child(Label::new("Jump to edit"))
-                        .child(Icon::new(IconName::ArrowDown))
+                    let mut element = container_element
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .children(keybinding)
+                                .child(Label::new("Jump to edit"))
+                                .child(Icon::new(IconName::ArrowDown)),
+                        )
                         .into_any();
                     let size = element.layout_as_root(AvailableSpace::min_size(), cx);
                     let offset = point(
@@ -2784,14 +2796,13 @@ impl EditorElement {
                     element.prepaint_at(text_bounds.origin + offset, cx);
                     Some(element)
                 } else {
-                    let mut element = h_flex()
-                        .gap_1()
-                        .children(ui::KeyBinding::for_action_in(
-                            &crate::AcceptInlineCompletion,
-                            &self.editor.focus_handle(cx),
-                            cx,
-                        ))
-                        .child(Label::new("Jump to edit"))
+                    let mut element = container_element
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .children(keybinding)
+                                .child(Label::new("Jump to edit")),
+                        )
                         .into_any();
 
                     let target_line_end = DisplayPoint::new(
