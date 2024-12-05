@@ -951,8 +951,10 @@ impl OnMatchingLines {
             Some(Ok(result)) => result,
         };
 
-        let regex = match Regex::new(&self.search) {
-            Ok(regex) => regex,
+        let mut action = self.action.boxed_clone();
+
+        let mut regexes = match Regex::new(&self.search) {
+            Ok(regex) => vec![(regex, !self.invert)],
             e @ Err(_) => {
                 let Some(workspace) = vim.workspace(cx) else {
                     return;
@@ -963,11 +965,20 @@ impl OnMatchingLines {
                 return;
             }
         };
+        while let Some(inner) = action
+            .boxed_clone()
+            .as_any()
+            .downcast_ref::<OnMatchingLines>()
+        {
+            let Some(regex) = Regex::new(&inner.search).ok() else {
+                break;
+            };
+            action = inner.action.boxed_clone();
+            regexes.push((regex, !inner.invert))
+        }
 
         vim.update_editor(cx, |_, editor, cx| {
             let snapshot = editor.snapshot(cx);
-            let invert = self.invert;
-            let action = self.action.boxed_clone();
             let mut row = range.start.0;
 
             let point_range = Point::new(range.start.0, 0)
@@ -988,7 +999,9 @@ impl OnMatchingLines {
                         for chunk in chunks {
                             for (newline_ix, text) in chunk.split('\n').enumerate() {
                                 if newline_ix > 0 {
-                                    if regex.is_match(&line) != invert {
+                                    if regexes.iter().all(|(regex, should_match)| {
+                                        regex.is_match(&line) == *should_match
+                                    }) {
                                         new_selections
                                             .push(Point::new(row, 0).to_display_point(&snapshot))
                                     }
