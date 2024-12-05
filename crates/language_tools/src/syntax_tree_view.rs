@@ -2,8 +2,8 @@ use editor::{scroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
     actions, div, rems, uniform_list, AppContext, Div, EventEmitter, FocusHandle, FocusableView,
     Hsla, InteractiveElement, IntoElement, Model, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ParentElement, Render, SharedString, Styled, UniformListScrollHandle, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    ParentElement, Render, ScrollStrategy, SharedString, Styled, UniformListScrollHandle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
@@ -199,7 +199,8 @@ impl SyntaxTreeView {
 
         let descendant_ix = cursor.descendant_index();
         self.selected_descendant_ix = Some(descendant_ix);
-        self.list_scroll_handle.scroll_to_item(descendant_ix);
+        self.list_scroll_handle
+            .scroll_to_item(descendant_ix, ScrollStrategy::Center);
 
         cx.notify();
         Some(())

@@ -5,7 +5,7 @@ use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
 use ec4rs::{
-    property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
+    property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
     Properties as EditorconfigProperties,
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
@@ -112,6 +112,9 @@ pub struct LanguageSettings {
     /// Controls whether inline completions are shown immediately (true)
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     pub show_inline_completions: bool,
+    /// Controls whether inline completions are shown in the given language
+    /// scopes.
+    pub inline_completions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
@@ -125,6 +128,8 @@ pub struct LanguageSettings {
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     pub use_on_type_format: bool,
+    /// Whether indentation of pasted content should be adjusted based on the context.
+    pub auto_indent_on_paste: bool,
     // Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
@@ -316,6 +321,14 @@ pub struct LanguageSettingsContent {
     /// Default: true
     #[serde(default)]
     pub show_inline_completions: Option<bool>,
+    /// Controls whether inline completions are shown in the given language
+    /// scopes.
+    ///
+    /// Example: ["string", "comment"]
+    ///
+    /// Default: []
+    #[serde(default)]
+    pub inline_completions_disabled_in: Option<Vec<String>>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
@@ -360,6 +373,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
+    /// Whether indentation of pasted content should be adjusted based on the context.
+    ///
+    /// Default: true
+    pub auto_indent_on_paste: Option<bool>,
     /// Task configuration for this language.
     ///
     /// Default: {}
@@ -870,10 +887,6 @@ impl AllLanguageSettings {
 }
 
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
-    let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
-        MaxLineLen::Value(u) => Some(u as u32),
-        MaxLineLen::Off => None,
-    });
     let tab_size = cfg.get::<IndentSize>().ok().and_then(|v| match v {
         IndentSize::Value(u) => NonZeroU32::new(u as u32),
         IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
@@ -896,13 +909,6 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
             TrimTrailingWs::Value(b) => b,
         })
         .ok();
-    let preferred_line_length = max_line_length;
-    let soft_wrap = if max_line_length.is_some() {
-        Some(SoftWrap::PreferredLineLength)
-    } else {
-        None
-    };
-
     fn merge<T>(target: &mut T, value: Option<T>) {
         if let Some(value) = value {
             *target = value;
@@ -918,8 +924,6 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
         &mut settings.ensure_final_newline_on_save,
         ensure_final_newline_on_save,
     );
-    merge(&mut settings.preferred_line_length, preferred_line_length);
-    merge(&mut settings.soft_wrap, soft_wrap);
 }
 
 /// The kind of an inlay hint.
@@ -1132,6 +1136,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.use_auto_surround, src.use_auto_surround);
     merge(&mut settings.use_on_type_format, src.use_on_type_format);
+    merge(&mut settings.auto_indent_on_paste, src.auto_indent_on_paste);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,
         src.always_treat_brackets_as_autoclosed,
@@ -1169,6 +1174,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(
         &mut settings.show_inline_completions,
         src.show_inline_completions,
+    );
+    merge(
+        &mut settings.inline_completions_disabled_in,
+        src.inline_completions_disabled_in.clone(),
     );
     merge(&mut settings.show_whitespaces, src.show_whitespaces);
     merge(

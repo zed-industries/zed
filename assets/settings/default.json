@@ -68,9 +68,17 @@
   "ui_font_size": 16,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
-  // The factor to grow the active pane by. Defaults to 1.0
-  // which gives the same size as all other panes.
-  "active_pane_magnification": 1.0,
+  // Active pane styling settings.
+  "active_pane_modifiers": {
+    // The factor to grow the active pane by. Defaults to 1.0
+    // which gives the same size as all other panes.
+    "magnification": 1.0,
+    // Inset border size of the active pane, in pixels.
+    "border_size": 0.0,
+    // Opacity of the inactive panes. 0 means transparent, 1 means opaque.
+    // Values are clamped to the [0.0, 1.0] range.
+    "inactive_opacity": 1.0
+  },
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
@@ -149,10 +157,10 @@
   "auto_signature_help": false,
   /// Whether to show the signature help after completion or a bracket pair inserted.
   /// If `auto_signature_help` is enabled, this setting will be treated as enabled also.
-  "show_signature_help_after_edits": true,
+  "show_signature_help_after_edits": false,
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
-  // if softwrap is set to 'preferred_line_length', and will show any
+  // if 'soft_wrap' is set to 'preferred_line_length', and will show any
   // additional guides as specified by the 'wrap_guides' setting.
   "show_wrap_guides": true,
   // Character counts at which to show wrap guides in the editor.
@@ -174,6 +182,8 @@
   // bracket, brace, single or double quote characters.
   // For example, when you select text and type (, Zed will surround the text with ().
   "use_auto_surround": true,
+  // Whether indentation of pasted content should be adjusted based on the context.
+  "auto_indent_on_paste": true,
   // Controls how the editor handles the autoclosed characters.
   // When set to `false`(default), skipping over and auto-removing of the closing characters
   // happen only for auto-inserted characters.
@@ -183,6 +193,9 @@
   // Controls whether inline completions are shown immediately (true)
   // or manually by triggering `editor::ShowInlineCompletion` (false).
   "show_inline_completions": true,
+  // Controls whether inline completions are shown in a given language scope.
+  // Example: ["string", "comment"]
+  "inline_completions_disabled_in": [],
   // Whether to show tabs and spaces in the editor.
   // This setting can take three values:
   //
@@ -287,6 +300,8 @@
   "scroll_beyond_last_line": "one_page",
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
+  // Whether to scroll when clicking near the edge of the visible text area.
+  "autoscroll_on_clicks": false,
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
@@ -370,6 +385,16 @@
       ///    "never"
       "show": null
     },
+    /// Which files containing diagnostic errors/warnings to mark in the project panel.
+    /// This setting can take the following three values:
+    ///
+    /// 1. Do not mark any files:
+    ///    "off"
+    /// 2. Only mark files with errors:
+    ///    "errors"
+    /// 3. Mark files with errors and warnings:
+    ///    "all"
+    "show_diagnostics": "all",
     // Settings related to indent guides in the project panel.
     "indent_guides": {
       // When to show indent guides in the project panel.
@@ -414,6 +439,23 @@
       // 2. Never show indent guides:
       //    "never"
       "show": "always"
+    },
+    /// Scrollbar-related settings
+    "scrollbar": {
+      /// When to show the scrollbar in the project panel.
+      /// This setting can take four values:
+      ///
+      /// 1. null (default): Inherit editor settings
+      /// 2. Show the scrollbar if there's important information or
+      ///    follow the system's configured behavior (default):
+      ///   "auto"
+      /// 3. Match the system's configured behavior:
+      ///    "system"
+      /// 4. Always show the scrollbar:
+      ///    "always"
+      /// 5. Never show the scrollbar:
+      ///    "never"
+      "show": null
     }
   },
   "collaboration_panel": {
@@ -458,7 +500,7 @@
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
-    // The default model to use when creating new contexts.
+    // The default model to use when creating new chats.
     "default_model": {
       // The provider to use.
       "provider": "zed.dev",
@@ -517,13 +559,25 @@
     "close_position": "right",
     // Whether to show the file icon for a tab.
     "file_icons": false,
+    // Whether to always show the close button on tabs.
+    "always_show_close_button": false,
     // What to do after closing the current tab.
     //
     // 1. Activate the tab that was open previously (default)
     //     "History"
     // 2. Activate the neighbour tab (prefers the right one, if present)
     //     "Neighbour"
-    "activate_on_close": "history"
+    "activate_on_close": "history",
+    /// Which files containing diagnostic errors/warnings to mark in the tabs.
+    /// This setting can take the following three values:
+    ///
+    /// 1. Do not mark any files:
+    ///    "off"
+    /// 2. Only mark files with errors:
+    ///    "errors"
+    /// 3. Mark files with errors and warnings:
+    ///    "all"
+    "show_diagnostics": "all"
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -540,7 +594,23 @@
   // Settings related to the file finder.
   "file_finder": {
     // Whether to show file icons in the file finder.
-    "file_icons": true
+    "file_icons": true,
+    // Determines how much space the file finder can take up in relation to the available window width.
+    // There are 5 possible width values:
+    //
+    // 1. Small: This value is essentially a fixed width.
+    //    "modal_width": "small"
+    // 2. Medium:
+    //    "modal_width": "medium"
+    // 3. Large:
+    //    "modal_width": "large"
+    // 4. Extra Large:
+    //    "modal_width": "xlarge"
+    // 5. Fullscreen: This value removes any horizontal padding, as it consumes the whole viewport width.
+    //    "modal_width": "full"
+    //
+    // Default: small
+    "modal_max_width": "small"
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -609,7 +679,7 @@
   },
   // Add files or globs of files that will be excluded by Zed entirely:
   // they will be skipped during FS scan(s), file tree and file search
-  // will lack the corresponding file entries.
+  // will lack the corresponding file entries. Overrides `file_scan_inclusions`.
   "file_scan_exclusions": [
     "**/.git",
     "**/.svn",
@@ -620,6 +690,11 @@
     "**/.classpath",
     "**/.settings"
   ],
+  // Add files or globs of files that will be included by Zed, even when
+  // ignored by git. This is useful for files that are not tracked by git,
+  // but are still important to your project. Note that globs that are
+  // overly broad can slow down Zed's file scanning. Overridden by `file_scan_exclusions`.
+  "file_scan_inclusions": [".env*"],
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
@@ -635,6 +710,12 @@
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       // "delay_ms": 600
+      //
+      // Whether or not do display the git commit summary on the same line.
+      // "show_commit_summary": false
+      //
+      // The minimum column number to show the inline blame information at
+      // "min_column": 0
     }
   },
   // Configuration for how direnv configuration should be loaded. May take 2 values:
@@ -774,8 +855,12 @@
       }
     },
     "toolbar": {
-      // Whether to display the terminal title in its toolbar.
-      "title": true
+      // Whether to display the terminal title in its toolbar's breadcrumbs.
+      // Only shown if the terminal title is not empty.
+      //
+      // The shell running in the terminal needs to be configured to emit the title.
+      // Example: `echo -e "\e]2;New Title\007";`
+      "breadcrumbs": true
     }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
@@ -797,7 +882,6 @@
   "tasks": {
     "variables": {}
   },
-  "toolchain": { "name": "default", "path": "default" },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
   // use those languages.
@@ -812,15 +896,8 @@
   //
   "file_types": {
     "Plain Text": ["txt"],
-    "JSON": ["flake.lock"],
-    "JSONC": [
-      "**/.zed/**/*.json",
-      "**/zed/**/*.json",
-      "**/Zed/**/*.json",
-      "tsconfig.json",
-      "pyrightconfig.json"
-    ],
-    "TOML": ["uv.lock"]
+    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
+    "Shell Script": [".env.*"]
   },
   /// By default use a recent system version of node, or install our own.
   /// You can override this to use a version of node that is not in $PATH with:
@@ -1008,13 +1085,11 @@
       "api_url": "https://generativelanguage.googleapis.com"
     },
     "ollama": {
-      "api_url": "http://localhost:11434",
-      "low_speed_timeout_in_seconds": 60
+      "api_url": "http://localhost:11434"
     },
     "openai": {
       "version": "1",
-      "api_url": "https://api.openai.com/v1",
-      "low_speed_timeout_in_seconds": 600
+      "api_url": "https://api.openai.com/v1"
     }
   },
   // Zed's Prettier integration settings.
@@ -1064,6 +1139,7 @@
     "use_system_clipboard": "always",
     "use_multiline_find": false,
     "use_smartcase_find": false,
+    "highlight_on_yank_duration": 200,
     "custom_digraphs": {}
   },
   // The server to connect to. If the environment variable
@@ -1121,6 +1197,8 @@
   //   "W": "workspace::Save"
   // }
   "command_aliases": {},
+  // Whether to show user picture in titlebar.
+  "show_user_picture": true,
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.
@@ -1137,15 +1215,6 @@
   //   }
   // ]
   "ssh_connections": [],
-  // Configures the Context Server Protocol binaries
-  //
-  // Examples:
-  // {
-  //   "id": "server-1",
-  //   "executable": "/path",
-  //   "args": ['arg1", "args2"]
-  // }
-  "experimental.context_servers": {
-    "servers": []
-  }
+  // Configures context servers for use in the Assistant.
+  "context_servers": {}
 }

@@ -155,6 +155,13 @@
   "}"
 ]  @punctuation.bracket
 
+(ternary_expression
+  [
+    "?"
+    ":"
+  ] @operator
+)
+
 [
   "as"
   "async"

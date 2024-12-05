@@ -3,16 +3,13 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
-use language::{
-    LanguageRegistry, LanguageServerName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
-};
-use lsp::LanguageServerBinary;
+use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::ContextProviderWithTasks;
+use project::{lsp_store::language_server_settings, ContextProviderWithTasks};
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
@@ -28,7 +25,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
@@ -77,13 +74,11 @@ impl JsonLspAdapter {
 
     fn get_workspace_config(language_names: Vec<String>, cx: &mut AppContext) -> Value {
         let action_names = cx.all_action_names();
-        let staff_mode = cx.is_staff();
 
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
             &SettingsJsonSchemaParams {
                 language_names: &language_names,
-                staff_mode,
                 font_names,
             },
             cx,
@@ -199,15 +194,26 @@ impl LspAdapter for JsonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        cx.update(|cx| {
+        let mut config = cx.update(|cx| {
             self.workspace_config
                 .get_or_init(|| Self::get_workspace_config(self.languages.language_names(), cx))
                 .clone()
-        })
+        })?;
+
+        let project_options = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &self.name(), cx)
+                .and_then(|s| s.settings.clone())
+        })?;
+
+        if let Some(override_options) = project_options {
+            merge_json_value_into(override_options, &mut config);
+        }
+
+        Ok(config)
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
@@ -355,7 +361,6 @@ impl LspAdapter for NodeVersionAdapter {
             }
             remove_matching(&container_dir, |entry| entry != destination_path).await;
         }
-
         Ok(LanguageServerBinary {
             path: destination_path,
             env: None,

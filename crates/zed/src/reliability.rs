@@ -85,7 +85,7 @@ pub fn init_panic_hook(
         // Strip out leading stack frames for rust panic-handling.
         if let Some(ix) = backtrace
             .iter()
-            .position(|name| name == "rust_begin_unwind")
+            .position(|name| name == "rust_begin_unwind" || name == "_rust_begin_unwind")
         {
             backtrace.drain(0..=ix);
         }
@@ -495,10 +495,7 @@ async fn upload_panic(
 ) -> Result<bool> {
     *most_recent_panic = Some((panic.panicked_on, panic.payload.clone()));
 
-    let json_bytes = serde_json::to_vec(&PanicRequest {
-        panic: panic.clone(),
-    })
-    .unwrap();
+    let json_bytes = serde_json::to_vec(&PanicRequest { panic }).unwrap();
 
     let Some(checksum) = client::telemetry::calculate_json_checksum(&json_bytes) else {
         return Ok(false);

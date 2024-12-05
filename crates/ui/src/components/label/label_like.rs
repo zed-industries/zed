@@ -49,6 +49,9 @@ pub trait LabelCommon {
 
     /// Sets the alpha property of the label, overwriting the alpha value of the color.
     fn alpha(self, alpha: f32) -> Self;
+
+    /// Sets the label to render as a single line.
+    fn single_line(self) -> Self;
 }
 
 #[derive(IntoElement)]
@@ -63,6 +66,7 @@ pub struct LabelLike {
     children: SmallVec<[AnyElement; 2]>,
     alpha: Option<f32>,
     underline: bool,
+    single_line: bool,
 }
 
 impl Default for LabelLike {
@@ -84,6 +88,7 @@ impl LabelLike {
             children: SmallVec::new(),
             alpha: None,
             underline: false,
+            single_line: false,
         }
     }
 }
@@ -139,6 +144,11 @@ impl LabelCommon for LabelLike {
         self.alpha = Some(alpha);
         self
     }
+
+    fn single_line(mut self) -> Self {
+        self.single_line = true;
+        self
+    }
 }
 
 impl ParentElement for LabelLike {
@@ -157,16 +167,6 @@ impl RenderOnce for LabelLike {
         }
 
         self.base
-            .when(self.strikethrough, |this| {
-                this.relative().child(
-                    div()
-                        .absolute()
-                        .top_1_2()
-                        .w_full()
-                        .h_px()
-                        .bg(Color::Hidden.color(cx)),
-                )
-            })
             .map(|this| match self.size {
                 LabelSize::Large => this.text_ui_lg(cx),
                 LabelSize::Default => this.text_ui(cx),
@@ -187,6 +187,8 @@ impl RenderOnce for LabelLike {
                 });
                 this
             })
+            .when(self.strikethrough, |this| this.line_through())
+            .when(self.single_line, |this| this.whitespace_nowrap())
             .text_color(color)
             .font_weight(self.weight.unwrap_or(settings.ui_font.weight))
             .children(self.children)

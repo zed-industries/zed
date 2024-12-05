@@ -7,7 +7,7 @@ use settings::{Settings, SettingsSources};
 
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {
-    pub active_pane_magnification: f32,
+    pub active_pane_modifiers: ActivePanelModifiers,
     pub pane_split_direction_horizontal: PaneSplitDirectionHorizontal,
     pub pane_split_direction_vertical: PaneSplitDirectionVertical,
     pub centered_layout: CenteredLayoutSettings,
@@ -19,6 +19,31 @@ pub struct WorkspaceSettings {
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub use_system_path_prompts: bool,
     pub command_aliases: HashMap<String, String>,
+    pub show_user_picture: bool,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ActivePanelModifiers {
+    /// Scale by which to zoom the active pane.
+    /// When set to 1.0, the active pane has the same size as others,
+    /// but when set to a larger value, the active pane takes up more space.
+    ///
+    /// Default: `1.0`
+    pub magnification: Option<f32>,
+    /// Size of the border surrounding the active pane.
+    /// When set to 0, the active pane doesn't have any border.
+    /// The border is drawn inset.
+    ///
+    /// Default: `0.0`
+    pub border_size: Option<f32>,
+    /// Opacity of inactive panels.
+    /// When set to 1.0, the inactive panes have the same opacity as the active one.
+    /// If set to 0, the inactive panes content will not be visible at all.
+    /// Values are clamped to the [0.0, 1.0] range.
+    ///
+    /// Default: `1.0`
+    pub inactive_opacity: Option<f32>,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -57,12 +82,8 @@ pub enum RestoreOnStartupBehavior {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSettingsContent {
-    /// Scale by which to zoom the active pane.
-    /// When set to 1.0, the active pane has the same size as others,
-    /// but when set to a larger value, the active pane takes up more space.
-    ///
-    /// Default: `1.0`
-    pub active_pane_magnification: Option<f32>,
+    /// Active pane styling settings.
+    pub active_pane_modifiers: Option<ActivePanelModifiers>,
     // Direction to split horizontally.
     //
     // Default: "up"
@@ -108,6 +129,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub command_aliases: Option<HashMap<String, String>>,
+    /// Whether to show user avatar in the title bar.
+    ///
+    /// Default: true
+    pub show_user_picture: Option<bool>,
 }
 
 #[derive(Deserialize)]

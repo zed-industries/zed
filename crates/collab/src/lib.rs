@@ -170,6 +170,10 @@ pub struct Config {
     pub blob_store_access_key: Option<String>,
     pub blob_store_secret_key: Option<String>,
     pub blob_store_bucket: Option<String>,
+    pub kinesis_region: Option<String>,
+    pub kinesis_stream: Option<String>,
+    pub kinesis_access_key: Option<String>,
+    pub kinesis_secret_key: Option<String>,
     pub zed_environment: Arc<str>,
     pub openai_api_key: Option<Arc<str>>,
     pub google_ai_api_key: Option<Arc<str>>,
@@ -238,6 +242,10 @@ impl Config {
             stripe_api_key: None,
             supermaven_admin_api_key: None,
             user_backfiller_github_access_token: None,
+            kinesis_region: None,
+            kinesis_access_key: None,
+            kinesis_secret_key: None,
+            kinesis_stream: None,
         }
     }
 }
@@ -276,6 +284,7 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
     pub clickhouse_client: Option<::clickhouse::Client>,
+    pub kinesis_client: Option<::aws_sdk_kinesis::Client>,
     pub config: Config,
 }
 
@@ -332,6 +341,11 @@ impl AppState {
                 .clickhouse_url
                 .as_ref()
                 .and_then(|_| build_clickhouse_client(&config).log_err()),
+            kinesis_client: if config.kinesis_access_key.is_some() {
+                build_kinesis_client(&config).await.log_err()
+            } else {
+                None
+            },
             config,
         };
         Ok(Arc::new(this))
@@ -379,6 +393,35 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
         .await;
 
     Ok(aws_sdk_s3::Client::new(&s3_config))
+}
+
+async fn build_kinesis_client(config: &Config) -> anyhow::Result<aws_sdk_kinesis::Client> {
+    let keys = aws_sdk_s3::config::Credentials::new(
+        config
+            .kinesis_access_key
+            .clone()
+            .ok_or_else(|| anyhow!("missing kinesis_access_key"))?,
+        config
+            .kinesis_secret_key
+            .clone()
+            .ok_or_else(|| anyhow!("missing kinesis_secret_key"))?,
+        None,
+        None,
+        "env",
+    );
+
+    let kinesis_config = aws_config::defaults(BehaviorVersion::latest())
+        .region(Region::new(
+            config
+                .kinesis_region
+                .clone()
+                .ok_or_else(|| anyhow!("missing blob_store_region"))?,
+        ))
+        .credentials_provider(keys)
+        .load()
+        .await;
+
+    Ok(aws_sdk_kinesis::Client::new(&kinesis_config))
 }
 
 fn build_clickhouse_client(config: &Config) -> anyhow::Result<::clickhouse::Client> {

@@ -835,7 +835,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         .map_ok(|_| ())
                         .boxed(),
                     LspRequestKind::CodeAction => project
-                        .code_actions(&buffer, offset..offset, cx)
+                        .code_actions(&buffer, offset..offset, None, cx)
                         .map(|_| Ok(()))
                         .boxed(),
                     LspRequestKind::Definition => project
@@ -1323,11 +1323,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                     match (host_file, guest_file) {
                         (Some(host_file), Some(guest_file)) => {
                             assert_eq!(guest_file.path(), host_file.path());
-                            assert_eq!(guest_file.is_deleted(), host_file.is_deleted());
-                            assert_eq!(
-                                guest_file.mtime(),
-                                host_file.mtime(),
-                                "guest {} mtime does not match host {} for path {:?} in project {}",
+                            assert_eq!(guest_file.disk_state(), host_file.disk_state(),
+                                "guest {} disk_state does not match host {} for path {:?} in project {}",
                                 guest_user_id,
                                 host_user_id,
                                 guest_file.path(),
@@ -1339,10 +1336,24 @@ impl RandomizedTest for ProjectCollaborationTest {
                         (_, None) => panic!("guest's file is None, hosts's isn't"),
                     }
 
-                    let host_diff_base = host_buffer
-                        .read_with(host_cx, |b, _| b.diff_base().map(ToString::to_string));
-                    let guest_diff_base = guest_buffer
-                        .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
+                    let host_diff_base = host_project.read_with(host_cx, |project, cx| {
+                        project
+                            .buffer_store()
+                            .read(cx)
+                            .get_unstaged_changes(host_buffer.read(cx).remote_id())
+                            .unwrap()
+                            .read(cx)
+                            .base_text_string(cx)
+                    });
+                    let guest_diff_base = guest_project.read_with(client_cx, |project, cx| {
+                        project
+                            .buffer_store()
+                            .read(cx)
+                            .get_unstaged_changes(guest_buffer.read(cx).remote_id())
+                            .unwrap()
+                            .read(cx)
+                            .base_text_string(cx)
+                    });
                     assert_eq!(
                             guest_diff_base, host_diff_base,
                             "guest {} diff base does not match host's for path {path:?} in project {project_id}",

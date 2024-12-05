@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, time::Duration};
 
 use collections::HashMap;
 use itertools::Itertools;
@@ -36,35 +36,53 @@ impl LinkedEditingRanges {
         self.0.is_empty()
     }
 }
-pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Editor>) -> Option<()> {
-    if this.pending_rename.is_some() {
+
+const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+
+// TODO do not refresh anything at all, if the settings/capabilities do not have it enabled.
+pub(super) fn refresh_linked_ranges(
+    editor: &mut Editor,
+    cx: &mut ViewContext<Editor>,
+) -> Option<()> {
+    if editor.pending_rename.is_some() {
         return None;
     }
-    let project = this.project.clone()?;
-    let selections = this.selections.all::<usize>(cx);
-    let buffer = this.buffer.read(cx);
-    let mut applicable_selections = vec![];
-    let snapshot = buffer.snapshot(cx);
-    for selection in selections {
-        let cursor_position = selection.head();
-        let start_position = snapshot.anchor_before(cursor_position);
-        let end_position = snapshot.anchor_after(selection.tail());
-        if start_position.buffer_id != end_position.buffer_id || end_position.buffer_id.is_none() {
-            // Throw away selections spanning multiple buffers.
-            continue;
+    let project = editor.project.as_ref()?.downgrade();
+
+    editor.linked_editing_range_task = Some(cx.spawn(|editor, mut cx| async move {
+        cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+
+        let mut applicable_selections = Vec::new();
+        editor
+            .update(&mut cx, |editor, cx| {
+                let selections = editor.selections.all::<usize>(cx);
+                let snapshot = editor.buffer.read(cx).snapshot(cx);
+                let buffer = editor.buffer.read(cx);
+                for selection in selections {
+                    let cursor_position = selection.head();
+                    let start_position = snapshot.anchor_before(cursor_position);
+                    let end_position = snapshot.anchor_after(selection.tail());
+                    if start_position.buffer_id != end_position.buffer_id
+                        || end_position.buffer_id.is_none()
+                    {
+                        // Throw away selections spanning multiple buffers.
+                        continue;
+                    }
+                    if let Some(buffer) = end_position.buffer_id.and_then(|id| buffer.buffer(id)) {
+                        applicable_selections.push((
+                            buffer,
+                            start_position.text_anchor,
+                            end_position.text_anchor,
+                        ));
+                    }
+                }
+            })
+            .ok()?;
+
+        if applicable_selections.is_empty() {
+            return None;
         }
-        if let Some(buffer) = end_position.buffer_id.and_then(|id| buffer.buffer(id)) {
-            applicable_selections.push((
-                buffer,
-                start_position.text_anchor,
-                end_position.text_anchor,
-            ));
-        }
-    }
-    if applicable_selections.is_empty() {
-        return None;
-    }
-    this.linked_editing_range_task = Some(cx.spawn(|this, mut cx| async move {
+
         let highlights = project
             .update(&mut cx, |project, cx| {
                 let mut linked_edits_tasks = vec![];
@@ -110,37 +128,38 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                 }
                 linked_edits_tasks
             })
-            .log_err()?;
+            .ok()?;
 
         let highlights = futures::future::join_all(highlights).await;
 
-        this.update(&mut cx, |this, cx| {
-            this.linked_edit_ranges.0.clear();
-            if this.pending_rename.is_some() {
-                return;
-            }
-            for (buffer_id, ranges) in highlights.into_iter().flatten() {
-                this.linked_edit_ranges
-                    .0
-                    .entry(buffer_id)
-                    .or_default()
-                    .extend(ranges);
-            }
-            for (buffer_id, values) in this.linked_edit_ranges.0.iter_mut() {
-                let Some(snapshot) = this
-                    .buffer
-                    .read(cx)
-                    .buffer(*buffer_id)
-                    .map(|buffer| buffer.read(cx).snapshot())
-                else {
-                    continue;
-                };
-                values.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0, &snapshot));
-            }
+        editor
+            .update(&mut cx, |this, cx| {
+                this.linked_edit_ranges.0.clear();
+                if this.pending_rename.is_some() {
+                    return;
+                }
+                for (buffer_id, ranges) in highlights.into_iter().flatten() {
+                    this.linked_edit_ranges
+                        .0
+                        .entry(buffer_id)
+                        .or_default()
+                        .extend(ranges);
+                }
+                for (buffer_id, values) in this.linked_edit_ranges.0.iter_mut() {
+                    let Some(snapshot) = this
+                        .buffer
+                        .read(cx)
+                        .buffer(*buffer_id)
+                        .map(|buffer| buffer.read(cx).snapshot())
+                    else {
+                        continue;
+                    };
+                    values.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0, &snapshot));
+                }
 
-            cx.notify();
-        })
-        .log_err();
+                cx.notify();
+            })
+            .ok()?;
 
         Some(())
     }));

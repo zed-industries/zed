@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{ActiveTheme, WindowContext};
+use ui::{prelude::*, ActiveTheme, WindowContext};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -29,6 +29,10 @@ impl SlashCommand for TabSlashCommand {
 
     fn description(&self) -> String {
         "Insert open tabs (active tab by default)".to_owned()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::FileTree
     }
 
     fn menu_text(&self) -> String {

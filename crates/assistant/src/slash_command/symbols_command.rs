@@ -22,6 +22,10 @@ impl SlashCommand for OutlineSlashCommand {
         "Insert symbols for active tab".into()
     }
 
+    fn icon(&self) -> IconName {
+        IconName::ListTree
+    }
+
     fn menu_text(&self) -> String {
         self.description()
     }

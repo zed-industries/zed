@@ -8,21 +8,11 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 ## Dependencies
 
-- Install [Rust](https://www.rust-lang.org/tools/install). If it's already installed, make sure it's up-to-date:
+- Install [rustup](https://www.rust-lang.org/tools/install)
 
-  ```sh
-  rustup update
-  ```
-
-- Install the Rust wasm toolchain:
-
-  ```sh
-  rustup target add wasm32-wasip1
-  ```
-
-- Install [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the optional component `MSVC v*** - VS YYYY C++ x64/x86 build tools` (`v***` is your VS version and `YYYY` is year when your VS was released)
+- Install [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the optional components `MSVC v*** - VS YYYY C++ x64/x86 build tools` and `MSVC v*** - VS YYYY C++ x64/x86 Spectre-mitigated libs (latest)` (`v***` is your VS version and `YYYY` is year when your VS was released. Pay attention to the architecture and change it to yours if needed.)
 - Install Windows 11 or 10 SDK depending on your system, but ensure that at least `Windows 10 SDK version 2104 (10.0.20348.0)` is installed on your machine. You can download it from the [Windows SDK Archive](https://developer.microsoft.com/windows/downloads/windows-sdk/)
-- Install [CMake](https://cmake.org/download)
+- Install [CMake](https://cmake.org/download) (required by [a dependency](https://docs.rs/wasmtime-c-api-impl/latest/wasmtime_c_api/))
 
 ## Backend dependencies
 
@@ -63,7 +53,7 @@ cargo test --workspace
 
 ## Installing from msys2
 
-[MSYS2](https://msys2.org/) distribution provides Zed as a package [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed). The package is available for UCRT64 and CLANG64. To download it, run
+[MSYS2](https://msys2.org/) distribution provides Zed as a package [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed). The package is available for UCRT64, MINGW64 and CLANG64 repositories. To download it, run
 
 ```sh
 pacman -Syu
@@ -120,3 +110,32 @@ In order to fix this issue, you can manually set the `ZED_RC_TOOLKIT_PATH` envir
 `C:\Program Files (x86)\Windows Kits\10\bin\<SDK_version>\x64`.
 
 See this [issue](https://github.com/zed-industries/zed/issues/18393) for more information.
+
+### Build fails: Path too long
+
+You may receive an error like the following when building
+
+```
+error: failed to get `pet` as a dependency of package `languages v0.1.0 (D:\a\zed-windows-builds\zed-windows-builds\crates\languages)`
+
+Caused by:
+  failed to load source for dependency `pet`
+
+Caused by:
+  Unable to update https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f2
+
+Caused by:
+  path too long: 'C:/Users/runneradmin/.cargo/git/checkouts/python-environment-tools-903993894b37a7d2/ffcbf3f/crates/pet-conda/tests/unix/conda_env_without_manager_but_found_in_history/some_other_location/conda_install/conda-meta/python-fastjsonschema-2.16.2-py310hca03da5_0.json'; class=Filesystem (30)
+```
+
+In order to solve this, you can enable longpath support for git and Windows.
+
+For git: `git config --system core.longpaths true`
+
+And for Windows with this PS command:
+
+```powershell
+New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+```
+
+For more information on this, please see [win32 docs](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation?tabs=powershell)

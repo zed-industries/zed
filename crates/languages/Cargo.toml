@@ -29,7 +29,7 @@ load-grammars = [
     "tree-sitter-rust",
     "tree-sitter-typescript",
     "tree-sitter-yaml",
-    "tree-sitter"
+    "tree-sitter",
 ]
 
 [dependencies]
@@ -38,7 +38,6 @@ async-compression.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
-feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
@@ -48,6 +47,7 @@ lsp.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
 pet.workspace = true
+pet-fs.workspace = true
 pet-core.workspace = true
 pet-conda.workspace = true
 pet-poetry.workspace = true

@@ -1,16 +1,16 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
+use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Model;
-use language::{Buffer, BufferSnapshot};
-use regex::{Captures, Regex, RegexBuilder};
+use language::{Buffer, BufferSnapshot, CharKind};
 use smol::future::yield_now;
 use std::{
     borrow::Cow,
     io::{BufRead, BufReader, Read},
     ops::Range,
     path::Path,
-    sync::{Arc, OnceLock},
+    sync::{Arc, LazyLock, OnceLock},
 };
 use text::Anchor;
 use util::paths::PathMatcher;
@@ -76,6 +76,12 @@ pub enum SearchQuery {
     },
 }
 
+static WORD_MATCH_TEST: LazyLock<Regex> = LazyLock::new(|| {
+    RegexBuilder::new(r"\B")
+        .build()
+        .expect("Failed to create WORD_MATCH_TEST")
+});
+
 impl SearchQuery {
     pub fn text(
         query: impl ToString,
@@ -119,16 +125,23 @@ impl SearchQuery {
         let initial_query = Arc::from(query.as_str());
         if whole_word {
             let mut word_query = String::new();
-            word_query.push_str("\\b");
+            if let Some(first) = query.get(0..1) {
+                if WORD_MATCH_TEST.is_match(first).is_ok_and(|x| !x) {
+                    word_query.push_str("\\b");
+                }
+            }
             word_query.push_str(&query);
-            word_query.push_str("\\b");
+            if let Some(last) = query.get(query.len() - 1..) {
+                if WORD_MATCH_TEST.is_match(last).is_ok_and(|x| !x) {
+                    word_query.push_str("\\b");
+                }
+            }
             query = word_query
         }
 
         let multiline = query.contains('\n') || query.contains("\\n") || query.contains("\\s");
         let regex = RegexBuilder::new(&query)
             .case_insensitive(!case_sensitive)
-            .multi_line(multiline)
             .build()?;
         let inner = SearchInputs {
             query: initial_query,
@@ -222,12 +235,12 @@ impl SearchQuery {
                     if let Err(err) = reader.read_to_string(&mut text) {
                         Err(err.into())
                     } else {
-                        Ok(regex.find(&text).is_some())
+                        Ok(regex.find(&text)?.is_some())
                     }
                 } else {
                     for line in reader.lines() {
                         let line = line?;
-                        if regex.find(&line).is_some() {
+                        if regex.find(&line)?.is_some() {
                             return Ok(true);
                         }
                     }
@@ -314,7 +327,9 @@ impl SearchQuery {
                         let end_kind =
                             classifier.kind(rope.reversed_chars_at(mat.end()).next().unwrap());
                         let next_kind = rope.chars_at(mat.end()).next().map(|c| classifier.kind(c));
-                        if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
+                        if (Some(start_kind) == prev_kind && start_kind == CharKind::Word)
+                            || (Some(end_kind) == next_kind && end_kind == CharKind::Word)
+                        {
                             continue;
                         }
                     }
@@ -332,7 +347,9 @@ impl SearchQuery {
                             yield_now().await;
                         }
 
-                        matches.push(mat.start()..mat.end());
+                        if let Ok(mat) = mat {
+                            matches.push(mat.start()..mat.end());
+                        }
                     }
                 } else {
                     let mut line = String::new();
@@ -344,7 +361,7 @@ impl SearchQuery {
 
                         for (newline_ix, text) in chunk.split('\n').enumerate() {
                             if newline_ix > 0 {
-                                for mat in regex.find_iter(&line) {
+                                for mat in regex.find_iter(&line).flatten() {
                                     let start = line_offset + mat.start();
                                     let end = line_offset + mat.end();
                                     matches.push(start..end);

@@ -1,0 +1,47 @@
+[package]
+name = "assistant2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/assistant.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+assistant_tool.workspace = true
+chrono.workspace = true
+client.workspace = true
+collections.workspace = true
+command_palette_hooks.workspace = true
+context_server.workspace = true
+editor.workspace = true
+feature_flags.workspace = true
+futures.workspace = true
+gpui.workspace = true
+language.workspace = true
+language_model.workspace = true
+language_model_selector.workspace = true
+language_models.workspace = true
+log.workspace = true
+markdown.workspace = true
+picker.workspace = true
+project.workspace = true
+proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+smol.workspace = true
+theme.workspace = true
+time.workspace = true
+time_format.workspace = true
+ui.workspace = true
+unindent.workspace = true
+util.workspace = true
+uuid.workspace = true
+workspace.workspace = true

@@ -1,9 +1,10 @@
 use crate::tests::TestServer;
 use call::ActiveCall;
 use collections::HashSet;
+use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _};
 use futures::StreamExt as _;
-use gpui::{BackgroundExecutor, Context as _, TestAppContext, UpdateGlobal as _};
+use gpui::{BackgroundExecutor, Context as _, SemanticVersion, TestAppContext, UpdateGlobal as _};
 use http_client::BlockedHttpClient;
 use language::{
     language_settings::{
@@ -31,6 +32,12 @@ async fn test_sharing_an_ssh_remote_project(
     server_cx: &mut TestAppContext,
 ) {
     let executor = cx_a.executor();
+    cx_a.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -75,6 +82,7 @@ async fn test_sharing_an_ssh_remote_project(
                 http_client: remote_http_client,
                 node_runtime: node,
                 languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,
         )
@@ -199,6 +207,13 @@ async fn test_ssh_collaboration_git_branches(
     cx_b.set_name("b");
     server_cx.set_name("server");
 
+    cx_a.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -230,6 +245,7 @@ async fn test_ssh_collaboration_git_branches(
                 http_client: remote_http_client,
                 node_runtime: node,
                 languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,
         )
@@ -329,6 +345,13 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     cx_b.set_name("b");
     server_cx.set_name("server");
 
+    cx_a.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -380,6 +403,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
                 http_client: remote_http_client,
                 node_runtime: NodeRuntime::unavailable(),
                 languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,
         )

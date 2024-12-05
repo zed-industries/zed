@@ -15,7 +15,6 @@ use extension::{
 };
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
-use theme::ThemeRegistry;
 use tree_sitter::{Language, Query, WasmStore};
 
 #[derive(Parser, Debug)]
@@ -267,7 +266,7 @@ async fn test_themes(
 ) -> Result<()> {
     for relative_theme_path in &manifest.themes {
         let theme_path = extension_path.join(relative_theme_path);
-        let theme_family = ThemeRegistry::read_user_theme(&theme_path, fs.clone()).await?;
+        let theme_family = theme::read_user_theme(&theme_path, fs.clone()).await?;
         log::info!("loaded theme family {}", theme_family.name);
     }
 

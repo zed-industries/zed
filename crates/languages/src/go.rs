@@ -5,10 +5,10 @@ use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
-use lsp::LanguageServerBinary;
+use lsp::{LanguageServerBinary, LanguageServerName};
 use regex::Regex;
 use serde_json::json;
-use smol::{fs, process};
+use smol::fs;
 use std::{
     any::Any,
     borrow::Cow,
@@ -67,6 +67,7 @@ impl super::LspAdapter for GoLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
@@ -89,8 +90,7 @@ impl super::LspAdapter for GoLspAdapter {
 
         let delegate = delegate.clone();
         Some(cx.spawn(|cx| async move {
-            let install_output = process::Command::new("go").args(["version"]).output().await;
-            if install_output.is_err() {
+            if delegate.which("go".as_ref()).await.is_none() {
                 if DID_SHOW_NOTIFICATION
                     .compare_exchange(false, true, SeqCst, SeqCst)
                     .is_ok()
@@ -139,7 +139,9 @@ impl super::LspAdapter for GoLspAdapter {
 
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
-        let install_output = process::Command::new("go")
+
+        let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
+        let install_output = util::command::new_smol_command(go)
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
             .args(["install", "golang.org/x/tools/gopls@latest"])
@@ -157,7 +159,7 @@ impl super::LspAdapter for GoLspAdapter {
         }
 
         let installed_binary_path = gobin_dir.join("gopls");
-        let version_output = process::Command::new(&installed_binary_path)
+        let version_output = util::command::new_smol_command(&installed_binary_path)
             .arg("version")
             .output()
             .await
@@ -408,6 +410,8 @@ fn adjust_runs(
 pub(crate) struct GoContextProvider;
 
 const GO_PACKAGE_TASK_VARIABLE: VariableName = VariableName::Custom(Cow::Borrowed("GO_PACKAGE"));
+const GO_MODULE_ROOT_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("GO_MODULE_ROOT"));
 const GO_SUBTEST_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("GO_SUBTEST_NAME"));
 
@@ -416,9 +420,10 @@ impl ContextProvider for GoContextProvider {
         &self,
         variables: &TaskVariables,
         location: &Location,
-        _: Option<&HashMap<String, String>>,
+        _: Option<HashMap<String, String>>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::AppContext,
-    ) -> Result<TaskVariables> {
+    ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
             .buffer
             .read(cx)
@@ -447,16 +452,34 @@ impl ContextProvider for GoContextProvider {
                 (GO_PACKAGE_TASK_VARIABLE.clone(), package_name.to_string())
             });
 
+        let go_module_root_variable = local_abs_path
+            .as_deref()
+            .and_then(|local_abs_path| local_abs_path.parent())
+            .map(|buffer_dir| {
+                // Walk dirtree up until getting the first go.mod file
+                let module_dir = buffer_dir
+                    .ancestors()
+                    .find(|dir| dir.join("go.mod").is_file())
+                    .map(|dir| dir.to_string_lossy().to_string())
+                    .unwrap_or_else(|| ".".to_string());
+
+                (GO_MODULE_ROOT_TASK_VARIABLE.clone(), module_dir)
+            });
+
         let _subtest_name = variables.get(&VariableName::Custom(Cow::Borrowed("_subtest_name")));
 
         let go_subtest_variable = extract_subtest_name(_subtest_name.unwrap_or(""))
             .map(|subtest_name| (GO_SUBTEST_NAME_TASK_VARIABLE.clone(), subtest_name));
 
-        Ok(TaskVariables::from_iter(
-            [go_package_variable, go_subtest_variable]
-                .into_iter()
-                .flatten(),
-        ))
+        Task::ready(Ok(TaskVariables::from_iter(
+            [
+                go_package_variable,
+                go_subtest_variable,
+                go_module_root_variable,
+            ]
+            .into_iter()
+            .flatten(),
+        )))
     }
 
     fn associated_tasks(
@@ -469,6 +492,7 @@ impl ContextProvider for GoContextProvider {
         } else {
             Some("$ZED_DIRNAME".to_string())
         };
+        let module_cwd = Some(GO_MODULE_ROOT_TASK_VARIABLE.template_value());
 
         Some(TaskTemplates(vec![
             TaskTemplate {
@@ -498,7 +522,7 @@ impl ContextProvider for GoContextProvider {
                 label: "go test ./...".into(),
                 command: "go".into(),
                 args: vec!["test".into(), "./...".into()],
-                cwd: package_cwd.clone(),
+                cwd: module_cwd.clone(),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -547,6 +571,21 @@ impl ContextProvider for GoContextProvider {
                 args: vec!["run".into(), ".".into()],
                 cwd: package_cwd.clone(),
                 tags: vec!["go-main".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!("go generate {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
+                command: "go".into(),
+                args: vec!["generate".into()],
+                cwd: package_cwd.clone(),
+                tags: vec!["go-generate".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "go generate ./...".into(),
+                command: "go".into(),
+                args: vec!["generate".into(), "./...".into()],
+                cwd: module_cwd.clone(),
                 ..TaskTemplate::default()
             },
         ]))

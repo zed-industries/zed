@@ -16,7 +16,6 @@ pub enum ComponentStory {
     AutoHeightEditor,
     Avatar,
     Button,
-    Checkbox,
     CollabNotification,
     ContextMenu,
     Cursor,
@@ -52,7 +51,6 @@ impl ComponentStory {
             Self::AutoHeightEditor => AutoHeightEditorStory::new(cx).into(),
             Self::Avatar => cx.new_view(|_| ui::AvatarStory).into(),
             Self::Button => cx.new_view(|_| ui::ButtonStory).into(),
-            Self::Checkbox => cx.new_view(|_| ui::CheckboxStory).into(),
             Self::CollabNotification => cx
                 .new_view(|_| collab_ui::notifications::CollabNotificationStory)
                 .into(),

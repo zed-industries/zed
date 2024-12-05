@@ -2,5 +2,5 @@
     (comment)
     (block_comment)
     (directive)
-] @comment
+] @comment.inclusive
 (string) @string

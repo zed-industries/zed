@@ -35,6 +35,7 @@ use std::{
     mem,
     ops::DerefMut,
     rc::Rc,
+    sync::Arc,
     time::Duration,
 };
 use taffy::style::Overflow;
@@ -61,6 +62,7 @@ pub struct DragMoveEvent<T> {
     /// The bounds of this element.
     pub bounds: Bounds<Pixels>,
     drag: PhantomData<T>,
+    dragged_item: Arc<dyn Any>,
 }
 
 impl<T: 'static> DragMoveEvent<T> {
@@ -70,6 +72,11 @@ impl<T: 'static> DragMoveEvent<T> {
             .as_ref()
             .and_then(|drag| drag.value.downcast_ref::<T>())
             .expect("DragMoveEvent is only valid when the stored active drag is of the same type.")
+    }
+
+    /// An item that is about to be dropped.
+    pub fn dragged_item(&self) -> &dyn Any {
+        self.dragged_item.as_ref()
     }
 }
 
@@ -243,20 +250,20 @@ impl Interactivity {
     {
         self.mouse_move_listeners
             .push(Box::new(move |event, phase, hitbox, cx| {
-                if phase == DispatchPhase::Capture
-                    && cx
-                        .active_drag
-                        .as_ref()
-                        .is_some_and(|drag| drag.value.as_ref().type_id() == TypeId::of::<T>())
-                {
-                    (listener)(
-                        &DragMoveEvent {
-                            event: event.clone(),
-                            bounds: hitbox.bounds,
-                            drag: PhantomData,
-                        },
-                        cx,
-                    );
+                if phase == DispatchPhase::Capture {
+                    if let Some(drag) = &cx.active_drag {
+                        if drag.value.as_ref().type_id() == TypeId::of::<T>() {
+                            (listener)(
+                                &DragMoveEvent {
+                                    event: event.clone(),
+                                    bounds: hitbox.bounds,
+                                    drag: PhantomData,
+                                    dragged_item: Arc::clone(&drag.value),
+                                },
+                                cx,
+                            );
+                        }
+                    }
                 }
             }));
     }
@@ -443,7 +450,7 @@ impl Interactivity {
     pub fn on_drag<T, W>(
         &mut self,
         value: T,
-        constructor: impl Fn(&T, &mut WindowContext) -> View<W> + 'static,
+        constructor: impl Fn(&T, Point<Pixels>, &mut WindowContext) -> View<W> + 'static,
     ) where
         Self: Sized,
         T: 'static,
@@ -454,8 +461,10 @@ impl Interactivity {
             "calling on_drag more than once on the same element is not supported"
         );
         self.drag_listener = Some((
-            Box::new(value),
-            Box::new(move |value, cx| constructor(value.downcast_ref().unwrap(), cx).into()),
+            Arc::new(value),
+            Box::new(move |value, offset, cx| {
+                constructor(value.downcast_ref().unwrap(), offset, cx).into()
+            }),
         ));
     }
 
@@ -511,7 +520,7 @@ impl Interactivity {
     }
 
     /// Block the mouse from interacting with this element or any of its children
-    /// The imperative API equivalent to [`InteractiveElement::block_mouse`]
+    /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
         self.occlude_mouse = true;
     }
@@ -874,10 +883,16 @@ pub trait InteractiveElement: Sized {
     }
 
     /// Block the mouse from interacting with this element or any of its children
-    /// The fluent API equivalent to [`Interactivity::block_mouse`]
+    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
     fn occlude(mut self) -> Self {
         self.interactivity().occlude_mouse();
         self
+    }
+
+    /// Block the mouse from interacting with this element or any of its children
+    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
+    fn block_mouse_down(mut self) -> Self {
+        self.on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
     }
 }
 
@@ -912,6 +927,12 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Track the scroll state of this element with the given handle.
     fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
         self.interactivity().tracked_scroll_handle = Some(scroll_handle.clone());
+        self
+    }
+
+    /// Track the scroll state of this element with the given handle.
+    fn anchor_scroll(mut self, scroll_anchor: Option<ScrollAnchor>) -> Self {
+        self.interactivity().scroll_anchor = scroll_anchor;
         self
     }
 
@@ -954,14 +975,15 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
-    /// the [`Self::on_drag_move`] API
+    /// the [`Self::on_drag_move`] API.
+    /// The callback also has access to the offset of triggering click from the origin of parent element.
     /// The fluent API equivalent to [`Interactivity::on_drag`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_drag<T, W>(
         mut self,
         value: T,
-        constructor: impl Fn(&T, &mut WindowContext) -> View<W> + 'static,
+        constructor: impl Fn(&T, Point<Pixels>, &mut WindowContext) -> View<W> + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -1044,7 +1066,8 @@ pub(crate) type ScrollWheelListener =
 
 pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>;
 
-pub(crate) type DragListener = Box<dyn Fn(&dyn Any, &mut WindowContext) -> AnyView + 'static>;
+pub(crate) type DragListener =
+    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut WindowContext) -> AnyView + 'static>;
 
 type DropListener = Box<dyn Fn(&dyn Any, &mut WindowContext) + 'static>;
 
@@ -1156,6 +1179,9 @@ impl Element for Div {
     ) -> Option<Hitbox> {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
+        if let Some(handle) = self.interactivity.scroll_anchor.as_ref() {
+            *handle.last_origin.borrow_mut() = bounds.origin - cx.element_offset();
+        }
         let content_size = if request_layout.child_layout_ids.is_empty() {
             bounds.size
         } else if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
@@ -1245,6 +1271,7 @@ pub struct Interactivity {
     pub(crate) focusable: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
+    pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
@@ -1272,7 +1299,7 @@ pub struct Interactivity {
     pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
-    pub(crate) drag_listener: Option<(Box<dyn Any>, DragListener)>,
+    pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) occlude_mouse: bool,
@@ -1802,7 +1829,8 @@ impl Interactivity {
                                 if let Some((drag_value, drag_listener)) = drag_listener.take() {
                                     *clicked_state.borrow_mut() = ElementClickedState::default();
                                     let cursor_offset = event.position - hitbox.origin;
-                                    let drag = (drag_listener)(drag_value.as_ref(), cx);
+                                    let drag =
+                                        (drag_listener)(drag_value.as_ref(), cursor_offset, cx);
                                     cx.active_drag = Some(AnyDrag {
                                         view: drag,
                                         value: drag_value,
@@ -2091,7 +2119,6 @@ impl Interactivity {
                     }
                     scroll_offset.y += delta_y;
                     scroll_offset.x += delta_x;
-
                     cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {
                         cx.refresh();
@@ -2363,7 +2390,7 @@ where
 
 /// A wrapper around an element that can store state, produced after assigning an ElementId.
 pub struct Stateful<E> {
-    element: E,
+    pub(crate) element: E,
 }
 
 impl<E> Styled for Stateful<E>
@@ -2454,6 +2481,34 @@ where
     }
 }
 
+/// Represents an element that can be scrolled *to* in its parent element.
+///
+/// Contrary to [ScrollHandle::scroll_to_item], an anchored element does not have to be an immediate child of the parent.
+#[derive(Clone)]
+pub struct ScrollAnchor {
+    handle: ScrollHandle,
+    last_origin: Rc<RefCell<Point<Pixels>>>,
+}
+
+impl ScrollAnchor {
+    /// Creates a [ScrollAnchor] associated with a given [ScrollHandle].
+    pub fn for_handle(handle: ScrollHandle) -> Self {
+        Self {
+            handle,
+            last_origin: Default::default(),
+        }
+    }
+    /// Request scroll to this item on the next frame.
+    pub fn scroll_to(&self, cx: &mut WindowContext<'_>) {
+        let this = self.clone();
+
+        cx.on_next_frame(move |_| {
+            let viewport_bounds = this.handle.bounds();
+            let self_bounds = *this.last_origin.borrow();
+            this.handle.set_offset(viewport_bounds.origin - self_bounds);
+        });
+    }
+}
 #[derive(Default, Debug)]
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,

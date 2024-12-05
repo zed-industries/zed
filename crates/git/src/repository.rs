@@ -45,6 +45,8 @@ pub trait GitRepository: Send + Sync {
     fn branch_exits(&self, _: &str) -> Result<bool>;
 
     fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame>;
+
+    fn path(&self) -> PathBuf;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -81,6 +83,11 @@ impl GitRepository for RealGitRepository {
         if let Ok(mut index) = self.repository.lock().index() {
             _ = index.read(false);
         }
+    }
+
+    fn path(&self) -> PathBuf {
+        let repo = self.repository.lock();
+        repo.path().into()
     }
 
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String> {
@@ -274,6 +281,11 @@ impl GitRepository for FakeGitRepository {
 
     fn head_sha(&self) -> Option<String> {
         None
+    }
+
+    fn path(&self) -> PathBuf {
+        let state = self.state.lock();
+        state.path.clone()
     }
 
     fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus> {

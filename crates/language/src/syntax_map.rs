@@ -814,6 +814,23 @@ impl SyntaxSnapshot {
             buffer.as_rope(),
             self.layers_for_range(range, buffer, true),
             query,
+            TreeSitterOptions::default(),
+        )
+    }
+
+    pub fn matches_with_options<'a>(
+        &'a self,
+        range: Range<usize>,
+        buffer: &'a BufferSnapshot,
+        options: TreeSitterOptions,
+        query: fn(&Grammar) -> Option<&Query>,
+    ) -> SyntaxMapMatches<'a> {
+        SyntaxMapMatches::new(
+            range.clone(),
+            buffer.as_rope(),
+            self.layers_for_range(range, buffer, true),
+            query,
+            options,
         )
     }
 
@@ -1001,12 +1018,25 @@ impl<'a> SyntaxMapCaptures<'a> {
     }
 }
 
+#[derive(Default)]
+pub struct TreeSitterOptions {
+    max_start_depth: Option<u32>,
+}
+impl TreeSitterOptions {
+    pub fn max_start_depth(max_start_depth: u32) -> Self {
+        Self {
+            max_start_depth: Some(max_start_depth),
+        }
+    }
+}
+
 impl<'a> SyntaxMapMatches<'a> {
     fn new(
         range: Range<usize>,
         text: &'a Rope,
         layers: impl Iterator<Item = SyntaxLayer<'a>>,
         query: fn(&Grammar) -> Option<&Query>,
+        options: TreeSitterOptions,
     ) -> Self {
         let mut result = Self::default();
         for layer in layers {
@@ -1027,6 +1057,7 @@ impl<'a> SyntaxMapMatches<'a> {
                     query_cursor.deref_mut(),
                 )
             };
+            cursor.set_max_start_depth(options.max_start_depth);
 
             cursor.set_byte_range(range.clone());
             let matches = cursor.matches(query, layer.node(), TextProvider(text));
@@ -1520,18 +1551,24 @@ impl<'a> SyntaxLayer<'a> {
         let config = self.language.grammar.as_ref()?.override_config.as_ref()?;
 
         let mut query_cursor = QueryCursorHandle::new();
-        query_cursor.set_byte_range(offset..offset);
+        query_cursor.set_byte_range(offset.saturating_sub(1)..offset.saturating_add(1));
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
         for mat in query_cursor.matches(&config.query, self.node(), text) {
             for capture in mat.captures {
-                if !config.values.contains_key(&capture.index) {
+                let Some(override_entry) = config.values.get(&capture.index) else {
                     continue;
-                }
+                };
 
                 let range = capture.node.byte_range();
-                if offset <= range.start || offset >= range.end {
-                    continue;
+                if override_entry.range_is_inclusive {
+                    if offset < range.start || offset > range.end {
+                        continue;
+                    }
+                } else {
+                    if offset <= range.start || offset >= range.end {
+                        continue;
+                    }
                 }
 
                 if let Some((_, smallest_range)) = &smallest_match {

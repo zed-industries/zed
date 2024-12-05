@@ -1,9 +1,7 @@
 use crate::{BufferSnapshot, Point, ToPoint};
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{relative, AppContext, BackgroundExecutor, HighlightStyle, StyledText, TextStyle};
-use settings::Settings;
+use gpui::{BackgroundExecutor, HighlightStyle};
 use std::ops::Range;
-use theme::{color_alpha, ActiveTheme, ThemeSettings};
 
 /// An outline of all the symbols contained in a buffer.
 #[derive(Debug)]
@@ -191,42 +189,6 @@ impl<T> Outline<T> {
 
         tree_matches
     }
-}
-
-pub fn render_item<T>(
-    outline_item: &OutlineItem<T>,
-    match_ranges: impl IntoIterator<Item = Range<usize>>,
-    cx: &AppContext,
-) -> StyledText {
-    let highlight_style = HighlightStyle {
-        background_color: Some(color_alpha(cx.theme().colors().text_accent, 0.3)),
-        ..Default::default()
-    };
-    let custom_highlights = match_ranges
-        .into_iter()
-        .map(|range| (range, highlight_style));
-
-    let settings = ThemeSettings::get_global(cx);
-
-    // TODO: We probably shouldn't need to build a whole new text style here
-    // but I'm not sure how to get the current one and modify it.
-    // Before this change TextStyle::default() was used here, which was giving us the wrong font and text color.
-    let text_style = TextStyle {
-        color: cx.theme().colors().text,
-        font_family: settings.buffer_font.family.clone(),
-        font_features: settings.buffer_font.features.clone(),
-        font_fallbacks: settings.buffer_font.fallbacks.clone(),
-        font_size: settings.buffer_font_size(cx).into(),
-        font_weight: settings.buffer_font.weight,
-        line_height: relative(1.),
-        ..Default::default()
-    };
-    let highlights = gpui::combine_highlights(
-        custom_highlights,
-        outline_item.highlight_ranges.iter().cloned(),
-    );
-
-    StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights)
 }
 
 #[cfg(test)]

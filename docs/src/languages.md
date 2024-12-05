@@ -4,6 +4,7 @@ Zed supports hundreds of programming languages and text formats. Some work out-o
 
 ## Languages with Documentation
 
+- [Ansible](./languages/ansible.md)
 - [AsciiDoc](./languages/asciidoc.md)
 - [Astro](./languages/astro.md)
 - [Bash](./languages/bash.md)

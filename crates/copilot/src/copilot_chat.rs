@@ -1,13 +1,13 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::OnceLock;
-use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use chrono::DateTime;
 use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global};
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 use settings::watch_config_file;
@@ -35,14 +35,30 @@ pub enum Model {
     Gpt4,
     #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
     Gpt3_5Turbo,
+    #[serde(alias = "o1-preview", rename = "o1-preview-2024-09-12")]
+    O1Preview,
+    #[serde(alias = "o1-mini", rename = "o1-mini-2024-09-12")]
+    O1Mini,
+    #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
+    Claude3_5Sonnet,
 }
 
 impl Model {
+    pub fn uses_streaming(&self) -> bool {
+        match self {
+            Self::Gpt4o | Self::Gpt4 | Self::Gpt3_5Turbo | Self::Claude3_5Sonnet => true,
+            Self::O1Mini | Self::O1Preview => false,
+        }
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "gpt-4o" => Ok(Self::Gpt4o),
             "gpt-4" => Ok(Self::Gpt4),
             "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
+            "o1-preview" => Ok(Self::O1Preview),
+            "o1-mini" => Ok(Self::O1Mini),
+            "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
     }
@@ -52,6 +68,9 @@ impl Model {
             Self::Gpt3_5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
             Self::Gpt4o => "gpt-4o",
+            Self::O1Mini => "o1-mini",
+            Self::O1Preview => "o1-preview",
+            Self::Claude3_5Sonnet => "claude-3-5-sonnet",
         }
     }
 
@@ -60,14 +79,20 @@ impl Model {
             Self::Gpt3_5Turbo => "GPT-3.5",
             Self::Gpt4 => "GPT-4",
             Self::Gpt4o => "GPT-4o",
+            Self::O1Mini => "o1-mini",
+            Self::O1Preview => "o1-preview",
+            Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
         }
     }
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::Gpt4o => 128000,
-            Self::Gpt4 => 8192,
-            Self::Gpt3_5Turbo => 16385,
+            Self::Gpt4o => 64000,
+            Self::Gpt4 => 32768,
+            Self::Gpt3_5Turbo => 12288,
+            Self::O1Mini => 20000,
+            Self::O1Preview => 20000,
+            Self::Claude3_5Sonnet => 200_000,
         }
     }
 }
@@ -87,7 +112,7 @@ impl Request {
         Self {
             intent: true,
             n: 1,
-            stream: true,
+            stream: model.uses_streaming(),
             temperature: 0.1,
             model,
             messages,
@@ -113,7 +138,8 @@ pub struct ResponseEvent {
 pub struct ResponseChoice {
     pub index: usize,
     pub finish_reason: Option<String>,
-    pub delta: ResponseDelta,
+    pub delta: Option<ResponseDelta>,
+    pub message: Option<ResponseDelta>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,7 +197,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut AppContext) {
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
-fn copilot_chat_config_path() -> &'static PathBuf {
+fn copilot_chat_config_dir() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
@@ -181,8 +207,12 @@ fn copilot_chat_config_path() -> &'static PathBuf {
             home_dir().join(".config")
         }
         .join("github-copilot")
-        .join("hosts.json")
     })
+}
+
+fn copilot_chat_config_paths() -> [PathBuf; 2] {
+    let base_dir = copilot_chat_config_dir();
+    [base_dir.join("hosts.json"), base_dir.join("apps.json")]
 }
 
 impl CopilotChat {
@@ -192,13 +222,24 @@ impl CopilotChat {
     }
 
     pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &AppContext) -> Self {
-        let mut config_file_rx = watch_config_file(
-            cx.background_executor(),
-            fs,
-            copilot_chat_config_path().clone(),
-        );
+        let config_paths = copilot_chat_config_paths();
+
+        let resolve_config_path = {
+            let fs = fs.clone();
+            async move {
+                for config_path in config_paths.iter() {
+                    if fs.metadata(config_path).await.is_ok_and(|v| v.is_some()) {
+                        return config_path.clone();
+                    }
+                }
+                config_paths[0].clone()
+            }
+        };
 
         cx.spawn(|cx| async move {
+            let config_file = resolve_config_path.await;
+            let mut config_file_rx = watch_config_file(cx.background_executor(), fs, config_file);
+
             while let Some(contents) = config_file_rx.next().await {
                 let oauth_token = extract_oauth_token(contents);
 
@@ -228,7 +269,6 @@ impl CopilotChat {
 
     pub async fn stream_completion(
         request: Request,
-        low_speed_timeout: Option<Duration>,
         mut cx: AsyncAppContext,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let Some(this) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
@@ -248,8 +288,7 @@ impl CopilotChat {
         let token = match api_token {
             Some(api_token) if api_token.remaining_seconds() > 5 * 60 => api_token.clone(),
             _ => {
-                let token =
-                    request_api_token(&oauth_token, client.clone(), low_speed_timeout).await?;
+                let token = request_api_token(&oauth_token, client.clone()).await?;
                 this.update(&mut cx, |this, cx| {
                     this.api_token = Some(token.clone());
                     cx.notify();
@@ -258,24 +297,16 @@ impl CopilotChat {
             }
         };
 
-        stream_completion(client.clone(), token.api_key, request, low_speed_timeout).await
+        stream_completion(client.clone(), token.api_key, request).await
     }
 }
 
-async fn request_api_token(
-    oauth_token: &str,
-    client: Arc<dyn HttpClient>,
-    low_speed_timeout: Option<Duration>,
-) -> Result<ApiToken> {
-    let mut request_builder = HttpRequest::builder()
+async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Result<ApiToken> {
+    let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(COPILOT_CHAT_AUTH_URL)
         .header("Authorization", format!("token {}", oauth_token))
         .header("Accept", "application/json");
-
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.read_timeout(low_speed_timeout);
-    }
 
     let request = request_builder.body(AsyncBody::empty())?;
 
@@ -302,9 +333,15 @@ async fn request_api_token(
 fn extract_oauth_token(contents: String) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(&contents)
         .map(|v| {
-            v["github.com"]["oauth_token"]
-                .as_str()
-                .map(|v| v.to_string())
+            v.as_object().and_then(|obj| {
+                obj.iter().find_map(|(key, value)| {
+                    if key.starts_with("github.com") {
+                        value["oauth_token"].as_str().map(|v| v.to_string())
+                    } else {
+                        None
+                    }
+                })
+            })
         })
         .ok()
         .flatten()
@@ -314,9 +351,8 @@ async fn stream_completion(
     client: Arc<dyn HttpClient>,
     api_key: String,
     request: Request,
-    low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(COPILOT_CHAT_COMPLETION_URL)
         .header(
@@ -330,12 +366,23 @@ async fn stream_completion(
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat");
 
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.read_timeout(low_speed_timeout);
-    }
+    let is_streaming = request.stream;
+
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
-    if response.status().is_success() {
+
+    if !response.status().is_success() {
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+        let body_str = std::str::from_utf8(&body)?;
+        return Err(anyhow!(
+            "Failed to connect to API: {} {}",
+            response.status(),
+            body_str
+        ));
+    }
+
+    if is_streaming {
         let reader = BufReader::new(response.into_body());
         Ok(reader
             .lines()
@@ -367,19 +414,9 @@ async fn stream_completion(
     } else {
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
-
         let body_str = std::str::from_utf8(&body)?;
+        let response: ResponseEvent = serde_json::from_str(body_str)?;
 
-        match serde_json::from_str::<ResponseEvent>(body_str) {
-            Ok(_) => Err(anyhow!(
-                "Unexpected success response while expecting an error: {}",
-                body_str,
-            )),
-            Err(_) => Err(anyhow!(
-                "Failed to connect to API: {} {}",
-                response.status(),
-                body_str,
-            )),
-        }
+        Ok(futures::stream::once(async move { Ok(response) }).boxed())
     }
 }

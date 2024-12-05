@@ -53,7 +53,7 @@ impl Vim {
         cx: &mut ViewContext<Self>,
         by: fn(c: Option<f32>) -> ScrollAmount,
     ) {
-        let amount = by(self.take_count(cx).map(|c| c as f32));
+        let amount = by(Vim::take_count(cx).map(|c| c as f32));
         self.update_editor(cx, |_, editor, cx| {
             scroll_editor(editor, move_cursor, &amount, cx)
         });

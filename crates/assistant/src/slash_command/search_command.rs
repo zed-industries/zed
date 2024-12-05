@@ -21,6 +21,10 @@ pub(crate) struct SearchSlashCommandFeatureFlag;
 
 impl FeatureFlag for SearchSlashCommandFeatureFlag {
     const NAME: &'static str = "search-slash-command";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 
 pub(crate) struct SearchSlashCommand;
@@ -36,6 +40,10 @@ impl SlashCommand for SearchSlashCommand {
 
     fn description(&self) -> String {
         "Search your project semantically".into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::SearchCode
     }
 
     fn menu_text(&self) -> String {

@@ -26,4 +26,3 @@ fi
 
 sed -i '' -e "s/^version = \".*\"/version = \"$VERSION\"/" "$EXTENSION_TOML"
 sed -i '' -e "s/^version = \".*\"/version = \"$VERSION\"/" "$CARGO_TOML"
-cargo check

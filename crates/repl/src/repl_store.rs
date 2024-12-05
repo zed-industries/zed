@@ -7,10 +7,14 @@ use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
 };
-use project::Fs;
+use jupyter_websocket_client::RemoteServer;
+use language::Language;
+use project::{Fs, Project, WorktreeId};
 use settings::{Settings, SettingsStore};
 
-use crate::kernels::kernel_specifications;
+use crate::kernels::{
+    list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
+};
 use crate::{JupyterSettings, KernelSpecification, Session};
 
 struct GlobalReplStore(Model<ReplStore>);
@@ -22,6 +26,8 @@ pub struct ReplStore {
     enabled: bool,
     sessions: HashMap<EntityId, View<Session>>,
     kernel_specifications: Vec<KernelSpecification>,
+    selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
+    kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
 }
@@ -55,6 +61,8 @@ impl ReplStore {
             sessions: HashMap::default(),
             kernel_specifications: Vec::new(),
             _subscriptions: subscriptions,
+            kernel_specifications_for_worktree: HashMap::default(),
+            selected_kernel_for_worktree: HashMap::default(),
         };
         this.on_enabled_changed(cx);
         this
@@ -72,7 +80,18 @@ impl ReplStore {
         self.enabled
     }
 
-    pub fn kernel_specifications(&self) -> impl Iterator<Item = &KernelSpecification> {
+    pub fn kernel_specifications_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> impl Iterator<Item = &KernelSpecification> {
+        self.kernel_specifications_for_worktree
+            .get(&worktree_id)
+            .into_iter()
+            .flat_map(|specs| specs.iter())
+            .chain(self.kernel_specifications.iter())
+    }
+
+    pub fn pure_jupyter_kernel_specifications(&self) -> impl Iterator<Item = &KernelSpecification> {
         self.kernel_specifications.iter()
     }
 
@@ -105,27 +124,118 @@ impl ReplStore {
         cx.notify();
     }
 
-    pub fn refresh_kernelspecs(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let kernel_specifications = kernel_specifications(self.fs.clone());
-        cx.spawn(|this, mut cx| async move {
-            let kernel_specifications = kernel_specifications.await?;
+    pub fn refresh_python_kernelspecs(
+        &mut self,
+        worktree_id: WorktreeId,
+        project: &Model<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let kernel_specifications = python_env_kernel_specifications(project, worktree_id, cx);
+        cx.spawn(move |this, mut cx| async move {
+            let kernel_specifications = kernel_specifications
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get python kernelspecs: {:?}", e))?;
 
             this.update(&mut cx, |this, cx| {
-                this.kernel_specifications = kernel_specifications;
+                this.kernel_specifications_for_worktree
+                    .insert(worktree_id, kernel_specifications);
                 cx.notify();
             })
         })
     }
 
-    pub fn kernelspec(&self, language_name: &str, cx: &AppContext) -> Option<KernelSpecification> {
+    fn get_remote_kernel_specifications(
+        &self,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Task<Result<Vec<KernelSpecification>>>> {
+        match (
+            std::env::var("JUPYTER_SERVER"),
+            std::env::var("JUPYTER_TOKEN"),
+        ) {
+            (Ok(server), Ok(token)) => {
+                let remote_server = RemoteServer {
+                    base_url: server,
+                    token,
+                };
+                let http_client = cx.http_client();
+                Some(cx.spawn(|_, _| async move {
+                    list_remote_kernelspecs(remote_server, http_client)
+                        .await
+                        .map(|specs| specs.into_iter().map(KernelSpecification::Remote).collect())
+                }))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn refresh_kernelspecs(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
+
+        let remote_kernel_specifications = self.get_remote_kernel_specifications(cx);
+
+        cx.spawn(|this, mut cx| async move {
+            let mut all_specs = local_kernel_specifications
+                .await?
+                .into_iter()
+                .map(KernelSpecification::Jupyter)
+                .collect::<Vec<_>>();
+
+            if let Some(remote_task) = remote_kernel_specifications {
+                if let Ok(remote_specs) = remote_task.await {
+                    all_specs.extend(remote_specs);
+                }
+            }
+
+            this.update(&mut cx, |this, cx| {
+                this.kernel_specifications = all_specs;
+                cx.notify();
+            })
+        })
+    }
+
+    pub fn set_active_kernelspec(
+        &mut self,
+        worktree_id: WorktreeId,
+        kernelspec: KernelSpecification,
+        _cx: &mut ModelContext<Self>,
+    ) {
+        self.selected_kernel_for_worktree
+            .insert(worktree_id, kernelspec);
+    }
+
+    pub fn active_kernelspec(
+        &self,
+        worktree_id: WorktreeId,
+        language_at_cursor: Option<Arc<Language>>,
+        cx: &AppContext,
+    ) -> Option<KernelSpecification> {
+        let selected_kernelspec = self.selected_kernel_for_worktree.get(&worktree_id).cloned();
+
+        if let Some(language_at_cursor) = language_at_cursor {
+            selected_kernelspec
+                .or_else(|| self.kernelspec_legacy_by_lang_only(language_at_cursor, cx))
+        } else {
+            selected_kernelspec
+        }
+    }
+
+    fn kernelspec_legacy_by_lang_only(
+        &self,
+        language_at_cursor: Arc<Language>,
+        cx: &AppContext,
+    ) -> Option<KernelSpecification> {
         let settings = JupyterSettings::get_global(cx);
-        let selected_kernel = settings.kernel_selections.get(language_name);
+        let selected_kernel = settings
+            .kernel_selections
+            .get(language_at_cursor.code_fence_block_name().as_ref());
 
         let found_by_name = self
             .kernel_specifications
             .iter()
             .find(|runtime_specification| {
-                if let Some(selected) = selected_kernel {
+                if let (Some(selected), KernelSpecification::Jupyter(runtime_specification)) =
+                    (selected_kernel, runtime_specification)
+                {
                     // Top priority is the selected kernel
                     return runtime_specification.name.to_lowercase() == selected.to_lowercase();
                 }
@@ -139,9 +249,19 @@ impl ReplStore {
 
         self.kernel_specifications
             .iter()
-            .find(|runtime_specification| {
-                runtime_specification.kernelspec.language.to_lowercase()
-                    == language_name.to_lowercase()
+            .find(|kernel_option| match kernel_option {
+                KernelSpecification::Jupyter(runtime_specification) => {
+                    runtime_specification.kernelspec.language.to_lowercase()
+                        == language_at_cursor.code_fence_block_name().to_lowercase()
+                }
+                KernelSpecification::PythonEnv(runtime_specification) => {
+                    runtime_specification.kernelspec.language.to_lowercase()
+                        == language_at_cursor.code_fence_block_name().to_lowercase()
+                }
+                KernelSpecification::Remote(remote_spec) => {
+                    remote_spec.kernelspec.language.to_lowercase()
+                        == language_at_cursor.code_fence_block_name().to_lowercase()
+                }
             })
             .cloned()
     }

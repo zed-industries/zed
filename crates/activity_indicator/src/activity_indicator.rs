@@ -1,15 +1,14 @@
 use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
-use extension::ExtensionStore;
+use extension_host::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
     actions, percentage, Animation, AnimationExt as _, AppContext, CursorStyle, EventEmitter,
     InteractiveElement as _, Model, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement, Styled, Transformation, View, ViewContext, VisualContext as _,
 };
-use language::{
-    LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId, LanguageServerName,
-};
+use language::{LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId};
+use lsp::LanguageServerName;
 use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
@@ -352,7 +351,10 @@ impl ActivityIndicator {
                         .into_any_element(),
                 ),
                 message: format!("Formatting failed: {}. Click to see logs.", failure),
-                on_click: Some(Arc::new(|_, cx| {
+                on_click: Some(Arc::new(|indicator, cx| {
+                    indicator.project.update(cx, |project, cx| {
+                        project.reset_last_formatting_failure(cx);
+                    });
                     cx.dispatch_action(Box::new(workspace::OpenLog));
                 })),
             });
