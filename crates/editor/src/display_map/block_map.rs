@@ -1339,7 +1339,7 @@ impl BlockSnapshot {
         self.transforms.summary().longest_row
     }
 
-    pub fn longest_row_in_range(&self, range: Range<BlockRow>) -> BlockRow {
+    pub fn longest_row_in_range(&self, range: Range<BlockRow>) -> (BlockRow, u32) {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&range.start, Bias::Right, &());
 
