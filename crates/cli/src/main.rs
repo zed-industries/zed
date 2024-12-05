@@ -548,7 +548,7 @@ mod mac_os {
         },
         LocalPath {
             executable: PathBuf,
-            short_version_string: String,
+            plist: InfoPlist,
         },
     }
 
@@ -587,9 +587,17 @@ mod mac_os {
                 }
                 _ => {
                     println!("Bundle path {bundle_path:?} has no *.app extension, attempting to locate a dev build");
+                    let plist_path = bundle_path
+                        .parent()
+                        .with_context(|| format!("Bundle path {bundle_path:?} has no parent"))?
+                        .join("WebRTC.framework/Resources/Info.plist");
+                    let plist =
+                        plist::from_file::<_, InfoPlist>(&plist_path).with_context(|| {
+                            format!("Reading dev bundle plist file at {plist_path:?}")
+                        })?;
                     Ok(Bundle::LocalPath {
                         executable: bundle_path,
-                        short_version_string: "test-dev-version".to_string(),
+                        plist,
                     })
                 }
             }
@@ -599,16 +607,9 @@ mod mac_os {
     impl InstalledApp for Bundle {
         fn zed_version_string(&self) -> String {
             let is_dev = matches!(self, Self::LocalPath { .. });
-            let version = match self {
-                Bundle::App { plist, .. } => &plist.bundle_short_version_string,
-                Bundle::LocalPath {
-                    short_version_string,
-                    ..
-                } => &short_version_string,
-            };
             format!(
                 "Zed {}{} – {}",
-                version,
+                self.plist().bundle_short_version_string,
                 if is_dev { " (dev)" } else { "" },
                 self.path().display(),
             )
@@ -690,6 +691,13 @@ mod mac_os {
     }
 
     impl Bundle {
+        fn plist(&self) -> &InfoPlist {
+            match self {
+                Self::App { plist, .. } => plist,
+                Self::LocalPath { plist, .. } => plist,
+            }
+        }
+
         fn path(&self) -> &Path {
             match self {
                 Self::App { app_bundle, .. } => app_bundle,
