@@ -1046,6 +1046,12 @@ impl BufferStore {
             .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_change_set(&mut self, buffer_id: BufferId, change_set: Model<BufferChangeSet>) {
+        self.loading_change_sets
+            .insert(buffer_id, Task::ready(Ok(change_set)).shared());
+    }
+
     pub async fn open_unstaged_changes_internal(
         this: WeakModel<Self>,
         text: Result<Option<String>>,
@@ -1062,10 +1068,9 @@ impl BufferStore {
             }
             Ok(text) => text,
         };
-        dbg!(&text);
 
         let change_set = buffer.update(&mut cx, |buffer, cx| {
-            cx.new_model(|_| dbg!(BufferChangeSet::new(buffer)))
+            cx.new_model(|_| BufferChangeSet::new(buffer))
         })?;
 
         if let Some(text) = text {

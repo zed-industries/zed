@@ -245,6 +245,7 @@ impl ProjectDiffEditor {
                                     entry_path.path
                                 ),
                             };
+
                             let change_set = project
                                 .update(&mut cx, |project, cx| {
                                     project.open_unstaged_changes(buffer.clone(), cx)
@@ -1115,7 +1116,7 @@ mod tests {
     //     // Apply randomized changes to the project: select a random file, random change and apply to buffers
     // }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 30)]
     async fn simple_edit_test(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
@@ -1147,26 +1148,6 @@ mod tests {
             .expect("did not open an item at all")
             .downcast::<Editor>()
             .expect("did not open an editor for file_a");
-        file_a_editor.update(cx, |file_a_editor, cx| {
-            file_a_editor.diff_map.add_change_set(
-                cx.new_model(|cx| {
-                    BufferChangeSet::new_with_base_text(
-                        file_a_editor.text(cx),
-                        file_a_editor
-                            .buffer()
-                            .read(cx)
-                            .as_singleton()
-                            .unwrap()
-                            .read(cx)
-                            .text_snapshot(),
-                        cx,
-                    )
-                }),
-                cx,
-            );
-        });
-        cx.run_until_parked();
-
         let project_diff_editor = workspace
             .update(cx, |workspace, cx| {
                 workspace
@@ -1183,6 +1164,7 @@ mod tests {
                 "Should have no changes after opening the diff on no git changes"
             );
         });
+
         let old_text = file_a_editor.update(cx, |editor, cx| editor.text(cx));
         let change = "an edit after git add";
         file_a_editor
@@ -1192,6 +1174,38 @@ mod tests {
             })
             .await
             .expect("failed to save a file");
+        file_a_editor.update(cx, |file_a_editor, cx| {
+            let change_set = cx.new_model(|cx| {
+                BufferChangeSet::new_with_base_text(
+                    old_text.clone(),
+                    file_a_editor
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
+                        .unwrap()
+                        .read(cx)
+                        .text_snapshot(),
+                    cx,
+                )
+            });
+            file_a_editor
+                .diff_map
+                .add_change_set(change_set.clone(), cx);
+            project.update(cx, |project, cx| {
+                project.buffer_store().update(cx, |buffer_store, cx| {
+                    buffer_store.set_change_set(
+                        file_a_editor
+                            .buffer()
+                            .read(cx)
+                            .as_singleton()
+                            .unwrap()
+                            .read(cx)
+                            .remote_id(),
+                        change_set,
+                    );
+                });
+            });
+        });
         fs.set_status_for_repo_via_git_operation(
             Path::new("/root/.git"),
             &[(Path::new("file_a"), GitFileStatus::Modified)],
