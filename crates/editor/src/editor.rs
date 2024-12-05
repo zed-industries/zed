@@ -5321,7 +5321,9 @@ impl Editor {
                 });
             }
             Prediction::Edit(edits) => {
-                let last_edit_end = edits.last().unwrap().0.end;
+                let snapshot = self.buffer.read(cx).snapshot(cx);
+                let last_edit_end = edits.last().unwrap().0.end.bias_right(&snapshot);
+
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.edit(edits.iter().cloned(), None, cx)
                 });
