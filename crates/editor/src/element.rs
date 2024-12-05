@@ -2755,19 +2755,13 @@ impl EditorElement {
 
                 let target_display_point = target_position.to_display_point(editor_snapshot);
 
-                let keybinding = ui::KeyBinding::for_action_in(
-                    &crate::AcceptInlineCompletion,
-                    &self.editor.focus_handle(cx),
-                    cx,
-                );
-
                 if target_display_point.row() < visible_row_range.start {
                     let mut element = container_element
                         .child(
                             h_flex()
                                 .gap_1()
-                                .children(keybinding)
-                                .child(Label::new("Jump to edit"))
+                                .child(Icon::new(IconName::Tab))
+                                .child(Label::new("Jump to Edit"))
                                 .child(Icon::new(IconName::ArrowUp)),
                         )
                         .into_any();
@@ -2783,8 +2777,8 @@ impl EditorElement {
                         .child(
                             h_flex()
                                 .gap_1()
-                                .children(keybinding)
-                                .child(Label::new("Jump to edit"))
+                                .child(Icon::new(IconName::Tab))
+                                .child(Label::new("Jump to Edit"))
                                 .child(Icon::new(IconName::ArrowDown)),
                         )
                         .into_any();
@@ -2800,8 +2794,8 @@ impl EditorElement {
                         .child(
                             h_flex()
                                 .gap_1()
-                                .children(keybinding)
-                                .child(Label::new("Jump to edit")),
+                                .child(Icon::new(IconName::Tab))
+                                .child(Label::new("Jump to Edit")),
                         )
                         .into_any();
 
@@ -2813,7 +2807,7 @@ impl EditorElement {
                         editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
                     })?;
                     element.prepaint_as_root(
-                        text_bounds.origin + origin,
+                        text_bounds.origin + origin + point(PADDING_X, px(0.)),
                         AvailableSpace::min_size(),
                         cx,
                     );
