@@ -1339,6 +1339,57 @@ impl BlockSnapshot {
         self.transforms.summary().longest_row
     }
 
+    pub fn longest_row_in_range(&self, range: Range<BlockRow>) -> BlockRow {
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
+        cursor.seek(&range.start, Bias::Right, &());
+
+        // input:  [    ]  [      ]  [  ]
+        // output: [    ][][      ][][  ][   ][        ]
+
+        let mut longest_row = range.start;
+        let mut longest_row_chars = 0;
+        if let Some(transform) = cursor.item() {
+            if transform.block.is_none() {
+                let (output_start, input_start) = cursor.start();
+                let overshoot = range.start.0 - output_start.0;
+                let wrap_start_row = input_start.0 + overshoot;
+                let wrap_end_row = cmp::min(range.end.0 - output_start.0, cursor.end(&()).1 .0);
+                let summary = self
+                    .wrap_snapshot
+                    .text_summary_for_range(wrap_start_row..wrap_end_row);
+                longest_row = BlockRow(range.start.0 + summary.longest_row);
+                longest_row_chars = summary.longest_row_chars;
+            }
+            cursor.next(&());
+        }
+
+        let cursor_start_row = cursor.start().0;
+        if range.end > cursor_start_row {
+            let summary = cursor.summary::<_, TransformSummary>(&range.end, Bias::Right, &());
+            if summary.longest_row_chars > longest_row_chars {
+                longest_row = BlockRow(cursor_start_row.0 + summary.longest_row);
+                longest_row_chars = summary.longest_row_chars;
+            }
+
+            if let Some(transform) = cursor.item() {
+                if transform.block.is_none() {
+                    let (output_start, input_start) = cursor.start();
+                    let overshoot = range.end.0 - output_start.0;
+                    let wrap_start_row = input_start.0;
+                    let wrap_end_row = input_start.0 + overshoot;
+                    let summary = self
+                        .wrap_snapshot
+                        .text_summary_for_range(wrap_start_row..wrap_end_row);
+                    if summary.longest_row_chars > longest_row_chars {
+                        longest_row = BlockRow(output_start.0 + summary.longest_row);
+                    }
+                }
+            }
+        }
+
+        (longest_row, longest_row_chars)
+    }
+
     pub(super) fn line_len(&self, row: BlockRow) -> u32 {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&BlockRow(row.0), Bias::Right, &());

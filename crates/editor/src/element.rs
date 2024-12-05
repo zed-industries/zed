@@ -62,7 +62,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::{self, Write},
     iter, mem,
-    ops::{Deref, Range},
+    ops::{Add, Deref, Range},
     rc::Rc,
     sync::Arc,
 };
@@ -2819,63 +2819,78 @@ impl EditorElement {
                     .0
                     .start
                     .to_display_point(editor_snapshot);
+                let edit_end = edits
+                    .last()
+                    .unwrap()
+                    .0
+                    .end
+                    .to_display_point(editor_snapshot);
 
-                if visible_row_range.contains(&edit_start.row())
-                    && edits.iter().any(|(range, new_text)| {
-                        !range.to_offset(&editor_snapshot.buffer_snapshot).is_empty()
-                            && !new_text.is_empty()
+                let is_visible = visible_row_range.contains(&edit_start.row())
+                    || visible_row_range.contains(&edit_end.row());
+
+                if !is_visible
+                    || edits.iter().all(|(range, new_text)| {
+                        range.to_offset(&editor_snapshot.buffer_snapshot).is_empty()
+                            || new_text.is_empty()
                     })
                 {
-                    let mut text = String::new();
-                    let mut offset = DisplayPoint::new(edit_start.row(), 0)
-                        .to_offset(editor_snapshot, Bias::Left);
-                    let mut highlights = Vec::new();
-                    for (old_range, new_text) in edits {
-                        let old_offset_range =
-                            old_range.to_offset(&editor_snapshot.buffer_snapshot);
-                        text.extend(
-                            editor_snapshot
-                                .buffer_snapshot
-                                .chunks(offset..old_offset_range.start, false)
-                                .map(|chunk| chunk.text),
-                        );
-                        offset = old_offset_range.end;
-
-                        let start = text.len();
-                        text.push_str(new_text);
-                        let end = text.len();
-                        highlights.push((
-                            start..end,
-                            HighlightStyle {
-                                background_color: Some(cx.theme().status().created_background),
-                                ..Default::default()
-                            },
-                        ));
-                    }
-
-                    let text = gpui::StyledText::new(text).with_highlights(text_style, highlights);
-
-                    let mut element = div()
-                        .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .rounded_md()
-                        .px_1()
-                        .child(text)
-                        .into_any();
-
-                    let line =
-                        &line_layouts[(edit_start.row().0 - visible_row_range.start.0) as usize];
-                    let origin = text_bounds.origin
-                        + point(
-                            line.width + PADDING_X - scroll_pixel_position.x,
-                            edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
-                        );
-                    element.prepaint_as_root(origin, AvailableSpace::min_size(), cx);
-                    Some(element)
-                } else {
-                    None
+                    return None;
                 }
+
+                let mut text = String::new();
+                let mut offset =
+                    DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
+                let mut highlights = Vec::new();
+                for (old_range, new_text) in edits {
+                    let old_offset_range = old_range.to_offset(&editor_snapshot.buffer_snapshot);
+                    text.extend(
+                        editor_snapshot
+                            .buffer_snapshot
+                            .chunks(offset..old_offset_range.start, false)
+                            .map(|chunk| chunk.text),
+                    );
+                    offset = old_offset_range.end;
+
+                    let start = text.len();
+                    text.push_str(new_text);
+                    let end = text.len();
+                    highlights.push((
+                        start..end,
+                        HighlightStyle {
+                            background_color: Some(cx.theme().status().created_background),
+                            ..Default::default()
+                        },
+                    ));
+                }
+
+                let longest_row = editor_snapshot.longest_row_in_range(
+                    edit_start.row()
+                        ..cmp::min(
+                            editor_snapshot.max_point().row(),
+                            edit_start.row() + DisplayRow(text.matches('\n').count() as u32),
+                        ) + 1,
+                );
+
+                let text = gpui::StyledText::new(text).with_highlights(text_style, highlights);
+
+                let mut element = div()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_md()
+                    .px_1()
+                    .child(text)
+                    .into_any();
+
+                let line = &line_layouts[(edit_start.row().0 - visible_row_range.start.0) as usize];
+                let origin = text_bounds.origin
+                    + point(
+                        line.width + PADDING_X - scroll_pixel_position.x,
+                        edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
+                    );
+                element.prepaint_as_root(origin, AvailableSpace::min_size(), cx);
+                Some(element)
             }
         }
     }
