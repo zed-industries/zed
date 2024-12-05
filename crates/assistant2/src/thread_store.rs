@@ -80,6 +80,10 @@ impl ThreadStore {
             .cloned()
     }
 
+    pub fn delete_thread(&mut self, id: &ThreadId, cx: &mut ModelContext<Self>) {
+        self.threads.retain(|thread| thread.read(cx).id() != id);
+    }
+
     fn register_context_server_handlers(&self, cx: &mut ModelContext<Self>) {
         cx.subscribe(
             &self.context_server_manager.clone(),
