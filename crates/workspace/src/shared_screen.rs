@@ -1,4 +1,4 @@
-#[cfg(not(target_os = "macos"))]
+#[cfg(feature = "livekit-cross-platform")]
 mod cross_platform {
     use crate::{
         item::{Item, ItemEvent},
@@ -117,10 +117,10 @@ mod cross_platform {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(feature = "livekit-cross-platform")]
 pub use cross_platform::*;
 
-#[cfg(target_os = "macos")]
+#[cfg(feature = "livekit-macos")]
 mod macos {
     use crate::{
         item::{Item, ItemEvent},
@@ -250,5 +250,5 @@ mod macos {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(feature = "livekit-macos")]
 pub use macos::*;

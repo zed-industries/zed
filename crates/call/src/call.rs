@@ -1,13 +1,13 @@
 pub mod call_settings;
 
-#[cfg(target_os = "macos")]
+#[cfg(feature = "livekit-macos")]
 mod macos;
 
-#[cfg(target_os = "macos")]
+#[cfg(feature = "livekit-macos")]
 pub use macos::*;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(feature = "livekit-cross-platform")]
 mod cross_platform;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(feature = "livekit-cross-platform")]
 pub use cross_platform::*;

@@ -24,6 +24,8 @@ test-support = [
     "gpui/test-support",
     "fs/test-support",
 ]
+livekit-macos = ["call/livekit-macos"]
+livekit-cross-platform = ["call/livekit-cross-platform"]
 
 [dependencies]
 anyhow.workspace = true
