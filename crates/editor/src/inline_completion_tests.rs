@@ -1,6 +1,6 @@
 use gpui::Model;
 use inline_completion::InlineCompletionProvider;
-use multi_buffer::{MultiBufferSnapshot, ToOffset};
+use multi_buffer::MultiBufferSnapshot;
 use std::ops::Range;
 use ui::Context;
 
