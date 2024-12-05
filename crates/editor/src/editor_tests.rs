@@ -14027,17 +14027,6 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
     );
 
     multi_buffer_editor.update(cx, |editor, cx| {
-        editor.change_selections(None, cx, |s| {
-            s.select_display_ranges([
-                DisplayPoint::new(DisplayRow(1), 1)..DisplayPoint::new(DisplayRow(1), 5),
-                DisplayPoint::new(DisplayRow(8), 1)..DisplayPoint::new(DisplayRow(8), 5),
-                DisplayPoint::new(DisplayRow(15), 1)..DisplayPoint::new(DisplayRow(15), 5),
-                DisplayPoint::new(DisplayRow(32), 1)..DisplayPoint::new(DisplayRow(32), 5),
-            ]);
-        });
-    });
-
-    multi_buffer_editor.update(cx, |editor, cx| {
         editor.fold_buffer(buffer_1.read(cx).remote_id(), cx)
     });
     assert_eq!(
@@ -14063,6 +14052,11 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         "\n\n\n\n\n",
         "After folding the third buffer, its text should not be displayed"
     );
+
+    // Emulate selection inside the fold logic, that should work
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.snapshot(cx).next_line_boundary(Point::new(0, 4));
+    });
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
