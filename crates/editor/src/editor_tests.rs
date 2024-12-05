@@ -13909,23 +13909,9 @@ async fn test_find_enclosing_node_with_task(cx: &mut gpui::TestAppContext) {
 async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let cols = 4;
-    let rows = 10;
-    let sample_text_1 = sample_text(rows, cols, 'a');
-    assert_eq!(
-        sample_text_1,
-        "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
-    );
-    let sample_text_2 = sample_text(rows, cols, 'l');
-    assert_eq!(
-        sample_text_2,
-        "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu"
-    );
-    let sample_text_3 = sample_text(rows, cols, 'v');
-    assert_eq!(
-        sample_text_3,
-        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}"
-    );
+    let sample_text_1 = "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj".to_string();
+    let sample_text_2 = "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu".to_string();
+    let sample_text_3 = "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n1111\n2222\n3333\n4444\n5555".to_string();
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -14034,18 +14020,29 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         )
     });
 
-    let full_text = "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n{{{{\n||||\n\n\n\n\u{7f}\u{7f}\u{7f}\u{7f}\n";
+    let full_text = "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n";
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         full_text,
     );
 
     multi_buffer_editor.update(cx, |editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 1)..DisplayPoint::new(DisplayRow(1), 5),
+                DisplayPoint::new(DisplayRow(8), 1)..DisplayPoint::new(DisplayRow(8), 5),
+                DisplayPoint::new(DisplayRow(15), 1)..DisplayPoint::new(DisplayRow(15), 5),
+                DisplayPoint::new(DisplayRow(32), 1)..DisplayPoint::new(DisplayRow(32), 5),
+            ]);
+        });
+    });
+
+    multi_buffer_editor.update(cx, |editor, cx| {
         editor.fold_buffer(buffer_1.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n{{{{\n||||\n\n\n\n\u{7f}\u{7f}\u{7f}\u{7f}\n",
+        "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
         "After folding the first buffer, its text should not be displayed"
     );
 
@@ -14054,7 +14051,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\nvvvv\nwwww\nxxxx\n\n\n\n{{{{\n||||\n\n\n\n\u{7f}\u{7f}\u{7f}\u{7f}\n",
+        "\n\n\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
         "After folding the second buffer, its text should not be displayed"
     );
 
@@ -14063,7 +14060,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n",
+        "\n\n\n\n\n",
         "After folding the third buffer, its text should not be displayed"
     );
 }
