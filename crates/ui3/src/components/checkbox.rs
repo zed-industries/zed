@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use gpui::{div, prelude::*, ElementId, IntoElement, Styled, WindowContext};
+use gpui::{div, prelude::*, ElementId, IntoElement, Styled};
 
 use crate::prelude::*;
 use crate::{Color, Icon, IconName, Selection};
@@ -15,7 +15,7 @@ pub struct Checkbox {
     id: ElementId,
     checked: Selection,
     disabled: bool,
-    on_click: Option<Box<dyn Fn(&Selection, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&Selection, &mut Window, &mut AppContext) + 'static>>,
 }
 
 impl Checkbox {
@@ -33,14 +33,17 @@ impl Checkbox {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&Selection, &mut WindowContext) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&Selection, &mut Window, &mut AppContext) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
 }
 
 impl RenderOnce for Checkbox {
-    fn render(self, window: &mut Window, app: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
         let icon = match self.checked {
@@ -108,7 +111,11 @@ impl RenderOnce for Checkbox {
             )
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
-                |this, on_click| this.on_click(move |_, cx| on_click(&self.checked.inverse(), cx)),
+                |this, on_click| {
+                    this.on_click(move |_, window, cx| {
+                        on_click(&self.checked.inverse(), window, cx)
+                    })
+                },
             )
     }
 }
@@ -118,7 +125,7 @@ impl ComponentPreview for Checkbox {
         "A checkbox lets people choose between a pair of opposing states, like enabled and disabled, using a different appearance to indicate each state."
     }
 
-    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &Window, _: &AppContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Default",
@@ -169,7 +176,7 @@ pub struct CheckboxWithLabel {
     id: ElementId,
     label: Label,
     checked: Selection,
-    on_click: Arc<dyn Fn(&Selection, &mut WindowContext) + 'static>,
+    on_click: Arc<dyn Fn(&Selection, &mut Window, &mut AppContext) + 'static>,
 }
 
 impl CheckboxWithLabel {
@@ -177,7 +184,7 @@ impl CheckboxWithLabel {
         id: impl Into<ElementId>,
         label: Label,
         checked: Selection,
-        on_click: impl Fn(&Selection, &mut WindowContext) + 'static,
+        on_click: impl Fn(&Selection, &mut Window, &mut AppContext) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -189,20 +196,20 @@ impl CheckboxWithLabel {
 }
 
 impl RenderOnce for CheckboxWithLabel {
-    fn render(self, window: &mut Window, app: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base08.rems(cx))
             .child(Checkbox::new(self.id.clone(), self.checked).on_click({
                 let on_click = self.on_click.clone();
-                move |checked, cx| {
-                    (on_click)(checked, cx);
+                move |checked, window, cx| {
+                    (on_click)(checked, window, cx);
                 }
             }))
             .child(
                 div()
                     .id(SharedString::from(format!("{}-label", self.id)))
-                    .on_click(move |_event, cx| {
-                        (self.on_click)(&self.checked.inverse(), cx);
+                    .on_click(move |_event, window, cx| {
+                        (self.on_click)(&self.checked.inverse(), window, cx);
                     })
                     .child(self.label),
             )
@@ -214,7 +221,7 @@ impl ComponentPreview for CheckboxWithLabel {
         "A checkbox with an associated label, allowing users to select an option while providing a descriptive text."
     }
 
-    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &Window, _: &AppContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![example_group(vec![
             single_example(
                 "Unselected",
@@ -222,7 +229,7 @@ impl ComponentPreview for CheckboxWithLabel {
                     "checkbox_with_label_unselected",
                     Label::new("Always save on quit"),
                     Selection::Unselected,
-                    |_, _| {},
+                    |_, _, _| {},
                 ),
             ),
             single_example(
@@ -231,7 +238,7 @@ impl ComponentPreview for CheckboxWithLabel {
                     "checkbox_with_label_indeterminate",
                     Label::new("Always save on quit"),
                     Selection::Indeterminate,
-                    |_, _| {},
+                    |_, _, _| {},
                 ),
             ),
             single_example(
@@ -240,7 +247,7 @@ impl ComponentPreview for CheckboxWithLabel {
                     "checkbox_with_label_selected",
                     Label::new("Always save on quit"),
                     Selection::Selected,
-                    |_, _| {},
+                    |_, _, _| {},
                 ),
             ),
         ])]

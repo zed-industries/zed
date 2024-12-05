@@ -4677,6 +4677,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs3"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ashpd",
+ "async-tar",
+ "async-trait",
+ "cocoa 0.26.0",
+ "collections",
+ "fsevent",
+ "futures 0.3.31",
+ "git",
+ "git2",
+ "gpui3",
+ "libc",
+ "notify",
+ "objc",
+ "parking_lot",
+ "paths",
+ "proto",
+ "rope",
+ "serde",
+ "serde_json",
+ "smol",
+ "tempfile",
+ "text",
+ "time",
+ "util",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "fsevent"
 version = "0.1.0"
 dependencies = [
@@ -7377,6 +7409,14 @@ name = "menu"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "serde",
+]
+
+[[package]]
+name = "menu3"
+version = "0.1.0"
+dependencies = [
+ "gpui3",
  "serde",
 ]
 
@@ -11192,6 +11232,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings3"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "ec4rs",
+ "fs3",
+ "futures 0.3.31",
+ "gpui3",
+ "indoc",
+ "log",
+ "paths",
+ "pretty_assertions",
+ "release_channel",
+ "rust-embed",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "serde_json_lenient",
+ "smallvec",
+ "tree-sitter",
+ "tree-sitter-json",
+ "unindent",
+ "util",
+]
+
+[[package]]
 name = "settings_ui"
 version = "0.1.0"
 dependencies = [
@@ -12550,9 +12618,9 @@ dependencies = [
  "anyhow",
  "collections",
  "derive_more",
- "fs",
+ "fs3",
  "futures 0.3.31",
- "gpui",
+ "gpui3",
  "indexmap 1.9.3",
  "log",
  "palette",
@@ -12564,7 +12632,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "serde_repr",
- "settings",
+ "settings3",
  "strum 0.25.0",
  "util",
  "uuid",
@@ -13579,14 +13647,14 @@ dependencies = [
  "chrono",
  "gpui3",
  "itertools 0.13.0",
- "menu",
+ "menu3",
  "serde",
- "settings",
+ "settings3",
  "smallvec",
  "story",
  "strum 0.25.0",
  "theme3",
- "ui_macros",
+ "ui_macros3",
  "windows 0.58.0",
 ]
 
@@ -13603,6 +13671,16 @@ dependencies = [
 
 [[package]]
 name = "ui_macros"
+version = "0.1.0"
+dependencies = [
+ "convert_case 0.6.0",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "ui_macros3"
 version = "0.1.0"
 dependencies = [
  "convert_case 0.6.0",

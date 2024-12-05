@@ -2,8 +2,8 @@ use crate::{
     point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyModel,
     AnyTooltip, AppContext, Arena, Asset, AsyncAppContext, AvailableSpace, Bounds, BoxShadow,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
-    DispatchNodeId, DispatchTree, DisplayId, Edges, Empty, EntityId, FileDropEvent, FontId,
-    GPUSpecs, GlobalElementId, GlyphId, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Empty, EntityId, EventEmitter, FileDropEvent,
+    FontId, GPUSpecs, GlobalElementId, GlyphId, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
     KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model,
     ModelContext, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
@@ -296,10 +296,22 @@ impl PartialEq<WeakFocusHandle> for FocusHandle {
 pub struct DismissEvent;
 
 /// For any focusable type, implement this trait to provide its FocusHandle.
-pub trait Focusable {
+pub trait FocusableView: 'static {
     /// Returns the focus handle associated with this view.
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
 }
+
+impl<T: 'static + FocusableView> FocusableView for Model<T> {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.read(cx).focus_handle(cx)
+    }
+}
+
+/// ManagedView is a view (like a Modal, Popover, Menu, etc.)
+/// where the lifecycle of the view is handled by another view.
+pub trait ManagedView: FocusableView + EventEmitter<DismissEvent> {}
+
+impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 
 type FrameCallback = Box<dyn FnOnce(&mut Window, &mut AppContext)>;
 
@@ -837,7 +849,7 @@ impl Window {
     }
 
     /// Obtain a handle to the window that belongs to this context.
-    pub fn window_handle(&self) -> AnyWindowHandle {
+    pub fn handle(&self) -> AnyWindowHandle {
         self.handle
     }
 
@@ -875,6 +887,11 @@ impl Window {
         self.focus = Some(handle.id);
         self.clear_pending_keystrokes();
         self.refresh();
+    }
+
+    /// Move focus to the element associated with the focus handle of a FocusableView
+    pub fn focus_view<T: FocusableView>(&mut self, handle: &Model<T>, cx: &AppContext) {
+        self.focus(&handle.focus_handle(cx))
     }
 
     /// Remove focus from all elements within this context's window.
@@ -2630,6 +2647,47 @@ impl Window {
                 listener(event, window, cx)
             },
         ));
+    }
+
+    /// Register a listener to be called when the given focus handle loses focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_blur(
+        &mut self,
+        handle: &FocusHandle,
+        cx: &mut AppContext,
+        mut listener: impl FnMut(&mut Window, &mut AppContext) + 'static,
+    ) -> Subscription {
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            self.new_focus_listener(Box::new(move |event, window, cx| {
+                if event.previous_focus_path.last() == Some(&focus_id)
+                    && event.current_focus_path.last() != Some(&focus_id)
+                {
+                    listener(window, cx);
+                }
+                true
+            }));
+        cx.defer(move |_| activate());
+        subscription
+    }
+
+    /// Register a listener to be called when nothing in the window has focus.
+    /// This typically happens when the node that was focused is removed from the tree,
+    /// and this callback lets you chose a default place to restore the users focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_lost(
+        &self,
+        mut listener: impl FnMut(&mut Window, &mut AppContext) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.focus_lost_listeners.insert(
+            (),
+            Box::new(move |window, cx| {
+                listener(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants receives focus.

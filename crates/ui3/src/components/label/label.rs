@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use gpui::{StyleRefinement, WindowContext};
+use gpui::StyleRefinement;
 
 use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 

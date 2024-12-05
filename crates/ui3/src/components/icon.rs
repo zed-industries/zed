@@ -2,6 +2,7 @@
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Point, Rems, Transformation};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
+use theme::ActiveTheme;
 use ui_macros::DerivePathStr;
 
 use crate::{
@@ -76,7 +77,11 @@ impl IconSize {
     /// The returned tuple contains:
     ///   1. The length of one side of the square
     ///   2. The padding of one side of the square
-    pub fn square_components(&self, cx: &mut WindowContext) -> (Pixels, Pixels) {
+    pub fn square_components(
+        &self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> (Pixels, Pixels) {
         let icon_size = self.rems() * window.rem_size();
         let padding = match self {
             IconSize::Indicator => DynamicSpacing::Base00.px(cx),
@@ -89,8 +94,8 @@ impl IconSize {
     }
 
     /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
-    pub fn square(&self, cx: &mut WindowContext) -> Pixels {
-        let (icon_size, padding) = self.square_components(cx);
+    pub fn square(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Pixels {
+        let (icon_size, padding) = self.square_components(window, cx);
 
         icon_size + padding * 2.
     }
@@ -352,7 +357,7 @@ impl Icon {
 }
 
 impl RenderOnce for Icon {
-    fn render(self, window: &mut Window, app: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         svg()
             .with_transformation(self.transformation)
             .size(self.size)
@@ -419,7 +424,7 @@ pub struct IconDecoration {
 
 impl IconDecoration {
     /// Create a new icon decoration
-    pub fn new(kind: IconDecorationKind, knockout_color: Hsla, cx: &WindowContext) -> Self {
+    pub fn new(kind: IconDecorationKind, knockout_color: Hsla, cx: &AppContext) -> Self {
         let color = cx.theme().colors().icon;
         let position = Point::default();
 
@@ -491,7 +496,7 @@ impl RenderOnce for IconDecoration {
 }
 
 impl ComponentPreview for IconDecoration {
-    fn examples(cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(window: &Window, cx: &AppContext) -> Vec<ComponentExampleGroup<Self>> {
         let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
 
         let examples = all_kinds
@@ -533,7 +538,7 @@ impl RenderOnce for DecoratedIcon {
 }
 
 impl ComponentPreview for DecoratedIcon {
-    fn examples(cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(window: &Window, cx: &AppContext) -> Vec<ComponentExampleGroup<Self>> {
         let icon_1 = Icon::new(IconName::FileDoc);
         let icon_2 = Icon::new(IconName::FileDoc);
         let icon_3 = Icon::new(IconName::FileDoc);
@@ -627,7 +632,7 @@ impl IconWithIndicator {
 }
 
 impl RenderOnce for IconWithIndicator {
-    fn render(self, window: &mut Window, app: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let indicator_border_color = self
             .indicator_border_color
             .unwrap_or_else(|| cx.theme().colors().elevated_surface_background);
@@ -652,7 +657,7 @@ impl RenderOnce for IconWithIndicator {
 }
 
 impl ComponentPreview for Icon {
-    fn examples(_cx: &WindowContext) -> Vec<ComponentExampleGroup<Icon>> {
+    fn examples(_cx: &Window, cx2: &AppContext) -> Vec<ComponentExampleGroup<Icon>> {
         let arrow_icons = vec![
             IconName::ArrowDown,
             IconName::ArrowLeft,

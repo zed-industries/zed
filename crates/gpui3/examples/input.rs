@@ -578,7 +578,7 @@ impl Render for TextInput {
     }
 }
 
-impl Focusable for TextInput {
+impl FocusableView for TextInput {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -590,7 +590,7 @@ struct InputExample {
     focus_handle: FocusHandle,
 }
 
-impl Focusable for InputExample {
+impl FocusableView for InputExample {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }

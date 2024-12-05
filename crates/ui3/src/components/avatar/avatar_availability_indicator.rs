@@ -30,7 +30,7 @@ impl AvatarAvailabilityIndicator {
 }
 
 impl RenderOnce for AvatarAvailabilityIndicator {
-    fn render(self, window: &mut Window, app: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let avatar_size = self.avatar_size.unwrap_or_else(|| window.rem_size());
 
         // HACK: non-integer sizes result in oval indicators.

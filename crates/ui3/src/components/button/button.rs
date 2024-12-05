@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{AnyView, DefiniteLength};
+use gpui::{AnyElement, AppContext, DefiniteLength, Window};
 
 use crate::{
     prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding, TintColor,
@@ -368,7 +368,10 @@ impl ButtonCommon for Button {
     /// ```
     ///
     /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip<F>(mut self, tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F) -> Self
+    where
+        F: 'static + Fn(&mut Window, &mut AppContext) -> AnyElement,
+    {
         self.base = self.base.tooltip(tooltip);
         self
     }
@@ -381,7 +384,7 @@ impl ButtonCommon for Button {
 
 impl RenderOnce for Button {
     #[allow(refining_impl_trait)]
-    fn render(self, window: &mut Window, app: &mut AppContext) -> ButtonLike {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 
@@ -445,7 +448,7 @@ impl ComponentPreview for Button {
         "A button allows users to take actions, and make choices, with a single tap."
     }
 
-    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &Window, _: &AppContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Styles",

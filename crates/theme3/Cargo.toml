@@ -20,9 +20,9 @@ doctest = false
 anyhow.workspace = true
 collections.workspace = true
 derive_more.workspace = true
-fs.workspace = true
+fs = { path = "../fs3", package = "fs3" }
 futures.workspace = true
-gpui = { path = "../gpui", package = "gpui3" }
+gpui = { path = "../gpui3", package = "gpui3" }
 indexmap.workspace = true
 log.workspace = true
 palette = { workspace = true, default-features = false, features = ["std"] }
@@ -34,12 +34,12 @@ serde_derive.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 serde_repr.workspace = true
-settings.workspace = true
+settings = { path = "../settings3", package = "settings3" }
 strum.workspace = true
 util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-fs = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support"] }
-settings = { workspace = true, features = ["test-support"] }
+fs = { path = "../fs3", package = "fs3", features = ["test-support"] }
+gpui = { path = "../gpui3", package = "gpui3", features = ["test-support"] }
+settings = { path = "../settings3", package = "settings3", features = ["test-support"] }

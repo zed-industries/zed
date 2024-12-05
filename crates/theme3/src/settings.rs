@@ -3,8 +3,8 @@ use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    Subscription, ViewContext, WindowContext,
+    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, ModelContext,
+    Pixels, Subscription, Window,
 };
 use refineable::Refineable;
 use schemars::{
@@ -490,9 +490,9 @@ impl ThemeSettings {
 }
 
 /// Observe changes to the adjusted buffer font size.
-pub fn observe_buffer_font_size_adjustment<V: 'static>(
-    cx: &mut ViewContext<V>,
-    f: impl 'static + Fn(&mut V, &mut ViewContext<V>),
+pub fn observe_buffer_font_size_adjustment<T: 'static>(
+    cx: &mut ModelContext<T>,
+    f: impl 'static + Fn(&mut T, &mut ModelContext<T>),
 ) -> Subscription {
     cx.observe_global::<AdjustedBufferFontSize>(f)
 }
@@ -544,14 +544,14 @@ pub fn reset_buffer_font_size(cx: &mut AppContext) {
 
 // TODO: Make private, change usages to use `get_ui_font_size` instead.
 #[allow(missing_docs)]
-pub fn setup_ui_font(cx: &mut WindowContext) -> gpui::Font {
+pub fn setup_ui_font(window: &mut Window, cx: &mut AppContext) -> gpui::Font {
     let (ui_font, ui_font_size) = {
         let theme_settings = ThemeSettings::get_global(cx);
         let font = theme_settings.ui_font.clone();
         (font, get_ui_font_size(cx))
     };
 
-    cx.set_rem_size(ui_font_size);
+    window.set_rem_size(ui_font_size);
     ui_font
 }
 

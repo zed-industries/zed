@@ -389,6 +389,7 @@ impl Element for UniformList {
                                 bounds,
                                 item_height,
                                 self.item_count,
+                                window,
                                 cx,
                             );
                             let available_space = size(
@@ -453,6 +454,7 @@ pub trait UniformListDecoration {
         bounds: Bounds<Pixels>,
         item_height: Pixels,
         item_count: usize,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> AnyElement;
 }

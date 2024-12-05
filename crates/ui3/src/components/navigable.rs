@@ -18,16 +18,16 @@ pub struct NavigableEntry {
 
 impl NavigableEntry {
     /// Creates a new [NavigableEntry] for a given scroll handle.
-    pub fn new(scroll_handle: &ScrollHandle, cx: &WindowContext<'_>) -> Self {
+    pub fn new(scroll_handle: &ScrollHandle, window: &Window, cx: &AppContext) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(),
             scroll_anchor: Some(ScrollAnchor::for_handle(scroll_handle.clone())),
         }
     }
     /// Create a new [NavigableEntry] that cannot be scrolled to.
-    pub fn focusable(cx: &WindowContext<'_>) -> Self {
+    pub fn focusable(window: &Window, cx: &AppContext) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(),
             scroll_anchor: None,
         }
     }
@@ -51,43 +51,48 @@ impl Navigable {
 
     fn find_focused(
         selectable_children: &[NavigableEntry],
-        cx: &mut WindowContext<'_>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<usize> {
         selectable_children
             .iter()
-            .position(|entry| entry.focus_handle.contains_focused(cx))
+            .position(|entry| entry.focus_handle.contains_focused(window))
     }
 }
 impl RenderOnce for Navigable {
-    fn render(self, _: &mut WindowContext<'_>) -> impl crate::IntoElement {
+    fn render(
+        self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> impl crate::IntoElement {
         div()
             .on_action({
                 let children = self.selectable_children.clone();
 
-                move |_: &menu::SelectNext, cx| {
-                    let target = Self::find_focused(&children, cx)
+                move |_: &menu::SelectNext, window, cx| {
+                    let target = Self::find_focused(&children, window, cx)
                         .and_then(|index| {
                             index.checked_add(1).filter(|index| *index < children.len())
                         })
                         .unwrap_or(0);
                     if let Some(entry) = children.get(target) {
-                        entry.focus_handle.focus(cx);
+                        entry.focus_handle.focus(window);
                         if let Some(anchor) = &entry.scroll_anchor {
-                            anchor.scroll_to(cx);
+                            anchor.scroll_to(window);
                         }
                     }
                 }
             })
             .on_action({
                 let children = self.selectable_children;
-                move |_: &menu::SelectPrev, cx| {
-                    let target = Self::find_focused(&children, cx)
+                move |_: &menu::SelectPrev, window, cx| {
+                    let target = Self::find_focused(&children, window, cx)
                         .and_then(|index| index.checked_sub(1))
                         .or(children.len().checked_sub(1));
                     if let Some(entry) = target.and_then(|target| children.get(target)) {
-                        entry.focus_handle.focus(cx);
+                        entry.focus_handle.focus(window);
                         if let Some(anchor) = &entry.scroll_anchor {
-                            anchor.scroll_to(cx);
+                            anchor.scroll_to(window);
                         }
                     }
                 }

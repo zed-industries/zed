@@ -148,7 +148,7 @@ pub use taffy::{AvailableSpace, LayoutId};
 pub use test::*;
 pub use text_system::*;
 pub use util::arc_cow::ArcCow;
-pub use window::Focusable;
+pub use window::FocusableView;
 pub use window::*;
 
 use std::{any::Any, borrow::BorrowMut};

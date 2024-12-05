@@ -37,7 +37,7 @@ use crate::{
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, mem};
+use std::{any::Any, fmt::Debug, mem, rc::Rc};
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
@@ -123,6 +123,16 @@ pub trait Render: 'static + Sized {
 impl Render for Empty {
     fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         Empty
+    }
+}
+
+/// A dynamically typed function that renders an AnyElement in a Window.
+pub type AnyView = Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>;
+
+impl<T: Render> Into<Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>> for Model<T> {
+    fn into(self) -> Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement> {
+        let this = self.clone();
+        Rc::new(move |_window, _cx| this.clone().into_any_element())
     }
 }
 

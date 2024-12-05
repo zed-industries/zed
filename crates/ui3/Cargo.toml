@@ -16,14 +16,14 @@ path = "src/ui.rs"
 chrono.workspace = true
 gpui = { path = "../gpui3", package = "gpui3" }
 itertools = { workspace = true, optional = true }
-menu.workspace = true
+menu = { path = "../menu3", package = "menu3" }
 serde.workspace = true
-settings.workspace = true
+settings = { path = "../settings3", package = "settings3" }
 smallvec.workspace = true
 story = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
 theme = { path = "../theme3", package = "theme3" }
-ui_macros.workspace = true
+ui_macros = { path = "../ui_macros3", package = "ui_macros3" }
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

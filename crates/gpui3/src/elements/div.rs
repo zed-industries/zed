@@ -2046,7 +2046,7 @@ impl Interactivity {
                             let task = cx.spawn({
                                 let active_tooltip = active_tooltip.clone();
                                 let build_tooltip = tooltip_builder.build.clone();
-                                let window_handle = window.window_handle();
+                                let window_handle = window.handle();
                                 move |mut cx| async move {
                                     cx.background_executor().timer(TOOLTIP_DELAY).await;
                                     window_handle

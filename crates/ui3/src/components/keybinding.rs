@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke, WindowContext};
+use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke};
 
 #[derive(Debug, IntoElement, Clone)]
 pub struct KeyBinding {
@@ -16,8 +16,12 @@ pub struct KeyBinding {
 }
 
 impl KeyBinding {
-    pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
-        let key_binding = cx.bindings_for_action(action).last().cloned()?;
+    pub fn for_action(
+        action: &dyn Action,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Option<Self> {
+        let key_binding = window.bindings_for_action(action).last().cloned()?;
         Some(Self::new(key_binding))
     }
 
@@ -26,9 +30,13 @@ impl KeyBinding {
     pub fn for_action_in(
         action: &dyn Action,
         focus: &FocusHandle,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<Self> {
-        let key_binding = cx.bindings_for_action_in(action, focus).last().cloned()?;
+        let key_binding = window
+            .bindings_for_action_in(action, focus)
+            .last()
+            .cloned()?;
         Some(Self::new(key_binding))
     }
 
@@ -71,7 +79,7 @@ impl KeyBinding {
 }
 
 impl RenderOnce for KeyBinding {
-    fn render(self, window: &mut Window, app: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .debug_selector(|| {
                 format!(
@@ -147,7 +155,7 @@ pub struct Key {
 }
 
 impl RenderOnce for Key {
-    fn render(self, window: &mut Window, app: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let single_char = self.key.len() == 1;
 
         div()
@@ -163,7 +171,7 @@ impl RenderOnce for Key {
                 }
             })
             .h(rems_from_px(14.))
-            .text_ui(cx)
+            .text_ui(window, cx)
             .line_height(relative(1.))
             .text_color(cx.theme().colors().text_muted)
             .child(self.key.clone())
@@ -196,8 +204,8 @@ impl KeyIcon {
 }
 
 /// Returns a textual representation of the key binding for the given [`Action`].
-pub fn text_for_action(action: &dyn Action, cx: &WindowContext) -> Option<String> {
-    let key_binding = cx.bindings_for_action(action).last().cloned()?;
+pub fn text_for_action(action: &dyn Action, window: &Window, cx: &AppContext) -> Option<String> {
+    let key_binding = window.bindings_for_action(action).last().cloned()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }
 
@@ -206,9 +214,13 @@ pub fn text_for_action(action: &dyn Action, cx: &WindowContext) -> Option<String
 pub fn text_for_action_in(
     action: &dyn Action,
     focus: &FocusHandle,
-    cx: &mut WindowContext,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
 ) -> Option<String> {
-    let key_binding = cx.bindings_for_action_in(action, focus).last().cloned()?;
+    let key_binding = window
+        .bindings_for_action_in(action, focus)
+        .last()
+        .cloned()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }
 
