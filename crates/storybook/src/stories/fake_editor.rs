@@ -90,7 +90,7 @@ impl FakeEditorStory {
 
                 let mut fake_editor = FakeEditor::new(editor_text, cx);
                 fake_editor.element_above(3, |line_height, _| {
-                    div()bg.w_16().h(line_height).into_any_element()
+                    div().bg(hsla(0.5, 1.,1.,0.2)).w_16().h(line_height).into_any_element()
                 });
                 fake_editor
             });
