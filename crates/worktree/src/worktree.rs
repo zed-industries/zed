@@ -3166,12 +3166,11 @@ async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
     // bare repository, the root folder contains what would normally be in the
     // `.git` folder.
     let head_metadata = fs.metadata(&path.join("HEAD")).await;
-    let config_metadata = fs.metadata(&path.join("config")).await;
-
-    match (head_metadata, config_metadata) {
-        (Ok(Some(_)), Ok(Some(_))) => true,
-        _ => false,
+    if !matches!(head_metadata, Ok(Some(_))) {
+        return false;
     }
+    let config_metadata = fs.metadata(&path.join("config")).await;
+    matches!(config_metadata, Ok(Some(_)))
 }
 
 async fn find_git_dir(path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
