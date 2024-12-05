@@ -1543,6 +1543,31 @@ impl MultiBuffer {
         excerpts
     }
 
+    pub fn excerpt_ranges_for_buffer(
+        &self,
+        buffer_id: BufferId,
+        cx: &AppContext,
+    ) -> Vec<Range<Point>> {
+        let snapshot = self.read(cx);
+        let buffers = self.buffers.borrow();
+        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, Point)>(&());
+        buffers
+            .get(&buffer_id)
+            .into_iter()
+            .flat_map(|state| &state.excerpts)
+            .filter_map(move |locator| {
+                cursor.seek_forward(&Some(locator), Bias::Left, &());
+                cursor.item().and_then(|excerpt| {
+                    if excerpt.locator == *locator {
+                        Some(cursor.start().1..cursor.end(&()).1)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect()
+    }
+
     pub fn excerpt_buffer_ids(&self) -> Vec<BufferId> {
         self.snapshot
             .borrow()

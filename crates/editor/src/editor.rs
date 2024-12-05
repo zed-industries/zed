@@ -663,7 +663,6 @@ pub struct Editor {
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
-    folded_buffers: HashMap<BufferId, CustomBlockId>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
 }
 
@@ -1310,7 +1309,6 @@ impl Editor {
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: HashMap::default(),
             text_style_refinement: None,
-            folded_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
@@ -10585,6 +10583,17 @@ impl Editor {
         self.remove_folds_with(ranges, auto_scroll, cx, |map, cx| {
             map.unfold_intersecting(ranges.iter().cloned(), inclusive, cx)
         });
+    }
+
+    pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut ViewContext<Self>) {
+        self.display_map
+            .update(cx, |display_map, cx| display_map.fold_buffer(buffer_id, cx))
+    }
+
+    pub fn unfold_buffer(&mut self, buffer_id: BufferId, cx: &mut ViewContext<Self>) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.unfold_buffer(buffer_id, cx);
+        })
     }
 
     /// Removes any folds with the given ranges.
