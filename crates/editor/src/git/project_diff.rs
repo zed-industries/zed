@@ -55,6 +55,7 @@ struct ProjectDiffEditor {
     _subscriptions: Vec<Subscription>,
 }
 
+#[derive(Debug)]
 struct Changes {
     _status: GitFileStatus,
     buffer: Model<Buffer>,
@@ -235,15 +236,16 @@ impl ProjectDiffEditor {
                         let mut change_sets = Vec::new();
                         for (status, entry_id, entry_path, open_task) in open_tasks {
                             let (_, opened_model) = open_task.await.with_context(|| {
-                                format!("loading buffer {} for git diff", entry_path.path.display())
+                                format!("loading buffer {:?} for git diff", entry_path.path)
                             })?;
                             let buffer = match opened_model.downcast::<Buffer>() {
                                 Ok(buffer) => buffer,
                                 Err(_model) => anyhow::bail!(
-                                    "Could not load {} as a buffer for git diff",
-                                    entry_path.path.display()
+                                    "Could not load {:?} as a buffer for git diff",
+                                    entry_path.path
                                 ),
                             };
+
                             let change_set = project
                                 .update(&mut cx, |project, cx| {
                                     project.open_unstaged_changes(buffer.clone(), cx)
@@ -1089,13 +1091,16 @@ impl Render for ProjectDiffEditor {
 
 #[cfg(test)]
 mod tests {
-    // use std::{ops::Deref as _, path::Path, sync::Arc};
+    use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
+    use project::buffer_store::BufferChangeSet;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::{
+        ops::Deref as _,
+        path::{Path, PathBuf},
+    };
 
-    // use fs::RealFs;
-    // use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
-    // use settings::SettingsStore;
-
-    // use super::*;
+    use super::*;
 
     // TODO finish
     // #[gpui::test]
@@ -1111,114 +1116,131 @@ mod tests {
     //     // Apply randomized changes to the project: select a random file, random change and apply to buffers
     // }
 
-    // #[gpui::test]
-    // async fn simple_edit_test(cx: &mut TestAppContext) {
-    //     cx.executor().allow_parking();
-    //     init_test(cx);
+    #[gpui::test(iterations = 30)]
+    async fn simple_edit_test(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
 
-    //     let dir = tempfile::tempdir().unwrap();
-    //     let dst = dir.path();
+        let fs = fs::FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                ".git": {},
+                "file_a": "This is file_a",
+                "file_b": "This is file_b",
+            }),
+        )
+        .await;
 
-    //     std::fs::write(dst.join("file_a"), "This is file_a").unwrap();
-    //     std::fs::write(dst.join("file_b"), "This is file_b").unwrap();
+        let project = Project::test(fs.clone(), [Path::new("/root")], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
-    //     run_git(dst, &["init"]);
-    //     run_git(dst, &["add", "*"]);
-    //     run_git(dst, &["commit", "-m", "Initial commit"]);
+        let file_a_editor = workspace
+            .update(cx, |workspace, cx| {
+                let file_a_editor =
+                    workspace.open_abs_path(PathBuf::from("/root/file_a"), true, cx);
+                ProjectDiffEditor::deploy(workspace, &Deploy, cx);
+                file_a_editor
+            })
+            .unwrap()
+            .await
+            .expect("did not open an item at all")
+            .downcast::<Editor>()
+            .expect("did not open an editor for file_a");
+        let project_diff_editor = workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<ProjectDiffEditor>())
+            })
+            .unwrap()
+            .expect("did not find a ProjectDiffEditor");
+        project_diff_editor.update(cx, |project_diff_editor, cx| {
+            assert!(
+                project_diff_editor.editor.read(cx).text(cx).is_empty(),
+                "Should have no changes after opening the diff on no git changes"
+            );
+        });
 
-    //     let project = Project::test(Arc::new(RealFs::default()), [dst], cx).await;
-    //     let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-    //     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+        let old_text = file_a_editor.update(cx, |editor, cx| editor.text(cx));
+        let change = "an edit after git add";
+        file_a_editor
+            .update(cx, |file_a_editor, cx| {
+                file_a_editor.insert(change, cx);
+                file_a_editor.save(false, project.clone(), cx)
+            })
+            .await
+            .expect("failed to save a file");
+        file_a_editor.update(cx, |file_a_editor, cx| {
+            let change_set = cx.new_model(|cx| {
+                BufferChangeSet::new_with_base_text(
+                    old_text.clone(),
+                    file_a_editor
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
+                        .unwrap()
+                        .read(cx)
+                        .text_snapshot(),
+                    cx,
+                )
+            });
+            file_a_editor
+                .diff_map
+                .add_change_set(change_set.clone(), cx);
+            project.update(cx, |project, cx| {
+                project.buffer_store().update(cx, |buffer_store, cx| {
+                    buffer_store.set_change_set(
+                        file_a_editor
+                            .buffer()
+                            .read(cx)
+                            .as_singleton()
+                            .unwrap()
+                            .read(cx)
+                            .remote_id(),
+                        change_set,
+                    );
+                });
+            });
+        });
+        fs.set_status_for_repo_via_git_operation(
+            Path::new("/root/.git"),
+            &[(Path::new("file_a"), GitFileStatus::Modified)],
+        );
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
 
-    //     let file_a_editor = workspace
-    //         .update(cx, |workspace, cx| {
-    //             let file_a_editor = workspace.open_abs_path(dst.join("file_a"), true, cx);
-    //             ProjectDiffEditor::deploy(workspace, &Deploy, cx);
-    //             file_a_editor
-    //         })
-    //         .unwrap()
-    //         .await
-    //         .expect("did not open an item at all")
-    //         .downcast::<Editor>()
-    //         .expect("did not open an editor for file_a");
+        project_diff_editor.update(cx, |project_diff_editor, cx| {
+            assert_eq!(
+                // TODO assert it better: extract added text (based on the background changes) and deleted text (based on the deleted blocks added)
+                project_diff_editor.editor.read(cx).text(cx),
+                format!("{change}{old_text}"),
+                "Should have a new change shown in the beginning, and the old text shown as deleted text afterwards"
+            );
+        });
+    }
 
-    //     let project_diff_editor = workspace
-    //         .update(cx, |workspace, cx| {
-    //             workspace
-    //                 .active_pane()
-    //                 .read(cx)
-    //                 .items()
-    //                 .find_map(|item| item.downcast::<ProjectDiffEditor>())
-    //         })
-    //         .unwrap()
-    //         .expect("did not find a ProjectDiffEditor");
-    //     project_diff_editor.update(cx, |project_diff_editor, cx| {
-    //         assert!(
-    //             project_diff_editor.editor.read(cx).text(cx).is_empty(),
-    //             "Should have no changes after opening the diff on no git changes"
-    //         );
-    //     });
+    fn init_test(cx: &mut gpui::TestAppContext) {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::try_init().ok();
+        }
 
-    //     let old_text = file_a_editor.update(cx, |editor, cx| editor.text(cx));
-    //     let change = "an edit after git add";
-    //     file_a_editor
-    //         .update(cx, |file_a_editor, cx| {
-    //             file_a_editor.insert(change, cx);
-    //             file_a_editor.save(false, project.clone(), cx)
-    //         })
-    //         .await
-    //         .expect("failed to save a file");
-    //     cx.executor().advance_clock(Duration::from_secs(1));
-    //     cx.run_until_parked();
-
-    //     // TODO does not work on Linux for some reason, returning a blank line
-    //     // hence disable the last check for now, and do some fiddling to avoid the warnings.
-    //     #[cfg(target_os = "linux")]
-    //     {
-    //         if true {
-    //             return;
-    //         }
-    //     }
-    //     project_diff_editor.update(cx, |project_diff_editor, cx| {
-    //         // TODO assert it better: extract added text (based on the background changes) and deleted text (based on the deleted blocks added)
-    //         assert_eq!(
-    //             project_diff_editor.editor.read(cx).text(cx),
-    //             format!("{change}{old_text}"),
-    //             "Should have a new change shown in the beginning, and the old text shown as deleted text afterwards"
-    //         );
-    //     });
-    // }
-
-    // fn run_git(path: &Path, args: &[&str]) -> String {
-    //     let output = std::process::Command::new("git")
-    //         .args(args)
-    //         .current_dir(path)
-    //         .output()
-    //         .expect("git commit failed");
-
-    //     format!(
-    //         "Stdout: {}; stderr: {}",
-    //         String::from_utf8(output.stdout).unwrap(),
-    //         String::from_utf8(output.stderr).unwrap()
-    //     )
-    // }
-
-    // fn init_test(cx: &mut gpui::TestAppContext) {
-    //     if std::env::var("RUST_LOG").is_ok() {
-    //         env_logger::try_init().ok();
-    //     }
-
-    //     cx.update(|cx| {
-    //         assets::Assets.load_test_fonts(cx);
-    //         let settings_store = SettingsStore::test(cx);
-    //         cx.set_global(settings_store);
-    //         theme::init(theme::LoadThemes::JustBase, cx);
-    //         release_channel::init(SemanticVersion::default(), cx);
-    //         client::init_settings(cx);
-    //         language::init(cx);
-    //         Project::init_settings(cx);
-    //         workspace::init_settings(cx);
-    //         crate::init(cx);
-    //     });
-    // }
+        cx.update(|cx| {
+            assets::Assets.load_test_fonts(cx);
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            release_channel::init(SemanticVersion::default(), cx);
+            client::init_settings(cx);
+            language::init(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
+            crate::init(cx);
+            cx.set_staff(true);
+        });
+    }
 }

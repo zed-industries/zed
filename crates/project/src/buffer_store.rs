@@ -49,6 +49,7 @@ struct SharedBuffer {
     unstaged_changes: Option<Model<BufferChangeSet>>,
 }
 
+#[derive(Debug)]
 pub struct BufferChangeSet {
     pub buffer_id: BufferId,
     pub base_text: Option<Model<Buffer>>,
@@ -1043,6 +1044,12 @@ impl BufferStore {
 
         cx.background_executor()
             .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_change_set(&mut self, buffer_id: BufferId, change_set: Model<BufferChangeSet>) {
+        self.loading_change_sets
+            .insert(buffer_id, Task::ready(Ok(change_set)).shared());
     }
 
     pub async fn open_unstaged_changes_internal(
