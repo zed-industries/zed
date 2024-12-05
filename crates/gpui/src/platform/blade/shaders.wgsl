@@ -274,6 +274,40 @@ fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
     return vec4<f32>(color.rgb * multiplier, alpha);
 }
 
+
+struct GradientColor {
+    solid: vec4<f32>,
+    color0: vec4<f32>,
+    color1: vec4<f32>,
+}
+
+fn prepare_gradient_color(tag: u32, color_space: u32,
+    solid: Hsla, colors: array<LinearColorStop, 2>) -> GradientColor {
+    var result = GradientColor();
+
+    if (tag == 0u) {
+        result.solid = hsla_to_rgba(solid);
+    } else if (tag == 1u) {
+        // The hsla_to_rgba is returns a linear sRGB color
+        result.color0 = hsla_to_rgba(colors[0].color);
+        result.color1 = hsla_to_rgba(colors[1].color);
+
+        // Prepare color space in vertex for avoid conversion
+        // in fragment shader for performance reasons
+        if (color_space == 0u) {
+            // sRGB
+            result.color0 = linear_to_srgba(result.color0);
+            result.color1 = linear_to_srgba(result.color1);
+        } else if (color_space == 1u) {
+            // Oklab
+            result.color0 = linear_srgb_to_oklab(result.color0);
+            result.color1 = linear_srgb_to_oklab(result.color1);
+        }
+    }
+
+    return result;
+}
+
 fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
     sold_color: vec4<f32>, color0: vec4<f32>, color1: vec4<f32>) -> vec4<f32> {
     var background_color = vec4<f32>(0.0);
@@ -360,26 +394,16 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 
     var out = QuadVarying();
     out.position = to_device_position(unit_vertex, quad.bounds);
-    if (quad.background.tag == 0u) {
-        out.background_solid = hsla_to_rgba(quad.background.solid);
-    } else if (quad.background.tag == 1u) {
-        let color_space = quad.background.color_space;
-        // The hsla_to_rgba is returns a linear sRGB color
-        out.background_color0 = hsla_to_rgba(quad.background.colors[0].color);
-        out.background_color1 = hsla_to_rgba(quad.background.colors[1].color);
 
-        // Prepare color space in vertex for avoid conversion
-        // in fragment shader for performance reasons
-        if (color_space == 0u) {
-            // sRGB
-            out.background_color0 = linear_to_srgba(out.background_color0);
-            out.background_color1 = linear_to_srgba(out.background_color1);
-        } else if (color_space == 1u) {
-            // Oklab
-            out.background_color0 = linear_srgb_to_oklab(out.background_color0);
-            out.background_color1 = linear_srgb_to_oklab(out.background_color1);
-        }
-    }
+    let gradient = prepare_gradient_color(
+        quad.background.tag,
+        quad.background.color_space,
+        quad.background.solid,
+        quad.background.colors
+    );
+    out.background_solid = gradient.solid;
+    out.background_color0 = gradient.color0;
+    out.background_color1 = gradient.color1;
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
@@ -586,26 +610,16 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.position = to_device_position(unit_vertex, sprite.bounds);
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.instance_id = instance_id;
-    if (sprite.color.tag == 0u) {
-        out.color_solid = hsla_to_rgba(sprite.color.solid);
-    } else if (sprite.color.tag == 1u) {
-        let color_space = sprite.color.color_space;
-        // The hsla_to_rgba is returns a linear sRGB color
-        out.color0 = hsla_to_rgba(sprite.color.colors[0].color);
-        out.color1 = hsla_to_rgba(sprite.color.colors[1].color);
 
-        // Prepare color space in vertex for avoid conversion
-        // in fragment shader for performance reasons
-        if (color_space == 0u) {
-            // sRGB
-            out.color0 = linear_to_srgba(out.color0);
-            out.color1 = linear_to_srgba(out.color1);
-        } else if (color_space == 1u) {
-            // Oklab
-            out.color0 = linear_srgb_to_oklab(out.color0);
-            out.color1 = linear_srgb_to_oklab(out.color1);
-        }
-    }
+    let gradient = prepare_gradient_color(
+        sprite.color.tag,
+        sprite.color.color_space,
+        sprite.color.solid,
+        sprite.color.colors
+    );
+    out.color_solid = gradient.solid;
+    out.color0 = gradient.color0;
+    out.color1 = gradient.color1;
     return out;
 }
 
