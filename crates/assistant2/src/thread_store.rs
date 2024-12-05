@@ -52,13 +52,19 @@ impl ThreadStore {
         })
     }
 
-    pub fn recent_threads(&self, limit: usize, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
-        self.threads
+    pub fn threads(&self, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
+        let mut threads = self
+            .threads
             .iter()
             .filter(|thread| !thread.read(cx).is_empty())
-            .take(limit)
             .cloned()
-            .collect()
+            .collect::<Vec<_>>();
+        threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.read(cx).updated_at()));
+        threads
+    }
+
+    pub fn recent_threads(&self, limit: usize, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
+        self.threads(cx).into_iter().take(limit).collect()
     }
 
     pub fn create_thread(&mut self, cx: &mut ModelContext<Self>) -> Model<Thread> {
@@ -148,6 +154,7 @@ impl ThreadStore {
 
         self.threads.push(cx.new_model(|cx| {
             let mut thread = Thread::new(self.tools.clone(), cx);
+            thread.set_summary("Introduction to quantum computing", cx);
             thread.insert_user_message("Hello! Can you help me understand quantum computing?", cx);
             thread.insert_message(Role::Assistant, "Of course! I'd be happy to help you understand quantum computing. Quantum computing is a fascinating field that uses the principles of quantum mechanics to process information. Unlike classical computers that use bits (0s and 1s), quantum computers use quantum bits or 'qubits'. These qubits can exist in multiple states simultaneously, a property called superposition. This allows quantum computers to perform certain calculations much faster than classical computers. What specific aspect of quantum computing would you like to know more about?", cx);
             thread.insert_user_message("That's interesting! Can you explain how quantum entanglement is used in quantum computing?", cx);
@@ -157,6 +164,7 @@ impl ThreadStore {
 
         self.threads.push(cx.new_model(|cx| {
             let mut thread = Thread::new(self.tools.clone(), cx);
+            thread.set_summary("Rust web development and async programming", cx);
             thread.insert_user_message("Can you show me an example of Rust code for a simple web server?", cx);
             thread.insert_message(Role::Assistant, "Certainly! Here's an example of a simple web server in Rust using the `actix-web` framework:
 
