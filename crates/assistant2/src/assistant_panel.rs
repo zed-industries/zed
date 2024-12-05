@@ -36,7 +36,7 @@ pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Model<ThreadStore>,
-    thread: Option<View<ActiveThread>>,
+    thread: View<ActiveThread>,
     message_editor: View<MessageEditor>,
     tools: Arc<ToolWorkingSet>,
 }
@@ -68,26 +68,25 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
+        let language_registry = workspace.project().read(cx).languages().clone();
+        let workspace = workspace.weak_handle();
 
-        let mut this = Self {
-            workspace: workspace.weak_handle(),
-            language_registry: workspace.project().read(cx).languages().clone(),
+        Self {
+            workspace: workspace.clone(),
+            language_registry: language_registry.clone(),
             thread_store,
-            thread: None,
+            thread: cx.new_view(|cx| {
+                ActiveThread::new(
+                    thread.clone(),
+                    workspace,
+                    language_registry,
+                    tools.clone(),
+                    cx,
+                )
+            }),
             message_editor: cx.new_view(|cx| MessageEditor::new(thread.clone(), cx)),
             tools,
-        };
-        this.thread = Some(cx.new_view(|cx| {
-            ActiveThread::new(
-                thread,
-                this.workspace.clone(),
-                this.language_registry.clone(),
-                this.tools.clone(),
-                cx,
-            )
-        }));
-
-        this
+        }
     }
 
     fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
@@ -95,7 +94,7 @@ impl AssistantPanel {
             .thread_store
             .update(cx, |this, cx| this.create_thread(cx));
 
-        self.thread = Some(cx.new_view(|cx| {
+        self.thread = cx.new_view(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.workspace.clone(),
@@ -103,7 +102,7 @@ impl AssistantPanel {
                 self.tools.clone(),
                 cx,
             )
-        }));
+        });
         self.message_editor = cx.new_view(|cx| MessageEditor::new(thread, cx));
         self.message_editor.focus_handle(cx).focus(cx);
     }
@@ -116,7 +115,7 @@ impl AssistantPanel {
             return;
         };
 
-        self.thread = Some(cx.new_view(|cx| {
+        self.thread = cx.new_view(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.workspace.clone(),
@@ -124,7 +123,7 @@ impl AssistantPanel {
                 self.tools.clone(),
                 cx,
             )
-        }));
+        });
         self.message_editor = cx.new_view(|cx| MessageEditor::new(thread, cx));
         self.message_editor.focus_handle(cx).focus(cx);
     }
@@ -191,13 +190,7 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
-            .child(
-                h_flex().children(
-                    self.thread
-                        .as_ref()
-                        .and_then(|thread| thread.read(cx).summary(cx).map(Label::new)),
-                ),
-            )
+            .child(h_flex().children(self.thread.read(cx).summary(cx).map(Label::new)))
             .child(
                 h_flex()
                     .gap(DynamicSpacing::Base08.rems(cx))
@@ -308,15 +301,11 @@ impl AssistantPanel {
     }
 
     fn render_active_thread_or_empty_state(&self, cx: &mut ViewContext<Self>) -> AnyElement {
-        let Some(thread) = self.thread.as_ref() else {
-            return self.render_thread_empty_state(cx).into_any_element();
-        };
-
-        if thread.read(cx).is_empty() {
+        if self.thread.read(cx).is_empty() {
             return self.render_thread_empty_state(cx).into_any_element();
         }
 
-        thread.clone().into_any()
+        self.thread.clone().into_any()
     }
 
     fn render_thread_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -441,7 +430,7 @@ impl AssistantPanel {
     }
 
     fn render_last_error(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
-        let last_error = self.thread.as_ref()?.read(cx).last_error()?;
+        let last_error = self.thread.read(cx).last_error()?;
 
         Some(
             div()
@@ -491,11 +480,9 @@ impl AssistantPanel {
                     .mt_1()
                     .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
                         |this, _, cx| {
-                            if let Some(thread) = this.thread.as_ref() {
-                                thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
-                            }
+                            this.thread.update(cx, |this, _cx| {
+                                this.clear_last_error();
+                            });
 
                             cx.open_url(&zed_urls::account_url(cx));
                             cx.notify();
@@ -503,11 +490,9 @@ impl AssistantPanel {
                     )))
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, cx| {
-                            if let Some(thread) = this.thread.as_ref() {
-                                thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
-                            }
+                            this.thread.update(cx, |this, _cx| {
+                                this.clear_last_error();
+                            });
 
                             cx.notify();
                         },
@@ -542,11 +527,9 @@ impl AssistantPanel {
                     .child(
                         Button::new("subscribe", "Update Monthly Spend Limit").on_click(
                             cx.listener(|this, _, cx| {
-                                if let Some(thread) = this.thread.as_ref() {
-                                    thread.update(cx, |this, _cx| {
-                                        this.clear_last_error();
-                                    });
-                                }
+                                this.thread.update(cx, |this, _cx| {
+                                    this.clear_last_error();
+                                });
 
                                 cx.open_url(&zed_urls::account_url(cx));
                                 cx.notify();
@@ -555,11 +538,9 @@ impl AssistantPanel {
                     )
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, cx| {
-                            if let Some(thread) = this.thread.as_ref() {
-                                thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
-                            }
+                            this.thread.update(cx, |this, _cx| {
+                                this.clear_last_error();
+                            });
 
                             cx.notify();
                         },
@@ -598,11 +579,9 @@ impl AssistantPanel {
                     .mt_1()
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, cx| {
-                            if let Some(thread) = this.thread.as_ref() {
-                                thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
-                            }
+                            this.thread.update(cx, |this, _cx| {
+                                this.clear_last_error();
+                            });
 
                             cx.notify();
                         },
