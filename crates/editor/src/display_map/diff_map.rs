@@ -7,7 +7,7 @@ use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{BufferChunks, BufferId, Chunk};
 use multi_buffer::MultiBuffer;
 use project::buffer_store::BufferChangeSet;
-use std::{cmp::Ordering, ops::Range};
+use std::{cmp::Ordering, mem, ops::Range};
 use sum_tree::{Cursor, SumTree, TreeMap};
 use text::{Bias, BufferSnapshot, Point, TextSummary, ToPoint};
 
@@ -259,10 +259,6 @@ impl DiffMap {
                         .snapshot
                         .fold_snapshot
                         .make_fold_point(hunk_start, Bias::Left);
-                    let hunk_end = self
-                        .snapshot
-                        .fold_snapshot
-                        .make_fold_point(hunk_end, Bias::Left);
 
                     if hunk_start > start {
                         new_transforms.push(
@@ -327,6 +323,14 @@ impl DiffMap {
 
     pub(super) fn set_all_hunks_expanded(&mut self, expand_all: bool, cx: &mut ModelContext<Self>) {
         self.all_hunks_expanded = expand_all;
+        let change_sets = self
+            .diff_bases
+            .values()
+            .map(|state| state.change_set.clone())
+            .collect::<Vec<_>>();
+        for change_set in change_sets {
+            self.buffer_diff_changed(change_set, cx)
+        }
         cx.notify()
     }
 
@@ -605,13 +609,7 @@ mod tests {
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let diff_map = cx.update(|cx| {
-            let (diff_map, _) = DiffMap::new(fold_snapshot, buffer, cx);
-            diff_map.update(cx, |diff_map, cx| {
-                diff_map.set_all_hunks_expanded(true, cx);
-            });
-            diff_map
-        });
+        let (diff_map, _) = cx.update(|cx| DiffMap::new(fold_snapshot, buffer, cx));
         diff_map.update(cx, |diff_map, cx| diff_map.add_change_set(change_set, cx));
         cx.run_until_parked();
 
