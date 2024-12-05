@@ -13266,10 +13266,10 @@ impl Editor {
     }
 
     pub fn display_to_pixel_point(
-        &mut self,
+        &self,
         source: DisplayPoint,
         editor_snapshot: &EditorSnapshot,
-        cx: &mut ViewContext<Self>,
+        cx: &WindowContext,
     ) -> Option<gpui::Point<Pixels>> {
         let line_height = self.style()?.text.line_height_in_pixels(cx.rem_size());
         let text_layout_details = self.text_layout_details(cx);

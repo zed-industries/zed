@@ -2733,6 +2733,8 @@ impl EditorElement {
         text_bounds: &Bounds<Pixels>,
         editor_snapshot: &EditorSnapshot,
         visible_row_range: Range<DisplayRow>,
+        scroll_top: f32,
+        scroll_bottom: f32,
         line_layouts: &[LineWithInvisibles],
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
@@ -2754,8 +2756,7 @@ impl EditorElement {
                     .px_1();
 
                 let target_display_point = target_position.to_display_point(editor_snapshot);
-
-                if target_display_point.row() < visible_row_range.start {
+                if target_display_point.row().as_f32() < scroll_top {
                     let mut element = container_element
                         .child(
                             h_flex()
@@ -2766,13 +2767,10 @@ impl EditorElement {
                         )
                         .into_any();
                     let size = element.layout_as_root(AvailableSpace::min_size(), cx);
-                    let offset = point(
-                        text_bounds.origin.x + (text_bounds.size.width - size.width) / 2.,
-                        PADDING_Y,
-                    );
+                    let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
                     element.prepaint_at(text_bounds.origin + offset, cx);
                     Some(element)
-                } else if target_display_point.row() > visible_row_range.end {
+                } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
                     let mut element = container_element
                         .child(
                             h_flex()
@@ -2784,7 +2782,7 @@ impl EditorElement {
                         .into_any();
                     let size = element.layout_as_root(AvailableSpace::min_size(), cx);
                     let offset = point(
-                        text_bounds.origin.x + (text_bounds.size.width - size.width) / 2.,
+                        (text_bounds.size.width - size.width) / 2.,
                         text_bounds.size.height - size.height - PADDING_Y,
                     );
                     element.prepaint_at(text_bounds.origin + offset, cx);
@@ -5754,6 +5752,8 @@ impl Element for EditorElement {
                         &text_hitbox.bounds,
                         &snapshot,
                         start_row..end_row,
+                        scroll_position.y,
+                        scroll_position.y + height_in_lines,
                         &line_layouts,
                         line_height,
                         scroll_pixel_position,
