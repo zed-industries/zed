@@ -12,6 +12,7 @@ pub enum Direction {
     Next,
 }
 
+#[derive(Clone)]
 pub struct Prediction {
     pub edits: Vec<(Range<language::Anchor>, String)>,
 }
