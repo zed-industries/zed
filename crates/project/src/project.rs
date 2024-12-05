@@ -73,7 +73,7 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
-    ops::Range,
+    ops::{Deref as _, Range},
     path::{Component, Path, PathBuf},
     str,
     sync::Arc,
@@ -582,6 +582,8 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
+
+        client.add_model_request_handler(WorktreeStore::handle_rename_project_entry);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -1489,11 +1491,35 @@ impl Project {
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<CreatedEntry>> {
-        let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
+        let worktree_store = self.worktree_store.read(cx);
+        let Some((worktree, old_path, is_dir)) = worktree_store
+            .worktree_and_entry_for_id(entry_id, cx)
+            .map(|(worktree, entry)| (worktree, entry.path.clone(), entry.is_dir()))
+        else {
             return Task::ready(Err(anyhow!(format!("No worktree for entry {entry_id:?}"))));
         };
-        worktree.update(cx, |worktree, cx| {
-            worktree.rename_entry(entry_id, new_path, cx)
+
+        let worktree_id = worktree.read(cx).id();
+        let new_path = new_path.into();
+        let lsp_store = self.lsp_store().downgrade();
+        cx.spawn(|_, mut cx| async move {
+            let entry = worktree
+                .update(&mut cx, |worktree, cx| {
+                    worktree.rename_entry(entry_id, new_path.clone(), cx)
+                })?
+                .await?;
+            lsp_store
+                .update(&mut cx, |this, cx| {
+                    this.did_rename_entry(
+                        worktree_id,
+                        old_path.to_string_lossy().into_owned(),
+                        new_path.to_string_lossy().into_owned(),
+                        is_dir,
+                        cx,
+                    );
+                })
+                .ok();
+            Ok(entry)
         })
     }
 

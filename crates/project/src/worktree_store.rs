@@ -69,7 +69,6 @@ impl EventEmitter<WorktreeStoreEvent> for WorktreeStore {}
 impl WorktreeStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_model_request_handler(Self::handle_create_project_entry);
-        client.add_model_request_handler(Self::handle_rename_project_entry);
         client.add_model_request_handler(Self::handle_copy_project_entry);
         client.add_model_request_handler(Self::handle_delete_project_entry);
         client.add_model_request_handler(Self::handle_expand_project_entry);
@@ -182,6 +181,19 @@ impl WorktreeStore {
     ) -> Option<&'a Entry> {
         self.worktrees()
             .find_map(|worktree| worktree.read(cx).entry_for_id(entry_id))
+    }
+
+    pub fn worktree_and_entry_for_id<'a>(
+        &'a self,
+        entry_id: ProjectEntryId,
+        cx: &'a AppContext,
+    ) -> Option<(Model<Worktree>, &'a Entry)> {
+        self.worktrees().find_map(|worktree| {
+            worktree
+                .read(cx)
+                .entry_for_id(entry_id)
+                .map(|e| (worktree.clone(), e))
+        })
     }
 
     pub fn entry_for_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Entry> {
@@ -1004,16 +1016,38 @@ impl WorktreeStore {
     }
 
     pub async fn handle_rename_project_entry(
-        this: Model<Self>,
+        this: Model<super::Project>,
         envelope: TypedEnvelope<proto::RenameProjectEntry>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let worktree = this.update(&mut cx, |this, cx| {
-            this.worktree_for_entry(entry_id, cx)
-                .ok_or_else(|| anyhow!("worktree not found"))
-        })??;
-        Worktree::handle_rename_entry(worktree, envelope.payload, cx).await
+        let (worktree_id, worktree, old_path, is_dir) = this
+            .update(&mut cx, |this, cx| {
+                this.worktree_store
+                    .read(cx)
+                    .worktree_and_entry_for_id(entry_id, cx)
+                    .map(|(worktree, entry)| {
+                        (
+                            worktree.read(cx).id(),
+                            worktree,
+                            entry.path.clone(),
+                            entry.is_dir(),
+                        )
+                    })
+            })?
+            .ok_or_else(|| anyhow!("worktree not found"))?;
+        let new_path = envelope.payload.new_path.clone();
+        let response = Worktree::handle_rename_entry(worktree, envelope.payload, cx.clone()).await;
+        this.update(&mut cx, |this, cx| {
+            this.lsp_store().read(cx).did_rename_entry(
+                worktree_id,
+                old_path.to_string_lossy().into_owned(),
+                new_path,
+                old_path.is_dir(),
+                cx,
+            );
+        });
+        response
     }
 
     pub async fn handle_copy_project_entry(

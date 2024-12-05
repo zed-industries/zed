@@ -43,12 +43,12 @@ use language::{
     Unclipped,
 };
 use lsp::{
-    CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
-    DidChangeWatchedFilesRegistrationOptions, Edit, FileSystemWatcher, InsertTextFormat,
-    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
-    LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
-    ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams,
-    WorkspaceFolder,
+    notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
+    DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationPatternKind,
+    FileSystemWatcher, InsertTextFormat, LanguageServer, LanguageServerBinary,
+    LanguageServerBinaryOptions, LanguageServerId, LanguageServerName, LspRequestFuture,
+    MessageActionItem, MessageType, OneOf, RenameFilesParams, ServerHealthStatus, ServerStatus,
+    SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::{Mutex, RwLock};
@@ -140,6 +140,8 @@ pub struct LocalLspStore {
     buffers_being_formatted: HashSet<BufferId>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
     language_server_watched_paths: HashMap<LanguageServerId, Model<LanguageServerWatchedPaths>>,
+    language_server_paths_watched_for_rename:
+        HashMap<LanguageServerId, Model<LanguageServerWatchedPaths>>,
     language_server_watcher_registrations:
         HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     supplementary_language_servers:
@@ -899,6 +901,7 @@ impl LspStore {
                 language_servers: Default::default(),
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: Default::default(),
+                language_server_paths_watched_for_rename: Default::default(),
                 language_server_watcher_registrations: Default::default(),
                 current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 buffers_being_formatted: Default::default(),
@@ -4332,6 +4335,47 @@ impl LspStore {
             .map(|(key, value)| (*key, value))
     }
 
+    pub(super) fn did_rename_entry(
+        &self,
+        worktree_id: WorktreeId,
+        old_path: String,
+        new_path: String,
+        is_dir: bool,
+        cx: &AppContext,
+    ) {
+        maybe!({
+            let local_store = self.as_local()?;
+            cx.scope()
+            for language_server in self.language_servers_for_worktree(worktree_id) {
+                let caps = language_server.capabilities();
+                let Some(filters) = local_store
+                    .language_server_paths_watched_for_rename
+                    .get(&language_server.server_id())
+                else {
+                    continue;
+                };
+
+
+                for filter in filters.filters {
+                    if filter
+                        .scheme
+                        .as_ref()
+                        .map_or(false, |scheme| scheme != "file")
+                    {
+                        continue;
+                    }
+                    if filter.pattern.matches.map_or(false, |kind| {
+                        (kind == FileOperationPatternKind::Folder) != is_dir
+                    }) {
+                        continue;
+                    }
+                    // if filter.pattern.glob
+                }
+            }
+            Some(())
+        });
+    }
+
     fn lsp_notify_abs_paths_changed(
         &mut self,
         server_id: LanguageServerId,
@@ -4369,6 +4413,32 @@ impl LspStore {
         language_server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) {
+        let Some(watchers) = self.as_local().and_then(|local| {
+            local
+                .language_server_watcher_registrations
+                .get(&language_server_id)
+        }) else {
+            return;
+        };
+
+        let watch_builder =
+            self.rebuild_watched_paths_inner(language_server_id, watchers.values().flatten(), cx);
+        let Some(local_lsp_store) = self.as_local_mut() else {
+            return;
+        };
+        let watcher = watch_builder.build(local_lsp_store.fs.clone(), language_server_id, cx);
+        local_lsp_store
+            .language_server_watched_paths
+            .insert(language_server_id, watcher);
+
+        cx.notify();
+    }
+    fn rebuild_watched_paths_inner<'a>(
+        &'a self,
+        language_server_id: LanguageServerId,
+        watchers: impl Iterator<Item = &'a FileSystemWatcher>,
+        cx: &mut ModelContext<Self>,
+    ) -> LanguageServerWatchedPathsBuilder {
         let worktrees = self
             .worktree_store
             .read(cx)
@@ -4379,15 +4449,6 @@ impl LspStore {
                     .map(|_| worktree)
             })
             .collect::<Vec<_>>();
-
-        let local_lsp_store = self.as_local_mut().unwrap();
-
-        let Some(watchers) = local_lsp_store
-            .language_server_watcher_registrations
-            .get(&language_server_id)
-        else {
-            return;
-        };
 
         let mut worktree_globs = HashMap::default();
         let mut abs_globs = HashMap::default();
@@ -4406,7 +4467,7 @@ impl LspStore {
                 pattern: String,
             },
         }
-        for watcher in watchers.values().flatten() {
+        for watcher in watchers {
             let mut found_host = false;
             for worktree in &worktrees {
                 let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
@@ -4545,12 +4606,7 @@ impl LspStore {
                 watch_builder.watch_abs_path(abs_path, globset);
             }
         }
-        let watcher = watch_builder.build(local_lsp_store.fs.clone(), language_server_id, cx);
-        local_lsp_store
-            .language_server_watched_paths
-            .insert(language_server_id, watcher);
-
-        cx.notify();
+        watch_builder
     }
 
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
@@ -6650,6 +6706,9 @@ impl LspStore {
                     simulate_disk_based_diagnostics_completion: None,
                 },
             );
+            // local
+            //     .language_server_paths_watched_for_rename
+            //     .insert(server_id);
         }
 
         self.language_server_statuses.insert(
