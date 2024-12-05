@@ -795,6 +795,7 @@ impl BlockMap {
 
                         if let Some(next_excerpt) = &next_boundary.next {
                             if next_excerpt.buffer_id != new_buffer_id {
+                                wrap_end_row = wrap_end_row.saturating_sub(1);
                                 break;
                             }
                         }
