@@ -293,6 +293,7 @@ impl Zeta {
             let old_text = snapshot
                 .text_for_range(excerpt_range.clone())
                 .collect::<String>();
+
             let diff = similar::TextDiff::from_chars(old_text.as_str(), new_text);
 
             let mut edits: Vec<(Range<usize>, String)> = Vec::new();
@@ -483,20 +484,9 @@ fn excerpt_range_for_position(point: Point, snapshot: &BufferSnapshot) -> Range<
         context_lines_before += (point.row + CONTEXT_LINES) - snapshot.max_point().row;
     }
 
-    let mut excerpt_start_row = point.row.saturating_sub(context_lines_before);
-    let mut excerpt_end_row = cmp::min(point.row + context_lines_after, snapshot.max_point().row);
-
-    // Skip blank lines at the start.
-    while excerpt_start_row < excerpt_end_row && snapshot.is_line_blank(excerpt_start_row) {
-        excerpt_start_row += 1;
-    }
-
-    // Skip blank lines at the end.
-    while excerpt_end_row > excerpt_start_row && snapshot.is_line_blank(excerpt_end_row) {
-        excerpt_end_row -= 1;
-    }
-
+    let excerpt_start_row = point.row.saturating_sub(context_lines_before);
     let excerpt_start = Point::new(excerpt_start_row, 0);
+    let excerpt_end_row = cmp::min(point.row + context_lines_after, snapshot.max_point().row);
     let excerpt_end = Point::new(excerpt_end_row, snapshot.line_len(excerpt_end_row));
     excerpt_start.to_offset(snapshot)..excerpt_end.to_offset(snapshot)
 }
@@ -704,6 +694,13 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
 #[cfg(test)]
 mod tests {
+    use client::test::FakeServer;
+    use clock::FakeSystemClock;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+    use indoc::indoc;
+    use settings::SettingsStore;
+
     use super::*;
 
     #[gpui::test]
@@ -805,33 +802,57 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_inline_completion_interpolation_spaces(cx: &mut AppContext) {
-        let buffer = cx.new_model(|cx| Buffer::local("Lorem", cx));
-        let completion = InlineCompletion {
-            edits: to_completion_edits([(5..5, " ipsum".to_string())], &buffer, cx),
-            path: Path::new("").into(),
-            snapshot: buffer.read(cx).snapshot(),
-            id: InlineCompletionId::new(),
-            _raw_response: String::new(),
-        };
+    async fn test_inline_completion_end_of_buffer(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            client::init_settings(cx);
+        });
 
-        assert_eq!(
-            from_completion_edits(
-                &completion.interpolate(buffer.read(cx).snapshot()).unwrap(),
-                &buffer,
-                cx
-            ),
-            vec![(5..5, " ipsum".to_string())]
+        let buffer_content = "lorem\n";
+        let completion_response = indoc! {"
+            ```animals.js
+            <|start_of_file|>
+            <|editable_region_start|>
+            lorem
+            ipsum
+            <|editable_region_end|>
+            ```"};
+
+        let http_client = FakeHttpClient::create(move |_| async move {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(
+                    serde_json::to_string(&PredictEditsResponse {
+                        text: completion_response.to_string(),
+                    })
+                    .unwrap()
+                    .into(),
+                )
+                .unwrap())
+        });
+
+        let client = cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+        let server = FakeServer::for_client(42, &client, cx).await;
+
+        let zeta = cx.new_model(|_| Zeta::new(client));
+        let buffer = cx.new_model(|cx| Buffer::local(buffer_content, cx));
+        let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
+        let completion_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_inline_completion(&buffer, cursor, cx)
+        });
+
+        let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
+        server.respond(
+            token_request.receipt(),
+            proto::GetLlmTokenResponse { token: "".into() },
         );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(5..5, " ")], None, cx));
+        let completion = completion_task.await.unwrap().unwrap();
+        buffer.update(cx, |buffer, cx| buffer.edit(completion.edits, None, cx));
         assert_eq!(
-            from_completion_edits(
-                &completion.interpolate(buffer.read(cx).snapshot()).unwrap(),
-                &buffer,
-                cx
-            ),
-            vec![(6..6, "ipsum".to_string())]
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "lorem\nipsum"
         );
     }
 
@@ -867,5 +888,12 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
     }
 }

@@ -16022,6 +16022,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "clock",
  "collections",
  "ctor",
  "env_logger 0.11.5",
@@ -16036,6 +16037,7 @@ dependencies = [
  "reqwest_client",
  "rpc",
  "serde_json",
+ "settings",
  "similar",
  "tree-sitter-go",
  "tree-sitter-rust",
