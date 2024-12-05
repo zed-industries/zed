@@ -45,9 +45,15 @@ use std::{
 };
 use workspace::{Workspace, WorkspaceStore};
 
+#[cfg(not(target_os = "macos"))]
+use livekit_client::test::TestServer as LivekitTestServer;
+
+#[cfg(target_os = "macos")]
+use livekit_client_macos::TestServer as LivekitTestServer;
+
 pub struct TestServer {
     pub app_state: Arc<AppState>,
-    pub test_live_kit_server: Arc<live_kit_client::TestServer>,
+    pub test_livekit_server: Arc<LivekitTestServer>,
     server: Arc<Server>,
     next_github_user_id: i32,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
@@ -79,7 +85,7 @@ pub struct ContactsSummary {
 
 impl TestServer {
     pub async fn start(deterministic: BackgroundExecutor) -> Self {
-        static NEXT_LIVE_KIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
+        static NEXT_LIVEKIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
 
         let use_postgres = env::var("USE_POSTGRES").ok();
         let use_postgres = use_postgres.as_deref();
@@ -88,16 +94,16 @@ impl TestServer {
         } else {
             TestDb::sqlite(deterministic.clone())
         };
-        let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
-        let live_kit_server = live_kit_client::TestServer::create(
-            format!("http://livekit.{}.test", live_kit_server_id),
-            format!("devkey-{}", live_kit_server_id),
-            format!("secret-{}", live_kit_server_id),
+        let livekit_server_id = NEXT_LIVEKIT_SERVER_ID.fetch_add(1, SeqCst);
+        let livekit_server = LivekitTestServer::create(
+            format!("http://livekit.{}.test", livekit_server_id),
+            format!("devkey-{}", livekit_server_id),
+            format!("secret-{}", livekit_server_id),
             deterministic.clone(),
         )
         .unwrap();
         let executor = Executor::Deterministic(deterministic.clone());
-        let app_state = Self::build_app_state(&test_db, &live_kit_server, executor.clone()).await;
+        let app_state = Self::build_app_state(&test_db, &livekit_server, executor.clone()).await;
         let epoch = app_state
             .db
             .create_server(&app_state.config.zed_environment)
@@ -114,7 +120,7 @@ impl TestServer {
             forbid_connections: Default::default(),
             next_github_user_id: 0,
             _test_db: test_db,
-            test_live_kit_server: live_kit_server,
+            test_livekit_server: livekit_server,
         }
     }
 
@@ -500,13 +506,13 @@ impl TestServer {
 
     pub async fn build_app_state(
         test_db: &TestDb,
-        live_kit_test_server: &live_kit_client::TestServer,
+        livekit_test_server: &LivekitTestServer,
         executor: Executor,
     ) -> Arc<AppState> {
         Arc::new(AppState {
             db: test_db.db().clone(),
             llm_db: None,
-            live_kit_client: Some(Arc::new(live_kit_test_server.create_api_client())),
+            livekit_client: Some(Arc::new(livekit_test_server.create_api_client())),
             blob_store_client: None,
             stripe_client: None,
             stripe_billing: None,
@@ -520,9 +526,9 @@ impl TestServer {
                 database_max_connections: 0,
                 api_token: "".into(),
                 invite_link_prefix: "".into(),
-                live_kit_server: None,
-                live_kit_key: None,
-                live_kit_secret: None,
+                livekit_server: None,
+                livekit_key: None,
+                livekit_secret: None,
                 llm_database_url: None,
                 llm_database_max_connections: None,
                 llm_database_migrations_path: None,
@@ -572,7 +578,7 @@ impl Deref for TestServer {
 impl Drop for TestServer {
     fn drop(&mut self) {
         self.server.teardown();
-        self.test_live_kit_server.teardown().unwrap();
+        self.test_livekit_server.teardown().unwrap();
     }
 }
 

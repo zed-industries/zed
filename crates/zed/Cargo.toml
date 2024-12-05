@@ -126,6 +126,12 @@ welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+workspace = { workspace = true, features = ["livekit-macos"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+workspace = { workspace = true, features = ["livekit-cross-platform"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 

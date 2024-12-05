@@ -129,6 +129,7 @@ jobs:
         run: |
           cargo build --workspace --bins --all-features
           cargo check -p gpui --features "macos-blade"
+          cargo check -p workspace --features "livekit-cross-platform"
           cargo build -p remote_server
 
   linux_tests:

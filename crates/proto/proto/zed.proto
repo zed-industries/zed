@@ -432,7 +432,7 @@ message Room {
     repeated Participant participants = 2;
     repeated PendingParticipant pending_participants = 3;
     repeated Follower followers = 4;
-    string live_kit_room = 5;
+    string livekit_room = 5;
 }
 
 message Participant {

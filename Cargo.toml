@@ -65,8 +65,9 @@ members = [
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
-    "crates/live_kit_client",
-    "crates/live_kit_server",
+    "crates/livekit_client",
+    "crates/livekit_client_macos",
+    "crates/livekit_server",
     "crates/lsp",
     "crates/markdown",
     "crates/markdown_preview",
@@ -248,8 +249,9 @@ language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
-live_kit_client = { path = "crates/live_kit_client" }
-live_kit_server = { path = "crates/live_kit_server" }
+livekit_client = { path = "crates/livekit_client" }
+livekit_client_macos = { path = "crates/livekit_client_macos" }
+livekit_server = { path = "crates/livekit_server" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
@@ -382,6 +384,7 @@ heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 hyper = "0.14"
+http = "1.1"
 ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
@@ -393,6 +396,7 @@ jupyter-websocket-client = { version = "0.8.0" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
+livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="799f10133d93ba2a88642cd480d01ec4da53408c", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
@@ -570,6 +574,10 @@ features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ]
+
+# TODO livekit https://github.com/RustAudio/cpal/pull/891
+[patch.crates-io]
+cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
