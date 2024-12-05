@@ -141,7 +141,7 @@ pub fn init(
 
 #[cfg(not(target_os = "windows"))]
 pub async fn capture_local_video_track(
-    capture_source: &dyn ScreenCaptureSource,
+    capture_source: &mut dyn ScreenCaptureSource,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
     let resolution = capture_source.resolution()?;
     let track_source = NativeVideoSource::new(VideoResolution {
@@ -518,8 +518,26 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn video_frame_buffer_to_webrtc(_frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
-    None as Option<Box<dyn VideoBuffer>>
+fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
+    use livekit::webrtc::prelude::NV12Buffer;
+    match frame.0 .0 {
+        scap::frame::Frame::YUVFrame(yuvframe) => {
+            let mut buffer = NV12Buffer::with_strides(
+                yuvframe.width as u32,
+                yuvframe.height as u32,
+                yuvframe.luminance_stride as u32,
+                yuvframe.chrominance_stride as u32,
+            );
+            let (luminance, chrominance) = buffer.data_mut();
+            luminance.copy_from_slice(yuvframe.luminance_bytes.as_slice());
+            chrominance.copy_from_slice(yuvframe.chrominance_bytes.as_slice());
+            Some(buffer)
+        }
+        _ => {
+            log::error!("Expected YUV frame from scap but got some other format.");
+            None
+        }
+    }
 }
 
 trait DeviceChangeListenerApi: Stream<Item = ()> + Sized {

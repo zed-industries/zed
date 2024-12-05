@@ -45,6 +45,7 @@ image.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 livekit.workspace = true
+scap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

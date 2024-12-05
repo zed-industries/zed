@@ -3,6 +3,8 @@ use std::hash::Hash;
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use calloop::timer::{TimeoutAction, Timer};
@@ -13,6 +15,7 @@ use filedescriptor::Pipe;
 
 use anyhow::anyhow;
 use futures::channel::oneshot;
+
 use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
@@ -80,12 +83,12 @@ use crate::platform::linux::{
 };
 use crate::platform::PlatformWindow;
 use crate::{
-    point, px, size, AnyWindowHandle, Bounds, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
-    ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
+    get_frame_size, point, px, size, AnyWindowHandle, Bounds, CursorStyle, DevicePixels, DisplayId,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScaledPixels,
-    ScreenCaptureSource, ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams,
-    DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
+    ScapCapturer, ScapFrame, ScapStream, ScreenCaptureSource, ScrollDelta, ScrollWheelEvent, Size,
+    TouchPhase, WindowParams, DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -619,10 +622,71 @@ impl LinuxClient for WaylandClient {
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        let (mut tx, rx) = oneshot::channel();
-        tx.send(Err(anyhow!("Wayland screen capture not yet implemented")))
-            .ok();
-        rx
+        let (mut tx, result_rx) = oneshot::channel();
+
+        std::thread::spawn(|| {
+            let (stream_tx, stream_rx) = std::sync::mpsc::channel();
+
+            let screen_capturer = util::maybe!({
+                // TODO: needed?
+                if !scap::has_permission() {
+                    if !scap::request_permission() {
+                        Err(anyhow!("No permissions to share screen"))?;
+                    }
+                }
+
+                let mut capturer = scap::capturer::Capturer::build(scap::capturer::Options {
+                    fps: 60,
+                    show_cursor: true,
+                    show_highlight: true,
+                    output_type: scap::frame::FrameType::YUVFrame,
+                    output_resolution: scap::capturer::Resolution::Captured,
+                    crop_area: None,
+                    target: None,
+                    excluded_targets: None,
+                })?;
+
+                capturer.start_capture();
+                let size = match capturer.get_next_frame() {
+                    Ok(frame) => get_frame_size(&frame),
+                    Err(std::sync::mpsc::RecvError) => Err(anyhow!(
+                        "Failed to get first frame of screenshare to get the size."
+                    ))?,
+                };
+
+                Ok((
+                    capturer,
+                    vec![Box::new(ScapCapturer { stream_tx, size }) as Box<dyn ScreenCaptureSource>],
+                ))
+            });
+
+            match screen_capturer {
+                Err(e) => {
+                    tx.send(Err(e)).ok();
+                }
+                Ok((mut capturer, sources)) => {
+                    tx.send(Ok(sources)).ok();
+
+                    while let Ok((tx, callback)) = stream_rx.recv() {
+                        let cancel_stream = Arc::new(AtomicBool::new(false));
+                        tx.send(Ok(Box::new(ScapStream(cancel_stream.clone()))))
+                            .ok();
+                        while cancel_stream.load(std::sync::atomic::Ordering::SeqCst) {
+                            match capturer.get_next_frame() {
+                                Ok(frame) => callback(crate::ScreenCaptureFrame(ScapFrame(frame))),
+                                Err(std::sync::mpsc::RecvError) => {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    capturer.stop_capture();
+                }
+            }
+        });
+
+        result_rx
     }
 
     fn open_window(

@@ -1,5 +1,5 @@
 use crate::{
-    px, size, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+    size, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     Keymap, Platform, PlatformDisplay, PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource,
     ScreenCaptureStream, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams,
 };
@@ -46,13 +46,13 @@ pub struct TestScreenCaptureSource {}
 pub struct TestScreenCaptureStream {}
 
 impl ScreenCaptureSource for TestScreenCaptureSource {
-    fn resolution(&self) -> Result<crate::Size<crate::Pixels>> {
-        Ok(size(px(1.), px(1.)))
+    fn resolution(&self) -> Result<crate::Size<crate::DevicePixels>> {
+        Ok(size(crate::DevicePixels(1), crate::DevicePixels(1)))
     }
 
     fn stream(
-        &self,
-        _frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+        &mut self,
+        _frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
         let (mut tx, rx) = oneshot::channel();
         let stream = TestScreenCaptureStream {};
