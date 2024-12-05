@@ -1,8 +1,10 @@
 use editor::*;
 use gpui::*;
+use settings::Settings as _;
+use theme::ThemeSettings;
 use ui::*;
 
-const DEFAULT_LINE_HEIGHT: Pixels = Pixels(20.);
+// const DEFAULT_LINE_HEIGHT: Pixels = Pixels(20.);
 
 pub struct EditorPrototype {
     editor: View<Editor>,
@@ -15,9 +17,13 @@ impl EditorPrototype {
         cx: &mut WindowContext,
         f: impl FnOnce(Self, &mut ViewContext<Self>) -> Self,
     ) -> View<Self> {
+        let theme = ThemeSettings::get_global(cx);
+        let line_height = rems(theme.buffer_line_height.value()).to_pixels(cx.rem_size());
+
         let mut text_style = cx.text_style();
         let refinement = TextStyleRefinement {
-            line_height: Some(DEFAULT_LINE_HEIGHT.into()),
+            font_family: Some(theme.buffer_font.family.clone()),
+            line_height: Some(line_height.into()),
             background_color: Some(gpui::transparent_black()),
             ..Default::default()
         };
@@ -40,15 +46,10 @@ impl EditorPrototype {
         })
     }
 
-    pub fn line_height(mut self, line_height: Pixels, cx: &mut ViewContext<Self>) -> Self {
-        let refinement = TextStyleRefinement {
-            line_height: Some(line_height.into()),
-            ..Default::default()
-        };
-        self.text_style.refine(&refinement);
-        self.editor
-            .update(cx, |editor, _| editor.set_text_style_refinement(refinement));
-        self
+    pub fn line_height(&self, cx: &ViewContext<Self>) -> Pixels {
+        self.text_style
+            .line_height
+            .to_pixels(self.text_style.font_size, cx.rem_size())
     }
 
     pub fn text(self, initial_text: &str, cx: &mut ViewContext<Self>) -> Self {
@@ -69,10 +70,7 @@ impl EditorPrototype {
 
 impl Render for EditorPrototype {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let line_height = self
-            .text_style
-            .line_height
-            .to_pixels(self.text_style.font_size, cx.rem_size());
+        let line_height = self.line_height(cx);
 
         div()
             .relative()
