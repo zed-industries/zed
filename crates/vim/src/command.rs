@@ -515,7 +515,7 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Skip),
-            close_pinned: false,
+            close_pinned: true,
         }),
         VimCommand::new(
             ("wq", ""),
@@ -526,7 +526,7 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
-            close_pinned: false,
+            close_pinned: true,
         }),
         VimCommand::new(
             ("x", "it"),
@@ -537,7 +537,7 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
-            close_pinned: false,
+            close_pinned: true,
         }),
         VimCommand::new(
             ("ex", "it"),
@@ -548,7 +548,7 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
-            close_pinned: false,
+            close_pinned: true,
         }),
         VimCommand::new(
             ("up", "date"),
@@ -613,7 +613,7 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Skip),
-            close_pinned: false,
+            close_pinned: true,
         }),
         VimCommand::new(("bn", "ext"), workspace::ActivateNextItem).count(),
         VimCommand::new(("bN", "ext"), workspace::ActivatePrevItem).count(),
