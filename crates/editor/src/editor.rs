@@ -5504,11 +5504,11 @@ impl Editor {
 
                 self.splice_inlays(vec![], inlays, cx);
             } else {
+                let background_color = cx.theme().status().deleted_background;
                 self.highlight_text::<PredictionHighlight>(
                     edits.iter().map(|(range, _)| range.clone()).collect(),
                     HighlightStyle {
-                        // todo!(use theme)
-                        background_color: Some(gpui::red()),
+                        background_color: Some(background_color),
                         ..Default::default()
                     },
                     cx,
