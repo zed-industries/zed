@@ -1254,9 +1254,12 @@ impl LinuxClient for X11Client {
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        unimplemented!()
+        /*
         let state = self.0.borrow();
         let xcb = state.xcb_connection;
         for root in xcb.setup().roots {}
+        */
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

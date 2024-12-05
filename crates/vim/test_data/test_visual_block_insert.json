@@ -1,7 +1,7 @@
 {"Put":{"state":"ˇThe quick brown\nfox jumps over\nthe lazy dog\n"}}
 {"Key":"ctrl-v"}
 {"Key":"9"}
-{"Key":"down"}
+{"Key":"down"sca}
 {"Get":{"state":"«Tˇ»he quick brown\n«fˇ»ox jumps over\n«tˇ»he lazy dog\nˇ","mode":"VisualBlock"}}
 {"Key":"shift-i"}
 {"Key":"k"}

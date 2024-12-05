@@ -43,7 +43,7 @@ const FRAME_CALLBACK_IVAR: &str = "frame_callback";
 const SCStreamOutputTypeScreen: NSInteger = 0;
 
 impl ScreenCaptureSource for MacScreenCaptureSource {
-    fn resolution(&self) -> Result<Size<Pixels>> {
+    fn resolution(&self) -> Result<Size<DevicePixels>> {
         unsafe {
             let width: i64 = msg_send![self.sc_display, width];
             let height: i64 = msg_send![self.sc_display, height];

@@ -141,7 +141,7 @@ pub fn init(
 
 #[cfg(not(target_os = "windows"))]
 pub async fn capture_local_video_track(
-    capture_source: &dyn ScreenCaptureSource,
+    capture_source: &mut dyn ScreenCaptureSource,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
     let resolution = capture_source.resolution()?;
     let track_source = NativeVideoSource::new(VideoResolution {
@@ -518,7 +518,18 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn video_frame_buffer_to_webrtc(_frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
+fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
+    //TODO:
+    // match frame.0 .0 {
+    //     scap::frame::Frame::YUVFrame(yuvframe) => ,
+    //     scap::frame::Frame::RGB(rgbframe) => todo!(),
+    //     scap::frame::Frame::RGBx(rgbx_frame) => todo!(),
+    //     scap::frame::Frame::XBGR(xbgrframe) => todo!(),
+    //     scap::frame::Frame::BGRx(bgrx_frame) => todo!(),
+    //     scap::frame::Frame::BGR0(bgrframe) => todo!(),
+    //     scap::frame::Frame::BGRA(bgraframe) => todo!(),
+    // }
+
     None as Option<Box<dyn VideoBuffer>>
 }
 

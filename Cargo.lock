@@ -7291,6 +7291,7 @@ dependencies = [
  "nanoid",
  "parking_lot",
  "postage",
+ "scap",
  "serde",
  "serde_json",
  "sha2",
