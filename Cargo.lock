@@ -10507,7 +10507,7 @@ checksum = "a25c3aad9fc1424eb82c88087789a7d938e1829724f3e4043163baf0d13cfc12"
 dependencies = [
  "errno 0.3.9",
  "libc",
- "rustix 0.38.40",
+ "rustix 0.38.41",
 ]
 
 [[package]]
