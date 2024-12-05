@@ -2849,9 +2849,17 @@ impl EditorElement {
                             },
                         ));
                     }
+
                     // todo!("do we wanna show the remainder of the line after offset?")
-                    let mut element = gpui::StyledText::new(text)
-                        .with_highlights(text_style, highlights)
+                    let text = gpui::StyledText::new(text).with_highlights(text_style, highlights);
+
+                    let mut element = div()
+                        .bg(cx.theme().colors().editor_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .rounded_md()
+                        .px_1()
+                        .child(text)
                         .into_any();
 
                     let line =
