@@ -1,4 +1,5 @@
 mod project_panel_settings;
+mod utils;
 
 use client::{ErrorCode, ErrorExt};
 use language::DiagnosticSeverity;
@@ -61,49 +62,6 @@ use workspace::{
     DraggedSelection, OpenInTerminal, PreviewTabsSettings, SelectedEntry, Workspace,
 };
 use worktree::CreatedEntry;
-
-struct ReversibleIterable<It> {
-    it: It,
-    reverse: bool,
-}
-
-impl<T> ReversibleIterable<T> {
-    fn new(it: T, reverse: bool) -> Self {
-        Self { it, reverse }
-    }
-}
-
-impl<It, Item> ReversibleIterable<It>
-where
-    It: Iterator<Item = Item>,
-{
-    fn find_single_ended<F>(mut self, pred: F) -> Option<Item>
-    where
-        F: FnMut(&Item) -> bool,
-    {
-        if self.reverse {
-            self.it.filter(pred).last()
-        } else {
-            self.it.find(pred)
-        }
-    }
-}
-
-impl<It, Item> ReversibleIterable<It>
-where
-    It: DoubleEndedIterator<Item = Item>,
-{
-    fn find<F>(mut self, mut pred: F) -> Option<Item>
-    where
-        F: FnMut(&Item) -> bool,
-    {
-        if self.reverse {
-            self.it.rfind(|x| pred(x))
-        } else {
-            self.it.find(|x| pred(x))
-        }
-    }
-}
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -2932,14 +2890,14 @@ impl ProjectPanel {
                 })?
                 .clone();
 
-            return ReversibleIterable::new(entries.iter(), reverse_search)
+            return utils::ReversibleIterable::new(entries.iter(), reverse_search)
                 .find(|ele| predicate(ele, worktree_id))
                 .cloned();
         }
 
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         worktree.update(cx, |tree, _| {
-            ReversibleIterable::new(tree.entries(true, 0usize), reverse_search)
+            utils::ReversibleIterable::new(tree.entries(true, 0usize), reverse_search)
                 .find_single_ended(|ele| predicate(ele, worktree_id))
                 .cloned()
         })
@@ -3086,13 +3044,13 @@ impl ProjectPanel {
 
             let (first_iter, second_iter) = if reverse_search {
                 (
-                    ReversibleIterable::new(left.iter(), reverse_search),
-                    ReversibleIterable::new(right.iter(), reverse_search),
+                    utils::ReversibleIterable::new(left.iter(), reverse_search),
+                    utils::ReversibleIterable::new(right.iter(), reverse_search),
                 )
             } else {
                 (
-                    ReversibleIterable::new(right.iter(), reverse_search),
-                    ReversibleIterable::new(left.iter(), reverse_search),
+                    utils::ReversibleIterable::new(right.iter(), reverse_search),
+                    utils::ReversibleIterable::new(left.iter(), reverse_search),
                 )
             };
 
