@@ -11,14 +11,15 @@ use gpui::{
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use language_model_selector::LanguageModelSelector;
-use time::{OffsetDateTime, UtcOffset};
-use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, KeyBinding, ListItem, Tab, Tooltip};
+use time::UtcOffset;
+use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, KeyBinding, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
 use crate::active_thread::ActiveThread;
 use crate::message_editor::MessageEditor;
-use crate::thread::{Thread, ThreadError, ThreadId};
+use crate::thread::{ThreadError, ThreadId};
+use crate::thread_history::{PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{NewThread, OpenHistory, ToggleFocus, ToggleModelSelector};
 
@@ -33,6 +34,11 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+enum ActiveView {
+    Thread,
+    History,
+}
+
 pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
     language_registry: Arc<LanguageRegistry>,
@@ -41,6 +47,8 @@ pub struct AssistantPanel {
     message_editor: View<MessageEditor>,
     tools: Arc<ToolWorkingSet>,
     local_timezone: UtcOffset,
+    active_view: ActiveView,
+    history: View<ThreadHistory>,
 }
 
 impl AssistantPanel {
@@ -72,11 +80,13 @@ impl AssistantPanel {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let language_registry = workspace.project().read(cx).languages().clone();
         let workspace = workspace.weak_handle();
+        let weak_self = cx.view().downgrade();
 
         Self {
+            active_view: ActiveView::Thread,
             workspace: workspace.clone(),
             language_registry: language_registry.clone(),
-            thread_store,
+            thread_store: thread_store.clone(),
             thread: cx.new_view(|cx| {
                 ActiveThread::new(
                     thread.clone(),
@@ -92,6 +102,7 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
+            history: cx.new_view(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
         }
     }
 
@@ -100,6 +111,7 @@ impl AssistantPanel {
             .thread_store
             .update(cx, |this, cx| this.create_thread(cx));
 
+        self.active_view = ActiveView::Thread;
         self.thread = cx.new_view(|cx| {
             ActiveThread::new(
                 thread.clone(),
@@ -113,7 +125,7 @@ impl AssistantPanel {
         self.message_editor.focus_handle(cx).focus(cx);
     }
 
-    fn open_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
+    pub(crate) fn open_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
         let Some(thread) = self
             .thread_store
             .update(cx, |this, cx| this.open_thread(thread_id, cx))
@@ -121,6 +133,7 @@ impl AssistantPanel {
             return;
         };
 
+        self.active_view = ActiveView::Thread;
         self.thread = cx.new_view(|cx| {
             ActiveThread::new(
                 thread.clone(),
@@ -133,11 +146,18 @@ impl AssistantPanel {
         self.message_editor = cx.new_view(|cx| MessageEditor::new(thread, cx));
         self.message_editor.focus_handle(cx).focus(cx);
     }
+
+    pub(crate) fn local_timezone(&self) -> UtcOffset {
+        self.local_timezone
+    }
 }
 
 impl FocusableView for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.message_editor.focus_handle(cx)
+        match self.active_view {
+            ActiveView::Thread => self.message_editor.focus_handle(cx),
+            ActiveView::History => self.history.focus_handle(cx),
+        }
     }
 }
 
@@ -373,72 +393,37 @@ impl AssistantPanel {
                             .child(Label::new("/src/components").size(LabelSize::Small)),
                     ),
             )
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_center()
-                    .child(Label::new("Recent Threads:").size(LabelSize::Small)),
-            )
-            .child(
-                v_flex().gap_2().children(
-                    recent_threads
-                        .into_iter()
-                        .map(|thread| self.render_past_thread(thread, cx)),
-                ),
-            )
-            .child(
-                h_flex().w_full().justify_center().child(
-                    Button::new("view-all-past-threads", "View All Past Threads")
-                        .style(ButtonStyle::Subtle)
-                        .label_size(LabelSize::Small)
-                        .key_binding(KeyBinding::for_action_in(
-                            &OpenHistory,
-                            &self.focus_handle(cx),
-                            cx,
-                        ))
-                        .on_click(move |_event, cx| {
-                            cx.dispatch_action(OpenHistory.boxed_clone());
-                        }),
-                ),
-            )
-    }
-
-    fn render_past_thread(
-        &self,
-        thread: Model<Thread>,
-        cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
-        let (id, summary) = {
-            const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
-            let thread = thread.read(cx);
-            (
-                thread.id().clone(),
-                thread.summary().unwrap_or(DEFAULT_SUMMARY),
-            )
-        };
-
-        let thread_timestamp = time_format::format_localized_timestamp(
-            OffsetDateTime::from_unix_timestamp(thread.read(cx).updated_at().timestamp()).unwrap(),
-            OffsetDateTime::now_utc(),
-            self.local_timezone,
-            time_format::TimestampFormat::EnhancedAbsolute,
-        );
-        ListItem::new(("past-thread", thread.entity_id()))
-            .start_slot(Icon::new(IconName::MessageBubbles))
-            .child(Label::new(summary))
-            .end_slot(
-                h_flex()
-                    .gap_2()
-                    .child(Label::new(thread_timestamp).color(Color::Disabled))
+            .when(!recent_threads.is_empty(), |parent| {
+                parent
                     .child(
-                        IconButton::new("delete", IconName::TrashAlt)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small),
-                    ),
-            )
-            .on_click(cx.listener(move |this, _event, cx| {
-                this.open_thread(&id, cx);
-            }))
+                        h_flex()
+                            .w_full()
+                            .justify_center()
+                            .child(Label::new("Recent Threads:").size(LabelSize::Small)),
+                    )
+                    .child(
+                        v_flex().gap_2().children(
+                            recent_threads
+                                .into_iter()
+                                .map(|thread| PastThread::new(thread, cx.view().downgrade())),
+                        ),
+                    )
+                    .child(
+                        h_flex().w_full().justify_center().child(
+                            Button::new("view-all-past-threads", "View All Past Threads")
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::Small)
+                                .key_binding(KeyBinding::for_action_in(
+                                    &OpenHistory,
+                                    &self.focus_handle(cx),
+                                    cx,
+                                ))
+                                .on_click(move |_event, cx| {
+                                    cx.dispatch_action(OpenHistory.boxed_clone());
+                                }),
+                        ),
+                    )
+            })
     }
 
     fn render_last_error(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
@@ -612,17 +597,23 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(|this, _: &NewThread, cx| {
                 this.new_thread(cx);
             }))
-            .on_action(cx.listener(|_this, _: &OpenHistory, _cx| {
-                println!("Open History");
+            .on_action(cx.listener(|this, _: &OpenHistory, cx| {
+                this.active_view = ActiveView::History;
+                this.history.focus_handle(cx).focus(cx);
+                cx.notify();
             }))
             .child(self.render_toolbar(cx))
-            .child(self.render_active_thread_or_empty_state(cx))
-            .child(
-                h_flex()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(self.message_editor.clone()),
-            )
-            .children(self.render_last_error(cx))
+            .map(|parent| match self.active_view {
+                ActiveView::Thread => parent
+                    .child(self.render_active_thread_or_empty_state(cx))
+                    .child(
+                        h_flex()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(self.message_editor.clone()),
+                    )
+                    .children(self.render_last_error(cx)),
+                ActiveView::History => parent.child(self.history.clone()),
+            })
     }
 }

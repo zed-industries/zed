@@ -52,14 +52,19 @@ impl ThreadStore {
         })
     }
 
-    pub fn recent_threads(&self, limit: usize, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
+    pub fn threads(&self, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
         let mut threads = self
             .threads
             .iter()
             .filter(|thread| !thread.read(cx).is_empty())
+            .cloned()
             .collect::<Vec<_>>();
-        threads.sort_unstable_by(|a, b| b.read(cx).updated_at().cmp(&a.read(cx).updated_at()));
-        threads.into_iter().take(limit).cloned().collect()
+        threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.read(cx).updated_at()));
+        threads
+    }
+
+    pub fn recent_threads(&self, limit: usize, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
+        self.threads(cx).into_iter().take(limit).collect()
     }
 
     pub fn create_thread(&mut self, cx: &mut ModelContext<Self>) -> Model<Thread> {
