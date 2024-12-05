@@ -2,7 +2,7 @@ use editor::*;
 use gpui::*;
 use ui::*;
 
-const DEFAULT_LINE_HEIGHT: Pixels = Pixels(75.);
+const DEFAULT_LINE_HEIGHT: Pixels = Pixels(20.);
 
 pub struct EditorPrototype {
     editor: View<Editor>,
@@ -28,7 +28,7 @@ impl EditorPrototype {
             f(
                 Self {
                     editor: cx.new_view(|cx| {
-                        let mut editor = Editor::multi_line(cx);
+                        let mut editor = Editor::auto_height(20, cx);
                         editor.set_text_style_refinement(refinement);
                         editor
                     }),
@@ -57,7 +57,7 @@ impl EditorPrototype {
         self
     }
 
-    fn element_above(
+    fn element_below(
         mut self,
         row: u32,
         element_fn: impl Fn(Pixels, &mut WindowContext) -> AnyElement + 'static,
@@ -78,14 +78,7 @@ impl Render for EditorPrototype {
             .relative()
             .flex_shrink_0()
             .size_full()
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full()
-                    .child(self.editor.clone()),
-            )
+            .bg(cx.theme().colors().editor_background)
             .child(div().absolute().top_0().left_0().size_full().children(
                 self.elements_above.iter().map(|(row, element_fn)| {
                     div()
@@ -94,6 +87,14 @@ impl Render for EditorPrototype {
                         .child(element_fn(line_height, cx))
                 }),
             ))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .child(self.editor.clone()),
+            )
     }
 }
 
@@ -104,54 +105,36 @@ pub struct FakeEditorStory {
 impl FakeEditorStory {
     pub fn view(cx: &mut WindowContext) -> View<Self> {
         let editor_text = r###"fn main() {
+    println!("Hello, World!");
 
-.iter().sum();i32=numbers:sumlet
-4,5];,3,![1,2=vecnumberslet   println!("Sum of numbers: {}", sum);
+    let name = "Rust";
+    println!("Welcome to {}", name);
 
-let mut counter = 0;
-while counter < 5 {
-println!("Counter: {}", counter);
-counter += 1;
+    let x = 5;
+    let y = 7;
+    println!("{} + {} = {}", x, y, x + y);
+
+    if x < y {
+        println!("{} is less than {}", x, y);
+    }
+
+    greet("Rustacean");
 }
 
-for i in 0..3 {
-println!("Iteration: {}", i);
-}
+fn greet(name: &str) {
+    println!("Hello, {}!", name);
 }"###;
 
         cx.new_view(|cx| {
             let fake_editor_1 = EditorPrototype::build(cx, |fake_editor, cx| {
                 fake_editor
                     .text(editor_text, cx)
-                    .element_above(0, |line_height, _| {
+                    .element_below(3, |line_height, _| {
+                        let green_bg = hsla(142. / 360., 0.68, 0.45, 0.6);
                         div()
                             .id("foo")
-                            .bg(gpui::yellow().opacity(0.7))
-                            .w_32()
-                            .h(line_height)
-                            .into_any_element()
-                    })
-                    .element_above(1, |line_height, _| {
-                        div()
-                            .id("foo")
-                            .bg(gpui::green().opacity(0.7))
-                            .w_32()
-                            .h(line_height)
-                            .into_any_element()
-                    })
-                    .element_above(2, |line_height, _| {
-                        div()
-                            .id("foo")
-                            .bg(gpui::red().opacity(0.7))
-                            .w_32()
-                            .h(line_height)
-                            .into_any_element()
-                    })
-                    .element_above(3, |line_height, _| {
-                        div()
-                            .id("foo")
-                            .bg(gpui::blue().opacity(0.7))
-                            .w_32()
+                            .bg(green_bg)
+                            .w_full()
                             .h(line_height)
                             .into_any_element()
                     })
