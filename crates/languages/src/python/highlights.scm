@@ -28,14 +28,18 @@
 
 ; Function calls
 
-(decorator
-  "@" @punctuation.special
-  (identifier) @function.decorator)
-
 (call
   function: (attribute attribute: (identifier) @function.method.call))
 (call
   function: (identifier) @function.call)
+
+(decorator
+  "@" @punctuation.special
+  [
+    (identifier) @function.decorator
+    (call function: (identifier) @function.decorator.call)
+  ])
+
 
 ; Function and class definitions
 
