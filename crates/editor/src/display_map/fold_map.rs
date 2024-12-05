@@ -641,6 +641,10 @@ impl FoldSnapshot {
         summary
     }
 
+    pub fn make_fold_point(&self, point: Point, bias: Bias) -> FoldPoint {
+        self.to_fold_point(self.inlay_snapshot.to_inlay_point(point), bias)
+    }
+
     pub fn to_fold_point(&self, point: InlayPoint, bias: Bias) -> FoldPoint {
         let mut cursor = self.transforms.cursor::<(InlayPoint, FoldPoint)>(&());
         cursor.seek(&point, Bias::Right, &());

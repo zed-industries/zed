@@ -317,8 +317,7 @@ impl TabSnapshot {
     }
 
     pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
-        let inlay_point = self.fold_snapshot.inlay_snapshot.to_inlay_point(point);
-        let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
+        let fold_point = self.fold_snapshot.make_fold_point(point, bias);
         self.to_tab_point(fold_point)
     }
 
