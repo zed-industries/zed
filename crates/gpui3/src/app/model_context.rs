@@ -217,7 +217,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     ///
     /// A new function that can be used as an event listener. This function takes a reference to the event (`&E`)
     /// and a mutable reference to the `AppContext`.
-    pub fn listener<E>(
+    pub fn listener<E: ?Sized>(
         &self,
         callback: impl Fn(&mut T, &E, &mut Window, &mut ModelContext<T>) + 'static,
     ) -> impl Fn(&E, &mut Window, &mut AppContext) {
