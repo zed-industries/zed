@@ -2,27 +2,19 @@ use crate::{
     display_map::fold_map::{FoldBufferRows, FoldOffset, FoldSnapshot},
     FoldPoint, Highlights,
 };
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{BufferChunks, BufferId, Chunk};
 use multi_buffer::MultiBuffer;
 use project::buffer_store::BufferChangeSet;
 use std::{cmp::Ordering, mem, ops::Range};
 use sum_tree::{Cursor, SumTree, TreeMap};
-use text::{Bias, BufferSnapshot, Point, TextSummary, ToPoint};
+use text::{Bias, Edit, Patch, Point, TextSummary, ToPoint};
 
 use super::fold_map::{FoldChunks, FoldEdit};
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct DiffOffset(pub usize);
-
-impl std::ops::Add<DiffOffset> for DiffOffset {
-    type Output = DiffOffset;
-
-    fn add(self, rhs: DiffOffset) -> Self::Output {
-        DiffOffset(self.0 + rhs.0)
-    }
-}
 
 struct DiffMap {
     snapshot: DiffMapSnapshot,
@@ -30,11 +22,11 @@ struct DiffMap {
     diff_bases: HashMap<BufferId, ChangeSetState>,
     buffer_input_row_counts: Vec<(BufferId, u32)>,
     all_hunks_expanded: bool,
+    edits_since_sync: Patch<DiffOffset>,
 }
 
 struct ChangeSetState {
     change_set: Model<BufferChangeSet>,
-    last_version: Option<usize>,
     _subscription: Subscription,
 }
 
@@ -132,6 +124,7 @@ impl DiffMap {
             snapshot: snapshot.clone(),
             all_hunks_expanded: false,
             diff_bases: HashMap::default(),
+            edits_since_sync: Patch::default(),
         });
 
         (this, snapshot)
@@ -148,7 +141,6 @@ impl DiffMap {
             buffer_id,
             ChangeSetState {
                 _subscription: cx.observe(&change_set, Self::buffer_diff_changed),
-                last_version: None,
                 change_set,
             },
         );
@@ -159,7 +151,9 @@ impl DiffMap {
         fold_snapshot: FoldSnapshot,
         mut fold_edits: Vec<FoldEdit>,
     ) -> (DiffMapSnapshot, Vec<DiffEdit>) {
-        todo!()
+        let patch = mem::take(&mut self.edits_since_sync);
+        let edits = patch.into_inner();
+        (self.snapshot(), edits)
     }
 
     fn buffer_diff_changed(
@@ -210,23 +204,28 @@ impl DiffMap {
 
             new_transforms.append(cursor.slice(&start, Bias::Left, &()), &());
             start = FoldPoint(new_transforms.summary().input.lines);
-            let mut old_tree = cursor.slice(&end, Bias::Right, &());
-            if cursor.start().input.lines < end.0 {
-                old_tree.extend(cursor.item().cloned(), &());
+
+            let mut old_expanded_hunks =
+                HashMap::<multi_buffer::Anchor, Range<DiffOffset>>::default();
+            while cursor.start().input.lines < end.0 {
+                let Some(item) = cursor.item() else {
+                    break;
+                };
+                if let DiffTransform::DeletedHunk {
+                    summary,
+                    hunk_position,
+                    ..
+                } = item
+                {
+                    let range = DiffOffset(cursor.start().output.len)
+                        ..DiffOffset(cursor.start().output.len + summary.len);
+                    old_expanded_hunks.insert(*hunk_position, range);
+                }
                 cursor.next(&());
             }
-            let old_expanded_hunk_anchors = old_tree
-                .iter()
-                .filter_map(|transform| {
-                    if let DiffTransform::DeletedHunk { hunk_position, .. } = transform {
-                        Some(*hunk_position)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<HashSet<_>>();
 
             let excerpt_start = buffer_range.start.to_point(snapshot);
+            let mut new_hunk_edits = Patch::default();
 
             if let Some(base_text) = &base_text {
                 for hunk in hunks {
@@ -235,9 +234,9 @@ impl DiffMap {
                         buffer_id: Some(buffer_id),
                         text_anchor: hunk.buffer_range.start,
                     };
-                    if !old_expanded_hunk_anchors.contains(&hunk_start_anchor)
-                        && !self.all_hunks_expanded
-                    {
+                    let was_previously_expanded =
+                        old_expanded_hunks.remove(&hunk_start_anchor).is_some();
+                    if !was_previously_expanded && !self.all_hunks_expanded {
                         continue;
                     }
 
@@ -247,14 +246,12 @@ impl DiffMap {
                     let mut text_cursor = base_text.as_rope().cursor(0);
                     let base_text_start =
                         text_cursor.summary::<Point>(hunk.diff_base_byte_range.start);
-                    let base_text_summary = text_cursor.summary(hunk.diff_base_byte_range.end);
+                    let base_text_summary =
+                        text_cursor.summary::<TextSummary>(hunk.diff_base_byte_range.end);
 
                     let hunk_start_in_excerpt =
                         hunk.buffer_range.start.to_point(snapshot) - excerpt_start;
-                    let hunk_end_in_excerpt =
-                        hunk.buffer_range.end.to_point(snapshot) - excerpt_start;
                     let hunk_start = multibuffer_range.start + hunk_start_in_excerpt;
-                    let hunk_end = multibuffer_range.start + hunk_end_in_excerpt;
                     let hunk_start = self
                         .snapshot
                         .fold_snapshot
@@ -274,6 +271,15 @@ impl DiffMap {
 
                     start = hunk_start;
 
+                    if !was_previously_expanded {
+                        let edit_start = DiffOffset(new_transforms.summary().output.len);
+
+                        new_hunk_edits.push(DiffEdit {
+                            old: edit_start..edit_start,
+                            new: edit_start..(edit_start + DiffOffset(base_text_summary.len)),
+                        });
+                    }
+
                     new_transforms.push(
                         DiffTransform::DeletedHunk {
                             hunk_position: hunk_start_anchor,
@@ -284,6 +290,20 @@ impl DiffMap {
                     );
                 }
             }
+
+            let mut old_hunk_edits = old_expanded_hunks
+                .values()
+                .map(|range| Edit {
+                    old: range.clone(),
+                    new: range.start..range.start,
+                })
+                .collect::<Vec<_>>();
+            old_hunk_edits.sort_by(|a, b| a.old.start.cmp(&b.old.start));
+
+            self.edits_since_sync = self
+                .edits_since_sync
+                .compose(Patch::new(old_hunk_edits))
+                .compose(new_hunk_edits);
 
             if end > start {
                 new_transforms.push(
@@ -562,6 +582,28 @@ impl<'a> Iterator for DiffMapBufferRows<'a> {
     }
 }
 
+impl std::ops::Add<DiffOffset> for DiffOffset {
+    type Output = DiffOffset;
+
+    fn add(self, rhs: DiffOffset) -> Self::Output {
+        DiffOffset(self.0 + rhs.0)
+    }
+}
+
+impl std::ops::AddAssign<DiffOffset> for DiffOffset {
+    fn add_assign(&mut self, rhs: DiffOffset) {
+        self.0 += rhs.0;
+    }
+}
+
+impl std::ops::Sub<DiffOffset> for DiffOffset {
+    type Output = DiffOffset;
+
+    fn sub(self, rhs: DiffOffset) -> Self::Output {
+        DiffOffset(self.0 - rhs.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,7 +651,7 @@ mod tests {
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (diff_map, _) = cx.update(|cx| DiffMap::new(fold_snapshot, buffer, cx));
+        let (diff_map, _) = cx.update(|cx| DiffMap::new(fold_snapshot.clone(), buffer, cx));
         diff_map.update(cx, |diff_map, cx| diff_map.add_change_set(change_set, cx));
         cx.run_until_parked();
 
@@ -628,8 +670,11 @@ mod tests {
 
         diff_map.update(cx, |diff_map, cx| diff_map.set_all_hunks_expanded(true, cx));
 
+        let (snapshot, edits) =
+            diff_map.update(cx, |diff_map, _| diff_map.sync(fold_snapshot, vec![]));
+
         assert_eq!(
-            diff_map.update(cx, |diff_map, cx| diff_map.snapshot().text()),
+            snapshot.text(),
             indoc!(
                 "
                 ZERO
@@ -642,6 +687,27 @@ mod tests {
                 six
                 "
             )
+        );
+
+        let six = DiffOffset(text.find("six").unwrap());
+        let two = DiffOffset(text.find("TWO").unwrap());
+        let new_two = DiffOffset(snapshot.text().find("two").unwrap());
+        let new_ttwwoo = DiffOffset(snapshot.text().find("TWO").unwrap());
+        let new_four = DiffOffset(snapshot.text().find("four").unwrap());
+        let new_six = DiffOffset(snapshot.text().find("six").unwrap());
+
+        assert_eq!(
+            edits,
+            vec![
+                Edit {
+                    old: two..two,
+                    new: new_two..new_ttwwoo
+                },
+                Edit {
+                    old: six..six,
+                    new: new_four..new_six
+                }
+            ]
         );
     }
 
