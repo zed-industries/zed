@@ -19,18 +19,18 @@ pub enum ParsedMarkdownElement {
 
 impl ParsedMarkdownElement {
     pub fn source_range(&self) -> Option<Range<usize>> {
-        match self {
-            Self::Heading(heading) => Some(heading.source_range.clone()),
-            Self::ListItem(list_item) => Some(list_item.source_range.clone()),
-            Self::Table(table) => Some(table.source_range.clone()),
-            Self::BlockQuote(block_quote) => Some(block_quote.source_range.clone()),
-            Self::CodeBlock(code_block) => Some(code_block.source_range.clone()),
+        Some(match self {
+            Self::Heading(heading) => heading.source_range.clone(),
+            Self::ListItem(list_item) => list_item.source_range.clone(),
+            Self::Table(table) => table.source_range.clone(),
+            Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
+            Self::CodeBlock(code_block) => code_block.source_range.clone(),
             Self::Paragraph(text) => match text.get(0)? {
-                MarkdownParagraphChunk::Text(t) => Some(t.source_range.clone()),
-                MarkdownParagraphChunk::Image(image) => Some(image.source_range.clone()),
+                MarkdownParagraphChunk::Text(t) => t.source_range.clone(),
+                MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
             },
-            Self::HorizontalRule(range) => Some(range.clone()),
-        }
+            Self::HorizontalRule(range) => range.clone(),
+        })
     }
 
     pub fn is_list_item(&self) -> bool {
