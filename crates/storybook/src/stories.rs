@@ -1,6 +1,7 @@
 mod auto_height_editor;
 mod cursor;
 mod default_colors;
+mod fake_editor;
 mod focus;
 mod kitchen_sink;
 mod overflow_scroll;
@@ -13,6 +14,7 @@ mod with_rem_size;
 pub use auto_height_editor::*;
 pub use cursor::*;
 pub use default_colors::*;
+pub use fake_editor::*;
 pub use focus::*;
 pub use kitchen_sink::*;
 pub use overflow_scroll::*;

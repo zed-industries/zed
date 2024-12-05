@@ -24,6 +24,7 @@ pub enum ComponentStory {
     Focus,
     Icon,
     IconButton,
+    FakeEditor,
     Keybinding,
     Label,
     List,
@@ -54,6 +55,7 @@ impl ComponentStory {
             Self::CollabNotification => cx
                 .new_view(|_| collab_ui::notifications::CollabNotificationStory)
                 .into(),
+            Self::FakeEditor => crate::stories::FakeEditorStory::view(cx).into(),
             Self::ContextMenu => cx.new_view(|_| ui::ContextMenuStory).into(),
             Self::Cursor => cx.new_view(|_| crate::stories::CursorStory).into(),
             Self::DefaultColors => DefaultColorsStory::view(cx).into(),
