@@ -735,7 +735,11 @@ impl DisplaySnapshot {
         }
     }
 
-    pub fn next_line_boundary(&self, mut point: MultiBufferPoint) -> (Point, DisplayPoint) {
+    pub fn next_line_boundary(
+        &self,
+        mut point: MultiBufferPoint,
+    ) -> (MultiBufferPoint, DisplayPoint) {
+        let original_point = point;
         loop {
             let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
             let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Right);
@@ -746,7 +750,8 @@ impl DisplaySnapshot {
             let mut display_point = self.point_to_display_point(point, Bias::Right);
             *display_point.column_mut() = self.line_len(display_point.row());
             let next_point = self.display_point_to_point(display_point, Bias::Right);
-            if next_point == point {
+            // TODO kb why is it a fix?
+            if next_point == point || original_point == point || original_point == next_point {
                 return (point, display_point);
             }
             point = next_point;
