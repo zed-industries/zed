@@ -12901,7 +12901,6 @@ impl Editor {
                             None => Autoscroll::newest(),
                         };
                         let nav_history = editor.nav_history.take();
-                        editor.unfold_ranges(&ranges, false, true, cx);
                         editor.change_selections(Some(autoscroll), cx, |s| {
                             s.select_ranges(ranges);
                         });
