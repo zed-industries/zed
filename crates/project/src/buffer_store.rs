@@ -49,6 +49,7 @@ struct SharedBuffer {
     unstaged_changes: Option<Model<BufferChangeSet>>,
 }
 
+#[derive(Debug)]
 pub struct BufferChangeSet {
     pub buffer_id: BufferId,
     pub base_text: Option<Model<Buffer>>,
@@ -1061,9 +1062,10 @@ impl BufferStore {
             }
             Ok(text) => text,
         };
+        dbg!(&text);
 
         let change_set = buffer.update(&mut cx, |buffer, cx| {
-            cx.new_model(|_| BufferChangeSet::new(buffer))
+            cx.new_model(|_| dbg!(BufferChangeSet::new(buffer)))
         })?;
 
         if let Some(text) = text {
