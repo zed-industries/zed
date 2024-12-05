@@ -69,14 +69,25 @@ impl AssistantPanel {
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
 
-        Self {
+        let mut this = Self {
             workspace: workspace.weak_handle(),
             language_registry: workspace.project().read(cx).languages().clone(),
             thread_store,
             thread: None,
-            message_editor: cx.new_view(|cx| MessageEditor::new(thread, cx)),
+            message_editor: cx.new_view(|cx| MessageEditor::new(thread.clone(), cx)),
             tools,
-        }
+        };
+        this.thread = Some(cx.new_view(|cx| {
+            ActiveThread::new(
+                thread,
+                this.workspace.clone(),
+                this.language_registry.clone(),
+                this.tools.clone(),
+                cx,
+            )
+        }));
+
+        this
     }
 
     fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
@@ -180,7 +191,13 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
-            .child(h_flex().child(Label::new("Thread Title Goes Here")))
+            .child(
+                h_flex().children(
+                    self.thread
+                        .as_ref()
+                        .and_then(|thread| thread.read(cx).summary(cx).map(Label::new)),
+                ),
+            )
             .child(
                 h_flex()
                     .gap(DynamicSpacing::Base08.rems(cx))
@@ -396,11 +413,18 @@ impl AssistantPanel {
         thread: Model<Thread>,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        let id = thread.read(cx).id().clone();
+        let (id, summary) = {
+            const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
+            let thread = thread.read(cx);
+            (
+                thread.id().clone(),
+                thread.summary().unwrap_or(DEFAULT_SUMMARY),
+            )
+        };
 
         ListItem::new(("past-thread", thread.entity_id()))
             .start_slot(Icon::new(IconName::MessageBubbles))
-            .child(Label::new(format!("Thread {id}")))
+            .child(Label::new(summary))
             .end_slot(
                 h_flex()
                     .gap_2()

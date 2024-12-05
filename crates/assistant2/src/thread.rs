@@ -7,13 +7,13 @@ use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, EventEmitter, ModelContext, SharedString, Task};
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResult, LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
-    StopReason,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, Role, StopReason,
 };
 use language_models::provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError};
 use serde::{Deserialize, Serialize};
-use util::post_inc;
+use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy)]
@@ -56,6 +56,8 @@ pub struct Message {
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
+    summary: Option<SharedString>,
+    pending_summary: Task<Option<()>>,
     messages: Vec<Message>,
     next_message_id: MessageId,
     completion_count: usize,
@@ -70,6 +72,8 @@ impl Thread {
     pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut ModelContext<Self>) -> Self {
         Self {
             id: ThreadId::new(),
+            summary: None,
+            pending_summary: Task::ready(None),
             messages: Vec::new(),
             next_message_id: MessageId(0),
             completion_count: 0,
@@ -87,6 +91,15 @@ impl Thread {
 
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
+    }
+
+    pub fn summary(&self) -> Option<SharedString> {
+        self.summary.clone()
+    }
+
+    pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut ModelContext<Self>) {
+        self.summary = Some(summary.into());
+        cx.emit(ThreadEvent::SummaryChanged);
     }
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
@@ -246,10 +259,14 @@ impl Thread {
                     smol::future::yield_now().await;
                 }
 
-                thread.update(&mut cx, |thread, _cx| {
+                thread.update(&mut cx, |thread, cx| {
                     thread
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
+
+                    if thread.summary.is_none() && thread.messages.len() >= 2 {
+                        thread.summarize(cx);
+                    }
                 })?;
 
                 anyhow::Ok(stop_reason)
@@ -289,6 +306,59 @@ impl Thread {
         self.pending_completions.push(PendingCompletion {
             id: pending_completion_id,
             _task: task,
+        });
+    }
+
+    pub fn summarize(&mut self, cx: &mut ModelContext<Self>) {
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+            return;
+        };
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
+
+        if !provider.is_authenticated(cx) {
+            return;
+        }
+
+        let mut request = self.to_completion_request(RequestKind::Chat, cx);
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![
+                "Generate a concise 3-7 word title for this conversation, omitting punctuation. Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`"
+                    .into(),
+            ],
+            cache: false,
+        });
+
+        self.pending_summary = cx.spawn(|this, mut cx| {
+            async move {
+                let stream = model.stream_completion_text(request, &cx);
+                let mut messages = stream.await?;
+
+                let mut new_summary = String::new();
+                while let Some(message) = messages.stream.next().await {
+                    let text = message?;
+                    let mut lines = text.lines();
+                    new_summary.extend(lines.next());
+
+                    // Stop if the LLM generated multiple lines.
+                    if lines.next().is_some() {
+                        break;
+                    }
+                }
+
+                this.update(&mut cx, |this, cx| {
+                    if !new_summary.is_empty() {
+                        this.summary = Some(new_summary.into());
+                    }
+
+                    cx.emit(ThreadEvent::SummaryChanged);
+                })?;
+
+                anyhow::Ok(())
+            }
+            .log_err()
         });
     }
 
@@ -365,6 +435,7 @@ pub enum ThreadEvent {
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
     MessageAdded(MessageId),
+    SummaryChanged,
     UsePendingTools,
     ToolFinished {
         #[allow(unused)]

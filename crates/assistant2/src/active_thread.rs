@@ -3,8 +3,8 @@ use std::sync::Arc;
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    list, AnyElement, Empty, ListAlignment, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, View, WeakView,
+    list, AnyElement, AppContext, Empty, ListAlignment, ListState, Model, StyleRefinement,
+    Subscription, TextStyleRefinement, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -68,6 +68,10 @@ impl ActiveThread {
 
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
+    }
+
+    pub fn summary(&self, cx: &AppContext) -> Option<SharedString> {
+        self.thread.read(cx).summary()
     }
 
     pub fn last_error(&self) -> Option<ThreadError> {
@@ -139,6 +143,7 @@ impl ActiveThread {
                 self.last_error = Some(error.clone());
             }
             ThreadEvent::StreamedCompletion => {}
+            ThreadEvent::SummaryChanged => {}
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
                     markdown.update(cx, |markdown, cx| {
