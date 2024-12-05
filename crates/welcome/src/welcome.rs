@@ -291,7 +291,7 @@ impl Render for WelcomePage {
                                         IconButton::new("vim-mode", IconName::Info)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
-                                            .tooltip(|cx| Tooltip::text("You can also toggle Vim Mode on and off via the command palette or the Editor Controls menu.", cx)),
+                                            .tooltip(|cx| Tooltip::text("You can also toggle Vim Mode via the command palette or Editor Controls menu.", cx)),
                                     )
                             )
                             .child(CheckboxWithLabel::new(
