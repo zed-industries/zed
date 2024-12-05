@@ -1,8 +1,8 @@
 use crate::markdown_elements::{
-    HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
+    HeadingLevel, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
     ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
     ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
-    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow, ParsedMarkdownText,
+    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use gpui::{
     div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
@@ -13,7 +13,6 @@ use gpui::{
 use settings::Settings;
 use std::{
     ops::{Mul, Range},
-    path::Path,
     sync::Arc,
     vec,
 };
