@@ -15,30 +15,20 @@ impl HandleTag for WikipediaChromeRemover {
         _writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
         match tag.tag() {
-            "head" | "script" | "style" | "nav" => return StartTagOutcome::Skip,
-            "sup" => {
-                if tag.has_class("reference") {
-                    return StartTagOutcome::Skip;
-                }
-            }
-            "div" | "span" | "a" => {
-                if tag.attr("id").as_deref() == Some("p-lang-btn") {
-                    return StartTagOutcome::Skip;
-                }
-
-                if tag.attr("id").as_deref() == Some("p-search") {
-                    return StartTagOutcome::Skip;
-                }
-
+            "head" | "script" | "style" | "nav" => { StartTagOutcome::Skip },
+            "sup" if tag.has_class("reference") => { StartTagOutcome::Skip },
+            "div" | "span" | "a" if tag.attr("id").as_deref() == Some("p-lang-btn") => { StartTagOutcome::Skip },
+            "div" | "span" | "a"  if tag.attr("id").as_deref() == Some("p-search") => { StartTagOutcome::Skip },
+            "div" | "span" | "a" => { 
                 let classes_to_skip = ["noprint", "mw-editsection", "mw-jump-link"];
                 if tag.has_any_classes(&classes_to_skip) {
-                    return StartTagOutcome::Skip;
+                    StartTagOutcome::Skip
+                } else {
+                    StartTagOutcome::Continue
                 }
-            }
-            _ => {}
+            },
+            _ => { StartTagOutcome::Continue },
         }
-
-        StartTagOutcome::Continue
     }
 }
 
