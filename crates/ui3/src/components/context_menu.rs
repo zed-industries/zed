@@ -61,9 +61,7 @@ impl ContextMenu {
             let focus_handle = window.focus_handle();
             let this = cx.handle();
             let _on_blur_subscription = window.on_blur(&focus_handle, cx, move |window, cx| {
-                this.update(cx, |this: &mut Self, cx| {
-                    this.cancel(&menu::Cancel, window, cx)
-                })
+                this.update(cx, |this: &mut Self, cx| this.cancel(&menu::Cancel, cx))
             });
             cx.refresh();
             f(
@@ -243,12 +241,7 @@ impl ContextMenu {
         cx.emit(DismissEvent);
     }
 
-    pub fn cancel(
-        &mut self,
-        _: &menu::Cancel,
-        window: &mut gpui::Window,
-        cx: &mut gpui::ModelContext<Self>,
-    ) {
+    pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut gpui::ModelContext<Self>) {
         cx.emit(DismissEvent);
         cx.emit(DismissEvent);
     }
@@ -365,7 +358,7 @@ impl ContextMenu {
                     .await;
                 window.update(&mut cx, |window, cx| {
                     this.update(cx, |this, cx| {
-                        this.cancel(&menu::Cancel, window, cx);
+                        this.cancel(&menu::Cancel, cx);
                         window.dispatch_action(action, cx);
                     })
                 })
@@ -416,9 +409,9 @@ impl Render for ContextMenu {
                         .max_h(vh(0.75, window, cx))
                         .overflow_y_scroll()
                         .track_focus(&self.focus_handle(cx))
-                        .on_mouse_down_out(cx.listener(|this, _event, window, cx| {
-                            this.cancel(&menu::Cancel, window, cx)
-                        }))
+                        .on_mouse_down_out(
+                            cx.listener(|this, _event, window, cx| this.cancel(&menu::Cancel, cx)),
+                        )
                         .key_context("menu")
                         .on_action(cx.listener(ContextMenu::select_first))
                         .on_action(cx.listener(ContextMenu::handle_select_last))
@@ -435,7 +428,7 @@ impl Render for ContextMenu {
                                 } = item
                                 {
                                     el = el.on_boxed_action(
-                                        todo!(),
+                                        &**action,
                                         cx.listener(ContextMenu::on_action_dispatch),
                                     );
                                 }
