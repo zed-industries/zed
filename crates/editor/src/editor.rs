@@ -13873,6 +13873,11 @@ fn snippet_completions(
             .take_while(|c| classifier.is_word(*c))
             .collect::<String>();
         last_word = last_word.chars().rev().collect();
+
+        if last_word.is_empty() {
+            return Ok(vec![]);
+        }
+
         let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
         let to_lsp = |point: &text::Anchor| {
             let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
