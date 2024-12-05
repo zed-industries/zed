@@ -642,12 +642,12 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         }
     }
 
-    fn predict(
+    fn suggest(
         &mut self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut ModelContext<Self>,
-    ) -> Option<inline_completion::Prediction> {
+    ) -> Option<inline_completion::InlineCompletion> {
         let completion = self.current_completion.as_mut()?;
 
         let buffer = buffer.read(cx);
@@ -686,7 +686,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             }
         }
 
-        Some(inline_completion::Prediction {
+        Some(inline_completion::InlineCompletion {
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
         })
     }

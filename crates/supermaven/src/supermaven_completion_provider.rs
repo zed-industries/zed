@@ -3,7 +3,7 @@ use anyhow::Result;
 use client::telemetry::Telemetry;
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
-use inline_completion::{Direction, InlineCompletionProvider, Prediction};
+use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
 use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
 use std::{
     ops::{AddAssign, Range},
@@ -43,16 +43,16 @@ impl SupermavenCompletionProvider {
     }
 }
 
-// Computes the prediction from the difference between the completion text.
+// Computes the inline completion from the difference between the completion text.
 // this is defined by greedily matching the buffer text against the completion text, with any leftover buffer placed at the end.
 // for example, given the completion text "moo cows are cool" and the buffer text "cowsre pool", the completion state would be
 // the inlays "moo ", " a", and "cool" which will render as "[moo ]cows[ a]re [cool]pool" in the editor.
-fn prediction_from_diff(
+fn completion_from_diff(
     snapshot: BufferSnapshot,
     completion_text: &str,
     position: Anchor,
     delete_range: Range<Anchor>,
-) -> Prediction {
+) -> InlineCompletion {
     let buffer_text = snapshot
         .text_for_range(delete_range.clone())
         .collect::<String>();
@@ -99,7 +99,7 @@ fn prediction_from_diff(
         edits.push((edit_range, edit_text));
     }
 
-    Prediction { edits }
+    InlineCompletion { edits }
 }
 
 impl InlineCompletionProvider for SupermavenCompletionProvider {
@@ -198,12 +198,12 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         self.completion_id = None;
     }
 
-    fn predict(
+    fn suggest(
         &mut self,
         buffer: &Model<Buffer>,
         cursor_position: Anchor,
         cx: &mut ModelContext<Self>,
-    ) -> Option<Prediction> {
+    ) -> Option<InlineCompletion> {
         let completion_text = self
             .supermaven
             .read(cx)
@@ -218,7 +218,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
             let mut point = cursor_position.to_point(&snapshot);
             point.column = snapshot.line_len(point.row);
             let range = cursor_position..snapshot.anchor_after(point);
-            Some(prediction_from_diff(
+            Some(completion_from_diff(
                 snapshot,
                 completion_text,
                 cursor_position,

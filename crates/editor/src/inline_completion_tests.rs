@@ -4,7 +4,9 @@ use multi_buffer::MultiBufferSnapshot;
 use std::ops::Range;
 use ui::Context;
 
-use crate::{editor_tests::init_test, test::editor_test_context::EditorTestContext, Prediction};
+use crate::{
+    editor_tests::init_test, test::editor_test_context::EditorTestContext, InlineCompletion,
+};
 
 #[gpui::test]
 async fn test_inline_completion_insert(cx: &mut gpui::TestAppContext) {
@@ -16,14 +18,16 @@ async fn test_inline_completion_insert(cx: &mut gpui::TestAppContext) {
     cx.set_state("let absolute_zero_celsius = ˇ;");
 
     propose_edits(&provider, vec![(28..28, "-273.15")], &mut cx);
-    cx.update_editor(|editor, cx| editor.update_visible_prediction(cx));
+    cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
 
-    assert_editor_active_prediction(&mut cx, |_, active_prediction| {
-        if let Prediction::Edit(edits) = active_prediction.expect("No active prediction") {
+    assert_editor_active_inline_completion(&mut cx, |_, active_inline_completion| {
+        if let InlineCompletion::Edit(edits) =
+            active_inline_completion.expect("no active completion")
+        {
             assert_eq!(edits.len(), 1);
             assert_eq!(edits[0].1.as_str(), "-273.15");
         } else {
-            panic!("Expected Edit prediction");
+            panic!("expected edit");
         }
     });
 
@@ -42,14 +46,16 @@ async fn test_inline_completion_modification(cx: &mut gpui::TestAppContext) {
     cx.set_state("let pi = ˇ\"foo\";");
 
     propose_edits(&provider, vec![(9..14, "3.14159")], &mut cx);
-    cx.update_editor(|editor, cx| editor.update_visible_prediction(cx));
+    cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
 
-    assert_editor_active_prediction(&mut cx, |_, active_prediction| {
-        if let Prediction::Edit(edits) = active_prediction.expect("No active prediction") {
+    assert_editor_active_inline_completion(&mut cx, |_, active_inline_completion| {
+        if let InlineCompletion::Edit(edits) =
+            active_inline_completion.expect("no active completion")
+        {
             assert_eq!(edits.len(), 1);
             assert_eq!(edits[0].1.as_str(), "3.14159");
         } else {
-            panic!("Expected Edit prediction");
+            panic!("expected edit");
         }
     });
 
@@ -58,23 +64,25 @@ async fn test_inline_completion_modification(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("let pi = 3.14159ˇ;")
 }
 
-fn assert_editor_active_prediction(
+fn assert_editor_active_inline_completion(
     cx: &mut EditorTestContext,
-    assert: impl FnOnce(MultiBufferSnapshot, Option<&Prediction>),
+    assert: impl FnOnce(MultiBufferSnapshot, Option<&InlineCompletion>),
 ) {
     cx.editor(|editor, cx| {
         assert(
             editor.buffer().read(cx).snapshot(cx),
             editor
-                .active_prediction
+                .active_inline_completion
                 .as_ref()
-                .map(|state| &state.prediction),
+                .map(|state| &state.completion),
         )
     })
 }
 
 fn accept_completion(cx: &mut EditorTestContext) {
-    cx.update_editor(|editor, cx| editor.accept_prediction(&crate::AcceptInlineCompletion, cx))
+    cx.update_editor(|editor, cx| {
+        editor.accept_inline_completion(&crate::AcceptInlineCompletion, cx)
+    })
 }
 
 fn propose_edits(
@@ -82,20 +90,24 @@ fn propose_edits(
     edits: Vec<(Range<usize>, &str)>,
     cx: &mut EditorTestContext,
 ) {
-    let edits = build_prediction(edits, cx);
-    cx.update(|cx| provider.update(cx, |provider, _| provider.set_prediction(Some(edits))));
+    let edits = build_inline_completion(edits, cx);
+    cx.update(|cx| {
+        provider.update(cx, |provider, _| {
+            provider.set_inline_completion(Some(edits))
+        })
+    });
 }
 
-fn build_prediction(
+fn build_inline_completion(
     edits: Vec<(Range<usize>, &str)>,
     cx: &mut EditorTestContext,
-) -> inline_completion::Prediction {
+) -> inline_completion::InlineCompletion {
     let snapshot = cx.buffer_snapshot();
     let edits = edits.into_iter().map(|(range, text)| {
         let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
         (range, text.into())
     });
-    inline_completion::Prediction {
+    inline_completion::InlineCompletion {
         edits: edits.collect(),
     }
 }
@@ -111,12 +123,15 @@ fn assign_editor_completion_provider(
 
 #[derive(Default, Clone)]
 struct FakeInlineCompletionProvider {
-    prediction: Option<inline_completion::Prediction>,
+    completion: Option<inline_completion::InlineCompletion>,
 }
 
 impl FakeInlineCompletionProvider {
-    pub fn set_prediction(&mut self, prediction: Option<inline_completion::Prediction>) {
-        self.prediction = prediction;
+    pub fn set_inline_completion(
+        &mut self,
+        completion: Option<inline_completion::InlineCompletion>,
+    ) {
+        self.completion = completion;
     }
 }
 
@@ -161,12 +176,12 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
     ) {
     }
 
-    fn predict<'a>(
+    fn suggest<'a>(
         &mut self,
         _buffer: &gpui::Model<language::Buffer>,
         _cursor_position: language::Anchor,
         _cx: &mut gpui::ModelContext<Self>,
-    ) -> Option<inline_completion::Prediction> {
-        self.prediction.clone()
+    ) -> Option<inline_completion::InlineCompletion> {
+        self.completion.clone()
     }
 }

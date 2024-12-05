@@ -1154,7 +1154,10 @@ impl Vim {
 
                 if self.mode == Mode::Normal {
                     self.update_editor(cx, |_, editor, cx| {
-                        editor.accept_prediction(&editor::actions::AcceptInlineCompletion {}, cx);
+                        editor.accept_inline_completion(
+                            &editor::actions::AcceptInlineCompletion {},
+                            cx,
+                        );
                     });
                 }
             }

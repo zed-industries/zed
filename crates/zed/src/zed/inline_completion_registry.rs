@@ -94,7 +94,7 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &ViewContext<Ed
             |editor,
              _: &editor::actions::AcceptPartialCopilotSuggestion,
              cx: &mut ViewContext<Editor>| {
-                editor.accept_partial_prediction(&Default::default(), cx);
+                editor.accept_partial_inline_completion(&Default::default(), cx);
             },
         ))
         .detach();

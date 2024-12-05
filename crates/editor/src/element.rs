@@ -19,10 +19,10 @@ use crate::{
     BlockId, ChunkReplacement, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint,
     DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp, OpenExcerpts,
-    PageDown, PageUp, Point, Prediction, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED,
-    MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
+    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
+    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -447,8 +447,8 @@ impl EditorElement {
         register_action(view, cx, Editor::display_cursor_names);
         register_action(view, cx, Editor::unique_lines_case_insensitive);
         register_action(view, cx, Editor::unique_lines_case_sensitive);
-        register_action(view, cx, Editor::accept_partial_prediction);
-        register_action(view, cx, Editor::accept_prediction);
+        register_action(view, cx, Editor::accept_partial_inline_completion);
+        register_action(view, cx, Editor::accept_inline_completion);
         register_action(view, cx, Editor::revert_file);
         register_action(view, cx, Editor::revert_selected_hunks);
         register_action(view, cx, Editor::apply_all_diff_hunks);
@@ -2742,10 +2742,10 @@ impl EditorElement {
         const PADDING_X: Pixels = Pixels(25.);
         const PADDING_Y: Pixels = Pixels(2.);
 
-        let active_prediction = self.editor.read(cx).active_prediction.as_ref()?;
+        let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
 
-        match &active_prediction.prediction {
-            Prediction::Move(target_position) => {
+        match &active_inline_completion.completion {
+            InlineCompletion::Move(target_position) => {
                 let container_element = div()
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
@@ -2820,7 +2820,7 @@ impl EditorElement {
                     Some(element)
                 }
             }
-            Prediction::Edit(edits) => {
+            InlineCompletion::Edit(edits) => {
                 let edit_start = edits
                     .first()
                     .unwrap()

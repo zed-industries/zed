@@ -13,7 +13,7 @@ pub enum Direction {
 }
 
 #[derive(Clone)]
-pub struct Prediction {
+pub struct InlineCompletion {
     pub edits: Vec<(Range<language::Anchor>, String)>,
 }
 
@@ -41,12 +41,12 @@ pub trait InlineCompletionProvider: 'static + Sized {
     );
     fn accept(&mut self, cx: &mut ModelContext<Self>);
     fn discard(&mut self, should_report_inline_completion_event: bool, cx: &mut ModelContext<Self>);
-    fn predict(
+    fn suggest(
         &mut self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut ModelContext<Self>,
-    ) -> Option<Prediction>;
+    ) -> Option<InlineCompletion>;
 }
 
 pub trait InlineCompletionProviderHandle {
@@ -72,12 +72,12 @@ pub trait InlineCompletionProviderHandle {
     );
     fn accept(&self, cx: &mut AppContext);
     fn discard(&self, should_report_inline_completion_event: bool, cx: &mut AppContext);
-    fn predict(
+    fn suggest(
         &self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut AppContext,
-    ) -> Option<Prediction>;
+    ) -> Option<InlineCompletion>;
 }
 
 impl<T> InlineCompletionProviderHandle for Model<T>
@@ -127,12 +127,12 @@ where
         })
     }
 
-    fn predict(
+    fn suggest(
         &self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut AppContext,
-    ) -> Option<Prediction> {
-        self.update(cx, |this, cx| this.predict(buffer, cursor_position, cx))
+    ) -> Option<InlineCompletion> {
+        self.update(cx, |this, cx| this.suggest(buffer, cursor_position, cx))
     }
 }
