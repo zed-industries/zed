@@ -209,7 +209,12 @@ impl DiffMap {
                 .make_fold_point(multibuffer_range.end, Bias::Right);
 
             new_transforms.append(cursor.slice(&start, Bias::Left, &()), &());
-            let old_tree = cursor.slice(&end, Bias::Left, &());
+            start = FoldPoint(new_transforms.summary().input.lines);
+            let mut old_tree = cursor.slice(&end, Bias::Right, &());
+            if cursor.start().input.lines < end.0 {
+                old_tree.extend(cursor.item().cloned(), &());
+                cursor.next(&());
+            }
             let old_expanded_hunk_anchors = old_tree
                 .iter()
                 .filter_map(|transform| {
@@ -231,7 +236,7 @@ impl DiffMap {
                         text_anchor: hunk.buffer_range.start,
                     };
                     if !old_expanded_hunk_anchors.contains(&hunk_start_anchor)
-                        || self.all_hunks_expanded
+                        && !self.all_hunks_expanded
                     {
                         continue;
                     }
@@ -265,13 +270,13 @@ impl DiffMap {
                                 summary: self
                                     .snapshot
                                     .fold_snapshot
-                                    .text_summary_for_range(hunk_start..hunk_end),
+                                    .text_summary_for_range(start..hunk_start),
                             },
                             &(),
                         );
                     }
 
-                    start = hunk_end;
+                    start = hunk_start;
 
                     new_transforms.push(
                         DiffTransform::DeletedHunk {
@@ -301,6 +306,9 @@ impl DiffMap {
 
         drop(cursor);
         self.snapshot.transforms = new_transforms;
+
+        #[cfg(test)]
+        self.check_invariants();
     }
 
     pub(super) fn expand_diff_hunks(
@@ -324,6 +332,19 @@ impl DiffMap {
 
     fn snapshot(&self) -> DiffMapSnapshot {
         self.snapshot.clone()
+    }
+
+    #[cfg(test)]
+    fn check_invariants(&self) {
+        let snapshot = &self.snapshot;
+        if snapshot.transforms.summary().input.len != snapshot.fold_snapshot.len().0 {
+            panic!(
+                "incorrect input length. expected {}, got {}. transforms: {:+?}",
+                snapshot.fold_snapshot.len().0,
+                snapshot.transforms.summary().input.len,
+                snapshot.transforms.items(&()),
+            );
+        }
     }
 }
 
@@ -358,8 +379,8 @@ impl DiffMapSnapshot {
         highlights: Highlights<'a>,
     ) -> DiffMapChunks<'a> {
         let mut cursor = self.transforms.cursor::<(DiffOffset, FoldOffset)>(&());
-        cursor.seek(&range.end, Bias::Right, &());
 
+        cursor.seek(&range.end, Bias::Right, &());
         let mut fold_end = cursor.start().1;
         if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
             let overshoot = range.end.0 - cursor.start().0 .0;
@@ -369,7 +390,7 @@ impl DiffMapSnapshot {
         cursor.seek(&range.start, Bias::Right, &());
         let mut fold_start = cursor.start().1;
         if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
-            let overshoot = range.end.0 - cursor.start().0 .0;
+            let overshoot = range.start.0 - cursor.start().0 .0;
             fold_start.0 += overshoot;
         }
 
@@ -421,13 +442,9 @@ impl<'a> Iterator for DiffMapChunks<'a> {
                     transform_end = self.end_offset
                 }
 
-                if transform_end <= chunk_end {
-                    self.cursor.next(&());
-                }
-
                 if transform_end < chunk_end {
-                    self.offset = transform_end;
                     let (before, after) = chunk.text.split_at(transform_end.0 - self.offset.0);
+                    self.offset = transform_end;
                     chunk.text = after;
                     Some(Chunk {
                         text: before,
@@ -557,7 +574,7 @@ mod tests {
 
         let text = indoc!(
             "
-            ERO
+            ZERO
             one
             TWO
             three
@@ -588,12 +605,18 @@ mod tests {
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (diff_map, _) = cx.update(|cx| DiffMap::new(fold_snapshot, buffer, cx));
+        let diff_map = cx.update(|cx| {
+            let (diff_map, _) = DiffMap::new(fold_snapshot, buffer, cx);
+            diff_map.update(cx, |diff_map, cx| {
+                diff_map.set_all_hunks_expanded(true, cx);
+            });
+            diff_map
+        });
         diff_map.update(cx, |diff_map, cx| diff_map.add_change_set(change_set, cx));
         cx.run_until_parked();
 
         assert_eq!(
-            diff_map.update(cx, |diff_map, cx| diff_map.snapshot().text()),
+            diff_map.update(cx, |diff_map, _| diff_map.snapshot().text()),
             indoc!(
                 "
                 ZERO
