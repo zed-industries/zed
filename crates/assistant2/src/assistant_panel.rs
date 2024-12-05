@@ -11,6 +11,7 @@ use gpui::{
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use language_model_selector::LanguageModelSelector;
+use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, KeyBinding, ListItem, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
@@ -39,6 +40,7 @@ pub struct AssistantPanel {
     thread: View<ActiveThread>,
     message_editor: View<MessageEditor>,
     tools: Arc<ToolWorkingSet>,
+    local_timezone: UtcOffset,
 }
 
 impl AssistantPanel {
@@ -86,6 +88,10 @@ impl AssistantPanel {
             }),
             message_editor: cx.new_view(|cx| MessageEditor::new(thread.clone(), cx)),
             tools,
+            local_timezone: UtcOffset::from_whole_seconds(
+                chrono::Local::now().offset().local_minus_utc(),
+            )
+            .unwrap(),
         }
     }
 
@@ -411,13 +417,19 @@ impl AssistantPanel {
             )
         };
 
+        let thread_timestamp = time_format::format_localized_timestamp(
+            OffsetDateTime::from_unix_timestamp(thread.read(cx).updated_at().timestamp()).unwrap(),
+            OffsetDateTime::now_utc(),
+            self.local_timezone,
+            time_format::TimestampFormat::EnhancedAbsolute,
+        );
         ListItem::new(("past-thread", thread.entity_id()))
             .start_slot(Icon::new(IconName::MessageBubbles))
             .child(Label::new(summary))
             .end_slot(
                 h_flex()
                     .gap_2()
-                    .child(Label::new("1 hour ago").color(Color::Disabled))
+                    .child(Label::new(thread_timestamp).color(Color::Disabled))
                     .child(
                         IconButton::new("delete", IconName::TrashAlt)
                             .shape(IconButtonShape::Square)

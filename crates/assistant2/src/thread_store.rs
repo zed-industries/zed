@@ -53,12 +53,13 @@ impl ThreadStore {
     }
 
     pub fn recent_threads(&self, limit: usize, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
-        self.threads
+        let mut threads = self
+            .threads
             .iter()
             .filter(|thread| !thread.read(cx).is_empty())
-            .take(limit)
-            .cloned()
-            .collect()
+            .collect::<Vec<_>>();
+        threads.sort_unstable_by(|a, b| b.read(cx).updated_at().cmp(&a.read(cx).updated_at()));
+        threads.into_iter().take(limit).cloned().collect()
     }
 
     pub fn create_thread(&mut self, cx: &mut ModelContext<Self>) -> Model<Thread> {

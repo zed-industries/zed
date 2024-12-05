@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use assistant_tool::ToolWorkingSet;
+use chrono::{DateTime, Utc};
 use collections::HashMap;
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
@@ -56,6 +57,7 @@ pub struct Message {
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
+    updated_at: DateTime<Utc>,
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
     messages: Vec<Message>,
@@ -72,6 +74,7 @@ impl Thread {
     pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut ModelContext<Self>) -> Self {
         Self {
             id: ThreadId::new(),
+            updated_at: Utc::now(),
             summary: None,
             pending_summary: Task::ready(None),
             messages: Vec::new(),
@@ -91,6 +94,14 @@ impl Thread {
 
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
+    }
+
+    pub fn updated_at(&self) -> DateTime<Utc> {
+        self.updated_at
+    }
+
+    pub fn touch_updated_at(&mut self) {
+        self.updated_at = Utc::now();
     }
 
     pub fn summary(&self) -> Option<SharedString> {
@@ -134,6 +145,7 @@ impl Thread {
             role,
             text: text.into(),
         });
+        self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
     }
 
@@ -204,13 +216,7 @@ impl Thread {
                     thread.update(&mut cx, |thread, cx| {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
-                                let id = thread.next_message_id.post_inc();
-                                thread.messages.push(Message {
-                                    id,
-                                    role: Role::Assistant,
-                                    text: String::new(),
-                                });
-                                cx.emit(ThreadEvent::MessageAdded(id));
+                                thread.insert_message(Role::Assistant, String::new(), cx);
                             }
                             LanguageModelCompletionEvent::Stop(reason) => {
                                 stop_reason = reason;
@@ -252,6 +258,7 @@ impl Thread {
                             }
                         }
 
+                        thread.touch_updated_at();
                         cx.emit(ThreadEvent::StreamedCompletion);
                         cx.notify();
                     })?;

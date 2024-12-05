@@ -456,6 +456,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_tool",
+ "chrono",
  "client",
  "collections",
  "command_palette_hooks",
@@ -478,6 +479,8 @@ dependencies = [
  "settings",
  "smol",
  "theme",
+ "time",
+ "time_format",
  "ui",
  "unindent",
  "util",
