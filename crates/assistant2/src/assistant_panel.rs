@@ -106,6 +106,10 @@ impl AssistantPanel {
         }
     }
 
+    pub(crate) fn local_timezone(&self) -> UtcOffset {
+        self.local_timezone
+    }
+
     fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
         let thread = self
             .thread_store
@@ -147,8 +151,9 @@ impl AssistantPanel {
         self.message_editor.focus_handle(cx).focus(cx);
     }
 
-    pub(crate) fn local_timezone(&self) -> UtcOffset {
-        self.local_timezone
+    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
+        self.thread_store
+            .update(cx, |this, cx| this.delete_thread(thread_id, cx));
     }
 }
 
