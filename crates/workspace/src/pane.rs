@@ -1,7 +1,7 @@
 use crate::{
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-        TabContentParams, WeakItemHandle,
+        ShowDiagnostics, TabContentParams, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -13,7 +13,6 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
-use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
     AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
@@ -23,6 +22,7 @@ use gpui::{
     WindowContext,
 };
 use itertools::Itertools;
+use language::DiagnosticSeverity;
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
 use serde::Deserialize;
@@ -39,10 +39,10 @@ use std::{
     },
 };
 use theme::ThemeSettings;
-
 use ui::{
-    prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape, IconName,
-    IconSize, Indicator, Label, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu, ButtonSize, Color, DecoratedIcon, IconButton, IconButtonShape,
+    IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label, PopoverMenu,
+    PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_flex, ContextMenu};
 use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
@@ -305,6 +305,7 @@ pub struct Pane {
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
+    diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
 }
 
 pub struct ActivationHistoryEntry {
@@ -381,6 +382,7 @@ impl Pane {
             cx.on_focus_in(&focus_handle, Pane::focus_in),
             cx.on_focus_out(&focus_handle, Pane::focus_out),
             cx.observe_global::<SettingsStore>(Self::settings_changed),
+            cx.subscribe(&project, Self::project_events),
         ];
 
         let handle = cx.view().downgrade();
@@ -504,6 +506,7 @@ impl Pane {
             split_item_context_menu_handle: Default::default(),
             new_item_context_menu_handle: Default::default(),
             pinned_tab_count: 0,
+            diagnostics: Default::default(),
         }
     }
 
@@ -598,6 +601,47 @@ impl Pane {
         cx.notify();
     }
 
+    fn project_events(
+        this: &mut Pane,
+        _project: Model<Project>,
+        event: &project::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            project::Event::DiskBasedDiagnosticsFinished { .. }
+            | project::Event::DiagnosticsUpdated { .. } => {
+                if ItemSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off {
+                    this.update_diagnostics(cx);
+                    cx.notify();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn update_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
+        let show_diagnostics = ItemSettings::get_global(cx).show_diagnostics;
+        self.diagnostics = if show_diagnostics != ShowDiagnostics::Off {
+            self.project
+                .read(cx)
+                .diagnostic_summaries(false, cx)
+                .filter_map(|(project_path, _, diagnostic_summary)| {
+                    if diagnostic_summary.error_count > 0 {
+                        Some((project_path, DiagnosticSeverity::ERROR))
+                    } else if diagnostic_summary.warning_count > 0
+                        && show_diagnostics != ShowDiagnostics::Errors
+                    {
+                        Some((project_path, DiagnosticSeverity::WARNING))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<HashMap<_, _>>()
+        } else {
+            Default::default()
+        }
+    }
+
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(display_nav_history_buttons) = self.display_nav_history_buttons.as_mut() {
             *display_nav_history_buttons = TabBarSettings::get_global(cx).show_nav_history_buttons;
@@ -605,6 +649,7 @@ impl Pane {
         if !PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = None;
         }
+        self.update_diagnostics(cx);
         cx.notify();
     }
 
@@ -1839,23 +1884,6 @@ impl Pane {
         }
     }
 
-    pub fn git_aware_icon_color(
-        git_status: Option<GitFileStatus>,
-        ignored: bool,
-        selected: bool,
-    ) -> Color {
-        if ignored {
-            Color::Ignored
-        } else {
-            match git_status {
-                Some(GitFileStatus::Added) => Color::Created,
-                Some(GitFileStatus::Modified) => Color::Modified,
-                Some(GitFileStatus::Conflict) => Color::Conflict,
-                None => Self::icon_color(selected),
-            }
-        }
-    }
-
     fn toggle_pin_tab(&mut self, _: &TogglePinTab, cx: &mut ViewContext<'_, Self>) {
         if self.items.is_empty() {
             return;
@@ -1919,8 +1947,6 @@ impl Pane {
         focus_handle: &FocusHandle,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
-        let project_path = item.project_path(cx);
-
         let is_active = ix == self.active_item_index;
         let is_preview = self
             .preview_item_id
@@ -1936,19 +1962,57 @@ impl Pane {
             cx,
         );
 
-        let icon_color = if ItemSettings::get_global(cx).git_status {
-            project_path
-                .as_ref()
-                .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
-                .map(|entry| {
-                    Self::git_aware_icon_color(entry.git_status, entry.is_ignored, is_active)
-                })
-                .unwrap_or_else(|| Self::icon_color(is_active))
+        let item_diagnostic = item
+            .project_path(cx)
+            .map_or(None, |project_path| self.diagnostics.get(&project_path));
+
+        let decorated_icon = item_diagnostic.map_or(None, |diagnostic| {
+            let icon = match item.tab_icon(cx) {
+                Some(icon) => icon,
+                None => return None,
+            };
+
+            let knockout_item_color = if is_active {
+                cx.theme().colors().tab_active_background
+            } else {
+                cx.theme().colors().tab_bar_background
+            };
+
+            let (icon_decoration, icon_color) = if matches!(diagnostic, &DiagnosticSeverity::ERROR)
+            {
+                (IconDecorationKind::X, Color::Error)
+            } else {
+                (IconDecorationKind::Triangle, Color::Warning)
+            };
+
+            Some(DecoratedIcon::new(
+                icon.size(IconSize::Small).color(Color::Muted),
+                Some(
+                    IconDecoration::new(icon_decoration, knockout_item_color, cx)
+                        .color(icon_color.color(cx))
+                        .position(Point {
+                            x: px(-2.),
+                            y: px(-2.),
+                        }),
+                ),
+            ))
+        });
+
+        let icon = if decorated_icon.is_none() {
+            match item_diagnostic {
+                Some(&DiagnosticSeverity::ERROR) => {
+                    Some(Icon::new(IconName::X).color(Color::Error))
+                }
+                Some(&DiagnosticSeverity::WARNING) => {
+                    Some(Icon::new(IconName::Triangle).color(Color::Warning))
+                }
+                _ => item.tab_icon(cx).map(|icon| icon.color(Color::Muted)),
+            }
+            .map(|icon| icon.size(IconSize::Small))
         } else {
-            Self::icon_color(is_active)
+            None
         };
 
-        let icon = item.tab_icon(cx);
         let settings = ItemSettings::get_global(cx);
         let close_side = &settings.close_position;
         let always_show_close_button = settings.always_show_close_button;
@@ -2078,7 +2142,13 @@ impl Pane {
             .child(
                 h_flex()
                     .gap_1()
-                    .children(icon.map(|icon| icon.size(IconSize::Small).color(icon_color)))
+                    .child(if let Some(decorated_icon) = decorated_icon {
+                        div().child(decorated_icon.into_any_element())
+                    } else if let Some(icon) = icon {
+                        div().child(icon.into_any_element())
+                    } else {
+                        div()
+                    })
                     .child(label),
             );
 

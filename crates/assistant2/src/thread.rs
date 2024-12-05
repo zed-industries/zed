@@ -2,22 +2,39 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use assistant_tool::ToolWorkingSet;
+use chrono::{DateTime, Utc};
 use collections::HashMap;
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, EventEmitter, ModelContext, SharedString, Task};
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResult, LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
-    StopReason,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, Role, StopReason,
 };
 use language_models::provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError};
 use serde::{Deserialize, Serialize};
-use util::post_inc;
+use util::{post_inc, TryFutureExt as _};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
     Chat,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct ThreadId(Arc<str>);
+
+impl ThreadId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+impl std::fmt::Display for ThreadId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -39,6 +56,10 @@ pub struct Message {
 
 /// A thread of conversation with the LLM.
 pub struct Thread {
+    id: ThreadId,
+    updated_at: DateTime<Utc>,
+    summary: Option<SharedString>,
+    pending_summary: Task<Option<()>>,
     messages: Vec<Message>,
     next_message_id: MessageId,
     completion_count: usize,
@@ -52,6 +73,10 @@ pub struct Thread {
 impl Thread {
     pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut ModelContext<Self>) -> Self {
         Self {
+            id: ThreadId::new(),
+            updated_at: Utc::now(),
+            summary: None,
+            pending_summary: Task::ready(None),
             messages: Vec::new(),
             next_message_id: MessageId(0),
             completion_count: 0,
@@ -63,8 +88,37 @@ impl Thread {
         }
     }
 
+    pub fn id(&self) -> &ThreadId {
+        &self.id
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+
+    pub fn updated_at(&self) -> DateTime<Utc> {
+        self.updated_at
+    }
+
+    pub fn touch_updated_at(&mut self) {
+        self.updated_at = Utc::now();
+    }
+
+    pub fn summary(&self) -> Option<SharedString> {
+        self.summary.clone()
+    }
+
+    pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut ModelContext<Self>) {
+        self.summary = Some(summary.into());
+        cx.emit(ThreadEvent::SummaryChanged);
+    }
+
     pub fn message(&self, id: MessageId) -> Option<&Message> {
         self.messages.iter().find(|message| message.id == id)
+    }
+
+    pub fn messages(&self) -> impl Iterator<Item = &Message> {
+        self.messages.iter()
     }
 
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
@@ -76,12 +130,22 @@ impl Thread {
     }
 
     pub fn insert_user_message(&mut self, text: impl Into<String>, cx: &mut ModelContext<Self>) {
+        self.insert_message(Role::User, text, cx)
+    }
+
+    pub fn insert_message(
+        &mut self,
+        role: Role,
+        text: impl Into<String>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let id = self.next_message_id.post_inc();
         self.messages.push(Message {
             id,
-            role: Role::User,
+            role,
             text: text.into(),
         });
+        self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
     }
 
@@ -152,13 +216,7 @@ impl Thread {
                     thread.update(&mut cx, |thread, cx| {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
-                                let id = thread.next_message_id.post_inc();
-                                thread.messages.push(Message {
-                                    id,
-                                    role: Role::Assistant,
-                                    text: String::new(),
-                                });
-                                cx.emit(ThreadEvent::MessageAdded(id));
+                                thread.insert_message(Role::Assistant, String::new(), cx);
                             }
                             LanguageModelCompletionEvent::Stop(reason) => {
                                 stop_reason = reason;
@@ -200,6 +258,7 @@ impl Thread {
                             }
                         }
 
+                        thread.touch_updated_at();
                         cx.emit(ThreadEvent::StreamedCompletion);
                         cx.notify();
                     })?;
@@ -207,10 +266,14 @@ impl Thread {
                     smol::future::yield_now().await;
                 }
 
-                thread.update(&mut cx, |thread, _cx| {
+                thread.update(&mut cx, |thread, cx| {
                     thread
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
+
+                    if thread.summary.is_none() && thread.messages.len() >= 2 {
+                        thread.summarize(cx);
+                    }
                 })?;
 
                 anyhow::Ok(stop_reason)
@@ -250,6 +313,59 @@ impl Thread {
         self.pending_completions.push(PendingCompletion {
             id: pending_completion_id,
             _task: task,
+        });
+    }
+
+    pub fn summarize(&mut self, cx: &mut ModelContext<Self>) {
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+            return;
+        };
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
+
+        if !provider.is_authenticated(cx) {
+            return;
+        }
+
+        let mut request = self.to_completion_request(RequestKind::Chat, cx);
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![
+                "Generate a concise 3-7 word title for this conversation, omitting punctuation. Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`"
+                    .into(),
+            ],
+            cache: false,
+        });
+
+        self.pending_summary = cx.spawn(|this, mut cx| {
+            async move {
+                let stream = model.stream_completion_text(request, &cx);
+                let mut messages = stream.await?;
+
+                let mut new_summary = String::new();
+                while let Some(message) = messages.stream.next().await {
+                    let text = message?;
+                    let mut lines = text.lines();
+                    new_summary.extend(lines.next());
+
+                    // Stop if the LLM generated multiple lines.
+                    if lines.next().is_some() {
+                        break;
+                    }
+                }
+
+                this.update(&mut cx, |this, cx| {
+                    if !new_summary.is_empty() {
+                        this.summary = Some(new_summary.into());
+                    }
+
+                    cx.emit(ThreadEvent::SummaryChanged);
+                })?;
+
+                anyhow::Ok(())
+            }
+            .log_err()
         });
     }
 
@@ -326,6 +442,7 @@ pub enum ThreadEvent {
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
     MessageAdded(MessageId),
+    SummaryChanged,
     UsePendingTools,
     ToolFinished {
         #[allow(unused)]

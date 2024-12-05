@@ -810,7 +810,7 @@ impl Workspace {
                     this.collaborator_left(*peer_id, cx);
                 }
 
-                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
+                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(cx);
                     this.serialize_workspace(cx);
                 }
@@ -832,7 +832,7 @@ impl Workspace {
                     cx.remove_window();
                 }
 
-                project::Event::DeletedEntry(entry_id) => {
+                project::Event::DeletedEntry(_, entry_id) => {
                     for pane in this.panes.iter() {
                         pane.update(cx, |pane, cx| {
                             pane.handle_deleted_project_item(*entry_id, cx)

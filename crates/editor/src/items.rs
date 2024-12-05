@@ -737,7 +737,7 @@ impl Item for Editor {
         let buffers = self.buffer().clone().read(cx).all_buffers();
         let buffers = buffers
             .into_iter()
-            .map(|handle| handle.read(cx).diff_base_buffer().unwrap_or(handle.clone()))
+            .map(|handle| handle.read(cx).base_buffer().unwrap_or(handle.clone()))
             .collect::<HashSet<_>>();
         cx.spawn(|this, mut cx| async move {
             if format {

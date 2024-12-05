@@ -2574,19 +2574,23 @@ async fn test_git_diff_base_change(
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
+    let change_set_local_a = project_local
+        .update(cx_a, |p, cx| {
+            p.open_unstaged_changes(buffer_local_a.clone(), cx)
+        })
+        .await
+        .unwrap();
 
     // Wait for it to catch up to the new diff
     executor.run_until_parked();
-
-    // Smoke test diffing
-
-    buffer_local_a.read_with(cx_a, |buffer, _| {
+    change_set_local_a.read_with(cx_a, |change_set, cx| {
+        let buffer = buffer_local_a.read(cx);
         assert_eq!(
-            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            change_set.base_text_string(cx).as_deref(),
             Some(diff_base.as_str())
         );
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
+            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
@@ -2598,25 +2602,30 @@ async fn test_git_diff_base_change(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
+    let change_set_remote_a = project_remote
+        .update(cx_b, |p, cx| {
+            p.open_unstaged_changes(buffer_remote_a.clone(), cx)
+        })
+        .await
+        .unwrap();
 
     // Wait remote buffer to catch up to the new diff
     executor.run_until_parked();
-
-    // Smoke test diffing
-
-    buffer_remote_a.read_with(cx_b, |buffer, _| {
+    change_set_remote_a.read_with(cx_b, |change_set, cx| {
+        let buffer = buffer_remote_a.read(cx);
         assert_eq!(
-            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            change_set.base_text_string(cx).as_deref(),
             Some(diff_base.as_str())
         );
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
+            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
         );
     });
 
+    // Update the staged text of the open buffer
     client_a.fs().set_index_for_repo(
         Path::new("/dir/.git"),
         &[(Path::new("a.txt"), new_diff_base.clone())],
@@ -2624,40 +2633,35 @@ async fn test_git_diff_base_change(
 
     // Wait for buffer_local_a to receive it
     executor.run_until_parked();
-
-    // Smoke test new diffing
-
-    buffer_local_a.read_with(cx_a, |buffer, _| {
+    change_set_local_a.read_with(cx_a, |change_set, cx| {
+        let buffer = buffer_local_a.read(cx);
         assert_eq!(
-            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            change_set.base_text_string(cx).as_deref(),
             Some(new_diff_base.as_str())
         );
-
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
+            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff_base,
+            &new_diff_base,
             &[(2..3, "", "three\n")],
         );
     });
 
-    // Smoke test B
-
-    buffer_remote_a.read_with(cx_b, |buffer, _| {
+    change_set_remote_a.read_with(cx_b, |change_set, cx| {
+        let buffer = buffer_remote_a.read(cx);
         assert_eq!(
-            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            change_set.base_text_string(cx).as_deref(),
             Some(new_diff_base.as_str())
         );
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
+            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff_base,
+            &new_diff_base,
             &[(2..3, "", "three\n")],
         );
     });
 
-    //Nested git dir
-
+    // Nested git dir
     let diff_base = "
         one
         three
@@ -2680,19 +2684,23 @@ async fn test_git_diff_base_change(
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
         .await
         .unwrap();
+    let change_set_local_b = project_local
+        .update(cx_a, |p, cx| {
+            p.open_unstaged_changes(buffer_local_b.clone(), cx)
+        })
+        .await
+        .unwrap();
 
     // Wait for it to catch up to the new diff
     executor.run_until_parked();
-
-    // Smoke test diffing
-
-    buffer_local_b.read_with(cx_a, |buffer, _| {
+    change_set_local_b.read_with(cx_a, |change_set, cx| {
+        let buffer = buffer_local_b.read(cx);
         assert_eq!(
-            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            change_set.base_text_string(cx).as_deref(),
             Some(diff_base.as_str())
         );
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
+            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
@@ -2704,25 +2712,29 @@ async fn test_git_diff_base_change(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
         .await
         .unwrap();
+    let change_set_remote_b = project_remote
+        .update(cx_b, |p, cx| {
+            p.open_unstaged_changes(buffer_remote_b.clone(), cx)
+        })
+        .await
+        .unwrap();
 
-    // Wait remote buffer to catch up to the new diff
     executor.run_until_parked();
-
-    // Smoke test diffing
-
-    buffer_remote_b.read_with(cx_b, |buffer, _| {
+    change_set_remote_b.read_with(cx_b, |change_set, cx| {
+        let buffer = buffer_remote_b.read(cx);
         assert_eq!(
-            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            change_set.base_text_string(cx).as_deref(),
             Some(diff_base.as_str())
         );
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
+            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
         );
     });
 
+    // Update the staged text
     client_a.fs().set_index_for_repo(
         Path::new("/dir/sub/.git"),
         &[(Path::new("b.txt"), new_diff_base.clone())],
@@ -2730,43 +2742,30 @@ async fn test_git_diff_base_change(
 
     // Wait for buffer_local_b to receive it
     executor.run_until_parked();
-
-    // Smoke test new diffing
-
-    buffer_local_b.read_with(cx_a, |buffer, _| {
+    change_set_local_b.read_with(cx_a, |change_set, cx| {
+        let buffer = buffer_local_b.read(cx);
         assert_eq!(
-            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            change_set.base_text_string(cx).as_deref(),
             Some(new_diff_base.as_str())
         );
-        println!("{:?}", buffer.as_rope().to_string());
-        println!("{:?}", buffer.diff_base());
-        println!(
-            "{:?}",
-            buffer
-                .snapshot()
-                .git_diff_hunks_in_row_range(0..4)
-                .collect::<Vec<_>>()
-        );
-
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
+            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff_base,
+            &new_diff_base,
             &[(2..3, "", "three\n")],
         );
     });
 
-    // Smoke test B
-
-    buffer_remote_b.read_with(cx_b, |buffer, _| {
+    change_set_remote_b.read_with(cx_b, |change_set, cx| {
+        let buffer = buffer_remote_b.read(cx);
         assert_eq!(
-            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            change_set.base_text_string(cx).as_deref(),
             Some(new_diff_base.as_str())
         );
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
+            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff_base,
+            &new_diff_base,
             &[(2..3, "", "three\n")],
         );
     });

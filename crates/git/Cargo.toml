@@ -14,7 +14,6 @@ path = "src/git.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-clock.workspace = true
 collections.workspace = true
 derive_more.workspace = true
 git2.workspace = true

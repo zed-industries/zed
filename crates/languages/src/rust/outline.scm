@@ -15,7 +15,11 @@
     (visibility_modifier)? @context
     name: (_) @name) @item
 
-(function_item
+(impl_item
+    "impl" @context
+    trait: (_)? @name
+    "for"? @context
+    type: (_) @name
     body: (_ "{" @open (_)* "}" @close)) @item
 
 (trait_item

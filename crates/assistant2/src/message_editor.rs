@@ -1,16 +1,22 @@
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AppContext, FocusableView, Model, TextStyle, View};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
+use picker::Picker;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, KeyBinding};
+use ui::{
+    prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, IconButtonShape, KeyBinding,
+    PopoverMenuHandle,
+};
 
+use crate::context_picker::{ContextPicker, ContextPickerDelegate};
 use crate::thread::{RequestKind, Thread};
 use crate::Chat;
 
 pub struct MessageEditor {
     thread: Model<Thread>,
     editor: View<Editor>,
+    pub(crate) context_picker_handle: PopoverMenuHandle<Picker<ContextPickerDelegate>>,
     use_tools: bool,
 }
 
@@ -24,6 +30,7 @@ impl MessageEditor {
 
                 editor
             }),
+            context_picker_handle: PopoverMenuHandle::default(),
             use_tools: false,
         }
     }
@@ -98,6 +105,14 @@ impl Render for MessageEditor {
             .gap_2()
             .p_2()
             .bg(cx.theme().colors().editor_background)
+            .child(
+                h_flex().gap_2().child(ContextPicker::new(
+                    cx.view().downgrade(),
+                    IconButton::new("add-context", IconName::Plus)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::Small),
+                )),
+            )
             .child({
                 let settings = ThemeSettings::get_global(cx);
                 let text_style = TextStyle {
@@ -123,26 +138,17 @@ impl Render for MessageEditor {
             .child(
                 h_flex()
                     .justify_between()
-                    .child(
-                        h_flex()
-                            .child(
-                                Button::new("add-context", "Add Context")
-                                    .style(ButtonStyle::Filled)
-                                    .icon(IconName::Plus)
-                                    .icon_position(IconPosition::Start),
-                            )
-                            .child(CheckboxWithLabel::new(
-                                "use-tools",
-                                Label::new("Tools"),
-                                self.use_tools.into(),
-                                cx.listener(|this, selection, _cx| {
-                                    this.use_tools = match selection {
-                                        Selection::Selected => true,
-                                        Selection::Unselected | Selection::Indeterminate => false,
-                                    };
-                                }),
-                            )),
-                    )
+                    .child(h_flex().gap_2().child(CheckboxWithLabel::new(
+                        "use-tools",
+                        Label::new("Tools"),
+                        self.use_tools.into(),
+                        cx.listener(|this, selection, _cx| {
+                            this.use_tools = match selection {
+                                Selection::Selected => true,
+                                Selection::Unselected | Selection::Indeterminate => false,
+                            };
+                        }),
+                    )))
                     .child(
                         h_flex()
                             .gap_2()

@@ -1,6 +1,9 @@
+mod active_thread;
 mod assistant_panel;
+mod context_picker;
 mod message_editor;
 mod thread;
+mod thread_history;
 mod thread_store;
 
 use command_palette_hooks::CommandPaletteFilter;
