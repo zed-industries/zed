@@ -2861,7 +2861,6 @@ impl EditorElement {
                         ));
                     }
 
-                    // todo!("do we wanna show the remainder of the line after offset?")
                     let text = gpui::StyledText::new(text).with_highlights(text_style, highlights);
 
                     let mut element = div()
