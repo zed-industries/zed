@@ -748,22 +748,18 @@ impl BlockMap {
 
         std::iter::from_fn(move || {
             let excerpt_boundary = boundaries.next()?;
-            let wrap_row;
-            if excerpt_boundary.next.is_some() {
-                wrap_row = wrap_snapshot
-                    .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
-                    .row();
+            let wrap_row = if excerpt_boundary.next.is_some() {
+                wrap_snapshot.make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
             } else {
-                wrap_row = wrap_snapshot
-                    .make_wrap_point(
-                        Point::new(
-                            excerpt_boundary.row.0,
-                            buffer.line_len(excerpt_boundary.row),
-                        ),
-                        Bias::Left,
-                    )
-                    .row();
+                wrap_snapshot.make_wrap_point(
+                    Point::new(
+                        excerpt_boundary.row.0,
+                        buffer.line_len(excerpt_boundary.row),
+                    ),
+                    Bias::Left,
+                )
             }
+            .row();
 
             let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
                 (_, None) => None,
@@ -2622,7 +2618,7 @@ mod tests {
                 buffer_start_header_height,
                 excerpt_header_height,
                 &buffer_snapshot,
-                &folded_buffers,
+                &HashSet::default(),
                 0..,
                 &wraps_snapshot,
             ));
