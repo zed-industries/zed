@@ -150,7 +150,7 @@ pub struct EditorElement {
 type DisplayRowDelta = u32;
 
 impl EditorElement {
-    pub(crate) const SCROLLBAR_WIDTH: Pixels = px(13.);
+    pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
 
     pub fn new(editor: &View<Editor>, style: EditorStyle) -> Self {
         Self {
@@ -1173,9 +1173,11 @@ impl EditorElement {
         scroll_position: gpui::Point<f32>,
         text_units_per_page: AxisPair<f32>,
         non_visible_cursors: bool,
+        letter_size: Size<Pixels>,
         cx: &mut WindowContext,
     ) -> AxisPair<Option<ScrollbarLayout>> {
-        let em_width = (1.0 / text_units_per_page.horizontal) * bounds.size.width;
+        // NOTE: The width of a character in the editor display
+        let em_width = letter_size.width;
 
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
         let show_scrollbars = match scrollbar_settings.show {
@@ -1215,6 +1217,7 @@ impl EditorElement {
             return axis_pair(None, None);
         }
 
+        // NOTE: The current visible range on the screen
         let visible_range = axis_pair(
             axes.horizontal
                 .then(|| scroll_position.x..scroll_position.x + text_units_per_page.horizontal),
@@ -1235,6 +1238,7 @@ impl EditorElement {
             });
         }
 
+        // NOTE: The heights and widths of the scrollbars
         let track_bounds = axis_pair(
             axes.horizontal.then(|| {
                 Bounds::from_corners(
@@ -1261,58 +1265,56 @@ impl EditorElement {
             }),
         );
 
-        let text_units_per_page = axis_pair(
-            track_bounds
-                .horizontal
-                .map_or(text_units_per_page.horizontal, |bounds_x| {
-                    let vertical_width = track_bounds
-                        .vertical
-                        .map_or(px(0.), |vertical| vertical.size.width);
+        // let settings = EditorSettings::get_global(cx);
 
-                    (bounds_x.size.width - vertical_width) / em_width
-                }),
-            text_units_per_page.vertical,
+        let scroll_range_size = scroll_range(&bounds, &letter_size, snapshot, cx).size;
+
+        // let scroll_beyond_last_line: AxisPair<f32> = match settings.scroll_beyond_last_line {
+        //     ScrollBeyondLastLine::OnePage => text_units_per_page.clone(),
+        //     ScrollBeyondLastLine::Off => axis_pair(1.0, 1.0),
+        //     // TODO: This should be ScrollMargin not VerticalScrollMargin
+        //     ScrollBeyondLastLine::VerticalScrollMargin => axis_pair(
+        //         1.0 + settings.horizontal_scroll_margin,
+        //         1.0 + settings.vertical_scroll_margin,
+        //     ),
+        // };
+
+        let total_text_units = axis_pair(
+            Some(scroll_range_size.width / letter_size.width),
+            Some(scroll_range_size.height / letter_size.height),
         );
 
-        let settings = EditorSettings::get_global(cx);
-        let scroll_beyond_last_line: AxisPair<f32> = match settings.scroll_beyond_last_line {
-            ScrollBeyondLastLine::OnePage => text_units_per_page.clone(),
-            ScrollBeyondLastLine::Off => axis_pair(1.0, 1.0),
-            // TODO: This should be ScrollMargin not VerticalScrollMargin
-            ScrollBeyondLastLine::VerticalScrollMargin => axis_pair(
-                1.0 + settings.horizontal_scroll_margin,
-                1.0 + settings.vertical_scroll_margin,
-            ),
-        };
+        // let total_text_units = {
+        //     let total_text_units_x = {
+        //         // TODO: Cleanup
+        //         // let ems_in_bounds = track_bounds
+        //         //     .horizontal
+        //         //     .map(|bounds| bounds.size.width / em_width);
 
-        let total_text_units = {
-            let total_text_units_x = {
-                // TODO: Cleanup
-                // let ems_in_bounds = track_bounds
-                //     .horizontal
-                //     .map(|bounds| bounds.size.width / em_width);
+        //         // TODO: Fix the scroll sideways (and possibly down too)
+        //         // The text render range shouldn't include the scroll to the side.
+        //         // let longest_line = (snapshot.line_len(snapshot.longest_row()) as f32);
+        //         // Some(
+        //         //     (longest_line + scroll_beyond_last_line.horizontal)
+        //         //         .max(text_units_per_page.horizontal),
+        //         // )
+        //         // longest_line.map(|longest| {
+        //         //     (longest + scroll_beyond_last_line.horizontal)
+        //         //         .max(text_units_per_page.horizontal)
+        //         // })
 
-                // TODO: Fix the scroll sideways (and possibly down too)
-                // The text render range shouldn't include the scroll to the side.
-                let longest_line = (snapshot.line_len(snapshot.longest_row()) as f32);
-                Some(
-                    (longest_line + scroll_beyond_last_line.horizontal)
-                        .max(text_units_per_page.horizontal),
-                )
-                // longest_line.map(|longest| {
-                //     (longest + scroll_beyond_last_line.horizontal)
-                //         .max(text_units_per_page.horizontal)
-                // })
-            };
+        //         Some(scroll_width / em_width)
+        //     };
 
-            let total_text_units_y = axes.vertical.then(|| {
-                (snapshot.max_point().row().as_f32() + scroll_beyond_last_line.vertical)
-                    .max(text_units_per_page.vertical)
-            });
+        //     let total_text_units_y = axes.vertical.then(|| {
+        //         (snapshot.max_point().row().as_f32() + scroll_beyond_last_line.vertical)
+        //             .max(text_units_per_page.vertical)
+        //     });
 
-            axis_pair(total_text_units_x, total_text_units_y)
-        };
+        //     axis_pair(total_text_units_x, total_text_units_y)
+        // };
 
+        // NOTE: The amount of scrollbar pixels per text unit
         let px_per_text_unit = axis_pair(
             total_text_units
                 .horizontal
@@ -1324,22 +1326,27 @@ impl EditorElement {
                 .map(|(text_units, bounds)| bounds.size.height / text_units),
         );
 
+        // NOTE: The width of the thumb in the scrollbar
         let thumb_size = axis_pair(
             px_per_text_unit
                 .horizontal
                 .zip(total_text_units.horizontal)
                 .zip(track_bounds.horizontal)
                 .map(|((px_per_unit, total_text_units_x), track_bounds_x)| {
-                    (track_bounds_x.size.width
-                        - (total_text_units_x - text_units_per_page.horizontal).max(0.)
-                            * px_per_unit)
-                        .max(ScrollbarLayout::MIN_THUMB_HEIGHT)
+                    // (track_bounds_x.size.width
+                    //     - (total_text_units_x - text_units_per_page.horizontal).max(0.)
+                    //         * px_per_unit)
+                    //     .max(ScrollbarLayout::MIN_THUMB_HEIGHT)
+
+                    track_bounds_x.size.width
+                        * (text_units_per_page.horizontal / total_text_units_x)
                 }),
             px_per_text_unit.vertical.map(|px_per_unit| {
                 (px_per_unit * text_units_per_page.vertical).max(ScrollbarLayout::MIN_THUMB_HEIGHT)
             }),
         );
 
+        // NOTE: Space not taken by track bounds divided by text units not on screen
         let text_unit_size = axis_pair(
             thumb_size
                 .horizontal
@@ -1357,6 +1364,33 @@ impl EditorElement {
                     (track_bounds.size.height - thumb_size)
                         / (total_text_units - text_units_per_page.vertical).max(0.)
                 }),
+        );
+
+        println!(
+            "text_unit_size_x: {}",
+            text_unit_size.horizontal.unwrap_or_default()
+        );
+
+        println!("em_width: {}", em_width);
+
+        println!(
+            "(total_text_units - text_units_per_page.horizontal): {}",
+            (total_text_units.horizontal.unwrap_or_default() - text_units_per_page.horizontal)
+        );
+
+        println!(
+            "(total_text_units - text_units_per_page.vertical): {}",
+            (total_text_units.vertical.unwrap_or_default() - text_units_per_page.vertical)
+        );
+
+        println!(
+            "total_text_units.vertical: {}",
+            total_text_units.vertical.unwrap_or_default()
+        );
+
+        println!(
+            "text_units_per_page.vertical: {}",
+            text_units_per_page.vertical
         );
 
         let horizontal_scrollbar = track_bounds
@@ -3740,6 +3774,8 @@ impl EditorElement {
     fn paint_scrollbars(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         let (scrollbar_x, scrollbar_y) = layout.scrollbars_layout.as_xy();
 
+        use gpui::rgb;
+
         if let Some(scrollbar_layout) = scrollbar_x {
             let hitbox = scrollbar_layout.hitbox.clone();
             let text_unit_size = scrollbar_layout.text_unit_size;
@@ -3751,7 +3787,8 @@ impl EditorElement {
                     cx.paint_quad(quad(
                         hitbox.bounds,
                         Corners::default(),
-                        cx.theme().colors().scrollbar_track_background,
+                        rgb(0xff0000),
+                        // cx.theme().colors().scrollbar_track_background,
                         Edges {
                             top: Pixels::ZERO,
                             right: Pixels::ZERO,
@@ -3764,7 +3801,8 @@ impl EditorElement {
                     cx.paint_quad(quad(
                         thumb_bounds,
                         Corners::default(),
-                        cx.theme().colors().scrollbar_thumb_background,
+                        rgb(0xff00ff),
+                        // cx.theme().colors().scrollbar_thumb_background,
                         Edges {
                             top: Pixels::ZERO,
                             right: Pixels::ZERO,
@@ -3800,6 +3838,7 @@ impl EditorElement {
                             let new_x = event.position.x;
                             if (hitbox.left()..hitbox.right()).contains(&x) {
                                 let mut position = editor.scroll_position(cx);
+
                                 position.x += (new_x - x) / text_unit_size;
                                 if position.x < 0.0 {
                                     position.x = 0.0;
@@ -3898,7 +3937,8 @@ impl EditorElement {
                     cx.paint_quad(quad(
                         hitbox.bounds,
                         Corners::default(),
-                        cx.theme().colors().scrollbar_track_background,
+                        // cx.theme().colors().scrollbar_track_background,
+                        rgb(0x00ff00),
                         Edges {
                             top: Pixels::ZERO,
                             right: Pixels::ZERO,
@@ -3923,7 +3963,8 @@ impl EditorElement {
                     cx.paint_quad(quad(
                         thumb_bounds,
                         Corners::default(),
-                        cx.theme().colors().scrollbar_thumb_background,
+                        // cx.theme().colors().scrollbar_thumb_background,
+                        rgb(0x00ffff),
                         Edges {
                             top: Pixels::ZERO,
                             right: Pixels::ZERO,
@@ -5355,6 +5396,8 @@ impl Element for EditorElement {
                         .unwrap()
                         .width;
 
+                    let letter_size = size(em_width, line_height);
+
                     let gutter_dimensions = snapshot.gutter_dimensions(
                         font_id,
                         font_size,
@@ -5371,50 +5414,7 @@ impl Element for EditorElement {
                         px(0.)
                     };
 
-                    // TODO: This code exists twice, this can be condensed
-                    let hitbox = cx.insert_hitbox(bounds, false);
-                    let gutter_hitbox =
-                        cx.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
-                    let text_hitbox = cx.insert_hitbox(
-                        Bounds {
-                            origin: gutter_hitbox.upper_right(),
-                            size: size(text_width, bounds.size.height),
-                        },
-                        false,
-                    );
-
-                    let content_origin =
-                        text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
-
-                    let scrollbar_bounds =
-                        Bounds::from_corners(content_origin, bounds.lower_right());
-
-                    let height_in_lines = scrollbar_bounds.size.height / line_height;
-                    let width_in_chars = scrollbar_bounds.size.width / em_width;
-
-                    let text_units_per_page = axis_pair(width_in_chars, height_in_lines);
-
-                    let settings = EditorSettings::get_global(cx);
-                    let scroll_beyond_last_line: AxisPair<f32> =
-                        match settings.scroll_beyond_last_line {
-                            ScrollBeyondLastLine::OnePage => text_units_per_page.clone(),
-                            ScrollBeyondLastLine::Off => axis_pair(1.0, 1.0),
-                            // TODO: This should be ScrollMargin not VerticalScrollMargin
-                            ScrollBeyondLastLine::VerticalScrollMargin => axis_pair(
-                                1.0 + settings.horizontal_scroll_margin,
-                                1.0 + settings.vertical_scroll_margin,
-                            ),
-                        };
-
-                    let overscroll = size(
-                        em_width * scroll_beyond_last_line.horizontal + right_margin,
-                        px(0.),
-                    );
-
                     let editor_width = text_width - gutter_dimensions.margin - em_width;
-
-                    println!("text_width: {}", text_width);
-                    println!("editor_width: {}", editor_width);
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
@@ -5450,28 +5450,33 @@ impl Element for EditorElement {
                         .map(|(guide, active)| (self.column_pixels(*guide, cx), *active))
                         .collect::<SmallVec<[_; 2]>>();
 
-                    // let hitbox = cx.insert_hitbox(bounds, false);
-                    // let gutter_hitbox =
-                    //     cx.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
-                    // let text_hitbox = cx.insert_hitbox(
-                    //     Bounds {
-                    //         origin: gutter_hitbox.upper_right(),
-                    //         size: size(text_width, bounds.size.height),
-                    //     },
-                    //     false,
-                    // );
+                    let hitbox = cx.insert_hitbox(bounds, false);
+                    let gutter_hitbox =
+                        cx.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
+                    let text_hitbox = cx.insert_hitbox(
+                        Bounds {
+                            origin: gutter_hitbox.upper_right(),
+                            size: size(text_width, bounds.size.height),
+                        },
+                        false,
+                    );
                     // Offset the content_bounds from the text_bounds by the gutter margin (which
                     // is roughly half a character wide) to make hit testing work more like how we want.
-                    // let content_origin =
-                    //     text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
+                    let content_origin =
+                        text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
 
-                    // let scrollbar_bounds =
-                    //     Bounds::from_corners(content_origin, bounds.lower_right());
+                    let scrollbar_bounds =
+                        Bounds::from_corners(content_origin, bounds.lower_right());
 
-                    // let height_in_lines = scrollbar_bounds.size.height / line_height;
-                    // let width_in_chars = scrollbar_bounds.size.width / em_width;
+                    let height_in_lines = scrollbar_bounds.size.height / line_height;
+                    let width_in_chars = scrollbar_bounds.size.width / em_width;
 
+                    let text_units_per_page = axis_pair(width_in_chars, height_in_lines);
+
+                    // NOTE: The max row number in the current file, minus one
                     let max_row = snapshot.max_point().row().as_f32();
+
+                    // NOTE: The max scroll position for the top of the window
                     let max_scroll_top = if matches!(snapshot.mode, EditorMode::AutoHeight { .. }) {
                         (max_row - height_in_lines + 1.).max(0.)
                     } else {
@@ -5486,6 +5491,7 @@ impl Element for EditorElement {
                         }
                     };
 
+                    // TODO: Autoscrolling for both axes
                     let mut autoscroll_request = None;
                     let mut autoscroll_containing_element = false;
                     let mut autoscroll_horizontally = false;
@@ -5493,6 +5499,7 @@ impl Element for EditorElement {
                         autoscroll_request = editor.autoscroll_request();
                         autoscroll_containing_element =
                             autoscroll_request.is_some() || editor.has_pending_selection();
+                        // TODO: Is this horizontal or vertical?!
                         autoscroll_horizontally =
                             editor.autoscroll_vertically(bounds, line_height, max_scroll_top, cx);
                         snapshot = editor.snapshot(cx);
@@ -5626,8 +5633,14 @@ impl Element for EditorElement {
                         cx,
                     )
                     .width;
+
                     let mut scroll_width =
-                        longest_line_width.max(max_visible_line_width) + overscroll.width;
+                        scroll_range(&scrollbar_bounds, &letter_size, &snapshot, cx)
+                            .size
+                            .width;
+
+                    // let mut scroll_width =
+                    //     longest_line_width.max(max_visible_line_width) + overscroll.width;
 
                     let blocks = cx.with_element_namespace("blocks", |cx| {
                         self.render_blocks(
@@ -5823,6 +5836,7 @@ impl Element for EditorElement {
                         scroll_position,
                         axis_pair(width_in_chars, height_in_lines),
                         non_visible_cursors,
+                        letter_size,
                         cx,
                     );
 
@@ -6150,6 +6164,38 @@ pub(super) fn gutter_bounds(
     Bounds {
         origin: editor_bounds.origin,
         size: size(gutter_dimensions.width, editor_bounds.size.height),
+    }
+}
+
+pub(super) fn scroll_range(
+    screen_text_bounds: &Bounds<Pixels>,
+    letter_size: &Size<Pixels>,
+    snapshot: &EditorSnapshot,
+    cx: &WindowContext,
+) -> Bounds<Pixels> {
+    let height_in_lines = px(screen_text_bounds.size.height / letter_size.height);
+    let width_in_chars = px(screen_text_bounds.size.width / letter_size.width);
+
+    let settings = EditorSettings::get_global(cx);
+    let scroll_beyond_last_line: Size<Pixels> = match settings.scroll_beyond_last_line {
+        ScrollBeyondLastLine::OnePage => size(height_in_lines, width_in_chars),
+        // TODO: Simplify this down, size(px(.))...
+        ScrollBeyondLastLine::Off => size(px(1.), px(1.)),
+        // TODO: This should be ScrollMargin not VerticalScrollMargin
+        ScrollBeyondLastLine::VerticalScrollMargin => size(
+            px(1.0 + settings.horizontal_scroll_margin),
+            px(1.0 + settings.vertical_scroll_margin),
+        ),
+    };
+
+    let overscroll = size(
+        letter_size.width * scroll_beyond_last_line.width, /* + right_margin */
+        px(0.),
+    );
+
+    Bounds {
+        origin: screen_text_bounds.origin,
+        size: screen_text_bounds.size + overscroll,
     }
 }
 
