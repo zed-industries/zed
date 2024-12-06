@@ -1,4 +1,4 @@
-use crate::{prelude::*, traits::component::Component};
+use crate::{prelude::*, traits::component::ComponentElement};
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
 
@@ -86,60 +86,60 @@ impl RenderOnce for ContentGroup {
     }
 }
 
-impl Component for ContentGroup {
-    fn name(&self) -> &'static str {
-        "Content Group"
-    }
+// impl Component for ContentGroup {
+//     fn name(&self) -> &'static str {
+//         "Content Group"
+//     }
 
-    fn scope(&self) -> &'static str {
-        "layout"
-    }
-}
+//     fn scope(&self) -> &'static str {
+//         "layout"
+//     }
+// }
 
-impl ComponentPreview for ContentGroup {
-    fn description() -> impl Into<Option<&'static str>> {
-        "A flexible container component that can hold other elements. It can be customized with or without a border and background fill."
-    }
+// impl Component for ContentGroup {
+//     fn description() -> impl Into<Option<&'static str>> {
+//         "A flexible container component that can hold other elements. It can be customized with or without a border and background fill."
+//     }
 
-    fn example_label_side() -> ExampleLabelSide {
-        ExampleLabelSide::Bottom
-    }
+//     fn example_label_side() -> ExampleLabelSide {
+//         ExampleLabelSide::Bottom
+//     }
 
-    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        vec![example_group(vec![
-            single_example(
-                "Default",
-                ContentGroup::new()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .h_48()
-                    .child(Label::new("Default ContentBox")),
-            )
-            .grow(),
-            single_example(
-                "Without Border",
-                ContentGroup::new()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .h_48()
-                    .borderless()
-                    .child(Label::new("Borderless ContentBox")),
-            )
-            .grow(),
-            single_example(
-                "Without Fill",
-                ContentGroup::new()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .h_48()
-                    .unfilled()
-                    .child(Label::new("Unfilled ContentBox")),
-            )
-            .grow(),
-        ])
-        .grow()]
-    }
-}
+//     fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+//         vec![example_group(vec![
+//             single_example(
+//                 "Default",
+//                 ContentGroup::new()
+//                     .flex_1()
+//                     .items_center()
+//                     .justify_center()
+//                     .h_48()
+//                     .child(Label::new("Default ContentBox")),
+//             )
+//             .grow(),
+//             single_example(
+//                 "Without Border",
+//                 ContentGroup::new()
+//                     .flex_1()
+//                     .items_center()
+//                     .justify_center()
+//                     .h_48()
+//                     .borderless()
+//                     .child(Label::new("Borderless ContentBox")),
+//             )
+//             .grow(),
+//             single_example(
+//                 "Without Fill",
+//                 ContentGroup::new()
+//                     .flex_1()
+//                     .items_center()
+//                     .justify_center()
+//                     .h_48()
+//                     .unfilled()
+//                     .child(Label::new("Unfilled ContentBox")),
+//             )
+//             .grow(),
+//         ])
+//         .grow()]
+//     }
+// }

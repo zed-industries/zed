@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::{prelude::*, Indicator};
 
 use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
 
@@ -94,5 +94,38 @@ impl RenderOnce for Avatar {
                     .bg(cx.theme().colors().ghost_element_background),
             )
             .children(self.indicator.map(|indicator| div().child(indicator)))
+    }
+}
+
+impl ComponentElement for Avatar {
+    fn scope() -> &'static str {
+        "user"
+    }
+
+    fn preview(cx: &WindowContext) -> Option<AnyElement> {
+        let avatar_1 = "https://avatars.githubusercontent.com/u/1789?s=70&v=4";
+        let avatar_2 = "https://avatars.githubusercontent.com/u/482957?s=70&v=4";
+        let avatar_3 = "https://avatars.githubusercontent.com/u/326587?s=70&v=4";
+
+        Some(
+            v_flex()
+                .gap_4()
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(Avatar::new(avatar_1))
+                        .child(Avatar::new(avatar_2).size(px(48.)))
+                        .child(Avatar::new(avatar_3).grayscale(true)),
+                )
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(Avatar::new(avatar_1).border_color(cx.theme().colors().border))
+                        .child(
+                            Avatar::new(avatar_2).indicator(Indicator::dot().color(Color::Success)),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 }

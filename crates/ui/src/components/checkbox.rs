@@ -113,53 +113,53 @@ impl RenderOnce for Checkbox {
     }
 }
 
-impl ComponentPreview for Checkbox {
-    fn description() -> impl Into<Option<&'static str>> {
-        "A checkbox lets people choose between a pair of opposing states, like enabled and disabled, using a different appearance to indicate each state."
-    }
+// impl Component for Checkbox {
+//     fn description() -> impl Into<Option<&'static str>> {
+//         "A checkbox lets people choose between a pair of opposing states, like enabled and disabled, using a different appearance to indicate each state."
+//     }
 
-    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        vec![
-            example_group_with_title(
-                "Default",
-                vec![
-                    single_example(
-                        "Unselected",
-                        Checkbox::new("checkbox_unselected", Selection::Unselected),
-                    ),
-                    single_example(
-                        "Indeterminate",
-                        Checkbox::new("checkbox_indeterminate", Selection::Indeterminate),
-                    ),
-                    single_example(
-                        "Selected",
-                        Checkbox::new("checkbox_selected", Selection::Selected),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Disabled",
-                vec![
-                    single_example(
-                        "Unselected",
-                        Checkbox::new("checkbox_disabled_unselected", Selection::Unselected)
-                            .disabled(true),
-                    ),
-                    single_example(
-                        "Indeterminate",
-                        Checkbox::new("checkbox_disabled_indeterminate", Selection::Indeterminate)
-                            .disabled(true),
-                    ),
-                    single_example(
-                        "Selected",
-                        Checkbox::new("checkbox_disabled_selected", Selection::Selected)
-                            .disabled(true),
-                    ),
-                ],
-            ),
-        ]
-    }
-}
+//     fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+//         vec![
+//             example_group_with_title(
+//                 "Default",
+//                 vec![
+//                     single_example(
+//                         "Unselected",
+//                         Checkbox::new("checkbox_unselected", Selection::Unselected),
+//                     ),
+//                     single_example(
+//                         "Indeterminate",
+//                         Checkbox::new("checkbox_indeterminate", Selection::Indeterminate),
+//                     ),
+//                     single_example(
+//                         "Selected",
+//                         Checkbox::new("checkbox_selected", Selection::Selected),
+//                     ),
+//                 ],
+//             ),
+//             example_group_with_title(
+//                 "Disabled",
+//                 vec![
+//                     single_example(
+//                         "Unselected",
+//                         Checkbox::new("checkbox_disabled_unselected", Selection::Unselected)
+//                             .disabled(true),
+//                     ),
+//                     single_example(
+//                         "Indeterminate",
+//                         Checkbox::new("checkbox_disabled_indeterminate", Selection::Indeterminate)
+//                             .disabled(true),
+//                     ),
+//                     single_example(
+//                         "Selected",
+//                         Checkbox::new("checkbox_disabled_selected", Selection::Selected)
+//                             .disabled(true),
+//                     ),
+//                 ],
+//             ),
+//         ]
+//     }
+// }
 
 use std::sync::Arc;
 
@@ -209,40 +209,40 @@ impl RenderOnce for CheckboxWithLabel {
     }
 }
 
-impl ComponentPreview for CheckboxWithLabel {
-    fn description() -> impl Into<Option<&'static str>> {
-        "A checkbox with an associated label, allowing users to select an option while providing a descriptive text."
-    }
+// impl Component for CheckboxWithLabel {
+//     fn description() -> impl Into<Option<&'static str>> {
+//         "A checkbox with an associated label, allowing users to select an option while providing a descriptive text."
+//     }
 
-    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        vec![example_group(vec![
-            single_example(
-                "Unselected",
-                CheckboxWithLabel::new(
-                    "checkbox_with_label_unselected",
-                    Label::new("Always save on quit"),
-                    Selection::Unselected,
-                    |_, _| {},
-                ),
-            ),
-            single_example(
-                "Indeterminate",
-                CheckboxWithLabel::new(
-                    "checkbox_with_label_indeterminate",
-                    Label::new("Always save on quit"),
-                    Selection::Indeterminate,
-                    |_, _| {},
-                ),
-            ),
-            single_example(
-                "Selected",
-                CheckboxWithLabel::new(
-                    "checkbox_with_label_selected",
-                    Label::new("Always save on quit"),
-                    Selection::Selected,
-                    |_, _| {},
-                ),
-            ),
-        ])]
-    }
-}
+//     fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+//         vec![example_group(vec![
+//             single_example(
+//                 "Unselected",
+//                 CheckboxWithLabel::new(
+//                     "checkbox_with_label_unselected",
+//                     Label::new("Always save on quit"),
+//                     Selection::Unselected,
+//                     |_, _| {},
+//                 ),
+//             ),
+//             single_example(
+//                 "Indeterminate",
+//                 CheckboxWithLabel::new(
+//                     "checkbox_with_label_indeterminate",
+//                     Label::new("Always save on quit"),
+//                     Selection::Indeterminate,
+//                     |_, _| {},
+//                 ),
+//             ),
+//             single_example(
+//                 "Selected",
+//                 CheckboxWithLabel::new(
+//                     "checkbox_with_label_selected",
+//                     Label::new("Always save on quit"),
+//                     Selection::Selected,
+//                     |_, _| {},
+//                 ),
+//             ),
+//         ])]
+//     }
+// }
