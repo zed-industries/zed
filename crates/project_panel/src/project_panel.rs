@@ -1207,10 +1207,14 @@ impl ProjectPanel {
 
     fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
-            let items_to_delete = self.disjoint_entries(cx);
-            if items_to_delete.is_empty() {
+            let mut items_to_delete = self.disjoint_entries(cx);
+            if self.selection.is_some() && items_to_delete.len() <= 2 {
+                items_to_delete.clear();
+                items_to_delete.insert(self.selection.unwrap());
+            } else if items_to_delete.is_empty() {
                 return None;
             }
+            eprintln!("items_to_delete: {:?}", items_to_delete);
             let project = self.project.read(cx);
 
             let mut dirty_buffers = 0;
