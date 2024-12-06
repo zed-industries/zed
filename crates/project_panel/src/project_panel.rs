@@ -1207,7 +1207,7 @@ impl ProjectPanel {
 
     fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
-            let mut items_to_delete = self.disjoint_entries(cx);
+            let mut items_to_delete = self.disjoint_entries(cx, cx.modifiers().shift);
             if self.selection.is_some() && items_to_delete.len() <= 2 {
                 items_to_delete.clear();
                 items_to_delete.insert(self.selection.unwrap());
@@ -1742,7 +1742,7 @@ impl ProjectPanel {
     }
 
     fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
-        let entries = self.disjoint_entries(cx);
+        let entries = self.disjoint_entries(cx, cx.modifiers().shift);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Cut(entries));
             cx.notify();
@@ -1750,7 +1750,7 @@ impl ProjectPanel {
     }
 
     fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        let entries = self.disjoint_entries(cx);
+        let entries = self.disjoint_entries(cx, cx.modifiers().shift);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Copied(entries));
             cx.notify();
@@ -2124,8 +2124,24 @@ impl ProjectPanel {
         None
     }
 
-    fn disjoint_entries(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
-        let marked_entries = self.marked_entries();
+    fn disjoint_entries(&self, cx: &AppContext, include_selected: bool) -> BTreeSet<SelectedEntry> {
+        let mut marked_entries = self
+            .marked_entries
+            .iter()
+            .map(|entry| SelectedEntry {
+                entry_id: self.resolve_entry(entry.entry_id),
+                worktree_id: entry.worktree_id,
+            })
+            .collect::<BTreeSet<_>>();
+
+        if self.selection.is_some() && include_selected {
+            let selection = self.selection.unwrap();
+            marked_entries.insert(SelectedEntry {
+                entry_id: self.resolve_entry(selection.entry_id),
+                worktree_id: selection.worktree_id,
+            });
+        }
+
         let mut sanitized_entries = BTreeSet::new();
         if marked_entries.is_empty() {
             return sanitized_entries;
