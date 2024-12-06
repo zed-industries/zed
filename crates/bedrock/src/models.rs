@@ -14,6 +14,10 @@ pub enum Model {
     Claude3Sonnet,
     #[serde(rename = "claude-3-5-haiku", alias = "claude-3-5-haiku-latest")]
     Claude3_5Haiku,
+    // Amazon Nova Models
+    AmazonNovaLite,
+    AmazonNovaMicro,
+    AmazonNovaPro,
     // AI21 models
     AI21J2GrandeInstruct,
     AI21J2JumboInstruct,
@@ -80,6 +84,9 @@ impl Model {
             Model::Claude3Opus => "anthropic.claude-3-opus-20240229-v1:0",
             Model::Claude3Sonnet => "anthropic.claude-3-sonnet-20240229-v1:0",
             Model::Claude3_5Haiku => "anthropic.claude-3-5-haiku-20241022-v1:0",
+            Model::AmazonNovaLite => "amazon.nova-lite-v1:0",
+            Model::AmazonNovaMicro => "amazon.nova-micro-v1:0",
+            Model::AmazonNovaPro => "amazon.nova-pro-v1:0",
             Model::AI21J2GrandeInstruct => "ai21.j2-grande-instruct",
             Model::AI21J2JumboInstruct => "ai21.j2-jumbo-instruct",
             Model::AI21J2Mid => "ai21.j2-mid",
@@ -118,6 +125,9 @@ impl Model {
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3_5Haiku => "Claude 3.5 Haiku",
+            Self::AmazonNovaLite => "Amazon Nova Lite",
+            Self::AmazonNovaMicro => "Amazon Nova Micro",
+            Self::AmazonNovaPro => "Amazon Nova Pro",
             Self::AI21J2GrandeInstruct => "AI21 Jurassic2 Grande Instruct",
             Self::AI21J2JumboInstruct => "AI21 Jurassic2 Jumbo Instruct",
             Self::AI21J2Mid => "AI21 Jurassic2 Mid",
