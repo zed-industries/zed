@@ -1,6 +1,10 @@
+mod rate_completion_modal;
+
+pub use rate_completion_modal::*;
+
 use anyhow::{anyhow, Context as _, Result};
 use client::Client;
-use collections::{HashMap, VecDeque};
+use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{AppContext, Context, Global, Model, ModelContext, Subscription, Task};
 use http_client::{HttpClient, Method};
@@ -32,6 +36,18 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 struct InlineCompletionId(Uuid);
 
+impl From<InlineCompletionId> for gpui::ElementId {
+    fn from(value: InlineCompletionId) -> Self {
+        gpui::ElementId::Uuid(value.0)
+    }
+}
+
+impl std::fmt::Display for InlineCompletionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl InlineCompletionId {
     fn new() -> Self {
         Self(Uuid::new_v4())
@@ -43,20 +59,15 @@ struct ZetaGlobal(Model<Zeta>);
 
 impl Global for ZetaGlobal {}
 
-pub struct Zeta {
-    client: Arc<Client>,
-    events: VecDeque<Event>,
-    registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
-    llm_token: LlmApiToken,
-    _llm_token_subscription: Subscription,
-}
-
+#[derive(Clone)]
 pub struct InlineCompletion {
     id: InlineCompletionId,
     path: Arc<Path>,
-    edits: Vec<(Range<Anchor>, String)>,
+    edits: Arc<[(Range<Anchor>, String)]>,
     snapshot: BufferSnapshot,
-    _raw_response: String,
+    input_events: Arc<str>,
+    input_excerpt: Arc<str>,
+    output_excerpt: Arc<str>,
 }
 
 impl InlineCompletion {
@@ -66,7 +77,7 @@ impl InlineCompletion {
         let mut user_edits = new_snapshot
             .edits_since::<usize>(&self.snapshot.version)
             .peekable();
-        for (model_old_range, model_new_text) in &self.edits {
+        for (model_old_range, model_new_text) in self.edits.iter() {
             let model_offset_range = model_old_range.to_offset(&self.snapshot);
             while let Some(next_user_edit) = user_edits.peek() {
                 if next_user_edit.old.end < model_offset_range.start {
@@ -119,15 +130,32 @@ impl std::fmt::Debug for InlineCompletion {
     }
 }
 
+pub enum InlineCompletionRating {
+    Positive,
+    Negative,
+}
+
+pub struct Zeta {
+    client: Arc<Client>,
+    events: VecDeque<Event>,
+    registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
+    recent_completions: VecDeque<InlineCompletion>,
+    rated_completions: HashSet<InlineCompletionId>,
+    llm_token: LlmApiToken,
+    _llm_token_subscription: Subscription,
+}
+
 impl Zeta {
+    pub fn global(cx: &mut AppContext) -> Option<Model<Self>> {
+        cx.try_global::<ZetaGlobal>().map(|global| global.0.clone())
+    }
+
     pub fn register(client: Arc<Client>, cx: &mut AppContext) -> Model<Self> {
-        cx.try_global::<ZetaGlobal>()
-            .map(|global| global.0.clone())
-            .unwrap_or_else(|| {
-                let model = cx.new_model(|cx| Self::new(client, cx));
-                cx.set_global(ZetaGlobal(model.clone()));
-                model
-            })
+        Self::global(cx).unwrap_or_else(|| {
+            let model = cx.new_model(|cx| Self::new(client, cx));
+            cx.set_global(ZetaGlobal(model.clone()));
+            model
+        })
     }
 
     fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
@@ -136,6 +164,8 @@ impl Zeta {
         Self {
             client,
             events: VecDeque::new(),
+            recent_completions: VecDeque::new(),
+            rated_completions: HashSet::default(),
             registered_buffers: HashMap::default(),
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
@@ -220,12 +250,12 @@ impl Zeta {
         }
     }
 
-    pub fn request_inline_completion(
+    pub fn request_completion(
         &mut self,
         buffer: &Model<Buffer>,
         position: language::Anchor,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<InlineCompletion>>> {
+    ) -> Task<Result<InlineCompletion>> {
         let snapshot = self.report_changes_for_buffer(buffer, cx);
         let point = position.to_point(&snapshot);
         let offset = point.to_offset(&snapshot);
@@ -239,26 +269,24 @@ impl Zeta {
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
 
-        cx.spawn(|_this, _cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let start = std::time::Instant::now();
 
             let token = llm_token.acquire(&client).await?;
 
-            let mut event_prompts = String::new();
+            let mut input_events = String::new();
             for event in events {
-                if !event_prompts.is_empty() {
-                    event_prompts.push('\n');
-                    event_prompts.push('\n');
+                if !input_events.is_empty() {
+                    input_events.push('\n');
+                    input_events.push('\n');
                 }
-                event_prompts.push_str(&event.to_prompt());
+                input_events.push_str(&event.to_prompt());
             }
+            let input_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
 
             let prompt = include_str!("./complete_prompt.md")
-                .replace("<events>", &event_prompts)
-                .replace(
-                    "<excerpt>",
-                    &prompt_for_excerpt(&snapshot, &excerpt_range, offset),
-                );
+                .replace("<events>", &input_events)
+                .replace("<excerpt>", &input_excerpt);
 
             log::debug!("predicting edit:\n{}", prompt);
 
@@ -288,10 +316,11 @@ impl Zeta {
             }
 
             let response = serde_json::from_str::<PredictEditsResponse>(&body)?;
+            let output_excerpt = response.text;
             log::debug!("prediction took: {:?}", start.elapsed());
-            log::debug!("completion response: {}", response.text);
+            log::debug!("completion response: {}", output_excerpt);
 
-            let content = response.text.replace(CURSOR_MARKER, "");
+            let content = output_excerpt.replace(CURSOR_MARKER, "");
             let mut new_text = content.as_str();
 
             let codefence_start = new_text
@@ -350,44 +379,51 @@ impl Zeta {
                 }
             }
 
-            if edits.is_empty() {
-                Ok(None)
-            } else {
-                let edits = edits
-                    .into_iter()
-                    .map(|(mut old_range, new_text)| {
-                        let prefix_len = common_prefix(
-                            snapshot.chars_for_range(old_range.clone()),
-                            new_text.chars(),
-                        );
-                        old_range.start += prefix_len;
-                        let suffix_len = common_prefix(
-                            snapshot.reversed_chars_for_range(old_range.clone()),
-                            new_text[prefix_len..].chars().rev(),
-                        );
-                        old_range.end = old_range.end.saturating_sub(suffix_len);
+            let edits = edits
+                .into_iter()
+                .map(|(mut old_range, new_text)| {
+                    let prefix_len = common_prefix(
+                        snapshot.chars_for_range(old_range.clone()),
+                        new_text.chars(),
+                    );
+                    old_range.start += prefix_len;
+                    let suffix_len = common_prefix(
+                        snapshot.reversed_chars_for_range(old_range.clone()),
+                        new_text[prefix_len..].chars().rev(),
+                    );
+                    old_range.end = old_range.end.saturating_sub(suffix_len);
 
-                        let new_text =
-                            new_text[prefix_len..new_text.len() - suffix_len].to_string();
-                        (
-                            snapshot.anchor_after(old_range.start)
-                                ..snapshot.anchor_before(old_range.end),
-                            new_text,
-                        )
-                    })
-                    .collect();
-                Ok(Some(InlineCompletion {
-                    id: InlineCompletionId::new(),
-                    path,
-                    edits,
-                    snapshot,
-                    _raw_response: response.text,
-                }))
-            }
+                    let new_text = new_text[prefix_len..new_text.len() - suffix_len].to_string();
+                    (
+                        snapshot.anchor_after(old_range.start)
+                            ..snapshot.anchor_before(old_range.end),
+                        new_text,
+                    )
+                })
+                .collect();
+            let inline_completion = InlineCompletion {
+                id: InlineCompletionId::new(),
+                path,
+                edits,
+                snapshot,
+                input_events: input_events.into(),
+                input_excerpt: input_excerpt.into(),
+                output_excerpt: output_excerpt.into(),
+            };
+            this.update(&mut cx, |this, cx| {
+                this.recent_completions
+                    .push_front(inline_completion.clone());
+                if this.recent_completions.len() > 50 {
+                    this.recent_completions.pop_back();
+                }
+                cx.notify();
+            })?;
+
+            Ok(inline_completion)
         })
     }
 
-    pub fn accept_inline_completion(
+    pub fn accept_completion(
         &mut self,
         _completion: &InlineCompletion,
         cx: &mut ModelContext<Self>,
@@ -395,12 +431,31 @@ impl Zeta {
         cx.notify();
     }
 
-    pub fn reject_inline_completion(
+    pub fn reject_completion(
         &mut self,
         _completion: &InlineCompletion,
         cx: &mut ModelContext<Self>,
     ) {
         cx.notify();
+    }
+
+    pub fn is_completion_rated(&self, completion_id: InlineCompletionId) -> bool {
+        self.rated_completions.contains(&completion_id)
+    }
+
+    pub fn rate_completion(
+        &mut self,
+        completion_id: InlineCompletionId,
+        rating: InlineCompletionRating,
+        feedback: String,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.rated_completions.insert(completion_id);
+        cx.notify();
+    }
+
+    pub fn recent_completions(&self) -> impl Iterator<Item = &InlineCompletion> {
+        self.recent_completions.iter()
     }
 
     fn report_changes_for_buffer(
@@ -614,13 +669,13 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
             let completion_request = this.update(&mut cx, |this, cx| {
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_inline_completion(&buffer, position, cx)
+                    zeta.request_completion(&buffer, position, cx)
                 })
             });
 
             let mut completion = None;
             if let Ok(completion_request) = completion_request {
-                completion = completion_request.await.log_err().flatten();
+                completion = completion_request.await.log_err();
             }
 
             this.update(&mut cx, |this, cx| {
@@ -644,7 +699,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     fn accept(&mut self, cx: &mut ModelContext<Self>) {
         if let Some(completion) = self.current_completion.as_ref() {
             self.zeta
-                .update(cx, |zeta, cx| zeta.accept_inline_completion(completion, cx));
+                .update(cx, |zeta, cx| zeta.accept_completion(completion, cx));
         }
     }
 
@@ -654,9 +709,8 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(completion) = self.current_completion.take() {
-            self.zeta.update(cx, |zeta, cx| {
-                zeta.reject_inline_completion(&completion, cx)
-            });
+            self.zeta
+                .update(cx, |zeta, cx| zeta.reject_completion(&completion, cx));
         }
     }
 
@@ -731,11 +785,14 @@ mod tests {
                 [(2..5, "REM".to_string()), (9..11, "".to_string())],
                 &buffer,
                 cx,
-            ),
+            )
+            .into(),
             path: Path::new("").into(),
             snapshot: buffer.read(cx).snapshot(),
             id: InlineCompletionId::new(),
-            _raw_response: String::new(),
+            input_events: "".into(),
+            input_excerpt: "".into(),
+            output_excerpt: "".into(),
         };
 
         assert_eq!(
@@ -861,9 +918,8 @@ mod tests {
         let zeta = cx.new_model(|cx| Zeta::new(client, cx));
         let buffer = cx.new_model(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
-        let completion_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_inline_completion(&buffer, cursor, cx)
-        });
+        let completion_task =
+            zeta.update(cx, |zeta, cx| zeta.request_completion(&buffer, cursor, cx));
 
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
         server.respond(
@@ -871,8 +927,10 @@ mod tests {
             proto::GetLlmTokenResponse { token: "".into() },
         );
 
-        let completion = completion_task.await.unwrap().unwrap();
-        buffer.update(cx, |buffer, cx| buffer.edit(completion.edits, None, cx));
+        let completion = completion_task.await.unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(completion.edits.iter().cloned(), None, cx)
+        });
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
             "lorem\nipsum"

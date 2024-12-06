@@ -197,7 +197,7 @@ pub fn initialize_workspace(
         }
 
         let inline_completion_button = cx.new_view(|cx| {
-            inline_completion_button::InlineCompletionButton::new(app_state.fs.clone(), cx)
+            inline_completion_button::InlineCompletionButton::new(workspace.weak_handle(), app_state.fs.clone(), cx)
         });
 
         let diagnostic_summary =
