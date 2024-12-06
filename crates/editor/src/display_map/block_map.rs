@@ -1339,12 +1339,9 @@ impl BlockSnapshot {
         self.transforms.summary().longest_row
     }
 
-    pub fn longest_row_in_range(&self, range: Range<BlockRow>) -> (BlockRow, u32) {
+    pub fn longest_row_in_range(&self, range: Range<BlockRow>) -> BlockRow {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&range.start, Bias::Right, &());
-
-        // input:  [    ]  [      ]  [  ]
-        // output: [    ][][      ][][  ][   ][        ]
 
         let mut longest_row = range.start;
         let mut longest_row_chars = 0;
@@ -1353,7 +1350,10 @@ impl BlockSnapshot {
                 let (output_start, input_start) = cursor.start();
                 let overshoot = range.start.0 - output_start.0;
                 let wrap_start_row = input_start.0 + overshoot;
-                let wrap_end_row = cmp::min(range.end.0 - output_start.0, cursor.end(&()).1 .0);
+                let wrap_end_row = cmp::min(
+                    input_start.0 + (range.end.0 - output_start.0),
+                    cursor.end(&()).1 .0,
+                );
                 let summary = self
                     .wrap_snapshot
                     .text_summary_for_range(wrap_start_row..wrap_end_row);
@@ -1387,7 +1387,7 @@ impl BlockSnapshot {
             }
         }
 
-        (longest_row, longest_row_chars)
+        longest_row
     }
 
     pub(super) fn line_len(&self, row: BlockRow) -> u32 {
@@ -2755,6 +2755,40 @@ mod tests {
                 expected_longest_rows,
                 longest_line_len,
             );
+
+            for _ in 0..10 {
+                let end_row = rng.gen_range(1..=expected_lines.len());
+                let start_row = rng.gen_range(0..end_row);
+
+                let mut expected_longest_rows_in_range = vec![];
+                let mut longest_line_len_in_range = 0;
+
+                let mut row = start_row as u32;
+                for line in &expected_lines[start_row..end_row] {
+                    let line_char_count = line.chars().count() as isize;
+                    match line_char_count.cmp(&longest_line_len_in_range) {
+                        Ordering::Less => {}
+                        Ordering::Equal => expected_longest_rows_in_range.push(row),
+                        Ordering::Greater => {
+                            longest_line_len_in_range = line_char_count;
+                            expected_longest_rows_in_range.clear();
+                            expected_longest_rows_in_range.push(row);
+                        }
+                    }
+                    row += 1;
+                }
+
+                let longest_row_in_range = blocks_snapshot
+                    .longest_row_in_range(BlockRow(start_row as u32)..BlockRow(end_row as u32));
+                assert!(
+                    expected_longest_rows_in_range.contains(&longest_row_in_range.0),
+                    "incorrect longest row {} in range {:?}. expected {:?} with length {}",
+                    longest_row,
+                    start_row..end_row,
+                    expected_longest_rows_in_range,
+                    longest_line_len_in_range,
+                );
+            }
 
             // Ensure that conversion between block points and wrap points is stable.
             for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {

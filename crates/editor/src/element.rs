@@ -2864,10 +2864,8 @@ impl EditorElement {
                     ));
                 }
 
-                let (longest_row, _longest_row_chars) = editor_snapshot.longest_row_in_range(
-                    edit_start.row()
-                        ..cmp::min(editor_snapshot.max_point().row(), edit_end.row()) + 1,
-                );
+                let longest_row =
+                    editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
 
                 let text = gpui::StyledText::new(text).with_highlights(text_style, highlights);
 
