@@ -351,21 +351,31 @@ impl Block {
     fn place_above(&self) -> bool {
         match self {
             Block::Custom(block) => matches!(block.placement, BlockPlacement::Above(_)),
-            Block::ExcerptBoundary { next_excerpt, .. } => next_excerpt.is_some(),
+            Block::ExcerptBoundary {
+                kind, next_excerpt, ..
+            } => {
+                !matches!(kind, ExcerptBoundaryKind::FoldedBufferBoundary) && next_excerpt.is_some()
+            }
         }
     }
 
     fn place_below(&self) -> bool {
         match self {
             Block::Custom(block) => matches!(block.placement, BlockPlacement::Below(_)),
-            Block::ExcerptBoundary { next_excerpt, .. } => next_excerpt.is_none(),
+            Block::ExcerptBoundary {
+                kind, next_excerpt, ..
+            } => {
+                !matches!(kind, ExcerptBoundaryKind::FoldedBufferBoundary) && next_excerpt.is_none()
+            }
         }
     }
 
     fn is_replacement(&self) -> bool {
         match self {
             Block::Custom(block) => matches!(block.placement, BlockPlacement::Replace(_)),
-            Block::ExcerptBoundary { .. } => false,
+            Block::ExcerptBoundary { kind, .. } => {
+                matches!(kind, ExcerptBoundaryKind::FoldedBufferBoundary)
+            }
         }
     }
 }
@@ -493,6 +503,7 @@ impl BlockMap {
         if edits.is_empty() {
             return;
         }
+        dbg!(&edits);
 
         let mut transforms = self.transforms.borrow_mut();
         let mut new_transforms = SumTree::default();
@@ -555,6 +566,7 @@ impl BlockMap {
                 }
             }
 
+            println!("item after seeking to start {:?}", cursor.item());
             // Decide where the edit ends
             // * It should end at a transform boundary
             // * Coalesce edits that intersect the same transform
@@ -563,7 +575,9 @@ impl BlockMap {
             loop {
                 // Seek to the transform starting at or after the end of the edit
                 cursor.seek(&old_end, Bias::Left, &());
+                println!("item after seeking to end {:?}", cursor.item());
                 cursor.next(&());
+                println!("item after calling next {:?}", cursor.item());
 
                 // Extend edit to the end of the discarded transform so it is reconstructed in full
                 let transform_rows_after_edit = cursor.start().0 - old_end.0;
@@ -596,6 +610,8 @@ impl BlockMap {
                     break;
                 }
             }
+
+            dbg!(cursor.item());
 
             // Find the blocks within this edited region.
             let new_buffer_start =
@@ -659,6 +675,7 @@ impl BlockMap {
                 ));
             }
 
+            dbg!(new_start..new_end, &blocks_in_edit);
             BlockMap::sort_blocks(&mut blocks_in_edit);
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
@@ -709,6 +726,7 @@ impl BlockMap {
         }
 
         new_transforms.append(cursor.suffix(&()), &());
+        dbg!(new_transforms.items(&()));
         debug_assert_eq!(
             new_transforms.summary().input_rows,
             wrap_snapshot.max_point().row() + 1
@@ -795,7 +813,8 @@ impl BlockMap {
 
                         if let Some(next_excerpt) = &next_boundary.next {
                             if next_excerpt.buffer_id != new_buffer_id {
-                                wrap_end_row = wrap_end_row.saturating_sub(1);
+                                // TODO kb works but seems like a hack
+                                // wrap_end_row = wrap_end_row.saturating_sub(1);
                                 break;
                             }
                         }
