@@ -130,7 +130,7 @@ When multiple keybindings have the same keystroke and are active at the same tim
 
 The other kind of conflict that arises is when you have two bindings, one of which is a prefix of the other. For example if you have `"ctrl-w":"editor::DeleteToNextWordEnd"` and `"ctrl-w left":"editor::DeleteToEndOfLine"`.
 
-When this happens, and both bindings are active in the current context, Zed will wait for 1 second after you tupe `ctrl-w` to se if you're about to type `left`. If you don't type anything, or if you type a different key, then `DeleteToNextWordEnd` will be triggered. If you do, then `DeleteToEndOfLine` will be triggered.
+When this happens, and both bindings are active in the current context, Zed will wait for 1 second after you type `ctrl-w` to see if you're about to type `left`. If you don't type anything, or if you type a different key, then `DeleteToNextWordEnd` will be triggered. If you do, then `DeleteToEndOfLine` will be triggered.
 
 ### Non-QWERTY keyboards
 
@@ -146,19 +146,14 @@ Finally keyboards that support extended Latin alphabets (usually ISO keyboards) 
 
 For example on a German QWERTZ keyboard, the `cmd->` shortcut is moved to `cmd-:` because `cmd->` is the system window switcher and this is where that shortcut is typed on a QWERTY keyboard. `cmd-+` stays the same because + is still typable without option, and as a result, `cmd-[` and `cmd-]` become `cmd-ö` and `cmd-ä`, moving out of the way of the `+` key.
 
-If you are defining shortcuts in your personal keymap, you can opt-out of the key equivalent mapping by setting `use_layout_keys` to `true` in your keymap:
+If you are defining shortcuts in your personal keymap, you can opt into the key equivalent mapping by setting `use_key_equivalents` to `true` in your keymap:
 
 ```json
 [
   {
+    "use_key_equivalents": true,
     "bindings": {
       "ctrl->": "editor::Indent" // parsed as ctrl-: when a German QWERTZ keyboard is active
-    }
-  },
-  {
-    "use_layout_keys": true,
-    "bindings": {
-      "ctrl->": "editor::Indent" // remains ctrl-> when a German QWERTZ keyboard is active
     }
   }
 ]

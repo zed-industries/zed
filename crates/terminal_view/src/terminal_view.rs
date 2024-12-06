@@ -136,24 +136,36 @@ impl TerminalView {
         let working_directory = default_working_directory(workspace, cx);
 
         let window = cx.window_handle();
-        let terminal = workspace
-            .project()
-            .update(cx, |project, cx| {
-                project.create_terminal(TerminalKind::Shell(working_directory), window, cx)
-            })
-            .notify_err(workspace, cx);
+        let project = workspace.project().downgrade();
+        cx.spawn(move |workspace, mut cx| async move {
+            let terminal = project
+                .update(&mut cx, |project, cx| {
+                    project.create_terminal(TerminalKind::Shell(working_directory), window, cx)
+                })
+                .ok()?
+                .await;
+            let terminal = workspace
+                .update(&mut cx, |workspace, cx| terminal.notify_err(workspace, cx))
+                .ok()
+                .flatten()?;
 
-        if let Some(terminal) = terminal {
-            let view = cx.new_view(|cx| {
-                TerminalView::new(
-                    terminal,
-                    workspace.weak_handle(),
-                    workspace.database_id(),
-                    cx,
-                )
-            });
-            workspace.add_item_to_active_pane(Box::new(view), None, true, cx);
-        }
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    let view = cx.new_view(|cx| {
+                        TerminalView::new(
+                            terminal,
+                            workspace.weak_handle(),
+                            workspace.database_id(),
+                            cx,
+                        )
+                    });
+                    workspace.add_item_to_active_pane(Box::new(view), None, true, cx);
+                })
+                .ok();
+
+            Some(())
+        })
+        .detach()
     }
 
     pub fn new(
@@ -1231,9 +1243,11 @@ impl SerializableItem for TerminalView {
                 .ok()
                 .flatten();
 
-            let terminal = project.update(&mut cx, |project, cx| {
-                project.create_terminal(TerminalKind::Shell(cwd), window, cx)
-            })??;
+            let terminal = project
+                .update(&mut cx, |project, cx| {
+                    project.create_terminal(TerminalKind::Shell(cwd), window, cx)
+                })?
+                .await?;
             cx.update(|cx| {
                 cx.new_view(|cx| TerminalView::new(terminal, workspace, Some(workspace_id), cx))
             })
@@ -1362,11 +1376,14 @@ impl SearchableItem for TerminalView {
 
 ///Gets the working directory for the given workspace, respecting the user's settings.
 /// None implies "~" on whichever machine we end up on.
-pub fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+pub(crate) fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
     match &TerminalSettings::get_global(cx).working_directory {
-        WorkingDirectory::CurrentProjectDirectory => {
-            workspace.project().read(cx).active_project_directory(cx)
-        }
+        WorkingDirectory::CurrentProjectDirectory => workspace
+            .project()
+            .read(cx)
+            .active_project_directory(cx)
+            .as_deref()
+            .map(Path::to_path_buf),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } => {

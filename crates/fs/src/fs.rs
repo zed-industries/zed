@@ -132,7 +132,7 @@ pub trait Fs: Send + Sync {
     async fn is_case_sensitive(&self) -> Result<bool>;
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeFs {
+    fn as_fake(&self) -> Arc<FakeFs> {
         panic!("called as_fake on a real fs");
     }
 }
@@ -840,6 +840,7 @@ impl Watcher for RealWatcher {
 
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeFs {
+    this: std::sync::Weak<Self>,
     // Use an unfair lock to ensure tests are deterministic.
     state: Mutex<FakeFsState>,
     executor: gpui::BackgroundExecutor,
@@ -1022,7 +1023,8 @@ impl FakeFs {
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
         let (tx, mut rx) = smol::channel::bounded::<PathBuf>(10);
 
-        let this = Arc::new(Self {
+        let this = Arc::new_cyclic(|this| Self {
+            this: this.clone(),
             executor: executor.clone(),
             state: Mutex::new(FakeFsState {
                 root: Arc::new(Mutex::new(FakeFsEntry::Dir {
@@ -1474,7 +1476,8 @@ struct FakeHandle {
 #[cfg(any(test, feature = "test-support"))]
 impl FileHandle for FakeHandle {
     fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf> {
-        let state = fs.as_fake().state.lock();
+        let fs = fs.as_fake();
+        let state = fs.state.lock();
         let Some(target) = state.moves.get(&self.inode) else {
             anyhow::bail!("fake fd not moved")
         };
@@ -1970,8 +1973,8 @@ impl Fs for FakeFs {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeFs {
-        self
+    fn as_fake(&self) -> Arc<FakeFs> {
+        self.this.upgrade().unwrap()
     }
 }
 

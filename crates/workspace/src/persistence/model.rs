@@ -473,7 +473,7 @@ impl SerializedPane {
             })?;
         }
         pane.update(cx, |pane, _| {
-            pane.set_pinned_count(self.pinned_count);
+            pane.set_pinned_count(self.pinned_count.min(items.len()));
         })?;
 
         anyhow::Ok(items)
