@@ -51,9 +51,9 @@ index 1d17cfa145..f845234987 100644
  pub use macos::*;
  
 -#[cfg(not(target_os = "macos"))]
-+#[cfg(not(all()))]
++#[cfg(all())]
  mod cross_platform;
  
 -#[cfg(not(target_os = "macos"))]
-+#[cfg(not(all()))]
++#[cfg(all())]
  pub use cross_platform::*;
