@@ -3,10 +3,10 @@ use gpui::{actions, hsla, AnyElement, AppContext, EventEmitter, FocusHandle, Foc
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
-    element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus,
-    Availability, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
-    Checkbox, CheckboxWithLabel, ContentGroup, DecoratedIcon, ElevationIndex, Facepile,
-    IconDecoration, Indicator, Table, TintColor, Tooltip,
+    component_registry::get_all_component_previews, element_cell, prelude::*, string_cell,
+    utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar, AvatarAudioStatusIndicator,
+    AvatarAvailabilityIndicator, ButtonLike, Checkbox, CheckboxWithLabel, ContentGroup,
+    DecoratedIcon, ElevationIndex, Facepile, IconDecoration, Indicator, Table, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -503,6 +503,7 @@ impl ThemePreview {
     }
 
     fn render_components_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let all_previews = get_all_component_previews();
         let layer = ElevationIndex::Surface;
 
         v_flex()
@@ -516,8 +517,15 @@ impl ThemePreview {
             // .child(Checkbox::render_component_previews(cx))
             // .child(CheckboxWithLabel::render_component_previews(cx))
             // .child(Facepile::render_component_previews(cx))
-            .child(Button::render_preview(cx))
-            .child(Avatar::render_preview(cx))
+            .children(all_previews.iter().map(|(scope, previews)| {
+                v_flex()
+                    .gap_4()
+                    .child(Headline::new(scope.to_string().clone()).size(HeadlineSize::Small))
+                    .children(previews.iter().map(|(name, preview)| {
+                        let id = ElementId::Name(format!("{}-preview", name).into());
+                        div().id(id).child(preview(cx))
+                    }))
+            }))
             // .child(Indicator::render_component_previews(cx))
             // .child(Icon::render_component_previews(cx))
             // .child(Table::render_component_previews(cx))

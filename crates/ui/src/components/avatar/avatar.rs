@@ -1,4 +1,4 @@
-use crate::{prelude::*, Indicator};
+use crate::{prelude::*, register_components, Indicator};
 
 use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
 
@@ -96,6 +96,8 @@ impl RenderOnce for Avatar {
             .children(self.indicator.map(|indicator| div().child(indicator)))
     }
 }
+
+register_components!(user, [Avatar]);
 
 impl ComponentElement for Avatar {
     fn scope() -> &'static str {

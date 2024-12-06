@@ -3,7 +3,8 @@ use gpui::{AnyElement, AnyView, DefiniteLength};
 
 use crate::traits::component::ComponentElement;
 use crate::{
-    prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding, TintColor,
+    prelude::*, register_components, Color, DynamicSpacing, ElevationIndex, IconPosition,
+    KeyBinding, TintColor,
 };
 use crate::{
     ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label, LineHeightStyle,
@@ -440,6 +441,8 @@ impl RenderOnce for Button {
         )
     }
 }
+
+register_components!(input, [Button]);
 
 impl ComponentElement for Button {
     fn scope() -> &'static str {

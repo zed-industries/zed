@@ -1,5 +1,7 @@
 #![allow(missing_docs)]
-use crate::{prelude::*, Icon, IconName, IconSize};
+use gpui::AnyElement;
+
+use crate::{prelude::*, register_components, Icon, IconName, IconSize, TintColor};
 
 /// An icon that appears within a button.
 ///
@@ -97,5 +99,55 @@ impl RenderOnce for ButtonIcon {
         };
 
         Icon::new(icon).size(self.size).color(icon_color)
+    }
+}
+
+register_components!(input, [ButtonIcon]);
+
+impl ComponentElement for ButtonIcon {
+    fn scope() -> &'static str {
+        "input"
+    }
+
+    fn description() -> impl Into<Option<&'static str>> {
+        "A ButtonIcon is an icon that appears within a button, used either alongside a label or as a standalone icon."
+    }
+
+    fn preview(_cx: &WindowContext) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_4()
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(ButtonIcon::new(IconName::Check))
+                        .child(ButtonIcon::new(IconName::Check).color(Color::Accent))
+                        .child(ButtonIcon::new(IconName::Check).size(IconSize::XSmall))
+                        .child(ButtonIcon::new(IconName::Check).size(IconSize::Small)),
+                )
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(ButtonIcon::new(IconName::Check).selected(true))
+                        .child(ButtonIcon::new(IconName::Check).disabled(true))
+                        .child(ButtonIcon::new(IconName::Check).selected_icon(IconName::X))
+                        .child(ButtonIcon::new(IconName::Check).selected_icon_color(Color::Error)),
+                )
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(ButtonIcon::new(IconName::Check).selected_style(ButtonStyle::Filled))
+                        .child(ButtonIcon::new(IconName::Check).selected_style(ButtonStyle::Subtle))
+                        .child(
+                            ButtonIcon::new(IconName::Check)
+                                .selected_style(ButtonStyle::Transparent),
+                        )
+                        .child(
+                            ButtonIcon::new(IconName::Check)
+                                .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 }

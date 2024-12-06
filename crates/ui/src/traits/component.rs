@@ -2,7 +2,7 @@ use crate::prelude::*;
 use gpui::{AnyElement, IntoElement, WindowContext};
 
 /// A trait that all components must implement
-pub trait ComponentElement: IntoElement {
+pub trait ComponentElement {
     /// The name of the component, derived from it's type
     fn title() -> &'static str {
         std::any::type_name::<Self>()

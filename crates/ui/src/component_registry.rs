@@ -1,68 +1,59 @@
-use crate::{prelude::*, traits::component::ComponentElement};
+use collections::HashMap;
 use gpui::{AnyElement, WindowContext};
-use std::collections::HashMap;
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 
-// /// The global component registry that tracks all registered components
-// pub struct ComponentRegistry {
-//     /// Map of scope -> (component_name -> component)
-//     components: HashMap<SharedString, HashMap<SharedString, Box<dyn Component>>>,
-// }
+/// A function that returns a preview of a component.
+pub type ComponentPreviewFn = fn(&WindowContext) -> AnyElement;
 
-// impl ComponentRegistry {
-//     /// Create a new empty registry
-//     pub fn new() -> Self {
-//         Self {
-//             components: HashMap::default(),
-//         }
-//     }
+static COMPONENTS: Lazy<Mutex<HashMap<&'static str, Vec<(&'static str, ComponentPreviewFn)>>>> =
+    Lazy::new(|| Mutex::new(HashMap::default()));
 
-//     /// Register a new component in the registry
-//     pub fn register<C: Component + 'static>(&mut self, component: C) {
-//         let scope = component.scope().into();
-//         let name = component.name().into();
+/// Registers a component in the component registry.
+pub fn register_component(scope: &'static str, name: &'static str, preview: ComponentPreviewFn) {
+    let mut components = COMPONENTS.lock().unwrap();
+    components
+        .entry(scope)
+        .or_insert_with(Vec::new)
+        .push((name, preview));
+}
 
-//         self.components
-//             .entry(scope)
-//             .or_default()
-//             .insert(name, Box::new(component));
-//     }
+/// Initializes all components that have been registered
+/// in the UI component registry.
+pub fn init_component_registry() {
+    for register in __COMPONENT_REGISTRATIONS {
+        register();
+    }
+}
 
-//     /// Get all registered components and their previews
-//     pub fn get_all_component_previews(
-//         &self,
-//         cx: &WindowContext,
-//     ) -> HashMap<SharedString, Vec<(&str, AnyElement)>> {
-//         let mut previews = HashMap::new();
+/// Returns a map of all registered components and their previews.
+pub fn get_all_component_previews() -> HashMap<&'static str, Vec<(&'static str, ComponentPreviewFn)>>
+{
+    COMPONENTS.lock().unwrap().clone()
+}
 
-//         for (scope, components) in &self.components {
-//             let mut scope_previews = Vec::new();
+#[doc(hidden)]
+#[linkme::distributed_slice]
+pub static __COMPONENT_REGISTRATIONS: [fn()];
 
-//             for component in components.values() {
-//                 if let Some(preview) = component.preview(cx) {
-//                     scope_previews.push((component.name(), preview));
-//                 }
-//             }
-
-//             if !scope_previews.is_empty() {
-//                 previews.insert(scope.clone(), scope_previews);
-//             }
-//         }
-
-//         previews
-//     }
-// }
-
-// // Make ComponentRegistry a singleton
-// lazy_static::lazy_static! {
-//     static ref REGISTRY: std::sync::Mutex<ComponentRegistry> = std::sync::Mutex::new(ComponentRegistry::new());
-// }
-
-// /// Register a component in the global registry
-// pub fn register_component<C: Component + 'static>(component: C) {
-//     REGISTRY.lock().unwrap().register(component);
-// }
-
-// /// Get a reference to the global component registry
-// pub fn get_registry() -> std::sync::MutexGuard<'static, ComponentRegistry> {
-//     REGISTRY.lock().unwrap()
-// }
+/// Defines components that should be registered in the component registry.
+///
+/// This allows components to be previewed, and eventually tracked for documentation
+/// purposes and to help the systems team to understand component usage across the codebase.
+#[macro_export]
+macro_rules! register_components {
+    ($scope:ident, [ $($component:ty),+ $(,)? ]) => {
+        const _: () = {
+            #[linkme::distributed_slice($crate::component_registry::__COMPONENT_REGISTRATIONS)]
+            fn register() {
+                $(
+                    $crate::component_registry::register_component(
+                        stringify!($scope),
+                        stringify!($component),
+                        |cx: &$crate::WindowContext| <$component>::render_preview(cx),
+                    );
+                )+
+            }
+        };
+    };
+}

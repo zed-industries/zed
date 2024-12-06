@@ -529,66 +529,6 @@ impl RenderOnce for DecoratedIcon {
     }
 }
 
-// impl Component for DecoratedIcon {
-//     fn examples(cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-//         let icon_1 = Icon::new(IconName::FileDoc);
-//         let icon_2 = Icon::new(IconName::FileDoc);
-//         let icon_3 = Icon::new(IconName::FileDoc);
-//         let icon_4 = Icon::new(IconName::FileDoc);
-
-//         let decoration_x = IconDecoration::new(
-//             IconDecorationKind::X,
-//             cx.theme().colors().surface_background,
-//             cx,
-//         )
-//         .color(cx.theme().status().error)
-//         .position(Point {
-//             x: px(-2.),
-//             y: px(-2.),
-//         });
-
-//         let decoration_triangle = IconDecoration::new(
-//             IconDecorationKind::Triangle,
-//             cx.theme().colors().surface_background,
-//             cx,
-//         )
-//         .color(cx.theme().status().error)
-//         .position(Point {
-//             x: px(-2.),
-//             y: px(-2.),
-//         });
-
-//         let decoration_dot = IconDecoration::new(
-//             IconDecorationKind::Dot,
-//             cx.theme().colors().surface_background,
-//             cx,
-//         )
-//         .color(cx.theme().status().error)
-//         .position(Point {
-//             x: px(-2.),
-//             y: px(-2.),
-//         });
-
-//         let examples = vec![
-//             single_example("no_decoration", DecoratedIcon::new(icon_1, None)),
-//             single_example(
-//                 "with_decoration",
-//                 DecoratedIcon::new(icon_2, Some(decoration_x)),
-//             ),
-//             single_example(
-//                 "with_decoration",
-//                 DecoratedIcon::new(icon_3, Some(decoration_triangle)),
-//             ),
-//             single_example(
-//                 "with_decoration",
-//                 DecoratedIcon::new(icon_4, Some(decoration_dot)),
-//             ),
-//         ];
-
-//         vec![example_group(examples)]
-//     }
-// }
-
 #[derive(IntoElement)]
 pub struct IconWithIndicator {
     icon: Icon,
@@ -647,26 +587,3 @@ impl RenderOnce for IconWithIndicator {
             })
     }
 }
-
-// impl Component for Icon {
-//     fn examples(_cx: &WindowContext) -> Vec<ComponentExampleGroup<Icon>> {
-//         let arrow_icons = vec![
-//             IconName::ArrowDown,
-//             IconName::ArrowLeft,
-//             IconName::ArrowRight,
-//             IconName::ArrowUp,
-//             IconName::ArrowCircle,
-//         ];
-
-//         vec![example_group_with_title(
-//             "Arrow Icons",
-//             arrow_icons
-//                 .into_iter()
-//                 .map(|icon| {
-//                     let name = format!("{:?}", icon).to_string();
-//                     ComponentExample::new(name, Icon::new(icon))
-//                 })
-//                 .collect(),
-//         )]
-//     }
-// }

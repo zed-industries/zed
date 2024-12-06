@@ -1,8 +1,8 @@
 #![allow(missing_docs)]
-use gpui::{AnyView, DefiniteLength};
+use gpui::{AnyElement, AnyView, DefiniteLength};
 
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
-use crate::{prelude::*, ElevationIndex, SelectableButton};
+use crate::{prelude::*, register_components, ElevationIndex, SelectableButton, TintColor};
 use crate::{IconName, IconSize};
 
 use super::button_icon::ButtonIcon;
@@ -163,5 +163,88 @@ impl RenderOnce for IconButton {
                     .size(self.icon_size)
                     .color(self.icon_color),
             )
+    }
+}
+
+register_components!(input, [IconButton]);
+
+impl ComponentElement for IconButton {
+    fn scope() -> &'static str {
+        "input"
+    }
+
+    fn description() -> impl Into<Option<&'static str>> {
+        "An icon button allows users to take actions with a single tap, represented by an icon."
+    }
+
+    fn preview(_cx: &WindowContext) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_4()
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(IconButton::new("default", IconName::Check))
+                        .child(
+                            IconButton::new("filled", IconName::Check).style(ButtonStyle::Filled),
+                        )
+                        .child(
+                            IconButton::new("subtle", IconName::Check).style(ButtonStyle::Subtle),
+                        )
+                        .child(
+                            IconButton::new("transparent", IconName::Check)
+                                .style(ButtonStyle::Transparent),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(
+                            IconButton::new("tinted_accent", IconName::Check)
+                                .style(ButtonStyle::Tinted(TintColor::Accent)),
+                        )
+                        .child(
+                            IconButton::new("tinted_negative", IconName::Check)
+                                .style(ButtonStyle::Tinted(TintColor::Negative)),
+                        )
+                        .child(
+                            IconButton::new("tinted_warning", IconName::Check)
+                                .style(ButtonStyle::Tinted(TintColor::Warning)),
+                        )
+                        .child(
+                            IconButton::new("tinted_positive", IconName::Check)
+                                .style(ButtonStyle::Tinted(TintColor::Positive)),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(IconButton::new("default_state", IconName::Check))
+                        .child(IconButton::new("disabled", IconName::Check).disabled(true))
+                        .child(IconButton::new("selected", IconName::Check).selected(true)),
+                )
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(
+                            IconButton::new("icon_size_small", IconName::Check)
+                                .icon_size(IconSize::Small),
+                        )
+                        .child(
+                            IconButton::new("icon_size_medium", IconName::Check)
+                                .icon_size(IconSize::Medium),
+                        )
+                        .child(
+                            IconButton::new("icon_color", IconName::Check)
+                                .icon_color(Color::Accent),
+                        )
+                        .child(
+                            IconButton::new("icon_delete", IconName::Trash)
+                                .style(ButtonStyle::Tinted(TintColor::Negative))
+                                .icon_color(Color::Error),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 }
