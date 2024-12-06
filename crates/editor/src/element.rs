@@ -2738,7 +2738,8 @@ impl EditorElement {
         line_layouts: &[LineWithInvisibles],
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
-        text_style: &gpui::TextStyle,
+        editor_width: Pixels,
+        style: &EditorStyle,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         const PADDING_X: Pixels = Pixels(25.);
@@ -2866,8 +2867,21 @@ impl EditorElement {
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
+                let longest_line_width = if visible_row_range.contains(&longest_row) {
+                    line_layouts[(longest_row.0 - visible_row_range.start.0) as usize].width
+                } else {
+                    layout_line(
+                        longest_row,
+                        editor_snapshot,
+                        style,
+                        editor_width,
+                        |_| false,
+                        cx,
+                    )
+                    .width
+                };
 
-                let text = gpui::StyledText::new(text).with_highlights(text_style, highlights);
+                let text = gpui::StyledText::new(text).with_highlights(&style.text, highlights);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)
@@ -2878,10 +2892,9 @@ impl EditorElement {
                     .child(text)
                     .into_any();
 
-                let line = &line_layouts[(longest_row.0 - visible_row_range.start.0) as usize];
                 let origin = text_bounds.origin
                     + point(
-                        line.width + PADDING_X - scroll_pixel_position.x,
+                        longest_line_width + PADDING_X - scroll_pixel_position.x,
                         edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
                     );
                 element.prepaint_as_root(origin, AvailableSpace::min_size(), cx);
@@ -5767,7 +5780,8 @@ impl Element for EditorElement {
                         &line_layouts,
                         line_height,
                         scroll_pixel_position,
-                        &style.text,
+                        editor_width,
+                        &style,
                         cx,
                     );
 
