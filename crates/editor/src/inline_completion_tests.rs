@@ -123,6 +123,111 @@ async fn test_inline_completion_jump_button(cx: &mut gpui::TestAppContext) {
     "});
 }
 
+#[gpui::test]
+async fn test_inline_completion_invalidation_range(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new_model(|_| FakeInlineCompletionProvider::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+
+    // Cursor is 3+ lines above the proposed edit
+    cx.set_state(indoc! {"
+        line 0
+        line ˇ1
+        line 2
+        line 3
+        line 4
+        line
+    "});
+    let edit_location = Point::new(5, 3);
+
+    propose_edits(
+        &provider,
+        vec![(edit_location..edit_location, " 5")],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
+    assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
+        assert_eq!(move_target.to_point(&snapshot), edit_location);
+    });
+
+    // If we move *towards* the completion, it stays active
+    cx.set_selections_state(indoc! {"
+        line 0
+        line 1
+        line ˇ2
+        line 3
+        line 4
+        line
+    "});
+    assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
+        assert_eq!(move_target.to_point(&snapshot), edit_location);
+    });
+
+    // If we move *away* from the completion, it is discarded
+    cx.set_selections_state(indoc! {"
+        line ˇ0
+        line 1
+        line 2
+        line 3
+        line 4
+        line
+    "});
+    cx.editor(|editor, _| {
+        assert!(editor.active_inline_completion.is_none());
+    });
+
+    // Cursor is 3+ lines below the proposed edit
+    cx.set_state(indoc! {"
+        line
+        line 1
+        line 2
+        line 3
+        line ˇ4
+        line 5
+    "});
+    let edit_location = Point::new(0, 3);
+
+    propose_edits(
+        &provider,
+        vec![(edit_location..edit_location, " 0")],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
+    assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
+        assert_eq!(move_target.to_point(&snapshot), edit_location);
+    });
+
+    // If we move *towards* the completion, it stays active
+    cx.set_selections_state(indoc! {"
+        line
+        line 1
+        line 2
+        line ˇ3
+        line 4
+        line 5
+    "});
+    assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
+        assert_eq!(move_target.to_point(&snapshot), edit_location);
+    });
+
+    // If we move *away* from the completion, it is discarded
+    cx.set_selections_state(indoc! {"
+        line
+        line 1
+        line 2
+        line 3
+        line 4
+        line ˇ5
+    "});
+    cx.editor(|editor, _| {
+        assert!(editor.active_inline_completion.is_none());
+    });
+}
+
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
     assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, String)>),
