@@ -113,6 +113,12 @@ jobs:
           script/check-licenses
           script/generate-licenses /tmp/zed_licenses_output
 
+      - name: Check for new vulnerable dependencies
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@3b139cfc5fae8b618d3eae3675e383bb1769c019 # v4
+        with:
+          license-check: false
+
       - name: Run tests
         uses: ./.github/actions/run_tests
 
@@ -123,7 +129,9 @@ jobs:
         run: |
           cargo build --workspace --bins --all-features
           cargo check -p gpui --features "macos-blade"
+          cargo check -p workspace
           cargo build -p remote_server
+          script/check-rust-livekit-macos
 
   linux_tests:
     timeout-minutes: 60
@@ -155,8 +163,10 @@ jobs:
       - name: Run tests
         uses: ./.github/actions/run_tests
 
-      - name: Build Zed
-        run: cargo build -p zed
+      - name: Build other binaries and features
+        run: |
+          cargo build -p zed
+          cargo check -p workspace
 
   build_remote_server:
     timeout-minutes: 60

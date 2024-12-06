@@ -13,7 +13,7 @@ anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
 indoc.workspace = true
-libsqlite3-sys = { version = "0.28", features = ["bundled"] }
+libsqlite3-sys.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
 sqlformat.workspace = true

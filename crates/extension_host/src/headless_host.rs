@@ -156,6 +156,7 @@ impl HeadlessExtensionStore {
                     config.name.clone(),
                     None,
                     config.matcher.clone(),
+                    config.hidden,
                     Arc::new(move || {
                         Ok(LoadedLanguage {
                             config: config.clone(),
