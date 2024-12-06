@@ -10663,11 +10663,17 @@ impl Editor {
     }
 
     pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut ViewContext<Self>) {
+        if self.buffer().read(cx).excerpt_buffer_ids().len() <= 1 {
+            return;
+        }
         self.display_map
             .update(cx, |display_map, cx| display_map.fold_buffer(buffer_id, cx))
     }
 
     pub fn unfold_buffer(&mut self, buffer_id: BufferId, cx: &mut ViewContext<Self>) {
+        if self.buffer().read(cx).excerpt_buffer_ids().len() <= 1 {
+            return;
+        }
         self.display_map.update(cx, |display_map, cx| {
             display_map.unfold_buffer(buffer_id, cx);
         })

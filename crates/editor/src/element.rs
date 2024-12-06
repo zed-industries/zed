@@ -2254,6 +2254,10 @@ impl EditorElement {
                                             h_flex()
                                                 .gap_3()
                                                 .map(|header| {
+                                                    if self.editor.read(cx).buffer().read(cx).excerpt_buffer_ids().len() <= 1 {
+                                                        return header;
+                                                    }
+
                                                     let kind = *kind;
                                                     let editor = self.editor.clone();
                                                     let buffer_id = next_excerpt.buffer_id;

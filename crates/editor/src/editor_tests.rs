@@ -14067,6 +14067,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         "After unfolding the third buffer, its text should be displayed"
     );
 
+    // TODO kb
     // multi_buffer_editor.update(cx, |editor, cx| {
     //     editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
     // });
@@ -14167,19 +14168,9 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n",
+        full_text,
+        "Folding a single buffer is a noop"
     );
-
-    // Simulate element rendering, where selections are resolved
-    multi_buffer_editor.update(cx, |editor, cx| {
-        let selections = editor
-            .selections
-            .disjoint_in_range::<Point>(Anchor::min()..Anchor::max(), cx)
-            .into_iter()
-            .map(|s| s.range())
-            .collect::<Vec<_>>();
-        assert_eq!(selections, vec![selection_range]);
-    });
 
     multi_buffer_editor.update(cx, |editor, cx| {
         editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
@@ -14187,6 +14178,7 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         full_text,
+        "Unfolding a not folded buffer is a noop"
     );
 }
 

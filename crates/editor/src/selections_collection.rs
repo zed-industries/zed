@@ -881,8 +881,10 @@ fn resolve_selections_display<'a>(
         .buffer_snapshot
         .summaries_for_anchors::<Point, _>(to_summarize.flat_map(|s| [&s.start, &s.end]))
         .into_iter();
+    // s.start.buffer_id
+    // let aa = map.blo
     let mut selections = selections
-        .map(move |s| {
+        .filter_map(move |s| {
             let start = summaries.next().unwrap();
             let end = summaries.next().unwrap();
 
@@ -893,13 +895,13 @@ fn resolve_selections_display<'a>(
                 map.point_to_display_point(end, Bias::Left)
             };
 
-            Selection {
+            Some(Selection {
                 id: s.id,
                 start: display_start,
                 end: display_end,
                 reversed: s.reversed,
                 goal: s.goal,
-            }
+            })
         })
         .peekable();
     iter::from_fn(move || {
