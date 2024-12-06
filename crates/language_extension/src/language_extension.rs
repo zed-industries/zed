@@ -34,10 +34,11 @@ impl ExtensionLanguageProxy for LanguageServerRegistryProxy {
         language: LanguageName,
         grammar: Option<Arc<str>>,
         matcher: LanguageMatcher,
+        hidden: bool,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
     ) {
         self.language_registry
-            .register_language(language, grammar, matcher, load);
+            .register_language(language, grammar, matcher, hidden, load);
     }
 
     fn remove_languages(

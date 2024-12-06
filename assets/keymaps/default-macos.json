@@ -93,8 +93,6 @@
       "ctrl-e": "editor::MoveToEndOfLine",
       "cmd-up": "editor::MoveToBeginning",
       "cmd-down": "editor::MoveToEnd",
-      "ctrl-home": "editor::MoveToBeginning",
-      "ctrl-end": "editor::MoveToEnd",
       "shift-up": "editor::SelectUp",
       "ctrl-shift-p": "editor::SelectUp",
       "shift-down": "editor::SelectDown",
@@ -212,7 +210,8 @@
   {
     "context": "AssistantPanel2",
     "bindings": {
-      "cmd-n": "assistant2::NewThread"
+      "cmd-n": "assistant2::NewThread",
+      "cmd-shift-h": "assistant2::OpenHistory"
     }
   },
   {

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod file_finder_tests;
 
-mod file_finder_settings;
+pub mod file_finder_settings;
 mod new_path_prompt;
 mod open_path_prompt;
 
@@ -648,7 +648,7 @@ impl FileFinderDelegate {
         cx.subscribe(project, |file_finder, _, event, cx| {
             match event {
                 project::Event::WorktreeUpdatedEntries(_, _)
-                | project::Event::WorktreeAdded
+                | project::Event::WorktreeAdded(_)
                 | project::Event::WorktreeRemoved(_) => file_finder
                     .picker
                     .update(cx, |picker, cx| picker.refresh(cx)),

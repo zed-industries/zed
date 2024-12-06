@@ -24,6 +24,8 @@ test-support = [
     "gpui/test-support",
     "fs/test-support",
 ]
+livekit-macos = ["call/livekit-macos"]
+livekit-cross-platform = ["call/livekit-cross-platform"]
 
 [dependencies]
 anyhow.workspace = true
@@ -38,7 +40,6 @@ db.workspace = true
 derive_more.workspace = true
 fs.workspace = true
 futures.workspace = true
-git.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 itertools.workspace = true

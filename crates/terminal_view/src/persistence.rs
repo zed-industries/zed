@@ -5,7 +5,7 @@ use futures::{stream::FuturesUnordered, StreamExt as _};
 use gpui::{AsyncWindowContext, Axis, Model, Task, View, WeakView};
 use project::{terminals::TerminalKind, Project};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use ui::{Pixels, ViewContext, VisualContext as _, WindowContext};
 use util::ResultExt as _;
 
@@ -219,33 +219,39 @@ async fn deserialize_pane_group(
                 })
                 .log_err()?;
             let active_item = serialized_pane.active_item;
-            pane.update(cx, |pane, cx| {
-                populate_pane_items(pane, new_items, active_item, cx);
-                // Avoid blank panes in splits
-                if pane.items_len() == 0 {
-                    let working_directory = workspace
-                        .update(cx, |workspace, cx| default_working_directory(workspace, cx))
-                        .ok()
-                        .flatten();
-                    let kind = TerminalKind::Shell(working_directory);
-                    let window = cx.window_handle();
-                    let terminal = project
-                        .update(cx, |project, cx| project.create_terminal(kind, window, cx))
-                        .log_err()?;
+
+            let terminal = pane
+                .update(cx, |pane, cx| {
+                    populate_pane_items(pane, new_items, active_item, cx);
+                    // Avoid blank panes in splits
+                    if pane.items_len() == 0 {
+                        let working_directory = workspace
+                            .update(cx, |workspace, cx| default_working_directory(workspace, cx))
+                            .ok()
+                            .flatten();
+                        let kind = TerminalKind::Shell(
+                            working_directory.as_deref().map(Path::to_path_buf),
+                        );
+                        let window = cx.window_handle();
+                        let terminal = project
+                            .update(cx, |project, cx| project.create_terminal(kind, window, cx));
+                        Some(Some(terminal))
+                    } else {
+                        Some(None)
+                    }
+                })
+                .ok()
+                .flatten()?;
+            if let Some(terminal) = terminal {
+                let terminal = terminal.await.ok()?;
+                pane.update(cx, |pane, cx| {
                     let terminal_view = Box::new(cx.new_view(|cx| {
-                        TerminalView::new(
-                            terminal.clone(),
-                            workspace.clone(),
-                            Some(workspace_id),
-                            cx,
-                        )
+                        TerminalView::new(terminal, workspace.clone(), Some(workspace_id), cx)
                     }));
                     pane.add_item(terminal_view, true, false, None, cx);
-                }
-                Some(())
-            })
-            .ok()
-            .flatten()?;
+                })
+                .ok()?;
+            }
             Some((Member::Pane(pane.clone()), active.then_some(pane)))
         }
     }

@@ -65,6 +65,11 @@ impl LabelCommon for HighlightedLabel {
         self.base = self.base.underline(underline);
         self
     }
+
+    fn single_line(mut self) -> Self {
+        self.base = self.base.single_line();
+        self
+    }
 }
 
 pub fn highlight_ranges(

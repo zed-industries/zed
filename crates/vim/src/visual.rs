@@ -308,7 +308,7 @@ impl Vim {
         if let Some(Operator::Object { around }) = self.active_operator() {
             self.pop_operator(cx);
             let current_mode = self.mode;
-            let target_mode = object.target_visual_mode(current_mode);
+            let target_mode = object.target_visual_mode(current_mode, around);
             if target_mode != current_mode {
                 self.switch_mode(target_mode, true, cx);
             }

@@ -1019,7 +1019,7 @@ impl InlaySnapshot {
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());
 
-        let max_buffer_row = MultiBufferRow(self.buffer.max_point().row);
+        let max_buffer_row = self.buffer.max_row();
         let mut buffer_point = cursor.start().1;
         let buffer_row = if row == 0 {
             MultiBufferRow(0)

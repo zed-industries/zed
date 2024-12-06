@@ -1,5 +1,5 @@
 [package]
-name = "live_kit_client"
+name = "livekit_client_macos"
 version = "0.1.0"
 edition = "2021"
 description = "Bindings to LiveKit Swift client SDK"
@@ -10,7 +10,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/live_kit_client.rs"
+path = "src/livekit_client.rs"
 doctest = false
 
 [[example]]
@@ -22,7 +22,7 @@ test-support = [
     "async-trait",
     "collections/test-support",
     "gpui/test-support",
-    "live_kit_server",
+    "livekit_server",
     "nanoid",
 ]
 
@@ -33,7 +33,7 @@ async-trait = { workspace = true, optional = true }
 collections = { workspace = true, optional = true }
 futures.workspace = true
 gpui = { workspace = true, optional = true }
-live_kit_server = { workspace = true, optional = true }
+livekit_server = { workspace = true, optional = true }
 log.workspace = true
 media.workspace = true
 nanoid = { workspace = true, optional = true}
@@ -47,14 +47,14 @@ core-foundation.workspace = true
 async-trait = { workspace = true }
 collections = { workspace = true }
 gpui = { workspace = true }
-live_kit_server.workspace = true
+livekit_server.workspace = true
 nanoid.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-live_kit_server.workspace = true
+livekit_server.workspace = true
 nanoid.workspace = true
 sha2.workspace = true
 simplelog.workspace = true

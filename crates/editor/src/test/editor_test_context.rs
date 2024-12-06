@@ -42,16 +42,16 @@ pub struct EditorTestContext {
 impl EditorTestContext {
     pub async fn new(cx: &mut gpui::TestAppContext) -> EditorTestContext {
         let fs = FakeFs::new(cx.executor());
-        // fs.insert_file("/file", "".to_owned()).await;
         let root = Self::root_path();
         fs.insert_tree(
             root,
             serde_json::json!({
+                ".git": {},
                 "file": "",
             }),
         )
         .await;
-        let project = Project::test(fs, [root], cx).await;
+        let project = Project::test(fs.clone(), [root], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(root.join("file"), cx)
@@ -65,6 +65,8 @@ impl EditorTestContext {
             editor
         });
         let editor_view = editor.root_view(cx).unwrap();
+
+        cx.run_until_parked();
         Self {
             cx: VisualTestContext::from_window(*editor.deref(), cx),
             window: editor.into(),
@@ -276,8 +278,16 @@ impl EditorTestContext {
         snapshot.anchor_before(ranges[0].start)..snapshot.anchor_after(ranges[0].end)
     }
 
-    pub fn set_diff_base(&mut self, diff_base: Option<&str>) {
-        self.update_buffer(|buffer, cx| buffer.set_diff_base(diff_base.map(ToOwned::to_owned), cx));
+    pub fn set_diff_base(&mut self, diff_base: &str) {
+        self.cx.run_until_parked();
+        let fs = self
+            .update_editor(|editor, cx| editor.project.as_ref().unwrap().read(cx).fs().as_fake());
+        let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
+        fs.set_index_for_repo(
+            &Self::root_path().join(".git"),
+            &[(path.as_ref(), diff_base.to_string())],
+        );
+        self.cx.run_until_parked();
     }
 
     /// Change the editor's text and selections using a string containing
@@ -319,10 +329,12 @@ impl EditorTestContext {
         state_context
     }
 
+    /// Assert about the text of the editor, the selections, and the expanded
+    /// diff hunks.
+    ///
+    /// Diff hunks are indicated by lines starting with `+` and `-`.
     #[track_caller]
-    pub fn assert_diff_hunks(&mut self, expected_diff: String) {
-        // Normalize the expected diff. If it has no diff markers, then insert blank markers
-        // before each line. Strip any whitespace-only lines.
+    pub fn assert_state_with_diff(&mut self, expected_diff: String) {
         let has_diff_markers = expected_diff
             .lines()
             .any(|line| line.starts_with("+") || line.starts_with("-"));
@@ -340,11 +352,14 @@ impl EditorTestContext {
             })
             .join("\n");
 
+        let actual_selections = self.editor_selections();
+        let actual_marked_text =
+            generate_marked_text(&self.buffer_text(), &actual_selections, true);
+
         // Read the actual diff from the editor's row highlights and block
         // decorations.
         let actual_diff = self.editor.update(&mut self.cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
-            let text = editor.text(cx);
             let insertions = editor
                 .highlighted_rows::<DiffRowHighlight>()
                 .map(|(range, _)| {
@@ -354,7 +369,7 @@ impl EditorTestContext {
                 })
                 .collect::<Vec<_>>();
             let deletions = editor
-                .expanded_hunks
+                .diff_map
                 .hunks
                 .iter()
                 .filter_map(|hunk| {
@@ -371,10 +386,20 @@ impl EditorTestContext {
                         .read(cx)
                         .excerpt_containing(hunk.hunk_range.start, cx)
                         .expect("no excerpt for expanded buffer's hunk start");
-                    let deleted_text = buffer
-                        .read(cx)
-                        .diff_base()
+                    let buffer_id = buffer.read(cx).remote_id();
+                    let change_set = &editor
+                        .diff_map
+                        .diff_bases
+                        .get(&buffer_id)
                         .expect("should have a diff base for expanded hunk")
+                        .change_set;
+                    let deleted_text = change_set
+                        .read(cx)
+                        .base_text
+                        .as_ref()
+                        .expect("no base text for expanded hunk")
+                        .read(cx)
+                        .as_rope()
                         .slice(hunk.diff_base_byte_range.clone())
                         .to_string();
                     if let DiffHunkStatus::Modified | DiffHunkStatus::Removed = hunk.status {
@@ -384,7 +409,7 @@ impl EditorTestContext {
                     }
                 })
                 .collect::<Vec<_>>();
-            format_diff(text, deletions, insertions)
+            format_diff(actual_marked_text, deletions, insertions)
         });
 
         pretty_assertions::assert_eq!(actual_diff, expected_diff_text, "unexpected diff state");

@@ -78,7 +78,7 @@ impl Item for ImageView {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(gpui::EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         f(self.image_item.entity_id(), self.image_item.read(cx))
     }
@@ -301,7 +301,8 @@ impl Render for ImageView {
                         img(image)
                             .object_fit(ObjectFit::ScaleDown)
                             .max_w_full()
-                            .max_h_full(),
+                            .max_h_full()
+                            .id("img"),
                     ),
             )
     }

@@ -1,8 +1,8 @@
 use crate::markdown_elements::{
-    HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
+    HeadingLevel, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
     ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
     ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
-    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow, ParsedMarkdownText,
+    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use gpui::{
     div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
@@ -13,7 +13,6 @@ use gpui::{
 use settings::Settings;
 use std::{
     ops::{Mul, Range},
-    path::Path,
     sync::Arc,
     vec,
 };
@@ -505,103 +504,41 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
             }
 
             MarkdownParagraphChunk::Image(image) => {
-                let (link, source_range, image_source, alt_text) = match image {
-                    Image::Web {
-                        link,
-                        source_range,
-                        url,
-                        alt_text,
-                    } => (
-                        link,
-                        source_range,
-                        Resource::Uri(url.clone().into()),
-                        alt_text,
-                    ),
-                    Image::Path {
-                        link,
-                        source_range,
-                        path,
-                        alt_text,
-                        ..
-                    } => {
-                        let image_path = Path::new(path.to_str().unwrap());
-                        (
-                            link,
-                            source_range,
-                            Resource::Path(Arc::from(image_path)),
-                            alt_text,
-                        )
-                    }
+                let image_resource = match image.link.clone() {
+                    Link::Web { url } => Resource::Uri(url.into()),
+                    Link::Path { path, .. } => Resource::Path(Arc::from(path)),
                 };
 
-                let element_id = cx.next_id(source_range);
+                let element_id = cx.next_id(&image.source_range);
 
-                match link {
-                    None => {
-                        let fallback_workspace = workspace_clone.clone();
-                        let fallback_syntax_theme = syntax_theme.clone();
-                        let fallback_text_style = text_style.clone();
-                        let fallback_alt_text = alt_text.clone();
-                        let element_id_new = element_id.clone();
-                        let element = div()
-                            .child(img(ImageSource::Resource(image_source)).with_fallback({
-                                move || {
-                                    fallback_text(
-                                        fallback_alt_text.clone().unwrap(),
-                                        element_id.clone(),
-                                        &fallback_syntax_theme,
-                                        code_span_bg_color,
-                                        fallback_workspace.clone(),
-                                        &fallback_text_style,
-                                    )
+                let image_element = div()
+                    .id(element_id)
+                    .child(img(ImageSource::Resource(image_resource)).with_fallback({
+                        let alt_text = image.alt_text.clone();
+                        {
+                            move || div().children(alt_text.clone()).into_any_element()
+                        }
+                    }))
+                    .tooltip({
+                        let link = image.link.clone();
+                        move |cx| LinkPreview::new(&link.to_string(), cx)
+                    })
+                    .on_click({
+                        let workspace = workspace_clone.clone();
+                        let link = image.link.clone();
+                        move |_event, window_cx| match &link {
+                            Link::Web { url } => window_cx.open_url(url),
+                            Link::Path { path, .. } => {
+                                if let Some(workspace) = &workspace {
+                                    _ = workspace.update(window_cx, |workspace, cx| {
+                                        workspace.open_abs_path(path.clone(), false, cx).detach();
+                                    });
                                 }
-                            }))
-                            .id(element_id_new)
-                            .into_any();
-                        any_element.push(element);
-                    }
-                    Some(link) => {
-                        let link_click = link.clone();
-                        let link_tooltip = link.clone();
-                        let fallback_workspace = workspace_clone.clone();
-                        let fallback_syntax_theme = syntax_theme.clone();
-                        let fallback_text_style = text_style.clone();
-                        let fallback_alt_text = alt_text.clone();
-                        let element_id_new = element_id.clone();
-                        let image_element = div()
-                            .child(img(ImageSource::Resource(image_source)).with_fallback({
-                                move || {
-                                    fallback_text(
-                                        fallback_alt_text.clone().unwrap(),
-                                        element_id.clone(),
-                                        &fallback_syntax_theme,
-                                        code_span_bg_color,
-                                        fallback_workspace.clone(),
-                                        &fallback_text_style,
-                                    )
-                                }
-                            }))
-                            .id(element_id_new)
-                            .tooltip(move |cx| LinkPreview::new(&link_tooltip.to_string(), cx))
-                            .on_click({
-                                let workspace = workspace_clone.clone();
-                                move |_event, window_cx| match &link_click {
-                                    Link::Web { url } => window_cx.open_url(url),
-                                    Link::Path { path, .. } => {
-                                        if let Some(workspace) = &workspace {
-                                            _ = workspace.update(window_cx, |workspace, cx| {
-                                                workspace
-                                                    .open_abs_path(path.clone(), false, cx)
-                                                    .detach();
-                                            });
-                                        }
-                                    }
-                                }
-                            })
-                            .into_any();
-                        any_element.push(image_element);
-                    }
-                }
+                            }
+                        }
+                    })
+                    .into_any();
+                any_element.push(image_element);
             }
         }
     }
@@ -612,81 +549,4 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
     let rule = div().w_full().h(px(2.)).bg(cx.border_color);
     div().pt_3().pb_3().child(rule).into_any()
-}
-
-fn fallback_text(
-    parsed: ParsedMarkdownText,
-    source_range: ElementId,
-    syntax_theme: &theme::SyntaxTheme,
-    code_span_bg_color: Hsla,
-    workspace: Option<WeakView<Workspace>>,
-    text_style: &TextStyle,
-) -> AnyElement {
-    let element_id = source_range;
-
-    let highlights = gpui::combine_highlights(
-        parsed.highlights.iter().filter_map(|(range, highlight)| {
-            let highlight = highlight.to_highlight_style(syntax_theme)?;
-            Some((range.clone(), highlight))
-        }),
-        parsed
-            .regions
-            .iter()
-            .zip(&parsed.region_ranges)
-            .filter_map(|(region, range)| {
-                if region.code {
-                    Some((
-                        range.clone(),
-                        HighlightStyle {
-                            background_color: Some(code_span_bg_color),
-                            ..Default::default()
-                        },
-                    ))
-                } else {
-                    None
-                }
-            }),
-    );
-    let mut links = Vec::new();
-    let mut link_ranges = Vec::new();
-    for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
-        if let Some(link) = region.link.clone() {
-            links.push(link);
-            link_ranges.push(range.clone());
-        }
-    }
-    let element = div()
-        .child(
-            InteractiveText::new(
-                element_id,
-                StyledText::new(parsed.contents.clone()).with_highlights(text_style, highlights),
-            )
-            .tooltip({
-                let links = links.clone();
-                let link_ranges = link_ranges.clone();
-                move |idx, cx| {
-                    for (ix, range) in link_ranges.iter().enumerate() {
-                        if range.contains(&idx) {
-                            return Some(LinkPreview::new(&links[ix].to_string(), cx));
-                        }
-                    }
-                    None
-                }
-            })
-            .on_click(
-                link_ranges,
-                move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
-                    Link::Web { url } => window_cx.open_url(url),
-                    Link::Path { path, .. } => {
-                        if let Some(workspace) = &workspace {
-                            _ = workspace.update(window_cx, |workspace, cx| {
-                                workspace.open_abs_path(path.clone(), false, cx).detach();
-                            });
-                        }
-                    }
-                },
-            ),
-        )
-        .into_any();
-    return element;
 }

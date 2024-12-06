@@ -14,7 +14,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, Action, AppContext, EventEmitter, Flatten, FocusableView,
+    actions, uniform_list, Action, AppContext, ClipboardItem, EventEmitter, Flatten, FocusableView,
     InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -637,13 +637,21 @@ impl ExtensionsPage {
         cx: &mut WindowContext,
     ) -> View<ContextMenu> {
         let context_menu = ContextMenu::build(cx, |context_menu, cx| {
-            context_menu.entry(
-                "Install Another Version...",
-                None,
-                cx.handler_for(this, move |this, cx| {
-                    this.show_extension_version_list(extension_id.clone(), cx)
-                }),
-            )
+            context_menu
+                .entry(
+                    "Install Another Version...",
+                    None,
+                    cx.handler_for(this, {
+                        let extension_id = extension_id.clone();
+                        move |this, cx| this.show_extension_version_list(extension_id.clone(), cx)
+                    }),
+                )
+                .entry("Copy Extension ID", None, {
+                    let extension_id = extension_id.clone();
+                    move |cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(extension_id.to_string()));
+                    }
+                })
         });
 
         context_menu

@@ -1,6 +1,10 @@
 use std::ops::Range;
 
-use crate::{motion::right, state::Mode, Vim};
+use crate::{
+    motion::right,
+    state::{Mode, Operator},
+    Vim,
+};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
@@ -10,7 +14,7 @@ use editor::{
 use itertools::Itertools;
 
 use gpui::{actions, impl_actions, ViewContext};
-use language::{BufferSnapshot, CharKind, Point, Selection};
+use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 
@@ -30,6 +34,9 @@ pub enum Object {
     Argument,
     IndentObj { include_below: bool },
     Tag,
+    Method,
+    Class,
+    Comment,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -61,7 +68,10 @@ actions!(
         CurlyBrackets,
         AngleBrackets,
         Argument,
-        Tag
+        Tag,
+        Method,
+        Class,
+        Comment
     ]
 );
 
@@ -107,6 +117,18 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &Argument, cx| {
         vim.object(Object::Argument, cx)
     });
+    Vim::action(editor, cx, |vim, _: &Method, cx| {
+        vim.object(Object::Method, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &Class, cx| {
+        vim.object(Object::Class, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &Comment, cx| {
+        if !matches!(vim.active_operator(), Some(Operator::Object { .. })) {
+            vim.push_operator(Operator::Object { around: true }, cx);
+        }
+        vim.object(Object::Comment, cx)
+    });
     Vim::action(
         editor,
         cx,
@@ -121,7 +143,7 @@ impl Vim {
         match self.mode {
             Mode::Normal => self.normal_object(object, cx),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => self.visual_object(object, cx),
-            Mode::Insert | Mode::Replace => {
+            Mode::Insert | Mode::Replace | Mode::HelixNormal => {
                 // Shouldn't execute a text object in insert mode. Ignoring
             }
         }
@@ -144,6 +166,9 @@ impl Object {
             | Object::CurlyBrackets
             | Object::SquareBrackets
             | Object::Argument
+            | Object::Method
+            | Object::Class
+            | Object::Comment
             | Object::IndentObj { .. } => true,
         }
     }
@@ -162,12 +187,15 @@ impl Object {
             | Object::Parentheses
             | Object::SquareBrackets
             | Object::Tag
+            | Object::Method
+            | Object::Class
+            | Object::Comment
             | Object::CurlyBrackets
             | Object::AngleBrackets => true,
         }
     }
 
-    pub fn target_visual_mode(self, current_mode: Mode) -> Mode {
+    pub fn target_visual_mode(self, current_mode: Mode, around: bool) -> Mode {
         match self {
             Object::Word { .. }
             | Object::Sentence
@@ -186,8 +214,16 @@ impl Object {
             | Object::AngleBrackets
             | Object::VerticalBars
             | Object::Tag
+            | Object::Comment
             | Object::Argument
             | Object::IndentObj { .. } => Mode::Visual,
+            Object::Method | Object::Class => {
+                if around {
+                    Mode::VisualLine
+                } else {
+                    Mode::Visual
+                }
+            }
             Object::Paragraph => Mode::VisualLine,
         }
     }
@@ -238,6 +274,33 @@ impl Object {
             Object::AngleBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '<', '>')
             }
+            Object::Method => text_object(
+                map,
+                relative_to,
+                if around {
+                    TextObject::AroundFunction
+                } else {
+                    TextObject::InsideFunction
+                },
+            ),
+            Object::Comment => text_object(
+                map,
+                relative_to,
+                if around {
+                    TextObject::AroundComment
+                } else {
+                    TextObject::InsideComment
+                },
+            ),
+            Object::Class => text_object(
+                map,
+                relative_to,
+                if around {
+                    TextObject::AroundClass
+                } else {
+                    TextObject::InsideClass
+                },
+            ),
             Object::Argument => argument(map, relative_to, around),
             Object::IndentObj { include_below } => indent(map, relative_to, around, include_below),
         }
@@ -441,6 +504,47 @@ fn around_next_word(
     Some(start..end)
 }
 
+fn text_object(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    target: TextObject,
+) -> Option<Range<DisplayPoint>> {
+    let snapshot = &map.buffer_snapshot;
+    let offset = relative_to.to_offset(map, Bias::Left);
+
+    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let buffer = excerpt.buffer();
+
+    let mut matches: Vec<Range<usize>> = buffer
+        .text_object_ranges(offset..offset, TreeSitterOptions::default())
+        .filter_map(|(r, m)| if m == target { Some(r) } else { None })
+        .collect();
+    matches.sort_by_key(|r| (r.end - r.start));
+    if let Some(range) = matches.first() {
+        return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
+    }
+
+    let around = target.around()?;
+    let mut matches: Vec<Range<usize>> = buffer
+        .text_object_ranges(offset..offset, TreeSitterOptions::default())
+        .filter_map(|(r, m)| if m == around { Some(r) } else { None })
+        .collect();
+    matches.sort_by_key(|r| (r.end - r.start));
+    let around_range = matches.first()?;
+
+    let mut matches: Vec<Range<usize>> = buffer
+        .text_object_ranges(around_range.clone(), TreeSitterOptions::default())
+        .filter_map(|(r, m)| if m == target { Some(r) } else { None })
+        .collect();
+    matches.sort_by_key(|r| r.start);
+    if let Some(range) = matches.first() {
+        if !range.is_empty() {
+            return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
+        }
+    }
+    return Some(around_range.start.to_display_point(map)..around_range.end.to_display_point(map));
+}
+
 fn argument(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
@@ -620,7 +724,7 @@ fn indent(
 
     // Loop forwards until we find a non-blank line with less indent
     let mut end_row = row;
-    let max_rows = map.max_buffer_row().0;
+    let max_rows = map.buffer_snapshot.max_row().0;
     for next_row in (row + 1)..=max_rows {
         let indent = map.line_indent_for_buffer_row(MultiBufferRow(next_row));
         if indent.is_line_empty() {
@@ -854,13 +958,13 @@ pub fn start_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) ->
 /// The trailing newline is excluded from the paragraph.
 pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
     let point = display_point.to_point(map);
-    if point.row == map.max_buffer_row().0 {
+    if point.row == map.buffer_snapshot.max_row().0 {
         return map.max_point();
     }
 
     let is_current_line_blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
 
-    for row in point.row + 1..map.max_buffer_row().0 + 1 {
+    for row in point.row + 1..map.buffer_snapshot.max_row().0 + 1 {
         let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
         if blank != is_current_line_blank {
             let previous_row = row - 1;

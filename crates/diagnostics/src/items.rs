@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use editor::Editor;
 use gpui::{
-    rems, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View,
+    EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, Task, View,
     ViewContext, WeakView,
 };
 use language::Diagnostic;
@@ -15,6 +17,7 @@ pub struct DiagnosticIndicator {
     workspace: WeakView<Workspace>,
     current_diagnostic: Option<Diagnostic>,
     _observe_active_editor: Option<Subscription>,
+    diagnostics_update: Task<()>,
 }
 
 impl Render for DiagnosticIndicator {
@@ -77,8 +80,10 @@ impl Render for DiagnosticIndicator {
         };
 
         h_flex()
-            .h(rems(1.375))
             .gap_2()
+            .pl_1()
+            .border_l_1()
+            .border_color(cx.theme().colors().border)
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)
@@ -124,6 +129,7 @@ impl DiagnosticIndicator {
             workspace: workspace.weak_handle(),
             current_diagnostic: None,
             _observe_active_editor: None,
+            diagnostics_update: Task::ready(()),
         }
     }
 
@@ -147,8 +153,17 @@ impl DiagnosticIndicator {
             .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
             .map(|entry| entry.diagnostic);
         if new_diagnostic != self.current_diagnostic {
-            self.current_diagnostic = new_diagnostic;
-            cx.notify();
+            self.diagnostics_update = cx.spawn(|diagnostics_indicator, mut cx| async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+                diagnostics_indicator
+                    .update(&mut cx, |diagnostics_indicator, cx| {
+                        diagnostics_indicator.current_diagnostic = new_diagnostic;
+                        cx.notify();
+                    })
+                    .ok();
+            });
         }
     }
 }
