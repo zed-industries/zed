@@ -214,8 +214,13 @@ async fn deserialize_pane_group(
             .await;
 
             let pane = panel
-                .update(cx, |_, cx| {
-                    new_terminal_pane(workspace.clone(), project.clone(), cx)
+                .update(cx, |terminal_panel, cx| {
+                    new_terminal_pane(
+                        workspace.clone(),
+                        project.clone(),
+                        terminal_panel.active_pane.read(cx).is_zoomed(),
+                        cx,
+                    )
                 })
                 .log_err()?;
             let active_item = serialized_pane.active_item;
