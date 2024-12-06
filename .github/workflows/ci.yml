@@ -131,6 +131,7 @@ jobs:
           cargo check -p gpui --features "macos-blade"
           cargo check -p workspace
           cargo build -p remote_server
+          script/check-rust-livekit-macos
 
   linux_tests:
     timeout-minutes: 60
