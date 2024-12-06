@@ -12013,13 +12013,20 @@ impl Editor {
     }
 
     fn insert_uuid(&mut self, version: UuidVersion, cx: &mut ViewContext<Self>) {
-        let uuid = match version {
-            UuidVersion::V4 => uuid::Uuid::new_v4(),
-            UuidVersion::V7 => uuid::Uuid::now_v7(),
-        };
-
         self.transact(cx, |this, cx| {
-            this.insert(&uuid.to_string(), cx);
+            let edits = this
+                .selections
+                .all::<Point>(cx)
+                .into_iter()
+                .map(|selection| {
+                    let uuid = match version {
+                        UuidVersion::V4 => uuid::Uuid::new_v4(),
+                        UuidVersion::V7 => uuid::Uuid::now_v7(),
+                    };
+
+                    (selection.range(), uuid.to_string())
+                });
+            this.edit(edits, cx);
             this.refresh_inline_completion(true, false, cx);
         });
     }
