@@ -153,7 +153,7 @@ If you are defining shortcuts in your personal keymap, you can opt into the key 
   {
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl->": "editor::Indent"  // parsed as ctrl-: when a German QWERTZ keyboard is active
+      "ctrl->": "editor::Indent" // parsed as ctrl-: when a German QWERTZ keyboard is active
     }
   }
 ]
