@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::Read;
 use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd};
-use std::panic::Location;
+use std::panic::{AssertUnwindSafe, Location};
 use std::rc::Weak;
 use std::{
     path::{Path, PathBuf},
@@ -483,7 +483,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                         .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
                     // oo7 panics if the retrieved secret can't be decrypted due to
                     // unexpected padding.
-                    let secret = std::panic::catch_unwind(|| item.secret())
+                    let secret = std::panic::catch_unwind(AssertUnwindSafe(|| item.secret()))
                         .map_err(|_| anyhow!("oo7 panicked while trying to read credentials"))?
                         .await?;
 
