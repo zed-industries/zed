@@ -268,7 +268,7 @@ fn get_item_color(cx: &ViewContext<ProjectPanel>) -> ItemColors {
     let colors = cx.theme().colors();
 
     ItemColors {
-        default: colors.surface_background,
+        default: colors.panel_background,
         hover: colors.ghost_element_hover,
         drag_over: colors.drop_target_background,
         marked_active: colors.ghost_element_selected,
