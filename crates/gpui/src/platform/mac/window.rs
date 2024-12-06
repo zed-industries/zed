@@ -152,10 +152,6 @@ unsafe fn build_classes() {
             sel!(flagsChanged:),
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
-        decl.add_method(
-            sel!(cancelOperation:),
-            cancel_operation as extern "C" fn(&Object, Sel, id),
-        );
 
         decl.add_method(
             sel!(makeBackingLayer),
@@ -1452,29 +1448,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             callback(event);
             window_state.lock().event_callback = Some(callback);
         }
-    }
-}
-
-// Allows us to receive `cmd-.` (the shortcut for closing a dialog)
-// https://bugs.eclipse.org/bugs/show_bug.cgi?id=300620#c6
-extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-
-    let keystroke = Keystroke {
-        modifiers: Default::default(),
-        key: ".".into(),
-        key_char: None,
-    };
-    let event = PlatformInput::KeyDown(KeyDownEvent {
-        keystroke: keystroke.clone(),
-        is_held: false,
-    });
-
-    if let Some(mut callback) = lock.event_callback.take() {
-        drop(lock);
-        callback(event);
-        window_state.lock().event_callback = Some(callback);
     }
 }
 
