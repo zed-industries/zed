@@ -4435,7 +4435,9 @@ impl LspStore {
             .ok()
             .flatten();
             for task in tasks {
-                if task.await.is_none() {}
+                // Await on tasks sequentially so that the order of application of edits is deterministic
+                // (at least with regards to the order of registration of language servers)
+                task.await;
             }
         })
     }
