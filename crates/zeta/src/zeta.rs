@@ -2,13 +2,14 @@ use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::{HashMap, VecDeque};
 use futures::AsyncReadExt;
-use gpui::{AppContext, Context, Global, Model, ModelContext, Task};
+use gpui::{AppContext, Context, Global, Model, ModelContext, Subscription, Task};
 use http_client::{HttpClient, Method};
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, OffsetRangeExt,
     Point, ToOffset, ToPoint,
 };
-use rpc::{proto, PredictEditsParams, PredictEditsResponse};
+use language_models::LlmApiToken;
+use rpc::{PredictEditsParams, PredictEditsResponse};
 use std::{
     borrow::Cow,
     cmp,
@@ -46,6 +47,8 @@ pub struct Zeta {
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
+    llm_token: LlmApiToken,
+    _llm_token_subscription: Subscription,
 }
 
 pub struct InlineCompletion {
@@ -121,17 +124,32 @@ impl Zeta {
         cx.try_global::<ZetaGlobal>()
             .map(|global| global.0.clone())
             .unwrap_or_else(|| {
-                let model = cx.new_model(|_cx| Self::new(client));
+                let model = cx.new_model(|cx| Self::new(client, cx));
                 cx.set_global(ZetaGlobal(model.clone()));
                 model
             })
     }
 
-    fn new(client: Arc<Client>) -> Self {
+    fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+        let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
+
         Self {
             client,
             events: VecDeque::new(),
             registered_buffers: HashMap::default(),
+            llm_token: LlmApiToken::default(),
+            _llm_token_subscription: cx.subscribe(
+                &refresh_llm_token_listener,
+                |this, _listener, _event, cx| {
+                    let client = this.client.clone();
+                    let llm_token = this.llm_token.clone();
+                    cx.spawn(|_this, _cx| async move {
+                        llm_token.refresh(&client).await?;
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                },
+            ),
         }
     }
 
@@ -219,12 +237,12 @@ impl Zeta {
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
 
         let client = self.client.clone();
+        let llm_token = self.llm_token.clone();
 
         cx.spawn(|_this, _cx| async move {
             let start = std::time::Instant::now();
 
-            // todo!("cache this token")
-            let response = client.request(proto::GetLlmToken {}).await?;
+            let token = llm_token.acquire(&client).await?;
 
             let mut event_prompts = String::new();
             for event in events {
@@ -256,7 +274,7 @@ impl Zeta {
                         .as_ref(),
                 )
                 .header("Content-Type", "application/json")
-                .header("Authorization", format!("Bearer {}", response.token))
+                .header("Authorization", format!("Bearer {}", token))
                 .body(serde_json::to_string(&body)?.into())?;
             let mut response = http_client.send(request).await?;
             let mut body = String::new();
@@ -699,6 +717,8 @@ mod tests {
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use indoc::indoc;
+    use language_models::RefreshLlmTokenListener;
+    use rpc::proto;
     use settings::SettingsStore;
 
     use super::*;
@@ -833,9 +853,12 @@ mod tests {
         });
 
         let client = cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+        cx.update(|cx| {
+            RefreshLlmTokenListener::register(client.clone(), cx);
+        });
         let server = FakeServer::for_client(42, &client, cx).await;
 
-        let zeta = cx.new_model(|_| Zeta::new(client));
+        let zeta = cx.new_model(|cx| Zeta::new(client, cx));
         let buffer = cx.new_model(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
         let completion_task = zeta.update(cx, |zeta, cx| {

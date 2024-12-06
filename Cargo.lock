@@ -16021,6 +16021,7 @@ name = "zeta"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "call",
  "client",
  "clock",
  "collections",
@@ -16032,6 +16033,7 @@ dependencies = [
  "indoc",
  "inline_completion",
  "language",
+ "language_models",
  "log",
  "open_ai",
  "reqwest_client",
