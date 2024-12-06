@@ -629,7 +629,11 @@ impl Vim {
                         // Navigation operators -> Block cursor
                         Operator::FindForward { .. }
                         | Operator::FindBackward { .. }
-                        | Operator::Mark => CursorShape::Block,
+                        | Operator::Mark
+                        | Operator::Jump { .. }
+                        | Operator::Register
+                        | Operator::RecordRegister
+                        | Operator::ReplayRegister => CursorShape::Block,
 
                         // All other operators -> Underline cursor
                         _ => CursorShape::Underline,
