@@ -23,7 +23,7 @@ use async_task::Runnable;
 use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
 use flume::{Receiver, Sender};
-use futures::channel::oneshot;
+use futures::{channel::oneshot, future::FutureExt};
 use parking_lot::Mutex;
 use util::ResultExt;
 
@@ -483,9 +483,10 @@ impl<P: LinuxClient + 'static> Platform for P {
                         .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
                     // oo7 panics if the retrieved secret can't be decrypted due to
                     // unexpected padding.
-                    let secret = std::panic::catch_unwind(AssertUnwindSafe(|| item.secret()))
-                        .map_err(|_| anyhow!("oo7 panicked while trying to read credentials"))?
-                        .await?;
+                    let secret = AssertUnwindSafe(item.secret())
+                        .catch_unwind()
+                        .await
+                        .map_err(|_| anyhow!("oo7 panicked while trying to read credentials"))??;
 
                     // we lose the zeroizing capabilities at this boundary,
                     // a current limitation GPUI's credentials api
