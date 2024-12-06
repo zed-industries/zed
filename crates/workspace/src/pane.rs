@@ -2145,7 +2145,7 @@ impl Pane {
                     .child(if let Some(decorated_icon) = decorated_icon {
                         div().child(decorated_icon.into_any_element())
                     } else if let Some(icon) = icon {
-                        div().child(icon.into_any_element())
+                        div().mt(px(2.5)).child(icon.into_any_element())
                     } else {
                         div()
                     })
