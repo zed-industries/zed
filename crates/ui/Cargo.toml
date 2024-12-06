@@ -17,6 +17,7 @@ chrono.workspace = true
 collections.workspace = true
 gpui.workspace = true
 itertools = { workspace = true, optional = true }
+lazy_static.workspace = true
 linkme.workspace = true
 menu.workspace = true
 once_cell.workspace = true

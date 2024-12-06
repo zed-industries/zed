@@ -13812,6 +13812,7 @@ dependencies = [
  "collections",
  "gpui",
  "itertools 0.13.0",
+ "lazy_static",
  "linkme",
  "menu",
  "once_cell",

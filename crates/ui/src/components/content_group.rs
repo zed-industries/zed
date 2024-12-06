@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::{prelude::*, traits::component::Component};
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
 
@@ -83,6 +83,16 @@ impl RenderOnce for ContentGroup {
             .rounded_md()
             .p_2()
             .children(self.children)
+    }
+}
+
+impl Component for ContentGroup {
+    fn name(&self) -> &'static str {
+        "Content Group"
+    }
+
+    fn scope(&self) -> &'static str {
+        "layout"
     }
 }
 
