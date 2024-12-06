@@ -146,19 +146,14 @@ Finally keyboards that support extended Latin alphabets (usually ISO keyboards) 
 
 For example on a German QWERTZ keyboard, the `cmd->` shortcut is moved to `cmd-:` because `cmd->` is the system window switcher and this is where that shortcut is typed on a QWERTY keyboard. `cmd-+` stays the same because + is still typable without option, and as a result, `cmd-[` and `cmd-]` become `cmd-ö` and `cmd-ä`, moving out of the way of the `+` key.
 
-If you are defining shortcuts in your personal keymap, you can opt-out of the key equivalent mapping by setting `use_layout_keys` to `true` in your keymap:
+If you are defining shortcuts in your personal keymap, you can opt into the key equivalent mapping by setting `use_key_equivalents` to `true` in your keymap:
 
 ```json
 [
   {
+    "use_key_equivalents": true,
     "bindings": {
       "ctrl->": "editor::Indent" // parsed as ctrl-: when a German QWERTZ keyboard is active
-    }
-  },
-  {
-    "use_layout_keys": true,
-    "bindings": {
-      "ctrl->": "editor::Indent" // remains ctrl-> when a German QWERTZ keyboard is active
     }
   }
 ]
