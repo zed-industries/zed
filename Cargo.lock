@@ -13809,9 +13809,12 @@ name = "ui"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "collections",
  "gpui",
  "itertools 0.13.0",
+ "linkme",
  "menu",
+ "once_cell",
  "serde",
  "settings",
  "smallvec",
