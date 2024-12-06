@@ -12004,6 +12004,33 @@ impl Editor {
         .detach();
     }
 
+    pub fn insert_uuid_v4(&mut self, _: &InsertUuidV4, cx: &mut ViewContext<Self>) {
+        self.insert_uuid(UuidVersion::V4, cx);
+    }
+
+    pub fn insert_uuid_v7(&mut self, _: &InsertUuidV7, cx: &mut ViewContext<Self>) {
+        self.insert_uuid(UuidVersion::V7, cx);
+    }
+
+    fn insert_uuid(&mut self, version: UuidVersion, cx: &mut ViewContext<Self>) {
+        self.transact(cx, |this, cx| {
+            let edits = this
+                .selections
+                .all::<Point>(cx)
+                .into_iter()
+                .map(|selection| {
+                    let uuid = match version {
+                        UuidVersion::V4 => uuid::Uuid::new_v4(),
+                        UuidVersion::V7 => uuid::Uuid::now_v7(),
+                    };
+
+                    (selection.range(), uuid.to_string())
+                });
+            this.edit(edits, cx);
+            this.refresh_inline_completion(true, false, cx);
+        });
+    }
+
     /// Adds a row highlight for the given range. If a row has multiple highlights, the
     /// last highlight added will be used.
     ///

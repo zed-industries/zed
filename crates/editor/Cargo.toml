@@ -85,6 +85,7 @@ unindent = { workspace = true, optional = true }
 ui.workspace = true
 url.workspace = true
 util.workspace = true
+uuid.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]

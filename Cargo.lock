@@ -3957,6 +3957,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "uuid",
  "workspace",
 ]
 
