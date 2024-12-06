@@ -8,7 +8,7 @@ use gpui::{
     div, img, px, rems, AbsoluteLength, AnyElement, AnyView, ClipboardItem, DefiniteLength, Div,
     Element, ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
     Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText,
-    TextStyle, WeakView, WindowContext,
+    TextStyle, View, WeakView, WindowContext,
 };
 use settings::Settings;
 use std::{
@@ -206,7 +206,9 @@ fn render_markdown_list_item(
                 ),
             )
             .hover(|s| s.cursor_pointer())
-            .tooltip(|cx| InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", cx))
+            .tooltip(|cx| {
+                InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", cx).into()
+            })
             .into_any_element(),
     };
     let bullet = div().mr_2().child(bullet);
@@ -519,6 +521,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                 "open image",
                                 cx,
                             )
+                            .into()
                         }
                     })
                     .on_click({
@@ -561,14 +564,17 @@ struct InteractiveMarkdownElementTooltip {
 }
 
 impl InteractiveMarkdownElementTooltip {
-    pub fn new(tooltip_text: Option<String>, action_text: &str, cx: &mut WindowContext) -> AnyView {
+    pub fn new(
+        tooltip_text: Option<String>,
+        action_text: &str,
+        cx: &mut WindowContext,
+    ) -> View<Self> {
         let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
 
         cx.new_view(|_| Self {
             tooltip_text,
             action_text: action_text.to_string(),
         })
-        .into()
     }
 }
 
