@@ -62,7 +62,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::{self, Write},
     iter, mem,
-    ops::{Add, Deref, Range},
+    ops::{Deref, Range},
     rc::Rc,
     sync::Arc,
 };
@@ -2864,7 +2864,7 @@ impl EditorElement {
                     ));
                 }
 
-                let longest_row = editor_snapshot.longest_row_in_range(
+                let (longest_row, _longest_row_chars) = editor_snapshot.longest_row_in_range(
                     edit_start.row()
                         ..cmp::min(
                             editor_snapshot.max_point().row(),
@@ -2883,7 +2883,7 @@ impl EditorElement {
                     .child(text)
                     .into_any();
 
-                let line = &line_layouts[(edit_start.row().0 - visible_row_range.start.0) as usize];
+                let line = &line_layouts[(longest_row.0 - visible_row_range.start.0) as usize];
                 let origin = text_bounds.origin
                     + point(
                         line.width + PADDING_X - scroll_pixel_position.x,
