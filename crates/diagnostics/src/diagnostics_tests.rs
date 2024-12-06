@@ -151,7 +151,13 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
 
     // Open the project diagnostics view while there are already diagnostics.
     let view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
     let editor = view.update(cx, |view, _| view.editor.clone());
 
@@ -459,7 +465,13 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let workspace = window.root(cx).unwrap();
 
     let view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
     let editor = view.update(cx, |view, _| view.editor.clone());
 
@@ -720,7 +732,13 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     let workspace = window.root(cx).unwrap();
 
     let mutated_view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
 
     workspace.update(cx, |workspace, cx| {
@@ -816,7 +834,13 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
     log::info!("constructing reference diagnostics view");
     let reference_view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
     cx.run_until_parked();
 
