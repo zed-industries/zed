@@ -1206,8 +1206,7 @@ impl<'a> BlockMapWriter<'a> {
 
     // TODO kb the last buffer folded disappears
     // TODO kb custom blocks (e.g. diagnostics in the tab) are not removed on fold
-    // TODO kb folding a single excerpt (when no others are in the multi buffer) panics
-    // TODO kb indent guids and gutter buttons for folded blocks are pushed upwards, and can be seen between the blocks
+    // TODO kb indent guides and gutter buttons for folded blocks are pushed upwards, and can be seen between the blocks
     // TODO kb folding multiple buffers and unfolding one in the middle makes its next neighbour look unfolded
     pub fn fold_buffer(
         &mut self,
