@@ -1,41 +1,16 @@
 pub mod call_settings;
 
-#[cfg(any(
-    all(target_os = "macos", feature = "livekit-macos"),
-    all(
-        not(target_os = "macos"),
-        feature = "livekit-macos",
-        not(feature = "livekit-cross-platform")
-    )
-))]
+#[cfg(all(target_os = "macos", not(feature = "livekit-cross-platform")))]
 mod macos;
 
-#[cfg(any(
-    all(target_os = "macos", feature = "livekit-macos"),
-    all(
-        not(target_os = "macos"),
-        feature = "livekit-macos",
-        not(feature = "livekit-cross-platform")
-    )
-))]
+#[cfg(all(target_os = "macos", not(feature = "livekit-cross-platform")))]
 pub use macos::*;
 
-#[cfg(any(
-    all(
-        target_os = "macos",
-        feature = "livekit-cross-platform",
-        not(feature = "livekit-macos"),
-    ),
-    all(not(target_os = "macos"), feature = "livekit-cross-platform"),
-))]
+#[cfg(feature = "livekit-cross-platform")]
 mod cross_platform;
 
-#[cfg(any(
-    all(
-        target_os = "macos",
-        feature = "livekit-cross-platform",
-        not(feature = "livekit-macos"),
-    ),
-    all(not(target_os = "macos"), feature = "livekit-cross-platform"),
-))]
+#[cfg(feature = "livekit-cross-platform")]
 pub use cross_platform::*;
+
+#[cfg(all(not(target_os = "macos"), not(feature = "livekit-cross-platform")))]
+compile_error!("Linux/Windows builds require `--features call/livekit-cross-platform`");
