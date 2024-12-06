@@ -1,7 +1,9 @@
 use gpui::Model;
+use indoc::indoc;
 use inline_completion::InlineCompletionProvider;
-use multi_buffer::MultiBufferSnapshot;
+use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::ops::Range;
+use text::{Point, ToOffset};
 use ui::Context;
 
 use crate::{
@@ -20,15 +22,9 @@ async fn test_inline_completion_insert(cx: &mut gpui::TestAppContext) {
     propose_edits(&provider, vec![(28..28, "-273.15")], &mut cx);
     cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
 
-    assert_editor_active_inline_completion(&mut cx, |_, active_inline_completion| {
-        if let InlineCompletion::Edit(edits) =
-            active_inline_completion.expect("no active completion")
-        {
-            assert_eq!(edits.len(), 1);
-            assert_eq!(edits[0].1.as_str(), "-273.15");
-        } else {
-            panic!("expected edit");
-        }
+    assert_editor_active_edit_completion(&mut cx, |_, edits| {
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].1.as_str(), "-273.15");
     });
 
     accept_completion(&mut cx);
@@ -48,15 +44,9 @@ async fn test_inline_completion_modification(cx: &mut gpui::TestAppContext) {
     propose_edits(&provider, vec![(9..14, "3.14159")], &mut cx);
     cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
 
-    assert_editor_active_inline_completion(&mut cx, |_, active_inline_completion| {
-        if let InlineCompletion::Edit(edits) =
-            active_inline_completion.expect("no active completion")
-        {
-            assert_eq!(edits.len(), 1);
-            assert_eq!(edits[0].1.as_str(), "3.14159");
-        } else {
-            panic!("expected edit");
-        }
+    assert_editor_active_edit_completion(&mut cx, |_, edits| {
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].1.as_str(), "3.14159");
     });
 
     accept_completion(&mut cx);
@@ -64,18 +54,108 @@ async fn test_inline_completion_modification(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("let pi = 3.14159ˇ;")
 }
 
-fn assert_editor_active_inline_completion(
+#[gpui::test]
+async fn test_inline_completion_jump_button(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new_model(|_| FakeInlineCompletionProvider::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+
+    // Cursor is 2+ lines above the proposed edit
+    cx.set_state(indoc! {"
+        line 0
+        line ˇ1
+        line 2
+        line 3
+        line
+    "});
+
+    propose_edits(
+        &provider,
+        vec![(Point::new(4, 3)..Point::new(4, 3), " 4")],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
+    assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
+        assert_eq!(move_target.to_point(&snapshot), Point::new(4, 3));
+    });
+
+    // When accepting, cursor is moved to the proposed location
+    accept_completion(&mut cx);
+    cx.assert_editor_state(indoc! {"
+        line 0
+        line 1
+        line 2
+        line 3
+        linˇe
+    "});
+
+    // Cursor is 2+ lines below the proposed edit
+    cx.set_state(indoc! {"
+        line 0
+        line
+        line 2
+        line 3
+        line ˇ4
+    "});
+
+    propose_edits(
+        &provider,
+        vec![(Point::new(1, 3)..Point::new(1, 3), " 1")],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
+    assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
+        assert_eq!(move_target.to_point(&snapshot), Point::new(1, 3));
+    });
+
+    // When accepting, cursor is moved to the proposed location
+    accept_completion(&mut cx);
+    cx.assert_editor_state(indoc! {"
+        line 0
+        linˇe
+        line 2
+        line 3
+        line 4
+    "});
+}
+
+fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
-    assert: impl FnOnce(MultiBufferSnapshot, Option<&InlineCompletion>),
+    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, String)>),
 ) {
     cx.editor(|editor, cx| {
-        assert(
-            editor.buffer().read(cx).snapshot(cx),
-            editor
-                .active_inline_completion
-                .as_ref()
-                .map(|state| &state.completion),
-        )
+        let completion_state = editor
+            .active_inline_completion
+            .as_ref()
+            .expect("editor has no active completion");
+
+        if let InlineCompletion::Edit(edits) = &completion_state.completion {
+            assert(editor.buffer().read(cx).snapshot(cx), edits);
+        } else {
+            panic!("expected edit completion");
+        }
+    })
+}
+
+fn assert_editor_active_move_completion(
+    cx: &mut EditorTestContext,
+    assert: impl FnOnce(MultiBufferSnapshot, Anchor),
+) {
+    cx.editor(|editor, cx| {
+        let completion_state = editor
+            .active_inline_completion
+            .as_ref()
+            .expect("editor has no active completion");
+
+        if let InlineCompletion::Move(anchor) = &completion_state.completion {
+            assert(editor.buffer().read(cx).snapshot(cx), *anchor);
+        } else {
+            panic!("expected move completion");
+        }
     })
 }
 
@@ -85,31 +165,24 @@ fn accept_completion(cx: &mut EditorTestContext) {
     })
 }
 
-fn propose_edits(
+fn propose_edits<T: ToOffset>(
     provider: &Model<FakeInlineCompletionProvider>,
-    edits: Vec<(Range<usize>, &str)>,
+    edits: Vec<(Range<T>, &str)>,
     cx: &mut EditorTestContext,
 ) {
-    let edits = build_inline_completion(edits, cx);
-    cx.update(|cx| {
-        provider.update(cx, |provider, _| {
-            provider.set_inline_completion(Some(edits))
-        })
-    });
-}
-
-fn build_inline_completion(
-    edits: Vec<(Range<usize>, &str)>,
-    cx: &mut EditorTestContext,
-) -> inline_completion::InlineCompletion {
     let snapshot = cx.buffer_snapshot();
     let edits = edits.into_iter().map(|(range, text)| {
         let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
         (range, text.into())
     });
-    inline_completion::InlineCompletion {
-        edits: edits.collect(),
-    }
+
+    cx.update(|cx| {
+        provider.update(cx, |provider, _| {
+            provider.set_inline_completion(Some(inline_completion::InlineCompletion {
+                edits: edits.collect(),
+            }))
+        })
+    });
 }
 
 fn assign_editor_completion_provider(
