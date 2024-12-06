@@ -127,7 +127,7 @@ async fn update_billing_preferences(
         };
 
     SnowflakeRow::new(
-        "Max Monthly LLM Usage Spending Updated",
+        "Spend Limit Updated",
         Some(user.metrics_id),
         user.admin,
         None,
