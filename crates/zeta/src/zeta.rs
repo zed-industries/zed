@@ -867,7 +867,7 @@ mod tests {
             .map(|(range, text)| {
                 (
                     buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
-                    text.into(),
+                    text,
                 )
             })
             .collect()
