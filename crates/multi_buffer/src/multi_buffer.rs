@@ -4668,6 +4668,10 @@ impl<'a> MultiBufferExcerpt<'a> {
         self.excerpt_position
     }
 
+    pub fn end_point(&self) -> Point {
+        self.excerpt_position + self.excerpt.text_summary.lines
+    }
+
     /// Maps an offset within the [`MultiBuffer`] to an offset within the [`Buffer`]
     pub fn map_offset_to_buffer(&self, offset: usize) -> usize {
         self.excerpt.buffer_start_offset()
