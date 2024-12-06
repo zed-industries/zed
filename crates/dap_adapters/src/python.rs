@@ -1,6 +1,5 @@
 use dap::transport::{TcpTransport, Transport};
 use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf};
-use util::maybe;
 
 use crate::*;
 
@@ -50,7 +49,25 @@ impl DebugAdapter for PythonDebugAdapter {
         version: AdapterVersion,
         delegate: &dyn DapDelegate,
     ) -> Result<()> {
-        adapters::download_adapter_from_github(self.name(), version, delegate).await?;
+        let version_path = adapters::download_adapter_from_github(
+            self.name(),
+            version,
+            adapters::DownloadedFileType::Zip,
+            delegate,
+        )
+        .await?;
+
+        // only needed when you install the latest version for the first time
+        if let Some(debugpy_dir) =
+            util::fs::find_file_name_in_dir(version_path.as_path(), |file_name| {
+                file_name.starts_with("microsoft-debugpy-")
+            })
+            .await
+        {
+            util::fs::move_folder_files_to_folder(debugpy_dir.as_path(), version_path.as_path())
+                .await?;
+        }
+
         Ok(())
     }
 
@@ -60,31 +77,17 @@ impl DebugAdapter for PythonDebugAdapter {
         config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
-        let adapter_path = paths::debug_adapters_dir().join(self.name());
-        let file_name_prefix = format!("{}_", self.name());
+        let debugpy_dir = if let Some(user_installed_path) = user_installed_path {
+            user_installed_path
+        } else {
+            let adapter_path = paths::debug_adapters_dir().join(self.name());
+            let file_name_prefix = format!("{}_", self.name());
 
-        let adapter_info: Result<_> = maybe!(async {
-            let debugpy_dir =
-                util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                    file_name.starts_with(&file_name_prefix)
-                })
-                .await
-                .ok_or_else(|| anyhow!("Debugpy directory not found"))?;
-
-            let version = debugpy_dir
-                .file_name()
-                .and_then(|file_name| file_name.to_str())
-                .and_then(|file_name| file_name.strip_prefix(&file_name_prefix))
-                .ok_or_else(|| anyhow!("Python debug adapter has invalid file name"))?
-                .to_string();
-
-            Ok((debugpy_dir, version))
-        })
-        .await;
-
-        let (debugpy_dir, version) = match user_installed_path {
-            Some(path) => (path, "N/A".into()),
-            None => adapter_info?,
+            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                file_name.starts_with(&file_name_prefix)
+            })
+            .await
+            .ok_or_else(|| anyhow!("Debugpy directory not found"))?
         };
 
         let python_cmds = [
@@ -114,7 +117,6 @@ impl DebugAdapter for PythonDebugAdapter {
             ]),
             cwd: config.cwd.clone(),
             envs: None,
-            version,
         })
     }
 

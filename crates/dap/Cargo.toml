@@ -10,6 +10,8 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+async-compression.workspace = true
+async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "b95818130022bfc72bbcd639bdd0c0358c7549fc" }

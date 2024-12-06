@@ -1,4 +1,5 @@
 use crate::ResultExt;
+use anyhow::{bail, Result};
 use async_fs as fs;
 use futures_lite::StreamExt;
 use std::path::{Path, PathBuf};
@@ -56,9 +57,9 @@ where
 
                 if let Some(file_name) = entry_path
                     .file_name()
-                    .and_then(|file_name| file_name.to_str())
+                    .map(|file_name| file_name.to_string_lossy())
                 {
-                    if predicate(file_name) {
+                    if predicate(&file_name) {
                         return Some(entry_path);
                     }
                 }
@@ -67,4 +68,26 @@ where
     }
 
     None
+}
+
+pub async fn move_folder_files_to_folder<P: AsRef<Path>>(
+    source_path: P,
+    target_path: P,
+) -> Result<()> {
+    if !target_path.as_ref().is_dir() {
+        bail!("Folder not found or is not a directory");
+    }
+
+    let mut entries = fs::read_dir(source_path.as_ref()).await?;
+    while let Some(entry) = entries.next().await {
+        let entry = entry?;
+        let old_path = entry.path();
+        let new_path = target_path.as_ref().join(entry.file_name());
+
+        fs::rename(&old_path, &new_path).await?;
+    }
+
+    fs::remove_dir(source_path).await?;
+
+    Ok(())
 }

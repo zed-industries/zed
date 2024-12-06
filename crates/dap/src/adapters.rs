@@ -1,10 +1,14 @@
 use crate::transport::Transport;
 use ::fs::Fs;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
+use async_compression::futures::bufread::GzipDecoder;
+use async_tar::Archive;
 use async_trait::async_trait;
+use futures::io::BufReader;
 use gpui::SharedString;
-use http_client::{github::latest_github_release, HttpClient};
+pub use http_client::{github::latest_github_release, HttpClient};
 use node_runtime::NodeRuntime;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smol::{self, fs::File, lock::Mutex, process};
 use std::{
@@ -17,6 +21,7 @@ use std::{
 };
 use sysinfo::{Pid, Process};
 use task::DebugAdapterConfig;
+use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {
@@ -37,7 +42,7 @@ pub trait DapDelegate {
     async fn shell_env(&self) -> collections::HashMap<String, String>;
 }
 
-#[derive(PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct DebugAdapterName(pub Arc<str>);
 
 impl Deref for DebugAdapterName {
@@ -72,18 +77,29 @@ impl From<DebugAdapterName> for SharedString {
     }
 }
 
+impl<'a> From<&'a str> for DebugAdapterName {
+    fn from(str: &'a str) -> DebugAdapterName {
+        DebugAdapterName(str.to_string().into())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DebugAdapterBinary {
     pub command: String,
     pub arguments: Option<Vec<OsString>>,
     pub envs: Option<HashMap<String, String>>,
     pub cwd: Option<PathBuf>,
-    pub version: String,
 }
 
 pub struct AdapterVersion {
     pub tag_name: String,
     pub url: String,
+}
+
+pub enum DownloadedFileType {
+    Vsix,
+    GzipTar,
+    Zip,
 }
 
 pub struct GithubRepo {
@@ -94,89 +110,79 @@ pub struct GithubRepo {
 pub async fn download_adapter_from_github(
     adapter_name: DebugAdapterName,
     github_version: AdapterVersion,
+    file_type: DownloadedFileType,
     delegate: &dyn DapDelegate,
 ) -> Result<PathBuf> {
     let adapter_path = paths::debug_adapters_dir().join(&adapter_name);
-    let version_dir = adapter_path.join(format!("{}_{}", adapter_name, github_version.tag_name));
+    let version_path = adapter_path.join(format!("{}_{}", adapter_name, github_version.tag_name));
     let fs = delegate.fs();
+
+    if version_path.exists() {
+        return Ok(version_path);
+    }
+
+    if !adapter_path.exists() {
+        fs.create_dir(&adapter_path.as_path())
+            .await
+            .context("Failed creating adapter path")?;
+    }
+
+    log::debug!(
+        "Downloading adapter {} from {}",
+        adapter_name,
+        &github_version.url,
+    );
 
     let http_client = delegate
         .http_client()
         .ok_or_else(|| anyhow!("Failed to download adapter: couldn't connect to GitHub"))?;
-
-    if !adapter_path.exists() {
-        fs.create_dir(&adapter_path.as_path()).await?;
-    }
-
-    if version_dir.exists() {
-        return Ok(version_dir);
-    }
-
-    let asset_name = format!("{}_{}.zip", &adapter_name, github_version.tag_name);
-    let zip_path = adapter_path.join(&asset_name);
-    fs.remove_file(
-        zip_path.as_path(),
-        fs::RemoveOptions {
-            recursive: true,
-            ignore_if_not_exists: true,
-        },
-    )
-    .await?;
-
     let mut response = http_client
         .get(&github_version.url, Default::default(), true)
         .await
         .context("Error downloading release")?;
+    if !response.status().is_success() {
+        Err(anyhow!(
+            "download failed with status {}",
+            response.status().to_string()
+        ))?;
+    }
 
-    let mut file = File::create(&zip_path).await?;
-    futures::io::copy(response.body_mut(), &mut file).await?;
+    match file_type {
+        DownloadedFileType::GzipTar => {
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let archive = Archive::new(decompressed_bytes);
+            archive.unpack(&version_path).await?;
+        }
+        DownloadedFileType::Zip | DownloadedFileType::Vsix => {
+            let zip_path = version_path.with_extension("zip");
 
-    let old_files: HashSet<_> = util::fs::collect_matching(&adapter_path.as_path(), |file_path| {
-        file_path != zip_path.as_path()
+            let mut file = File::create(&zip_path).await?;
+            futures::io::copy(response.body_mut(), &mut file).await?;
+
+            // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
+            process::Command::new("unzip")
+                .arg(&zip_path)
+                .arg("-d")
+                .arg(&version_path)
+                .output()
+                .await?;
+
+            util::fs::remove_matching(&adapter_path, |entry| {
+                entry
+                    .file_name()
+                    .is_some_and(|file| file.to_string_lossy().ends_with(".zip"))
+            })
+            .await;
+        }
+    }
+
+    // remove older versions
+    util::fs::remove_matching(&adapter_path, |entry| {
+        entry.to_string_lossy() != version_path.to_string_lossy()
     })
-    .await
-    .into_iter()
-    .filter_map(|file_path| {
-        file_path
-            .file_name()
-            .and_then(|f| f.to_str())
-            .map(|f| f.to_string())
-    })
-    .collect();
+    .await;
 
-    let _unzip_status = process::Command::new("unzip")
-        .current_dir(&adapter_path)
-        .arg(&zip_path)
-        .output()
-        .await?
-        .status;
-
-    let file_name = util::fs::find_file_name_in_dir(&adapter_path.as_path(), |file_name| {
-        !file_name.ends_with(".zip") && !old_files.contains(file_name)
-    })
-    .await
-    .ok_or_else(|| anyhow!("Unzipped directory not found"));
-
-    let file_name = file_name?;
-    let downloaded_path = adapter_path
-        .join(format!("{}_{}", adapter_name, github_version.tag_name))
-        .to_owned();
-
-    fs.rename(
-        file_name.as_path(),
-        downloaded_path.as_path(),
-        Default::default(),
-    )
-    .await?;
-
-    util::fs::remove_matching(&adapter_path, |entry| entry != version_dir).await;
-
-    // if !unzip_status.success() {
-    //     dbg!(unzip_status);
-    //     Err(anyhow!("failed to unzip downloaded dap archive"))?;
-    // }
-
-    Ok(downloaded_path)
+    Ok(version_path)
 }
 
 pub async fn fetch_latest_adapter_version_from_github(
@@ -186,8 +192,14 @@ pub async fn fetch_latest_adapter_version_from_github(
     let http_client = delegate
         .http_client()
         .ok_or_else(|| anyhow!("Failed to download adapter: couldn't connect to GitHub"))?;
-    let repo_name_with_owner = format!("{}/{}", github_repo.repo_owner, github_repo.repo_name);
-    let release = latest_github_release(&repo_name_with_owner, false, false, http_client).await?;
+
+    let release = latest_github_release(
+        &format!("{}/{}", github_repo.repo_owner, github_repo.repo_name),
+        false,
+        false,
+        http_client,
+    )
+    .await?;
 
     Ok(AdapterVersion {
         tag_name: release.tag_name,
@@ -203,39 +215,8 @@ pub trait DebugAdapter: 'static + Send + Sync {
         &self,
         delegate: &dyn DapDelegate,
         config: &DebugAdapterConfig,
-        adapter_path: Option<PathBuf>,
+        user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
-        if let Some(adapter_path) = adapter_path {
-            if adapter_path.exists() {
-                log::info!(
-                    "Using adapter path from settings\n debug adapter name: {}\n adapter_path: {:?}",
-                    self.name(),
-                    &adapter_path,
-                );
-
-                let binary = self
-                    .get_installed_binary(delegate, &config, Some(adapter_path))
-                    .await;
-
-                if binary.is_ok() {
-                    return binary;
-                } else {
-                    log::info!(
-                        "Failed to get debug adapter path from user's setting.\n adapter_name: {}",
-                        self.name()
-                    );
-                }
-            } else {
-                log::warn!(
-                    r#"User downloaded adapter path does not exist
-                    Debug Adapter: {},
-                    User Adapter Path: {:?}"#,
-                    self.name(),
-                    &adapter_path
-                )
-            }
-        }
-
         if delegate
             .updated_adapters()
             .lock()
@@ -244,49 +225,39 @@ pub trait DebugAdapter: 'static + Send + Sync {
         {
             log::info!("Using cached debug adapter binary {}", self.name());
 
-            return self.get_installed_binary(delegate, &config, None).await;
-        }
-
-        log::info!("Getting latest version of debug adapter {}", self.name());
-        delegate.update_status(self.name(), DapStatus::CheckingForUpdate);
-        let version = self.fetch_latest_adapter_version(delegate).await.ok();
-
-        let mut binary = self.get_installed_binary(delegate, &config, None).await;
-
-        if let Some(version) = version {
-            if binary
-                .as_ref()
-                .is_ok_and(|binary| binary.version == version.tag_name)
+            if let Some(binary) = self
+                .get_installed_binary(delegate, &config, user_installed_path.clone())
+                .await
+                .log_err()
             {
-                delegate
-                    .updated_adapters()
-                    .lock_arc()
-                    .await
-                    .insert(self.name());
-
-                return binary;
+                return Ok(binary);
             }
 
-            delegate.update_status(self.name(), DapStatus::Downloading);
-            self.install_binary(version, delegate).await?;
-
-            binary = self.get_installed_binary(delegate, &config, None).await;
-        } else {
-            log::error!(
-                "Failed getting latest version of debug adapter {}",
+            log::info!(
+                "Cached binary {} is corrupt falling back to install",
                 self.name()
             );
         }
 
-        let binary = binary?;
+        log::info!("Getting latest version of debug adapter {}", self.name());
+        delegate.update_status(self.name(), DapStatus::CheckingForUpdate);
+        if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+            log::info!(
+                "Installiing latest version of debug adapter {}",
+                self.name()
+            );
+            delegate.update_status(self.name(), DapStatus::Downloading);
+            self.install_binary(version, delegate).await?;
 
-        delegate
-            .updated_adapters()
-            .lock_arc()
+            delegate
+                .updated_adapters()
+                .lock_arc()
+                .await
+                .insert(self.name());
+        }
+
+        self.get_installed_binary(delegate, &config, user_installed_path)
             .await
-            .insert(self.name());
-
-        Ok(binary)
     }
 
     fn transport(&self) -> Box<dyn Transport>;

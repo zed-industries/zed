@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::{ffi::OsString, path::PathBuf};
 
 use dap::transport::{StdioTransport, TcpTransport, Transport};
 use serde_json::Value;
@@ -54,7 +54,6 @@ impl DebugAdapter for CustomDebugAdapter {
                 .map(|args| args.iter().map(OsString::from).collect()),
             cwd: config.cwd.clone(),
             envs: self.custom_args.envs.clone(),
-            version: "Custom Debug Adapter".to_string(),
         })
     }
 

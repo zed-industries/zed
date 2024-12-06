@@ -1,6 +1,6 @@
+use adapters::latest_github_release;
 use dap::transport::{TcpTransport, Transport};
-use std::net::Ipv4Addr;
-use util::maybe;
+use std::{net::Ipv4Addr, path::PathBuf};
 
 use crate::*;
 
@@ -12,7 +12,7 @@ pub(crate) struct PhpDebugAdapter {
 
 impl PhpDebugAdapter {
     const ADAPTER_NAME: &'static str = "vscode-php-debug";
-    const ADAPTER_PATH: &'static str = "out/phpDebug.js";
+    const ADAPTER_PATH: &'static str = "extension/out/phpDebug.js";
 
     pub(crate) async fn new(host: TCPHost) -> Result<Self> {
         Ok(PhpDebugAdapter {
@@ -37,12 +37,29 @@ impl DebugAdapter for PhpDebugAdapter {
         &self,
         delegate: &dyn DapDelegate,
     ) -> Result<AdapterVersion> {
-        let github_repo = GithubRepo {
-            repo_name: Self::ADAPTER_NAME.into(),
-            repo_owner: "xdebug".into(),
-        };
+        let http_client = delegate
+            .http_client()
+            .ok_or_else(|| anyhow!("Failed to download adapter: couldn't connect to GitHub"))?;
+        let release = latest_github_release(
+            &format!("{}/{}", "xdebug", Self::ADAPTER_NAME),
+            true,
+            false,
+            http_client,
+        )
+        .await?;
 
-        adapters::fetch_latest_adapter_version_from_github(github_repo, delegate).await
+        let asset_name = format!("php-debug-{}.vsix", release.tag_name.replace("v", ""));
+
+        Ok(AdapterVersion {
+            tag_name: release.tag_name,
+            url: release
+                .assets
+                .iter()
+                .find(|asset| asset.name == asset_name)
+                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?
+                .browser_download_url
+                .clone(),
+        })
     }
 
     async fn get_installed_binary(
@@ -51,36 +68,23 @@ impl DebugAdapter for PhpDebugAdapter {
         config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
+        let adapter_path = if let Some(user_installed_path) = user_installed_path {
+            user_installed_path
+        } else {
+            let adapter_path = paths::debug_adapters_dir().join(self.name());
+
+            let file_name_prefix = format!("{}_", self.name());
+
+            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                file_name.starts_with(&file_name_prefix)
+            })
+            .await
+            .ok_or_else(|| anyhow!("Couldn't find PHP dap directory"))?
+        };
+
         let node_runtime = delegate
             .node_runtime()
             .ok_or(anyhow!("Couldn't get npm runtime"))?;
-
-        let adapter_path = paths::debug_adapters_dir().join(self.name());
-        let file_name_prefix = format!("{}_", self.name());
-
-        let adapter_info: Result<_> = maybe!(async {
-            let adapter_path =
-                util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                    file_name.starts_with(&file_name_prefix)
-                })
-                .await
-                .ok_or_else(|| anyhow!("Couldn't find Php dap directory"))?;
-
-            let version = adapter_path
-                .file_name()
-                .and_then(|file_name| file_name.to_str())
-                .and_then(|file_name| file_name.strip_prefix(&file_name_prefix))
-                .ok_or_else(|| anyhow!("PHP debug adapter has invalid file name"))?
-                .to_string();
-
-            Ok((adapter_path, version))
-        })
-        .await;
-
-        let (adapter_path, version) = match user_installed_path {
-            Some(path) => (path, "N/A".into()),
-            None => adapter_info?,
-        };
 
         Ok(DebugAdapterBinary {
             command: node_runtime
@@ -94,7 +98,6 @@ impl DebugAdapter for PhpDebugAdapter {
             ]),
             cwd: config.cwd.clone(),
             envs: None,
-            version,
         })
     }
 
@@ -103,22 +106,13 @@ impl DebugAdapter for PhpDebugAdapter {
         version: AdapterVersion,
         delegate: &dyn DapDelegate,
     ) -> Result<()> {
-        let adapter_path =
-            adapters::download_adapter_from_github(self.name(), version, delegate).await?;
-
-        let _ = delegate
-            .node_runtime()
-            .ok_or(anyhow!("Couldn't get npm runtime"))?
-            .run_npm_subcommand(&adapter_path, "install", &[])
-            .await
-            .is_ok();
-
-        let _ = delegate
-            .node_runtime()
-            .ok_or(anyhow!("Couldn't get npm runtime"))?
-            .run_npm_subcommand(&adapter_path, "run", &["build"])
-            .await
-            .is_ok();
+        adapters::download_adapter_from_github(
+            self.name(),
+            version,
+            adapters::DownloadedFileType::Vsix,
+            delegate,
+        )
+        .await?;
 
         Ok(())
     }

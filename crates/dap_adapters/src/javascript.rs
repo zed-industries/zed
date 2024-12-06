@@ -1,9 +1,9 @@
+use adapters::latest_github_release;
 use dap::transport::{TcpTransport, Transport};
 use regex::Regex;
-use std::{collections::HashMap, net::Ipv4Addr};
+use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf};
 use sysinfo::{Pid, Process};
 use task::DebugRequestType;
-use util::maybe;
 
 use crate::*;
 
@@ -15,7 +15,7 @@ pub(crate) struct JsDebugAdapter {
 
 impl JsDebugAdapter {
     const ADAPTER_NAME: &'static str = "vscode-js-debug";
-    const ADAPTER_PATH: &'static str = "src/dapDebugServer.js";
+    const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
 
     pub(crate) async fn new(host: TCPHost) -> Result<Self> {
         Ok(JsDebugAdapter {
@@ -40,12 +40,29 @@ impl DebugAdapter for JsDebugAdapter {
         &self,
         delegate: &dyn DapDelegate,
     ) -> Result<AdapterVersion> {
-        let github_repo = GithubRepo {
-            repo_name: Self::ADAPTER_NAME.into(),
-            repo_owner: "microsoft".to_string(),
-        };
+        let http_client = delegate
+            .http_client()
+            .ok_or_else(|| anyhow!("Failed to download adapter: couldn't connect to GitHub"))?;
+        let release = latest_github_release(
+            &format!("{}/{}", "microsoft", Self::ADAPTER_NAME),
+            true,
+            false,
+            http_client,
+        )
+        .await?;
 
-        adapters::fetch_latest_adapter_version_from_github(github_repo, delegate).await
+        let asset_name = format!("js-debug-dap-{}.tar.gz", release.tag_name);
+
+        Ok(AdapterVersion {
+            tag_name: release.tag_name,
+            url: release
+                .assets
+                .iter()
+                .find(|asset| asset.name == asset_name)
+                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?
+                .browser_download_url
+                .clone(),
+        })
     }
 
     async fn get_installed_binary(
@@ -54,36 +71,23 @@ impl DebugAdapter for JsDebugAdapter {
         config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
+        let adapter_path = if let Some(user_installed_path) = user_installed_path {
+            user_installed_path
+        } else {
+            let adapter_path = paths::debug_adapters_dir().join(self.name());
+
+            let file_name_prefix = format!("{}_", self.name());
+
+            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                file_name.starts_with(&file_name_prefix)
+            })
+            .await
+            .ok_or_else(|| anyhow!("Couldn't find JavaScript dap directory"))?
+        };
+
         let node_runtime = delegate
             .node_runtime()
             .ok_or(anyhow!("Couldn't get npm runtime"))?;
-
-        let adapter_path = paths::debug_adapters_dir().join(self.name());
-        let file_name_prefix = format!("{}_", self.name());
-
-        let adapter_info: Result<_> = maybe!(async {
-            let adapter_path =
-                util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                    file_name.starts_with(&file_name_prefix)
-                })
-                .await
-                .ok_or_else(|| anyhow!("Couldn't find Php dap directory"))?;
-
-            let version = adapter_path
-                .file_name()
-                .and_then(|file_name| file_name.to_str())
-                .and_then(|file_name| file_name.strip_prefix(&file_name_prefix))
-                .ok_or_else(|| anyhow!("PHP debug adapter has invalid file name"))?
-                .to_string();
-
-            Ok((adapter_path, version))
-        })
-        .await;
-
-        let (adapter_path, version) = match user_installed_path {
-            Some(path) => (path, "N/A".into()),
-            None => adapter_info?,
-        };
 
         Ok(DebugAdapterBinary {
             command: node_runtime
@@ -94,10 +98,10 @@ impl DebugAdapter for JsDebugAdapter {
             arguments: Some(vec![
                 adapter_path.join(Self::ADAPTER_PATH).into(),
                 self.port.to_string().into(),
+                self.host.to_string().into(),
             ]),
             cwd: config.cwd.clone(),
             envs: None,
-            version,
         })
     }
 
@@ -106,22 +110,13 @@ impl DebugAdapter for JsDebugAdapter {
         version: AdapterVersion,
         delegate: &dyn DapDelegate,
     ) -> Result<()> {
-        let adapter_path =
-            adapters::download_adapter_from_github(self.name(), version, delegate).await?;
-
-        let _ = delegate
-            .node_runtime()
-            .ok_or(anyhow!("Couldn't get npm runtime"))?
-            .run_npm_subcommand(&adapter_path, "install", &[])
-            .await
-            .ok();
-
-        let _ = delegate
-            .node_runtime()
-            .ok_or(anyhow!("Couldn't get npm runtime"))?
-            .run_npm_subcommand(&adapter_path, "run", &["compile"])
-            .await
-            .ok();
+        adapters::download_adapter_from_github(
+            self.name(),
+            version,
+            adapters::DownloadedFileType::GzipTar,
+            delegate,
+        )
+        .await?;
 
         return Ok(());
     }

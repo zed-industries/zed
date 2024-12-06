@@ -36,9 +36,9 @@ impl DebugAdapter for GoDebugAdapter {
         &self,
         delegate: &dyn DapDelegate,
         config: &DebugAdapterConfig,
-        adapter_path: Option<PathBuf>,
+        user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
-        self.get_installed_binary(delegate, config, adapter_path)
+        self.get_installed_binary(delegate, config, user_installed_path)
             .await
     }
 
@@ -46,12 +46,6 @@ impl DebugAdapter for GoDebugAdapter {
         &self,
         _delegate: &dyn DapDelegate,
     ) -> Result<AdapterVersion> {
-        // let github_repo = GithubRepo {
-        //     repo_name: Self::ADAPTER_NAME.into(),
-        //     repo_owner: "go-delve".into(),
-        // };
-
-        // adapters::fetch_latest_adapter_version_from_github(github_repo, delegate).await
         unimplemented!("This adapter is used from path for now");
     }
 
@@ -60,7 +54,13 @@ impl DebugAdapter for GoDebugAdapter {
         version: AdapterVersion,
         delegate: &dyn DapDelegate,
     ) -> Result<()> {
-        adapters::download_adapter_from_github(self.name(), version, delegate).await?;
+        adapters::download_adapter_from_github(
+            self.name(),
+            version,
+            adapters::DownloadedFileType::Zip,
+            delegate,
+        )
+        .await?;
         Ok(())
     }
 
@@ -68,26 +68,30 @@ impl DebugAdapter for GoDebugAdapter {
         &self,
         delegate: &dyn DapDelegate,
         config: &DebugAdapterConfig,
-        _user_installed_path: Option<PathBuf>,
+        _: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         let delve_path = delegate
             .which(OsStr::new("dlv"))
             .and_then(|p| p.to_str().map(|p| p.to_string()))
             .ok_or(anyhow!("Dlv not found in path"))?;
 
-        let ip_address = format!("{}:{}", self.host, self.port);
-        let version = "N/A".into();
-
         Ok(DebugAdapterBinary {
             command: delve_path,
-            arguments: Some(vec!["dap".into(), "--listen".into(), ip_address.into()]),
+            arguments: Some(vec![
+                "dap".into(),
+                "--listen".into(),
+                format!("{}:{}", self.host, self.port).into(),
+            ]),
             cwd: config.cwd.clone(),
             envs: None,
-            version,
         })
     }
 
     fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        json!({"program": config.program, "subProcess": true})
+        json!({
+            "program": config.program,
+            "cwd": config.cwd,
+            "subProcess": true,
+        })
     }
 }

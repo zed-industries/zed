@@ -1,9 +1,10 @@
-use crate::{project_settings::ProjectSettings, ProjectEnvironment, ProjectPath};
+use crate::project_settings::ProjectSettings;
+use crate::{ProjectEnvironment, ProjectPath};
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 
 use collections::HashMap;
-use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
+use dap::adapters::{DapDelegate, DapStatus, DebugAdapter, DebugAdapterBinary, DebugAdapterName};
 use dap::{
     client::{DebugAdapterClient, DebugAdapterClientId},
     messages::{Message, Response},
@@ -37,7 +38,7 @@ use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use serde_json::Value;
-use settings::{Settings, WorktreeId};
+use settings::{Settings as _, WorktreeId};
 use smol::lock::Mutex;
 use std::{
     collections::{BTreeMap, HashSet},
@@ -51,7 +52,7 @@ use std::{
 };
 use task::{AttachConfig, DebugAdapterConfig, DebugRequestType};
 use text::Point;
-use util::{maybe, merge_json_value_into, ResultExt as _};
+use util::{merge_json_value_into, ResultExt as _};
 
 pub enum DapStoreEvent {
     DebugClientStarted(DebugAdapterClientId),
@@ -379,102 +380,55 @@ impl DapStore {
         }
     }
 
-    pub fn start_client(&mut self, config: DebugAdapterConfig, cx: &mut ModelContext<Self>) {
-        let Some(local_store) = self.as_local_mut() else {
+    pub fn start_client(
+        &mut self,
+        adapter: Arc<Box<dyn DebugAdapter>>,
+        binary: DebugAdapterBinary,
+        config: DebugAdapterConfig,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(_) = self.as_local() else {
             return;
         };
 
-        let mut adapter_delegate = local_store.delegate.clone();
-        let worktree_abs_path = config.cwd.as_ref().map(|p| Arc::from(p.as_path()));
-        adapter_delegate.refresh_shell_env_task(local_store.environment.update(cx, |env, cx| {
-            env.get_environment(None, worktree_abs_path, cx)
-        }));
-        let adapter_delegate = Arc::new(adapter_delegate);
+        if !adapter.supports_attach() && matches!(config.request, DebugRequestType::Attach(_)) {
+            cx.emit(DapStoreEvent::Notification(
+                "Debug adapter does not support `attach` request".into(),
+            ));
+
+            return;
+        }
 
         let client_id = self.next_client_id();
 
         let start_client_task = cx.spawn(|this, mut cx| async move {
             let dap_store = this.clone();
-            let client = maybe!(async {
-                let adapter = Arc::new(
-                    build_adapter(&config.kind)
-                        .await
-                        .context("Creating debug adapter")?,
-                );
+            let mut client =
+                DebugAdapterClient::new(client_id, config, adapter, binary.clone(), &cx);
 
-                if !adapter.supports_attach()
-                    && matches!(config.request, DebugRequestType::Attach(_))
-                {
-                    return Err(anyhow!("Debug adapter does not support `attach` request"));
-                }
+            let result = client
+                .start(
+                    &binary,
+                    move |message, cx| {
+                        dap_store
+                            .update(cx, |_, cx| {
+                                cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
+                            })
+                            .log_err();
+                    },
+                    &mut cx,
+                )
+                .await;
 
-                let path = cx.update(|cx| {
-                    let name = LanguageServerName::from(adapter.name().as_ref());
+            if let Err(error) = result {
+                this.update(&mut cx, |_, cx| {
+                    cx.emit(DapStoreEvent::Notification(error.to_string()));
+                })
+                .log_err()?;
+                return None;
+            }
 
-                    ProjectSettings::get_global(cx)
-                        .dap
-                        .get(&name)
-                        .and_then(|s| s.path.as_ref().map(PathBuf::from))
-                })?;
-
-                let binary = match adapter
-                    .get_binary(adapter_delegate.as_ref(), &config, path)
-                    .await
-                {
-                    Err(error) => {
-                        adapter_delegate.update_status(
-                            adapter.name(),
-                            DapStatus::Failed {
-                                error: error.to_string(),
-                            },
-                        );
-
-                        return Err(error);
-                    }
-                    Ok(mut binary) => {
-                        adapter_delegate.update_status(adapter.name(), DapStatus::None);
-
-                        let shell_env = adapter_delegate.shell_env().await;
-                        let mut envs = binary.envs.unwrap_or_default();
-                        envs.extend(shell_env);
-                        binary.envs = Some(envs);
-
-                        binary
-                    }
-                };
-
-                let mut client = DebugAdapterClient::new(client_id, config, adapter, &cx);
-
-                client
-                    .start(
-                        &binary,
-                        move |message, cx| {
-                            dap_store
-                                .update(cx, |_, cx| {
-                                    cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
-                                })
-                                .log_err();
-                        },
-                        &mut cx,
-                    )
-                    .await?;
-
-                log::info!("Client has started");
-                anyhow::Ok(client)
-            })
-            .await;
-
-            let client = match client {
-                Err(error) => {
-                    this.update(&mut cx, |_, cx| {
-                        cx.emit(DapStoreEvent::Notification(error.to_string()));
-                    })
-                    .log_err()?;
-
-                    return None;
-                }
-                Ok(client) => Arc::new(client),
-            };
+            let client = Arc::new(client);
 
             this.update(&mut cx, |store, cx| {
                 let handle = store
@@ -497,6 +451,67 @@ impl DapStore {
             client_id,
             DebugAdapterClientState::Starting(start_client_task),
         );
+    }
+
+    pub fn start_client_from_debug_config(
+        &mut self,
+        config: DebugAdapterConfig,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(local_store) = self.as_local_mut() else {
+            return;
+        };
+
+        let mut adapter_delegate = local_store.delegate.clone();
+        let worktree_abs_path = config.cwd.as_ref().map(|p| Arc::from(p.as_path()));
+        adapter_delegate.refresh_shell_env_task(local_store.environment.update(cx, |env, cx| {
+            env.get_environment(None, worktree_abs_path, cx)
+        }));
+        let adapter_delegate = Arc::new(adapter_delegate);
+
+        cx.spawn(|this, mut cx| async move {
+            let adapter = Arc::new(build_adapter(&config.kind).await?);
+
+            let binary = cx.update(|cx| {
+                let name = DebugAdapterName::from(adapter.name().as_ref());
+
+                ProjectSettings::get_global(cx)
+                    .dap
+                    .get(&name)
+                    .and_then(|s| s.binary.as_ref().map(PathBuf::from))
+            })?;
+
+            let (adapter, binary) = match adapter
+                .get_binary(adapter_delegate.as_ref(), &config, binary)
+                .await
+            {
+                Err(error) => {
+                    adapter_delegate.update_status(
+                        adapter.name(),
+                        DapStatus::Failed {
+                            error: error.to_string(),
+                        },
+                    );
+
+                    return Err(error);
+                }
+                Ok(mut binary) => {
+                    adapter_delegate.update_status(adapter.name(), DapStatus::None);
+
+                    let shell_env = adapter_delegate.shell_env().await;
+                    let mut envs = binary.envs.unwrap_or_default();
+                    envs.extend(shell_env);
+                    binary.envs = Some(envs);
+
+                    (adapter, binary)
+                }
+            };
+
+            this.update(&mut cx, |store, cx| {
+                store.start_client(adapter, binary, config, cx);
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn initialize(
@@ -737,6 +752,8 @@ impl DapStore {
                     let config = client.config();
 
                     store.start_client(
+                        client.adapter().clone(),
+                        client.binary().clone(),
                         DebugAdapterConfig {
                             kind: config.kind.clone(),
                             request: match args.request {
@@ -771,9 +788,7 @@ impl DapStore {
                         command: StartDebugging::COMMAND.to_string(),
                         body: Some(serde_json::to_value(ErrorResponse { error: None })?),
                     }))
-                    .await?;
-
-                Ok(())
+                    .await
             }
         })
     }

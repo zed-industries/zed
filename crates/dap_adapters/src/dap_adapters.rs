@@ -22,7 +22,6 @@ use lldb::LldbDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use serde_json::{json, Value};
-use std::path::PathBuf;
 use task::{CustomArgs, DebugAdapterConfig, DebugAdapterKind, DebugConnectionType, TCPHost};
 
 pub async fn build_adapter(kind: &DebugAdapterKind) -> Result<Box<dyn DebugAdapter>> {
