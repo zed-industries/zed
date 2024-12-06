@@ -2023,28 +2023,7 @@ impl Editor {
 
         let mut code_action_providers = Vec::new();
         if let Some(project) = project.clone() {
-            let mut tasks = Vec::new();
-            buffer.update(cx, |multibuffer, cx| {
-                project.update(cx, |project, cx| {
-                    multibuffer.for_each_buffer(|buffer| {
-                        tasks.push(project.open_unstaged_changes(buffer.clone(), cx))
-                    });
-                });
-            });
-
-            cx.spawn(|this, mut cx| async move {
-                let change_sets = futures::future::join_all(tasks).await;
-                this.update(&mut cx, |this, cx| {
-                    for change_set in change_sets {
-                        if let Some(change_set) = change_set.log_err() {
-                            this.diff_map.add_change_set(change_set, cx);
-                        }
-                    }
-                })
-                .ok();
-            })
-            .detach();
-
+            get_unstaged_changes_for_buffers(&project, buffer.read(cx).all_buffers(), cx);
             code_action_providers.push(Arc::new(project) as Arc<_>);
         }
 
@@ -12646,6 +12625,12 @@ impl Editor {
                 excerpts,
             } => {
                 self.tasks_update_task = Some(self.refresh_runnables(cx));
+                let buffer_id = buffer.read(cx).remote_id();
+                if !self.diff_map.diff_bases.contains_key(&buffer_id) {
+                    if let Some(project) = &self.project {
+                        get_unstaged_changes_for_buffers(project, [buffer.clone()], cx);
+                    }
+                }
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -13340,6 +13325,31 @@ impl Editor {
 
         gpui::Point::new(em_width, line_height)
     }
+}
+
+fn get_unstaged_changes_for_buffers(
+    project: &Model<Project>,
+    buffers: impl IntoIterator<Item = Model<Buffer>>,
+    cx: &mut ViewContext<Editor>,
+) {
+    let mut tasks = Vec::new();
+    project.update(cx, |project, cx| {
+        for buffer in buffers {
+            tasks.push(project.open_unstaged_changes(buffer.clone(), cx))
+        }
+    });
+    cx.spawn(|this, mut cx| async move {
+        let change_sets = futures::future::join_all(tasks).await;
+        this.update(&mut cx, |this, cx| {
+            for change_set in change_sets {
+                if let Some(change_set) = change_set.log_err() {
+                    this.diff_map.add_change_set(change_set, cx);
+                }
+            }
+        })
+        .ok();
+    })
+    .detach();
 }
 
 fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) -> usize {
