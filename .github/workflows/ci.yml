@@ -162,7 +162,7 @@ jobs:
       - name: Run tests
         uses: ./.github/actions/run_tests
 
-      - name: Build other binaries an features
+      - name: Build other binaries and features
         run: |
           cargo build -p zed
           cargo check -p workspace
