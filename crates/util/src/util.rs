@@ -1,4 +1,5 @@
 pub mod arc_cow;
+pub mod command;
 pub mod fs;
 pub mod paths;
 pub mod serde;
@@ -145,6 +146,12 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
                 } else {
                     target.insert(key.clone(), value);
                 }
+            }
+        }
+
+        (Value::Array(source), Value::Array(target)) => {
+            for value in source {
+                target.push(value);
             }
         }
 

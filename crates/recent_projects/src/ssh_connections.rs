@@ -4,6 +4,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use anyhow::{anyhow, Result};
 use auto_update::AutoUpdater;
 use editor::Editor;
+use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
     percentage, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
@@ -200,7 +201,7 @@ impl SshPrompt {
             selection_background_color: cx.theme().players().local().selection,
             ..Default::default()
         };
-        let markdown = cx.new_view(|cx| Markdown::new_text(prompt, markdown_style, None, cx, None));
+        let markdown = cx.new_view(|cx| Markdown::new_text(prompt, markdown_style, None, None, cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         cx.focus_view(&self.editor);
@@ -629,6 +630,15 @@ pub async fn open_ssh_project(
                 continue;
             }
         }
+
+        window
+            .update(cx, |workspace, cx| {
+                if let Some(client) = workspace.project().read(cx).ssh_client().clone() {
+                    ExtensionStore::global(cx)
+                        .update(cx, |store, cx| store.register_ssh_client(client, cx));
+                }
+            })
+            .ok();
 
         break;
     }

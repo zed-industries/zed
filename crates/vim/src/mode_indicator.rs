@@ -2,7 +2,7 @@ use gpui::{div, Element, Render, Subscription, View, ViewContext, WeakView};
 use itertools::Itertools;
 use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
-use crate::{Vim, VimEvent};
+use crate::{Vim, VimEvent, VimGlobals};
 
 /// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
@@ -68,14 +68,22 @@ impl ModeIndicator {
 
         let vim = vim.read(cx);
         recording
-            .chain(vim.pre_count.map(|count| format!("{}", count)))
+            .chain(
+                cx.global::<VimGlobals>()
+                    .pre_count
+                    .map(|count| format!("{}", count)),
+            )
             .chain(vim.selected_register.map(|reg| format!("\"{reg}")))
             .chain(
                 vim.operator_stack
                     .iter()
                     .map(|item| item.status().to_string()),
             )
-            .chain(vim.post_count.map(|count| format!("{}", count)))
+            .chain(
+                cx.global::<VimGlobals>()
+                    .post_count
+                    .map(|count| format!("{}", count)),
+            )
             .collect::<Vec<_>>()
             .join("")
     }

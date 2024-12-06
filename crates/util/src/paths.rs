@@ -1,5 +1,5 @@
 use std::cmp;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -92,6 +92,46 @@ impl<T: AsRef<Path>> PathExt for T {
         }
 
         self.as_ref().file_name()?.to_str()?.split('.').last()
+    }
+}
+
+/// Due to the issue of UNC paths on Windows, which can cause bugs in various parts of Zed, introducing this `SanitizedPath`
+/// leverages Rust's type system to ensure that all paths entering Zed are always "sanitized" by removing the `\\\\?\\` prefix.
+/// On non-Windows operating systems, this struct is effectively a no-op.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SanitizedPath(Arc<Path>);
+
+impl SanitizedPath {
+    pub fn starts_with(&self, prefix: &SanitizedPath) -> bool {
+        self.0.starts_with(&prefix.0)
+    }
+
+    pub fn as_path(&self) -> &Arc<Path> {
+        &self.0
+    }
+
+    pub fn to_string(&self) -> String {
+        self.0.to_string_lossy().to_string()
+    }
+}
+
+impl From<SanitizedPath> for Arc<Path> {
+    fn from(sanitized_path: SanitizedPath) -> Self {
+        sanitized_path.0
+    }
+}
+
+impl<T: AsRef<Path>> From<T> for SanitizedPath {
+    #[cfg(not(target_os = "windows"))]
+    fn from(path: T) -> Self {
+        let path = path.as_ref();
+        SanitizedPath(path.into())
+    }
+
+    #[cfg(target_os = "windows")]
+    fn from(path: T) -> Self {
+        let path = path.as_ref();
+        SanitizedPath(dunce::simplified(path).into())
     }
 }
 
@@ -378,7 +418,15 @@ pub fn compare_paths(
                         .as_deref()
                         .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
 
-                    num_and_remainder_a.cmp(&num_and_remainder_b)
+                    num_and_remainder_a.cmp(&num_and_remainder_b).then_with(|| {
+                        if a_is_file && b_is_file {
+                            let ext_a = path_a.extension().unwrap_or_default();
+                            let ext_b = path_b.extension().unwrap_or_default();
+                            ext_a.cmp(ext_b)
+                        } else {
+                            cmp::Ordering::Equal
+                        }
+                    })
                 });
                 if !ordering.is_eq() {
                     return ordering;
@@ -429,6 +477,28 @@ mod tests {
             vec![
                 (Path::new("root1/one.txt"), true),
                 (Path::new("root1/one.two.txt"), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn compare_paths_with_same_name_different_extensions() {
+        let mut paths = vec![
+            (Path::new("test_dirs/file.rs"), true),
+            (Path::new("test_dirs/file.txt"), true),
+            (Path::new("test_dirs/file.md"), true),
+            (Path::new("test_dirs/file"), true),
+            (Path::new("test_dirs/file.a"), true),
+        ];
+        paths.sort_by(|&a, &b| compare_paths(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (Path::new("test_dirs/file"), true),
+                (Path::new("test_dirs/file.a"), true),
+                (Path::new("test_dirs/file.md"), true),
+                (Path::new("test_dirs/file.rs"), true),
+                (Path::new("test_dirs/file.txt"), true),
             ]
         );
     }
@@ -773,6 +843,24 @@ mod tests {
         assert!(
             path_matcher.is_match(path),
             "Path matcher should match {path:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_sanitized_path() {
+        let path = Path::new("C:\\Users\\someone\\test_file.rs");
+        let sanitized_path = SanitizedPath::from(path);
+        assert_eq!(
+            sanitized_path.to_string(),
+            "C:\\Users\\someone\\test_file.rs"
+        );
+
+        let path = Path::new("\\\\?\\C:\\Users\\someone\\test_file.rs");
+        let sanitized_path = SanitizedPath::from(path);
+        assert_eq!(
+            sanitized_path.to_string(),
+            "C:\\Users\\someone\\test_file.rs"
         );
     }
 }

@@ -1,14 +1,14 @@
 use super::{
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    BoolExt,
+    renderer, screen_capture, BoolExt,
 };
 use crate::{
     hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
     ClipboardString, CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher,
     MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowAppearance,
-    WindowParams,
+    PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task,
+    WindowAppearance, WindowParams,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -57,8 +57,6 @@ use std::{
     sync::Arc,
 };
 use strum::IntoEnumIterator;
-
-use super::renderer;
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -552,6 +550,12 @@ impl Platform for MacPlatform {
             .collect()
     }
 
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        screen_capture::get_sources()
+    }
+
     fn active_window(&self) -> Option<AnyWindowHandle> {
         MacWindow::active_window()
     }
@@ -844,7 +848,9 @@ impl Platform for MacPlatform {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            app.setMainMenu_(self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap));
+            let menu = self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap);
+            drop(state);
+            app.setMainMenu_(menu);
         }
     }
 

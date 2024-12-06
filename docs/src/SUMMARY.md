@@ -43,6 +43,8 @@
 - [Inline Assistant](./assistant/inline-assistant.md)
 - [Commands](./assistant/commands.md)
 - [Prompts](./assistant/prompting.md)
+- [Context Servers](./assistant/context-servers.md)
+  - [Model Context Protocol](./assistant/model-context-protocol.md)
 
 # Extensions
 
@@ -51,7 +53,8 @@
 - [Developing Extensions](./extensions/developing-extensions.md)
 - [Language Extensions](./extensions/languages.md)
 - [Theme Extensions](./extensions/themes.md)
-- [Slash Commands](./extensions/slash-commands.md)
+- [Slash Command Extensions](./extensions/slash-commands.md)
+- [Context Server Extensions](./extensions/context-servers.md)
 
 # Language Support
 

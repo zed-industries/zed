@@ -20,15 +20,19 @@ pub struct Toolchain {
     pub name: SharedString,
     pub path: SharedString,
     pub language_name: LanguageName,
+    /// Full toolchain data (including language-specific details)
+    pub as_json: serde_json::Value,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait ToolchainLister: Send + Sync {
     async fn list(
         &self,
         worktree_root: PathBuf,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList;
+    // Returns a term which we should use in UI to refer to a toolchain.
+    fn term(&self) -> SharedString;
 }
 
 #[async_trait(?Send)]

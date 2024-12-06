@@ -2,7 +2,6 @@
 mod context_tests;
 
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
@@ -12,10 +11,11 @@ use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
 };
+use assistant_tool::ToolWorkingSet;
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt};
+use feature_flags::{FeatureFlagAppExt, ToolUseFeatureFlag};
 use fs::{Fs, RemoveOptions};
 use futures::{future::Shared, FutureExt, StreamExt};
 use gpui::{
@@ -25,12 +25,14 @@ use gpui::{
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    logging::report_assistant_event,
-    provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
-    StopReason,
+    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, Role, StopReason,
+};
+use language_models::{
+    provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
+    report_assistant_event,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -383,7 +385,7 @@ pub enum ContextEvent {
     },
     UsePendingTools,
     ToolFinished {
-        tool_use_id: Arc<str>,
+        tool_use_id: LanguageModelToolUseId,
         output_range: Range<language::Anchor>,
     },
     Operation(ContextOperation),
@@ -477,7 +479,7 @@ pub enum Content {
     },
     ToolResult {
         range: Range<language::Anchor>,
-        tool_use_id: Arc<str>,
+        tool_use_id: LanguageModelToolUseId,
     },
 }
 
@@ -544,7 +546,7 @@ pub struct Context {
     pub(crate) slash_commands: Arc<SlashCommandWorkingSet>,
     pub(crate) tools: Arc<ToolWorkingSet>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
-    pending_tool_uses_by_id: HashMap<Arc<str>, PendingToolUse>,
+    pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
     message_anchors: Vec<MessageAnchor>,
     contents: Vec<Content>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
@@ -1124,7 +1126,7 @@ impl Context {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn get_tool_use_by_id(&self, id: &Arc<str>) -> Option<&PendingToolUse> {
+    pub fn get_tool_use_by_id(&self, id: &LanguageModelToolUseId) -> Option<&PendingToolUse> {
         self.pending_tool_uses_by_id.get(id)
     }
 
@@ -2151,7 +2153,7 @@ impl Context {
 
     pub fn insert_tool_output(
         &mut self,
-        tool_use_id: Arc<str>,
+        tool_use_id: LanguageModelToolUseId,
         output: Task<Result<String>>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -2338,11 +2340,10 @@ impl Context {
                                         let source_range = buffer.anchor_after(start_ix)
                                             ..buffer.anchor_after(end_ix);
 
-                                        let tool_use_id: Arc<str> = tool_use.id.into();
                                         this.pending_tool_uses_by_id.insert(
-                                            tool_use_id.clone(),
+                                            tool_use.id.clone(),
                                             PendingToolUse {
-                                                id: tool_use_id,
+                                                id: tool_use.id,
                                                 name: tool_use.name,
                                                 input: tool_use.input,
                                                 status: PendingToolUseStatus::Idle,
@@ -3199,19 +3200,9 @@ pub enum PendingSlashCommandStatus {
     Error(String),
 }
 
-pub(crate) struct ToolUseFeatureFlag;
-
-impl FeatureFlag for ToolUseFeatureFlag {
-    const NAME: &'static str = "assistant-tool-use";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct PendingToolUse {
-    pub id: Arc<str>,
+    pub id: LanguageModelToolUseId,
     pub name: String,
     pub input: serde_json::Value,
     pub status: PendingToolUseStatus,

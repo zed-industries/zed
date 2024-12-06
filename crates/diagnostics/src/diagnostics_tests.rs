@@ -151,11 +151,18 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
 
     // Open the project diagnostics view while there are already diagnostics.
     let view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
     let editor = view.update(cx, |view, _| view.editor.clone());
 
-    view.next_notification(cx).await;
+    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .await;
     assert_eq!(
         editor_blocks(&editor, cx),
         [
@@ -240,7 +247,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store.disk_based_diagnostics_finished(language_server_id, cx);
     });
 
-    view.next_notification(cx).await;
+    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .await;
     assert_eq!(
         editor_blocks(&editor, cx),
         [
@@ -352,7 +360,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store.disk_based_diagnostics_finished(language_server_id, cx);
     });
 
-    view.next_notification(cx).await;
+    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .await;
     assert_eq!(
         editor_blocks(&editor, cx),
         [
@@ -456,7 +465,13 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let workspace = window.root(cx).unwrap();
 
     let view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
     let editor = view.update(cx, |view, _| view.editor.clone());
 
@@ -491,6 +506,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     });
 
     // Only the first language server's diagnostics are shown.
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -537,6 +554,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     });
 
     // Both language server's diagnostics are shown.
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -603,6 +622,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     });
 
     // Only the first language server's diagnostics are updated.
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -659,6 +680,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     });
 
     // Both language servers' diagnostics are updated.
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -709,7 +732,13 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     let workspace = window.root(cx).unwrap();
 
     let mutated_view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
 
     workspace.update(cx, |workspace, cx| {
@@ -805,7 +834,13 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
     log::info!("constructing reference diagnostics view");
     let reference_view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
     cx.run_until_parked();
 

@@ -197,7 +197,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut AppContext) {
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
-fn copilot_chat_config_path() -> &'static PathBuf {
+fn copilot_chat_config_dir() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
@@ -207,8 +207,12 @@ fn copilot_chat_config_path() -> &'static PathBuf {
             home_dir().join(".config")
         }
         .join("github-copilot")
-        .join("hosts.json")
     })
+}
+
+fn copilot_chat_config_paths() -> [PathBuf; 2] {
+    let base_dir = copilot_chat_config_dir();
+    [base_dir.join("hosts.json"), base_dir.join("apps.json")]
 }
 
 impl CopilotChat {
@@ -218,13 +222,24 @@ impl CopilotChat {
     }
 
     pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &AppContext) -> Self {
-        let mut config_file_rx = watch_config_file(
-            cx.background_executor(),
-            fs,
-            copilot_chat_config_path().clone(),
-        );
+        let config_paths = copilot_chat_config_paths();
+
+        let resolve_config_path = {
+            let fs = fs.clone();
+            async move {
+                for config_path in config_paths.iter() {
+                    if fs.metadata(config_path).await.is_ok_and(|v| v.is_some()) {
+                        return config_path.clone();
+                    }
+                }
+                config_paths[0].clone()
+            }
+        };
 
         cx.spawn(|cx| async move {
+            let config_file = resolve_config_path.await;
+            let mut config_file_rx = watch_config_file(cx.background_executor(), fs, config_file);
+
             while let Some(contents) = config_file_rx.next().await {
                 let oauth_token = extract_oauth_token(contents);
 
@@ -318,9 +333,15 @@ async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Re
 fn extract_oauth_token(contents: String) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(&contents)
         .map(|v| {
-            v["github.com"]["oauth_token"]
-                .as_str()
-                .map(|v| v.to_string())
+            v.as_object().and_then(|obj| {
+                obj.iter().find_map(|(key, value)| {
+                    if key.starts_with("github.com") {
+                        value["oauth_token"].as_str().map(|v| v.to_string())
+                    } else {
+                        None
+                    }
+                })
+            })
         })
         .ok()
         .flatten()

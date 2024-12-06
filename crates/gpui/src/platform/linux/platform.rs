@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::Read;
 use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd};
-use std::panic::Location;
+use std::panic::{AssertUnwindSafe, Location};
 use std::rc::Weak;
 use std::{
     path::{Path, PathBuf},
@@ -23,7 +23,7 @@ use async_task::Runnable;
 use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
 use flume::{Receiver, Sender};
-use futures::channel::oneshot;
+use futures::{channel::oneshot, future::FutureExt};
 use parking_lot::Mutex;
 use util::ResultExt;
 
@@ -35,8 +35,8 @@ use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
-    PlatformWindow, Point, PromptLevel, Result, SemanticVersion, SharedString, Size, Task,
-    WindowAppearance, WindowOptions, WindowParams,
+    PlatformWindow, Point, PromptLevel, Result, ScreenCaptureSource, SemanticVersion, SharedString,
+    Size, Task, WindowAppearance, WindowOptions, WindowParams,
 };
 
 pub(crate) const SCROLL_LINES: f32 = 3.0;
@@ -240,6 +240,14 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.displays()
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (mut tx, rx) = oneshot::channel();
+        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
+        rx
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -481,7 +489,12 @@ impl<P: LinuxClient + 'static> Platform for P {
                     let username = attributes
                         .get("username")
                         .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
-                    let secret = item.secret().await?;
+                    // oo7 panics if the retrieved secret can't be decrypted due to
+                    // unexpected padding.
+                    let secret = AssertUnwindSafe(item.secret())
+                        .catch_unwind()
+                        .await
+                        .map_err(|_| anyhow!("oo7 panicked while trying to read credentials"))??;
 
                     // we lose the zeroizing capabilities at this boundary,
                     // a current limitation GPUI's credentials api
@@ -742,14 +755,14 @@ impl Keystroke {
             }
         }
 
-        // Ignore control characters (and DEL) for the purposes of ime_key
-        let ime_key =
+        // Ignore control characters (and DEL) for the purposes of key_char
+        let key_char =
             (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
         Keystroke {
             modifiers,
             key,
-            ime_key,
+            key_char,
         }
     }
 

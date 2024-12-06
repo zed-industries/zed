@@ -1,6 +1,7 @@
 use crate::{Event, *};
 use fs::FakeFs;
 use futures::{future, StreamExt};
+use git::diff::assert_hunks;
 use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
@@ -2792,7 +2793,9 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_language_servers.next().await.unwrap();
 
     // Language server returns code actions that contain commands, and not edits.
-    let actions = project.update(cx, |project, cx| project.code_actions(&buffer, 0..0, cx));
+    let actions = project.update(cx, |project, cx| {
+        project.code_actions(&buffer, 0..0, None, cx)
+    });
     fake_server
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
             Ok(Some(vec![
@@ -4962,6 +4965,84 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.ts": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let fake_server = fake_language_servers
+        .next()
+        .await
+        .expect("failed to get the language server");
+
+    let mut request_handled = fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+        move |_, _| async move {
+            Ok(Some(vec![
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    title: "organize imports".to_string(),
+                    kind: Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+                    ..lsp::CodeAction::default()
+                }),
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    title: "fix code".to_string(),
+                    kind: Some(CodeActionKind::SOURCE_FIX_ALL),
+                    ..lsp::CodeAction::default()
+                }),
+            ]))
+        },
+    );
+
+    let code_actions_task = project.update(cx, |project, cx| {
+        project.code_actions(
+            &buffer,
+            0..buffer.read(cx).len(),
+            Some(vec![CodeActionKind::SOURCE_ORGANIZE_IMPORTS]),
+            cx,
+        )
+    });
+
+    let () = request_handled
+        .next()
+        .await
+        .expect("The code action request should have been triggered");
+
+    let code_actions = code_actions_task.await.unwrap();
+    assert_eq!(code_actions.len(), 1);
+    assert_eq!(
+        code_actions[0].lsp_action.kind,
+        Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS)
+    );
+}
+
+#[gpui::test]
 async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -5092,7 +5173,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     }
 
     let code_actions_task = project.update(cx, |project, cx| {
-        project.code_actions(&buffer, 0..buffer.read(cx).len(), cx)
+        project.code_actions(&buffer, 0..buffer.read(cx).len(), None, cx)
     });
 
     // cx.run_until_parked();
@@ -5313,6 +5394,98 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let staged_contents = r#"
+        fn main() {
+            println!("hello world");
+        }
+    "#
+    .unindent();
+    let file_contents = r#"
+        // print goodbye
+        fn main() {
+            println!("goodbye world");
+        }
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+           "src": {
+               "main.rs": file_contents,
+           }
+        }),
+    )
+    .await;
+
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[(Path::new("src/main.rs"), staged_contents)],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    let unstaged_changes = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_changes(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    unstaged_changes.update(cx, |unstaged_changes, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            &snapshot,
+            &unstaged_changes.base_text.as_ref().unwrap().read(cx).text(),
+            &[
+                (0..1, "", "// print goodbye\n"),
+                (
+                    2..3,
+                    "    println!(\"hello world\");\n",
+                    "    println!(\"goodbye world\");\n",
+                ),
+            ],
+        );
+    });
+
+    let staged_contents = r#"
+        // print goodbye
+        fn main() {
+        }
+    "#
+    .unindent();
+
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[(Path::new("src/main.rs"), staged_contents)],
+    );
+
+    cx.run_until_parked();
+    unstaged_changes.update(cx, |unstaged_changes, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            &snapshot,
+            &unstaged_changes.base_text.as_ref().unwrap().read(cx).text(),
+            &[(2..3, "", "    println!(\"goodbye world\");\n")],
+        );
     });
 }
 

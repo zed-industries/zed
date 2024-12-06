@@ -2,25 +2,18 @@ use client::telemetry::Telemetry;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, impl_actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render,
-    UpdateGlobal, View, ViewContext, VisualContext, WeakView,
+    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, UpdateGlobal, View,
+    ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use serde::Deserialize;
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
 use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
+use zed_actions::theme_selector::Toggle;
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
-pub struct Toggle {
-    /// A list of theme names to filter the theme selector down to.
-    pub themes_filter: Option<Vec<String>>,
-}
-
-impl_actions!(theme_selector, [Toggle]);
 actions!(theme_selector, [Reload]);
 
 pub fn init(cx: &mut AppContext) {

@@ -300,6 +300,8 @@
   "scroll_beyond_last_line": "one_page",
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
+  // Whether to scroll when clicking near the edge of the visible text area.
+  "autoscroll_on_clicks": false,
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
@@ -490,9 +492,6 @@
     "version": "2",
     // Whether the assistant is enabled.
     "enabled": true,
-    // Whether to show inline hints showing the keybindings to use the inline assistant and the
-    // assistant panel.
-    "show_hints": true,
     // Whether to show the assistant panel button in the status bar.
     "button": true,
     // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.
@@ -560,13 +559,25 @@
     "close_position": "right",
     // Whether to show the file icon for a tab.
     "file_icons": false,
+    // Whether to always show the close button on tabs.
+    "always_show_close_button": false,
     // What to do after closing the current tab.
     //
     // 1. Activate the tab that was open previously (default)
     //     "History"
     // 2. Activate the neighbour tab (prefers the right one, if present)
     //     "Neighbour"
-    "activate_on_close": "history"
+    "activate_on_close": "history",
+    /// Which files containing diagnostic errors/warnings to mark in the tabs.
+    /// This setting can take the following three values:
+    ///
+    /// 1. Do not mark any files:
+    ///    "off"
+    /// 2. Only mark files with errors:
+    ///    "errors"
+    /// 3. Mark files with errors and warnings:
+    ///    "all"
+    "show_diagnostics": "all"
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -668,7 +679,7 @@
   },
   // Add files or globs of files that will be excluded by Zed entirely:
   // they will be skipped during FS scan(s), file tree and file search
-  // will lack the corresponding file entries.
+  // will lack the corresponding file entries. Overrides `file_scan_inclusions`.
   "file_scan_exclusions": [
     "**/.git",
     "**/.svn",
@@ -679,6 +690,11 @@
     "**/.classpath",
     "**/.settings"
   ],
+  // Add files or globs of files that will be included by Zed, even when
+  // ignored by git. This is useful for files that are not tracked by git,
+  // but are still important to your project. Note that globs that are
+  // overly broad can slow down Zed's file scanning. Overridden by `file_scan_exclusions`.
+  "file_scan_inclusions": [".env*"],
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
@@ -839,8 +855,12 @@
       }
     },
     "toolbar": {
-      // Whether to display the terminal title in its toolbar.
-      "title": true
+      // Whether to display the terminal title in its toolbar's breadcrumbs.
+      // Only shown if the terminal title is not empty.
+      //
+      // The shell running in the terminal needs to be configured to emit the title.
+      // Example: `echo -e "\e]2;New Title\007";`
+      "breadcrumbs": true
     }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
@@ -876,7 +896,7 @@
   //
   "file_types": {
     "Plain Text": ["txt"],
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json"],
+    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
     "Shell Script": [".env.*"]
   },
   /// By default use a recent system version of node, or install our own.
@@ -1119,6 +1139,7 @@
     "use_system_clipboard": "always",
     "use_multiline_find": false,
     "use_smartcase_find": false,
+    "highlight_on_yank_duration": 200,
     "custom_digraphs": {}
   },
   // The server to connect to. If the environment variable
@@ -1176,6 +1197,8 @@
   //   "W": "workspace::Save"
   // }
   "command_aliases": {},
+  // Whether to show user picture in titlebar.
+  "show_user_picture": true,
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.
