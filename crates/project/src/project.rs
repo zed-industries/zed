@@ -73,7 +73,7 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
-    ops::{Deref as _, Range},
+    ops::Range,
     path::{Component, Path, PathBuf},
     str,
     sync::Arc,
@@ -1492,6 +1492,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<CreatedEntry>> {
         let worktree_store = self.worktree_store.read(cx);
+        let new_path = new_path.into();
         let Some((worktree, old_path, is_dir)) = worktree_store
             .worktree_and_entry_for_id(entry_id, cx)
             .map(|(worktree, entry)| (worktree, entry.path.clone(), entry.is_dir()))
@@ -1500,23 +1501,32 @@ impl Project {
         };
 
         let worktree_id = worktree.read(cx).id();
-        let new_path = new_path.into();
+
         let lsp_store = self.lsp_store().downgrade();
         cx.spawn(|_, mut cx| async move {
+            let (old_abs_path, new_abs_path) = {
+                let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
+                (root_path.join(&old_path), root_path.join(&new_path))
+            };
+            LspStore::will_rename_entry(
+                lsp_store.clone(),
+                worktree_id,
+                &old_abs_path,
+                &new_abs_path,
+                is_dir,
+                cx.clone(),
+            )
+            .await;
+
             let entry = worktree
                 .update(&mut cx, |worktree, cx| {
                     worktree.rename_entry(entry_id, new_path.clone(), cx)
                 })?
                 .await?;
+
             lsp_store
-                .update(&mut cx, |this, cx| {
-                    this.did_rename_entry(
-                        worktree_id,
-                        old_path.to_string_lossy().into_owned(),
-                        new_path.to_string_lossy().into_owned(),
-                        is_dir,
-                        cx,
-                    );
+                .update(&mut cx, |this, _| {
+                    this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
                 })
                 .ok();
             Ok(entry)

@@ -26,7 +26,7 @@ use text::ReplicaId;
 use util::{paths::SanitizedPath, ResultExt};
 use worktree::{Entry, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
 
-use crate::{search::SearchQuery, ProjectPath};
+use crate::{search::SearchQuery, LspStore, ProjectPath};
 
 struct MatchingEntry {
     worktree_path: Arc<Path>,
@@ -1036,17 +1036,35 @@ impl WorktreeStore {
                     })
             })?
             .ok_or_else(|| anyhow!("worktree not found"))?;
-        let new_path = envelope.payload.new_path.clone();
+        let (old_abs_path, new_abs_path) = {
+            let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
+            (
+                root_path.join(&old_path),
+                root_path.join(&envelope.payload.new_path),
+            )
+        };
+        let lsp_store = this
+            .update(&mut cx, |this, _| this.lsp_store())?
+            .downgrade();
+        LspStore::will_rename_entry(
+            lsp_store,
+            worktree_id,
+            &old_abs_path,
+            &new_abs_path,
+            is_dir,
+            cx.clone(),
+        )
+        .await;
         let response = Worktree::handle_rename_entry(worktree, envelope.payload, cx.clone()).await;
         this.update(&mut cx, |this, cx| {
             this.lsp_store().read(cx).did_rename_entry(
                 worktree_id,
-                old_path.to_string_lossy().into_owned(),
-                new_path,
-                old_path.is_dir(),
-                cx,
+                &old_abs_path,
+                &new_abs_path,
+                is_dir,
             );
-        });
+        })
+        .ok();
         response
     }
 
