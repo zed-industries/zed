@@ -153,8 +153,8 @@
     "context": "Editor && mode == full && inline_completion",
     "use_key_equivalents": true,
     "bindings": {
-      "alt-]": "editor::NextInlineCompletion",
-      "alt-[": "editor::PreviousInlineCompletion",
+      "alt-tab": "editor::NextInlineCompletion",
+      "alt-shift-tab": "editor::PreviousInlineCompletion",
       "ctrl-right": "editor::AcceptPartialInlineCompletion"
     }
   },
@@ -162,7 +162,7 @@
     "context": "Editor && !inline_completion",
     "use_key_equivalents": true,
     "bindings": {
-      "alt-\\": "editor::ShowInlineCompletion"
+      "alt-tab": "editor::ShowInlineCompletion"
     }
   },
   {
