@@ -1174,11 +1174,9 @@ impl EditorElement {
         text_units_per_page: AxisPair<f32>,
         non_visible_cursors: bool,
         letter_size: Size<Pixels>,
+        scroll_range: Bounds<Pixels>,
         cx: &mut WindowContext,
     ) -> AxisPair<Option<ScrollbarLayout>> {
-        // NOTE: The width of a character in the editor display
-        let em_width = letter_size.width;
-
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
         let show_scrollbars = match scrollbar_settings.show {
             ShowScrollbar::Auto => {
@@ -1267,7 +1265,7 @@ impl EditorElement {
 
         // let settings = EditorSettings::get_global(cx);
 
-        let scroll_range_size = scroll_range(&bounds, &letter_size, snapshot, cx).size;
+        let scroll_range_size = scroll_range.size;
 
         // let scroll_beyond_last_line: AxisPair<f32> = match settings.scroll_beyond_last_line {
         //     ScrollBeyondLastLine::OnePage => text_units_per_page.clone(),
@@ -1328,22 +1326,29 @@ impl EditorElement {
 
         // NOTE: The width of the thumb in the scrollbar
         let thumb_size = axis_pair(
-            px_per_text_unit
+            total_text_units
                 .horizontal
-                .zip(total_text_units.horizontal)
                 .zip(track_bounds.horizontal)
-                .map(|((px_per_unit, total_text_units_x), track_bounds_x)| {
+                .map(|(total_text_units_x, track_bounds_x)| {
                     // (track_bounds_x.size.width
                     //     - (total_text_units_x - text_units_per_page.horizontal).max(0.)
                     //         * px_per_unit)
                     //     .max(ScrollbarLayout::MIN_THUMB_HEIGHT)
+                    let thumb_percent =
+                        (text_units_per_page.horizontal / total_text_units_x).min(1.);
 
-                    track_bounds_x.size.width
-                        * (text_units_per_page.horizontal / total_text_units_x)
+                    track_bounds_x.size.width * thumb_percent
                 }),
-            px_per_text_unit.vertical.map(|px_per_unit| {
-                (px_per_unit * text_units_per_page.vertical).max(ScrollbarLayout::MIN_THUMB_HEIGHT)
-            }),
+            // px_per_text_unit.vertical.map(|px_per_unit| {
+            //     (px_per_unit * text_units_per_page.vertical).max(ScrollbarLayout::MIN_THUMB_HEIGHT)
+            // }),
+            total_text_units.vertical.zip(track_bounds.vertical).map(
+                |(total_text_units_y, track_bounds_y)| {
+                    let thumb_percent = (text_units_per_page.vertical / total_text_units_y).min(1.);
+
+                    track_bounds_y.size.height * thumb_percent
+                },
+            ),
         );
 
         // NOTE: Space not taken by track bounds divided by text units not on screen
@@ -1364,33 +1369,6 @@ impl EditorElement {
                     (track_bounds.size.height - thumb_size)
                         / (total_text_units - text_units_per_page.vertical).max(0.)
                 }),
-        );
-
-        println!(
-            "text_unit_size_x: {}",
-            text_unit_size.horizontal.unwrap_or_default()
-        );
-
-        println!("em_width: {}", em_width);
-
-        println!(
-            "(total_text_units - text_units_per_page.horizontal): {}",
-            (total_text_units.horizontal.unwrap_or_default() - text_units_per_page.horizontal)
-        );
-
-        println!(
-            "(total_text_units - text_units_per_page.vertical): {}",
-            (total_text_units.vertical.unwrap_or_default() - text_units_per_page.vertical)
-        );
-
-        println!(
-            "total_text_units.vertical: {}",
-            total_text_units.vertical.unwrap_or_default()
-        );
-
-        println!(
-            "text_units_per_page.vertical: {}",
-            text_units_per_page.vertical
         );
 
         let horizontal_scrollbar = track_bounds
@@ -5634,10 +5612,15 @@ impl Element for EditorElement {
                     )
                     .width;
 
-                    let mut scroll_width =
-                        scroll_range(&scrollbar_bounds, &letter_size, &snapshot, cx)
-                            .size
-                            .width;
+                    let scroll_range_bounds = scroll_range(
+                        &scrollbar_bounds,
+                        &letter_size,
+                        &snapshot,
+                        &longest_line_width,
+                        cx,
+                    );
+
+                    let mut scroll_width = scroll_range_bounds.size.width;
 
                     // let mut scroll_width =
                     //     longest_line_width.max(max_visible_line_width) + overscroll.width;
@@ -5837,6 +5820,7 @@ impl Element for EditorElement {
                         axis_pair(width_in_chars, height_in_lines),
                         non_visible_cursors,
                         letter_size,
+                        scroll_range_bounds,
                         cx,
                     );
 
@@ -6167,18 +6151,30 @@ pub(super) fn gutter_bounds(
     }
 }
 
+// Get the scroll range unambiguously of the current file, in pixels
 pub(super) fn scroll_range(
     screen_text_bounds: &Bounds<Pixels>,
     letter_size: &Size<Pixels>,
     snapshot: &EditorSnapshot,
+    longest_line_width: &Pixels,
     cx: &WindowContext,
 ) -> Bounds<Pixels> {
+    // TODO: Simplify this function down, it requires a lot of parameters
+    let max_row = snapshot.max_point().row();
+    let text_bounds_size = size(*longest_line_width, max_row.0 as f32 * letter_size.height);
+
+    let right_margin = if snapshot.mode == EditorMode::Full {
+        EditorElement::SCROLLBAR_WIDTH
+    } else {
+        px(0.)
+    };
+
     let height_in_lines = px(screen_text_bounds.size.height / letter_size.height);
     let width_in_chars = px(screen_text_bounds.size.width / letter_size.width);
 
     let settings = EditorSettings::get_global(cx);
     let scroll_beyond_last_line: Size<Pixels> = match settings.scroll_beyond_last_line {
-        ScrollBeyondLastLine::OnePage => size(height_in_lines, width_in_chars),
+        ScrollBeyondLastLine::OnePage => size(width_in_chars, height_in_lines),
         // TODO: Simplify this down, size(px(.))...
         ScrollBeyondLastLine::Off => size(px(1.), px(1.)),
         // TODO: This should be ScrollMargin not VerticalScrollMargin
@@ -6189,13 +6185,15 @@ pub(super) fn scroll_range(
     };
 
     let overscroll = size(
-        letter_size.width * scroll_beyond_last_line.width, /* + right_margin */
-        px(0.),
+        letter_size.width * scroll_beyond_last_line.width,
+        letter_size.height * scroll_beyond_last_line.height,
     );
+
+    let bounds_size = text_bounds_size + overscroll;
 
     Bounds {
         origin: screen_text_bounds.origin,
-        size: screen_text_bounds.size + overscroll,
+        size: text_bounds_size + overscroll,
     }
 }
 
