@@ -12,16 +12,16 @@ let package = Package(
         .library(
             name: "LiveKitBridge",
             type: .static,
-            targets: ["LiveKitBridge"]),
+            targets: ["LiveKitBridge"])
     ],
     dependencies: [
-        .package(url: "https://github.com/livekit/client-sdk-swift.git", .exact("1.0.12")),
+        .package(url: "https://github.com/livekit/client-sdk-swift.git", .exact("1.1.6"))
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.
         // Targets can depend on other targets in this package, and on products in packages this package depends on.
         .target(
             name: "LiveKitBridge",
-            dependencies: [.product(name: "LiveKit", package: "client-sdk-swift")]),
+            dependencies: [.product(name: "LiveKit", package: "client-sdk-swift")])
     ]
 )

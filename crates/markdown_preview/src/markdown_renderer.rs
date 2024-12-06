@@ -7,8 +7,8 @@ use crate::markdown_elements::{
 use gpui::{
     div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
     ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length,
-    Modifiers, ParentElement, Resource, SharedString, Styled, StyledText, TextStyle, WeakView,
-    WindowContext,
+    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, View,
+    WeakView, WindowContext,
 };
 use settings::Settings;
 use std::{
@@ -18,9 +18,10 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, relative, v_flex, Checkbox, Clickable, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, LinkPreview, Selection, StatefulInteractiveElement, StyledExt, StyledImage,
-    Tooltip, VisibleOnHover,
+    h_flex, relative, tooltip_container, v_flex, Checkbox, Clickable, Color, FluentBuilder,
+    IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview,
+    Selection, StatefulInteractiveElement, StyledExt, StyledImage, ViewContext, VisibleOnHover,
+    VisualContext as _,
 };
 use workspace::Workspace;
 
@@ -206,15 +207,7 @@ fn render_markdown_list_item(
             )
             .hover(|s| s.cursor_pointer())
             .tooltip(|cx| {
-                let secondary_modifier = Keystroke {
-                    key: "".to_string(),
-                    modifiers: Modifiers::secondary_key(),
-                    key_char: None,
-                };
-                Tooltip::text(
-                    format!("{}-click to toggle the checkbox", secondary_modifier),
-                    cx,
-                )
+                InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", cx).into()
             })
             .into_any_element(),
     };
@@ -513,6 +506,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
 
                 let image_element = div()
                     .id(element_id)
+                    .cursor_pointer()
                     .child(img(ImageSource::Resource(image_resource)).with_fallback({
                         let alt_text = image.alt_text.clone();
                         {
@@ -521,18 +515,31 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                     }))
                     .tooltip({
                         let link = image.link.clone();
-                        move |cx| LinkPreview::new(&link.to_string(), cx)
+                        move |cx| {
+                            InteractiveMarkdownElementTooltip::new(
+                                Some(link.to_string()),
+                                "open image",
+                                cx,
+                            )
+                            .into()
+                        }
                     })
                     .on_click({
                         let workspace = workspace_clone.clone();
                         let link = image.link.clone();
-                        move |_event, window_cx| match &link {
-                            Link::Web { url } => window_cx.open_url(url),
-                            Link::Path { path, .. } => {
-                                if let Some(workspace) = &workspace {
-                                    _ = workspace.update(window_cx, |workspace, cx| {
-                                        workspace.open_abs_path(path.clone(), false, cx).detach();
-                                    });
+                        move |_, cx| {
+                            if cx.modifiers().secondary() {
+                                match &link {
+                                    Link::Web { url } => cx.open_url(url),
+                                    Link::Path { path, .. } => {
+                                        if let Some(workspace) = &workspace {
+                                            _ = workspace.update(cx, |workspace, cx| {
+                                                workspace
+                                                    .open_abs_path(path.clone(), false, cx)
+                                                    .detach();
+                                            });
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -549,4 +556,51 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
     let rule = div().w_full().h(px(2.)).bg(cx.border_color);
     div().pt_3().pb_3().child(rule).into_any()
+}
+
+struct InteractiveMarkdownElementTooltip {
+    tooltip_text: Option<SharedString>,
+    action_text: String,
+}
+
+impl InteractiveMarkdownElementTooltip {
+    pub fn new(
+        tooltip_text: Option<String>,
+        action_text: &str,
+        cx: &mut WindowContext,
+    ) -> View<Self> {
+        let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
+
+        cx.new_view(|_| Self {
+            tooltip_text,
+            action_text: action_text.to_string(),
+        })
+    }
+}
+
+impl Render for InteractiveMarkdownElementTooltip {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        tooltip_container(cx, |el, _| {
+            let secondary_modifier = Keystroke {
+                modifiers: Modifiers::secondary_key(),
+                ..Default::default()
+            };
+
+            el.child(
+                v_flex()
+                    .gap_1()
+                    .when_some(self.tooltip_text.clone(), |this, text| {
+                        this.child(Label::new(text).size(LabelSize::Small))
+                    })
+                    .child(
+                        Label::new(format!(
+                            "{}-click to {}",
+                            secondary_modifier, self.action_text
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
+        })
+    }
 }
