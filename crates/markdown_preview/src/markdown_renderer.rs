@@ -5,10 +5,10 @@ use crate::markdown_elements::{
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use gpui::{
-    div, img, px, rems, AbsoluteLength, AnyElement, AnyView, ClipboardItem, DefiniteLength, Div,
-    Element, ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
-    Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText,
-    TextStyle, View, WeakView, WindowContext,
+    div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
+    ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length,
+    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, View,
+    WeakView, WindowContext,
 };
 use settings::Settings;
 use std::{
