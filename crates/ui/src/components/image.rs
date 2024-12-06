@@ -1,10 +1,11 @@
 #![allow(missing_docs)]
-use gpui::{svg, IntoElement, Rems, RenderOnce, Size, Styled, WindowContext};
+use crate::prelude::*;
+use gpui::{svg, AnyElement, IntoElement, Rems, RenderOnce, Size, Styled, WindowContext};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::{path_str, DerivePathStr};
 
-use crate::Color;
+use crate::{Color, ComponentPreview};
 
 #[derive(
     Debug,
@@ -22,6 +23,8 @@ use crate::Color;
 #[strum(serialize_all = "snake_case")]
 #[path_str(prefix = "images", suffix = ".svg")]
 pub enum VectorName {
+    HashPattern,
+    HashPatternFine,
     ZedLogo,
     ZedXCopilot,
 }
@@ -112,5 +115,41 @@ mod tests {
     #[test]
     fn vector_path() {
         assert_eq!(VectorName::ZedLogo.path(), "images/zed_logo.svg");
+    }
+}
+
+impl ComponentPreview for Vector {
+    fn title() -> &'static str {
+        "Vector"
+    }
+
+    fn description() -> impl Into<Option<&'static str>> {
+        "Vectors are scalable images such as SVGs that can be displayed at specific sizes."
+    }
+
+    fn examples(cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+        vec![
+            example_group_with_title(
+                "Square Vectors",
+                vec![
+                    single_example("Zed Logo", Vector::square(VectorName::ZedLogo, rems(1.))),
+                    single_example(
+                        "Hash Pattern",
+                        Vector::square(VectorName::HashPattern, rems(1.)),
+                    ),
+                    single_example(
+                        "Fine Hash Pattern",
+                        Vector::square(VectorName::HashPatternFine, rems(1.)),
+                    ),
+                ],
+            ),
+            example_group_with_title(
+                "Custom Sized Vectors",
+                vec![single_example(
+                    "Wide Logo",
+                    Vector::new(VectorName::ZedXCopilot, rems(12.), rems(4.)),
+                )],
+            ),
+        ]
     }
 }
