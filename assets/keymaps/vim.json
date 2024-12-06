@@ -326,6 +326,7 @@
     "bindings": {
       "i": "vim::InsertBefore",
       "a": "vim::InsertAfter",
+      "d": "vim::HelixDelete",
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
       "b": "vim::PreviousWordStart",
