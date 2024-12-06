@@ -49,6 +49,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot,
 };
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -2829,13 +2830,11 @@ impl EditorElement {
 
                 let is_visible = visible_row_range.contains(&edit_start.row())
                     || visible_row_range.contains(&edit_end.row());
+                if !is_visible {
+                    return None;
+                }
 
-                if !is_visible
-                    || edits.iter().all(|(range, new_text)| {
-                        range.to_offset(&editor_snapshot.buffer_snapshot).is_empty()
-                            || new_text.is_empty()
-                    })
-                {
+                if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
                     return None;
                 }
 
@@ -4337,6 +4336,34 @@ impl EditorElement {
             + 1;
         self.column_pixels(digit_count, cx)
     }
+}
+
+fn all_edits_insertions_or_deletions(
+    edits: &Vec<(Range<Anchor>, String)>,
+    snapshot: &MultiBufferSnapshot,
+) -> bool {
+    let mut all_insertions = true;
+    let mut all_deletions = true;
+
+    for (range, new_text) in edits.iter() {
+        let range_is_empty = range.to_offset(&snapshot).is_empty();
+        let text_is_empty = new_text.is_empty();
+
+        if range_is_empty != text_is_empty {
+            if range_is_empty {
+                all_deletions = false;
+            } else {
+                all_insertions = false;
+            }
+        } else {
+            return false;
+        }
+
+        if !all_insertions && !all_deletions {
+            return false;
+        }
+    }
+    all_insertions || all_deletions
 }
 
 #[allow(clippy::too_many_arguments)]
