@@ -133,7 +133,7 @@ async fn update_billing_preferences(
         None,
         json!({
             "user_id": user.id,
-            "max_monthly_llm_usage_spending_in_cents": body.max_monthly_llm_usage_spending_in_cents,
+            "max_monthly_llm_usage_spending_in_cents": billing_preferences.max_monthly_llm_usage_spending_in_cents,
         }),
     )
     .write(&app.kinesis_client, &app.config.kinesis_stream)
