@@ -626,13 +626,17 @@ impl Vim {
             Mode::Normal => {
                 if let Some(operator) = self.operator_stack.last() {
                     match operator {
-                        Operator::Change
-                        | Operator::Delete
-                        | Operator::Yank
-                        | Operator::Replace => CursorShape::Underline,
-                        _ => CursorShape::Block,
+                        // Navigation operators -> Block cursor
+                        Operator::FindForward { .. }
+                        | Operator::FindBackward { .. }
+                        | Operator::Literal { .. }
+                        | Operator::Mark => CursorShape::Block,
+
+                        // All other operators -> Underline cursor
+                        _ => CursorShape::Underline,
                     }
                 } else {
+                    // No operator active -> Block cursor
                     CursorShape::Block
                 }
             }
