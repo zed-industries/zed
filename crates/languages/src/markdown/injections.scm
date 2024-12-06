@@ -9,8 +9,6 @@
 ((html_block) @content
   (#set! "language" "html"))
 
-([(minus_metadata)] @content
-  (#set! "language" "yaml"))
+((minus_metadata) @content (#set! "language" "yaml"))
 
-([(plus_metadata)] @content
-  (#set! "language" "toml"))
+((plus_metadata) @content (#set! "language" "toml"))
