@@ -5659,7 +5659,7 @@ impl Element for EditorElement {
                         MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
 
                     let scroll_max = point(
-                        ((scroll_width - text_hitbox.size.width) / em_width).max(0.0),
+                        ((scroll_width - scrollbar_bounds.size.width) / em_width).max(0.0),
                         max_row.as_f32(),
                     );
 
@@ -5744,7 +5744,7 @@ impl Element for EditorElement {
                     );
 
                     let scroll_max = point(
-                        ((scroll_width - text_hitbox.size.width) / em_width).max(0.0),
+                        ((scroll_width - scrollbar_bounds.size.width) / em_width).max(0.0),
                         max_scroll_top,
                     );
 
