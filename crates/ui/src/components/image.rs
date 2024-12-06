@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 use crate::prelude::*;
-use gpui::{svg, AnyElement, IntoElement, Rems, RenderOnce, Size, Styled, WindowContext};
+use gpui::{svg, Hsla, IntoElement, Rems, RenderOnce, Size, Styled, WindowContext};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::{path_str, DerivePathStr};
@@ -84,6 +84,38 @@ impl RenderOnce for Vector {
             .h(height)
             .path(self.path)
             .text_color(self.color.color(cx))
+    }
+}
+
+#[derive(IntoElement)]
+pub struct VectorPattern {
+    vectors: Vec<Vector>,
+}
+
+impl VectorPattern {
+    pub fn single_row(vector: VectorName, size: Rems, color: Hsla, pattern_cols: usize) -> Self {
+        let vectors = (0..pattern_cols)
+            .map(|_| Vector::square(vector, size).color(Color::Custom(color)))
+            .collect();
+        Self { vectors }
+    }
+
+    pub fn multi_row(
+        vector: VectorName,
+        size: Rems,
+        pattern_rows: usize,
+        pattern_cols: usize,
+    ) -> Self {
+        let vectors = (0..pattern_rows)
+            .flat_map(|_| (0..pattern_cols).map(|_| Vector::square(vector, size)))
+            .collect();
+        Self { vectors }
+    }
+}
+
+impl RenderOnce for VectorPattern {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        h_flex().children(self.vectors)
     }
 }
 

@@ -126,16 +126,6 @@ impl Render for EditorPrototype {
             .h(self.height)
             .bg(cx.theme().colors().editor_background)
             .child(div().absolute().top_0().left_0().size_full().children(
-                self.elements_above.iter().map(|(row, element_fn)| {
-                    div()
-                        .absolute()
-                        .top(px(*row as f32) * line_height)
-                        .left_0()
-                        .w_full()
-                        .child(element_fn(line_height, cx))
-                }),
-            ))
-            .child(div().absolute().top_0().left_0().size_full().children(
                 self.elements_below.iter().map(|(row, element_fn)| {
                     div()
                         .absolute()
@@ -151,6 +141,16 @@ impl Render for EditorPrototype {
                     .child(div().w(px(48.)).h_full().flex_shrink_0())
                     .child(div().size_full().child(self.editor.clone())),
             )
+            .child(div().absolute().top_0().left_0().size_full().children(
+                self.elements_above.iter().map(|(row, element_fn)| {
+                    div()
+                        .absolute()
+                        .top(px(*row as f32) * line_height)
+                        .left_0()
+                        .w_full()
+                        .child(element_fn(line_height, cx))
+                }),
+            ))
     }
 }
 
@@ -185,6 +185,16 @@ fn greet(name: &str) {
             let fake_editor_1 = EditorPrototype::build(cx, |fake_editor, cx| {
                 fake_editor
                     .text(editor_text, cx)
+                    .element_below(3, |line_height, cx| {
+                        let pattern_color = hsla(142. / 360., 0.68, 0.45, 0.08);
+                        VectorPattern::single_row(
+                            VectorName::HashPattern,
+                            rems(line_height / cx.rem_size()),
+                            pattern_color,
+                            99,
+                        )
+                        .into_any_element()
+                    })
                     .element_below(3, |line_height, _| {
                         let green_bg = hsla(142. / 360., 0.68, 0.45, 0.06);
                         div()
@@ -194,41 +204,76 @@ fn greet(name: &str) {
                             .h(line_height)
                             .into_any_element()
                     })
-                    .element_below(3, |line_height, _| {
-                        let line_color = hsla(142. / 360., 0.68, 0.45, 0.08); // Modify color and transparency as needed
-                        let line_thickness = px(2.);
-                        let line_spacing = px(4.);
-
-                        canvas(
-                            |bounds, _| bounds,
-                            move |bounds, _bounds_origin, cx| {
-                                let width = bounds.size.width;
-                                let height = line_height;
-                                let num_lines =
-                                    (width / (line_thickness + line_spacing)).ceil() as i32;
-
-                                for i in 0..num_lines {
-                                    // Calculate the starting x position for each line
-                                    let x_start = i as f32 * (line_thickness + line_spacing).0;
-                                    let y_start = 0.0;
-
-                                    // Calculate the ending x and y positions for each line
-                                    let x_end = x_start + line_thickness.0;
-                                    let y_end = height.0;
-
-                                    // Draw the path using the calculated points directly
-                                    //
-                                    let mut path = Path::new(point(px(x_start), px(y_start)));
-                                    path.line_to(point(px(x_end), px(y_end)));
-                                    cx.paint_path(path, line_color);
-                                }
-                            },
-                        )
-                        .w_full()
-                        .h(line_height)
-                        .into_any_element()
+                    .element_above(3, |line_height, _| {
+                        h_flex()
+                            .group("")
+                            .relative()
+                            .overflow_hidden()
+                            .occlude()
+                            .w_full()
+                            .h(line_height)
+                            .child(
+                                h_flex()
+                                    .invisible()
+                                    .group_hover("", |this| this.visible())
+                                    .w(px(38.))
+                                    .items_center()
+                                    .justify_center()
+                                    .child(Checkbox::new("stage-line", false.into())),
+                            )
+                            .into_any_element()
                     })
                     .element_above(3, |line_height, _| {
+                        let green_fg = hsla(142. / 360., 0.68, 0.45, 0.7);
+
+                        div()
+                            .relative()
+                            .overflow_hidden()
+                            .w(px(3.))
+                            .h(line_height)
+                            .child(
+                                div()
+                                    .id("added-mark")
+                                    .absolute()
+                                    .top_0()
+                                    .left(px(-3.0))
+                                    .bg(green_fg)
+                                    .w(px(6.))
+                                    .rounded_sm()
+                                    .h(line_height)
+                                    .into_any_element(),
+                            )
+                            .into_any_element()
+                    })
+                    .element_below(4, |line_height, _| {
+                        let green_bg = hsla(142. / 360., 0.68, 0.45, 0.08);
+                        div()
+                            .id("foo")
+                            .bg(green_bg)
+                            .w_full()
+                            .h(line_height)
+                            .into_any_element()
+                    })
+                    .element_above(4, |line_height, _| {
+                        h_flex()
+                            .group("")
+                            .w_full()
+                            .relative()
+                            .overflow_hidden()
+                            .occlude()
+                            .h(line_height)
+                            .child(
+                                h_flex()
+                                    .invisible()
+                                    .group_hover("", |this| this.visible())
+                                    .w(px(38.))
+                                    .items_center()
+                                    .justify_center()
+                                    .child(Checkbox::new("stage-line", true.into())),
+                            )
+                            .into_any_element()
+                    })
+                    .element_above(4, |line_height, _| {
                         let green_fg = hsla(142. / 360., 0.68, 0.45, 0.7);
 
                         div()
