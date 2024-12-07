@@ -2138,13 +2138,17 @@ impl Pane {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(if let Some(decorated_icon) = decorated_icon {
-                        div().child(decorated_icon.into_any_element())
-                    } else if let Some(icon) = icon {
-                        div().mt(px(2.5)).child(icon.into_any_element())
-                    } else {
-                        div()
-                    })
+                    .items_center()
+                    .children(
+                        std::iter::once(if let Some(decorated_icon) = decorated_icon {
+                            Some(div().child(decorated_icon.into_any_element()))
+                        } else if let Some(icon) = icon {
+                            Some(div().child(icon.into_any_element()))
+                        } else {
+                            None
+                        })
+                        .flatten(),
+                    )
                     .child(label),
             );
 
