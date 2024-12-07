@@ -1,3 +1,6 @@
+[env]
+LK_CUSTOM_WEBRTC = { value = "../livekit-rust-sdks/webrtc-sys/libwebrtc/linux-x64-release", relative = true }
+
 [build]
 # v0 mangling scheme provides more detailed backtraces around closures
 rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]

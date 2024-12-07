@@ -142,6 +142,15 @@ members = [
     "crates/zed",
     "crates/zed_actions",
 
+    "crates/livekit",
+    "crates/livekit-api",
+    "crates/livekit-protocol",
+    "crates/livekit-ffi",
+    "crates/libwebrtc",
+    "crates/soxr-sys",
+    "crates/webrtc-sys",
+    "crates/webrtc-sys/build",
+
     #
     # Extensions
     #
@@ -326,6 +335,8 @@ worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
+livekit = { path = "crates/livekit", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots" ], default-features = false }
+
 #
 # External crates
 #
@@ -396,7 +407,7 @@ jupyter-websocket-client = { version = "0.8.0" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
-livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="799f10133d93ba2a88642cd480d01ec4da53408c", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
+# livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="799f10133d93ba2a88642cd480d01ec4da53408c", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
