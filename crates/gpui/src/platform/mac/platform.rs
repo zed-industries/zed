@@ -57,6 +57,7 @@ use std::{
     sync::Arc,
 };
 use strum::IntoEnumIterator;
+use util::ResultExt;
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
