@@ -4725,6 +4725,10 @@ impl BackgroundScanner {
     }
 
     async fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) {
+        if self.settings.disable_git_updates {
+            return;
+        }
+
         log::debug!("reloading repositories: {dot_git_paths:?}");
 
         let mut repo_updates = Vec::new();
