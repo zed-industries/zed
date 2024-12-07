@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Context as _;
+use anyhow::{anyhow, Context as _};
 use collections::{BTreeMap, HashMap};
 use feature_flags::FeatureFlagAppExt;
 use git::{
@@ -235,22 +235,30 @@ impl ProjectDiffEditor {
                         >::default();
                         let mut change_sets = Vec::new();
                         for (status, entry_id, entry_path, open_task) in open_tasks {
-                            let (_, opened_model) = open_task.await.with_context(|| {
-                                format!("loading buffer {:?} for git diff", entry_path.path)
-                            })?;
-                            let buffer = match opened_model.downcast::<Buffer>() {
-                                Ok(buffer) => buffer,
-                                Err(_model) => anyhow::bail!(
-                                    "Could not load {:?} as a buffer for git diff",
-                                    entry_path.path
-                                ),
+                            let Some(buffer) = open_task
+                                .await
+                                .and_then(|(_, opened_model)| {
+                                    opened_model
+                                        .downcast::<Buffer>()
+                                        .map_err(|_| anyhow!("Unexpected non-buffer"))
+                                })
+                                .with_context(|| {
+                                    format!("loading {} for git diff", entry_path.path.display())
+                                })
+                                .log_err()
+                            else {
+                                continue;
                             };
 
-                            let change_set = project
+                            let Some(change_set) = project
                                 .update(&mut cx, |project, cx| {
                                     project.open_unstaged_changes(buffer.clone(), cx)
                                 })?
-                                .await?;
+                                .await
+                                .log_err()
+                            else {
+                                continue;
+                            };
 
                             cx.update(|cx| {
                                 buffers.insert(
@@ -267,7 +275,7 @@ impl ProjectDiffEditor {
                             new_entries.push((entry_path, entry_id));
                         }
 
-                        Ok((buffers, new_entries, change_sets))
+                        anyhow::Ok((buffers, new_entries, change_sets))
                     })
                     .await
                     .log_err()
