@@ -1211,7 +1211,9 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
         assert_match_at_position(finder, 2, "bar.rs");
     });
 
-    // all files match, main.rs is still on top, but the second item is selected
+    // all files match and are now included (rather than only history),
+    // main.rs is still on top, but the second item is selected. Non-history
+    // items are shown at the end.
     picker
         .update(cx, |finder, cx| {
             finder.delegate.update_matches(".rs".to_string(), cx)
@@ -1220,9 +1222,9 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 5);
         assert_match_at_position(finder, 0, "main.rs");
-        assert_match_selection(finder, 1, "moo.rs");
-        assert_match_at_position(finder, 2, "bar.rs");
-        assert_match_at_position(finder, 3, "lib.rs");
+        assert_match_selection(finder, 1, "bar.rs");
+        assert_match_at_position(finder, 2, "lib.rs");
+        assert_match_at_position(finder, 3, "moo.rs");
         assert_match_at_position(finder, 4, "maaa.rs");
     });
 
@@ -1262,6 +1264,70 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
         assert_match_selection(finder, 0, "main.rs");
         assert_match_at_position(finder, 1, "lib.rs");
         assert_match_at_position(finder, 2, "bar.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_closer_relative_paths_prioritized(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/root",
+            json!({
+                "dir1": {
+                    "subdir": {
+                        "file1.rs": "// file1.rs",
+                        "sibling1.rs": "// sibling.rs",
+                    },
+                },
+                "dir2": {
+                    "file2.rs": "// file2.rs",
+                    "sibling2.rs": "// sibling2.rs",
+                },
+                "file3.rs": "// file3.rs",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    // Open the file in dir1 to set it as the current 'relative' directory
+    open_queried_buffer("sibling1", 1, "sibling1.rs", &workspace, cx).await;
+
+    cx.dispatch_action(ToggleFileFinder::default());
+    let picker = active_file_picker(&workspace, cx);
+
+    picker
+        .update(cx, |finder, cx| {
+            finder.delegate.update_matches("file".to_string(), cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "file1.rs");
+        assert_match_at_position(finder, 1, "file3.rs");
+        assert_match_at_position(finder, 2, "file2.rs");
+    });
+
+    // Open the file in dir2 to set it as the current 'relative' directory
+    open_queried_buffer("sibling2", 1, "sibling2.rs", &workspace, cx).await;
+
+    cx.dispatch_action(ToggleFileFinder::default());
+    let picker = active_file_picker(&workspace, cx);
+
+    picker
+        .update(cx, |finder, cx| {
+            finder.delegate.update_matches("file".to_string(), cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "file2.rs");
+        assert_match_at_position(finder, 1, "file3.rs");
+        assert_match_at_position(finder, 2, "file1.rs");
     });
 }
 
