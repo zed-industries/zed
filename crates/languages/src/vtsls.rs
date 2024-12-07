@@ -19,6 +19,12 @@ fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
+struct TypeScriptPlugin {
+    name: &'static str,
+    path: &'static str,
+    for_extension: Option<&'static str>,
+}
+
 pub struct VtslsLspAdapter {
     node: NodeRuntime,
 }
@@ -29,6 +35,12 @@ impl VtslsLspAdapter {
 
     const TYPESCRIPT_PACKAGE_NAME: &'static str = "typescript";
     const TYPESCRIPT_TSDK_PATH: &'static str = "node_modules/typescript/lib";
+
+    const DEFAULT_PLUGINS: &'static [TypeScriptPlugin] = &[TypeScriptPlugin {
+        name: "@astrojs/ts-plugin",
+        path: "node_modules/@astrojs/ts-plugin/dist",
+        for_extension: Some("astro"),
+    }];
 
     pub fn new(node: NodeRuntime) -> Self {
         VtslsLspAdapter { node }
@@ -44,6 +56,31 @@ impl VtslsLspAdapter {
             ".yarn/sdks/typescript/lib"
         } else {
             Self::TYPESCRIPT_TSDK_PATH
+        }
+    }
+
+    async fn check_installed_extension(
+        &self,
+        extension_installed: Option<&str>,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<bool> {
+        match extension_installed {
+            Some(extension) => {
+                let language_server_path = delegate
+                    .language_server_download_dir(&SERVER_NAME)
+                    .await
+                    .ok_or_else(|| anyhow!("Could not get language server download directory"))?;
+                let extension_path = language_server_path
+                    .ancestors()
+                    .nth(2)
+                    .ok_or_else(|| anyhow!("Invalid language server path structure"))?
+                    .join("extensions")
+                    .join("installed")
+                    .join(extension)
+                    .join("extension.wasm");
+                Ok(extension_path.try_exists()?)
+            }
+            None => Ok(true),
         }
     }
 }
@@ -93,7 +130,7 @@ impl LspAdapter for VtslsLspAdapter {
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
@@ -127,6 +164,32 @@ impl LspAdapter for VtslsLspAdapter {
                 Self::TYPESCRIPT_PACKAGE_NAME,
                 latest_version.typescript_version.as_str(),
             ));
+        }
+
+        let mut active_plugins = Vec::new();
+        for plugin in Self::DEFAULT_PLUGINS {
+            if self
+                .check_installed_extension(plugin.for_extension, delegate)
+                .await?
+            {
+                let version = self.node.npm_package_latest_version(plugin.name).await?;
+                active_plugins.push((plugin, version));
+            }
+        }
+
+        for (plugin, version) in &active_plugins {
+            if self
+                .node
+                .should_install_npm_package(
+                    plugin.name,
+                    &container_dir.join(plugin.path),
+                    &container_dir,
+                    version,
+                )
+                .await
+            {
+                packages_to_install.push((plugin.name, version.as_str()));
+            }
         }
 
         self.node
@@ -235,6 +298,25 @@ impl LspAdapter for VtslsLspAdapter {
             },
         });
 
+        let language_server_download_dir = delegate
+            .language_server_download_dir(&SERVER_NAME)
+            .await
+            .ok_or_else(|| anyhow!("Could not get language server download directory"))?;
+
+        let mut global_plugins = Vec::new();
+        for plugin in Self::DEFAULT_PLUGINS {
+            if self
+                .check_installed_extension(plugin.for_extension, delegate.as_ref())
+                .await?
+            {
+                global_plugins.push(serde_json::json!({
+                    "name": plugin.name,
+                    "location": language_server_download_dir,
+                    "enableForWorkspaceTypeScriptVersions": true,
+                }));
+            }
+        }
+
         let mut default_workspace_configuration = serde_json::json!({
             "typescript": config,
             "javascript": config,
@@ -245,8 +327,11 @@ impl LspAdapter for VtslsLspAdapter {
                         "entriesLimit": 5000,
                     }
                 },
-               "autoUseWorkspaceTsdk": true
-            }
+                "autoUseWorkspaceTsdk": true,
+                "tsserver": {
+                    "globalPlugins": global_plugins
+                }
+            },
         });
 
         let override_options = cx.update(|cx| {
