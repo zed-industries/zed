@@ -11,6 +11,9 @@
 (attribute attribute: (identifier) @property)
 (type (identifier) @type)
 (generic_type (identifier) @type)
+(comment) @comment
+(string) @string
+(escape_sequence) @string.escape
 
 ; Type alias
 (type_alias_statement "type" @keyword)
@@ -87,10 +90,6 @@
   (attribute (identifier) @variable.special)
   (#match? @variable.special "^self|cls$")
 ]
-
-(comment) @comment
-(string) @string
-(escape_sequence) @string.escape
 
 [
   "("
