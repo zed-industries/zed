@@ -9,6 +9,7 @@ use collections::HashSet;
 use reqwest::StatusCode;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{str::FromStr, sync::Arc, time::Duration};
 use stripe::{
     BillingPortalSession, CreateBillingPortalSession, CreateBillingPortalSessionFlowData,
@@ -19,6 +20,7 @@ use stripe::{
 };
 use util::ResultExt;
 
+use crate::api::events::SnowflakeRow;
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::{ResultExt as _, Server};
 use crate::{
@@ -123,6 +125,20 @@ async fn update_billing_preferences(
                 )
                 .await?
         };
+
+    SnowflakeRow::new(
+        "Spend Limit Updated",
+        Some(user.metrics_id),
+        user.admin,
+        None,
+        json!({
+            "user_id": user.id,
+            "max_monthly_llm_usage_spending_in_cents": billing_preferences.max_monthly_llm_usage_spending_in_cents,
+        }),
+    )
+    .write(&app.kinesis_client, &app.config.kinesis_stream)
+    .await
+    .log_err();
 
     rpc_server.refresh_llm_tokens_for_user(user.id).await;
 

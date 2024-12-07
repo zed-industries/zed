@@ -21,8 +21,6 @@ test-support = [
     "project/test-support",
     "util/test-support"
 ]
-livekit-macos = ["livekit_client_macos"]
-livekit-cross-platform = ["livekit_client"]
 
 [dependencies]
 anyhow.workspace = true
@@ -42,8 +40,12 @@ serde.workspace = true
 serde_derive.workspace = true
 settings.workspace = true
 util.workspace = true
-livekit_client_macos = { workspace = true, optional = true }
-livekit_client = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+livekit_client_macos = { workspace = true }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+livekit_client = { workspace = true }
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
