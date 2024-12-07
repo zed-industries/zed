@@ -23,10 +23,10 @@ use futures::{
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt,
 };
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
-    AppContext, AsyncAppContext, Context, Entity, EventEmitter, Model, ModelContext, PromptLevel,
-    Task, WeakModel,
+    AppContext, AsyncAppContext, Entity, EventEmitter, Model, ModelContext, PromptLevel, Task,
+    WeakModel,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -43,12 +43,13 @@ use language::{
     Unclipped,
 };
 use lsp::{
-    CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
-    DidChangeWatchedFilesRegistrationOptions, Edit, FileSystemWatcher, InsertTextFormat,
-    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
-    LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
-    ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams,
-    WorkspaceFolder,
+    notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
+    DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter,
+    FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
+    InsertTextFormat, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
+    LanguageServerId, LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
+    RenameFilesParams, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url,
+    WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::{Mutex, RwLock};
@@ -139,7 +140,9 @@ pub struct LocalLspStore {
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
     buffers_being_formatted: HashSet<BufferId>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
-    language_server_watched_paths: HashMap<LanguageServerId, Model<LanguageServerWatchedPaths>>,
+    language_server_watched_paths: HashMap<LanguageServerId, LanguageServerWatchedPaths>,
+    language_server_paths_watched_for_rename:
+        HashMap<LanguageServerId, RenamePathsWatchedForServer>,
     language_server_watcher_registrations:
         HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     supplementary_language_servers:
@@ -899,6 +902,7 @@ impl LspStore {
                 language_servers: Default::default(),
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: Default::default(),
+                language_server_paths_watched_for_rename: Default::default(),
                 language_server_watcher_registrations: Default::default(),
                 current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 buffers_being_formatted: Default::default(),
@@ -4332,6 +4336,112 @@ impl LspStore {
             .map(|(key, value)| (*key, value))
     }
 
+    pub(super) fn did_rename_entry(
+        &self,
+        worktree_id: WorktreeId,
+        old_path: &Path,
+        new_path: &Path,
+        is_dir: bool,
+    ) {
+        maybe!({
+            let local_store = self.as_local()?;
+
+            let old_uri = lsp::Url::from_file_path(old_path).ok().map(String::from)?;
+            let new_uri = lsp::Url::from_file_path(new_path).ok().map(String::from)?;
+
+            for language_server in self.language_servers_for_worktree(worktree_id) {
+                let Some(filter) = local_store
+                    .language_server_paths_watched_for_rename
+                    .get(&language_server.server_id())
+                else {
+                    continue;
+                };
+
+                if filter.should_send_did_rename(&old_uri, is_dir) {
+                    language_server
+                        .notify::<DidRenameFiles>(RenameFilesParams {
+                            files: vec![FileRename {
+                                old_uri: old_uri.clone(),
+                                new_uri: new_uri.clone(),
+                            }],
+                        })
+                        .log_err();
+                }
+            }
+            Some(())
+        });
+    }
+
+    pub(super) fn will_rename_entry(
+        this: WeakModel<Self>,
+        worktree_id: WorktreeId,
+        old_path: &Path,
+        new_path: &Path,
+        is_dir: bool,
+        cx: AsyncAppContext,
+    ) -> Task<()> {
+        let old_uri = lsp::Url::from_file_path(old_path).ok().map(String::from);
+        let new_uri = lsp::Url::from_file_path(new_path).ok().map(String::from);
+        cx.spawn(move |mut cx| async move {
+            let mut tasks = vec![];
+            this.update(&mut cx, |this, cx| {
+                let local_store = this.as_local()?;
+                let old_uri = old_uri?;
+                let new_uri = new_uri?;
+                for language_server in this.language_servers_for_worktree(worktree_id) {
+                    let Some(filter) = local_store
+                        .language_server_paths_watched_for_rename
+                        .get(&language_server.server_id())
+                    else {
+                        continue;
+                    };
+                    let Some(adapter) =
+                        this.language_server_adapter_for_id(language_server.server_id())
+                    else {
+                        continue;
+                    };
+                    if filter.should_send_will_rename(&old_uri, is_dir) {
+                        let apply_edit = cx.spawn({
+                            let old_uri = old_uri.clone();
+                            let new_uri = new_uri.clone();
+                            let language_server = language_server.clone();
+                            |this, mut cx| async move {
+                                let edit = language_server
+                                    .request::<WillRenameFiles>(RenameFilesParams {
+                                        files: vec![FileRename { old_uri, new_uri }],
+                                    })
+                                    .log_err()
+                                    .await
+                                    .flatten()?;
+
+                                Self::deserialize_workspace_edit(
+                                    this.upgrade()?,
+                                    edit,
+                                    false,
+                                    adapter.clone(),
+                                    language_server.clone(),
+                                    &mut cx,
+                                )
+                                .await
+                                .ok();
+                                Some(())
+                            }
+                        });
+                        tasks.push(apply_edit);
+                    }
+                }
+                Some(())
+            })
+            .ok()
+            .flatten();
+            for task in tasks {
+                // Await on tasks sequentially so that the order of application of edits is deterministic
+                // (at least with regards to the order of registration of language servers)
+                task.await;
+            }
+        })
+    }
+
     fn lsp_notify_abs_paths_changed(
         &mut self,
         server_id: LanguageServerId,
@@ -4369,6 +4479,32 @@ impl LspStore {
         language_server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) {
+        let Some(watchers) = self.as_local().and_then(|local| {
+            local
+                .language_server_watcher_registrations
+                .get(&language_server_id)
+        }) else {
+            return;
+        };
+
+        let watch_builder =
+            self.rebuild_watched_paths_inner(language_server_id, watchers.values().flatten(), cx);
+        let Some(local_lsp_store) = self.as_local_mut() else {
+            return;
+        };
+        let watcher = watch_builder.build(local_lsp_store.fs.clone(), language_server_id, cx);
+        local_lsp_store
+            .language_server_watched_paths
+            .insert(language_server_id, watcher);
+
+        cx.notify();
+    }
+    fn rebuild_watched_paths_inner<'a>(
+        &'a self,
+        language_server_id: LanguageServerId,
+        watchers: impl Iterator<Item = &'a FileSystemWatcher>,
+        cx: &mut ModelContext<Self>,
+    ) -> LanguageServerWatchedPathsBuilder {
         let worktrees = self
             .worktree_store
             .read(cx)
@@ -4379,15 +4515,6 @@ impl LspStore {
                     .map(|_| worktree)
             })
             .collect::<Vec<_>>();
-
-        let local_lsp_store = self.as_local_mut().unwrap();
-
-        let Some(watchers) = local_lsp_store
-            .language_server_watcher_registrations
-            .get(&language_server_id)
-        else {
-            return;
-        };
 
         let mut worktree_globs = HashMap::default();
         let mut abs_globs = HashMap::default();
@@ -4406,7 +4533,7 @@ impl LspStore {
                 pattern: String,
             },
         }
-        for watcher in watchers.values().flatten() {
+        for watcher in watchers {
             let mut found_host = false;
             for worktree in &worktrees {
                 let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
@@ -4545,12 +4672,7 @@ impl LspStore {
                 watch_builder.watch_abs_path(abs_path, globset);
             }
         }
-        let watcher = watch_builder.build(local_lsp_store.fs.clone(), language_server_id, cx);
-        local_lsp_store
-            .language_server_watched_paths
-            .insert(language_server_id, watcher);
-
-        cx.notify();
+        watch_builder
     }
 
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
@@ -6650,6 +6772,23 @@ impl LspStore {
                     simulate_disk_based_diagnostics_completion: None,
                 },
             );
+            if let Some(file_ops_caps) = language_server
+                .capabilities()
+                .workspace
+                .as_ref()
+                .and_then(|ws| ws.file_operations.as_ref())
+            {
+                let did_rename_caps = file_ops_caps.did_rename.as_ref();
+                let will_rename_caps = file_ops_caps.will_rename.as_ref();
+                if did_rename_caps.or(will_rename_caps).is_some() {
+                    let watcher = RenamePathsWatchedForServer::default()
+                        .with_did_rename_patterns(did_rename_caps)
+                        .with_will_rename_patterns(will_rename_caps);
+                    local
+                        .language_server_paths_watched_for_rename
+                        .insert(server_id, watcher);
+                }
+            }
         }
 
         self.language_server_statuses.insert(
@@ -7010,7 +7149,7 @@ impl LspStore {
                 if let Some(watched_paths) = local
                     .language_server_watched_paths
                     .get(server_id)
-                    .and_then(|paths| paths.read(cx).worktree_paths.get(&worktree_id))
+                    .and_then(|paths| paths.worktree_paths.get(&worktree_id))
                 {
                     let params = lsp::DidChangeWatchedFilesParams {
                         changes: changes
@@ -7115,7 +7254,7 @@ impl LspStore {
         Ok(transaction)
     }
 
-    pub async fn deserialize_workspace_edit(
+    pub(crate) async fn deserialize_workspace_edit(
         this: Model<Self>,
         edit: lsp::WorkspaceEdit,
         push_to_history: bool,
@@ -7516,6 +7655,84 @@ pub enum LanguageServerToQuery {
 }
 
 #[derive(Default)]
+struct RenamePathsWatchedForServer {
+    did_rename: Vec<RenameActionPredicate>,
+    will_rename: Vec<RenameActionPredicate>,
+}
+
+impl RenamePathsWatchedForServer {
+    fn with_did_rename_patterns(
+        mut self,
+        did_rename: Option<&FileOperationRegistrationOptions>,
+    ) -> Self {
+        if let Some(did_rename) = did_rename {
+            self.did_rename = did_rename
+                .filters
+                .iter()
+                .filter_map(|filter| filter.try_into().log_err())
+                .collect();
+        }
+        self
+    }
+    fn with_will_rename_patterns(
+        mut self,
+        will_rename: Option<&FileOperationRegistrationOptions>,
+    ) -> Self {
+        if let Some(will_rename) = will_rename {
+            self.will_rename = will_rename
+                .filters
+                .iter()
+                .filter_map(|filter| filter.try_into().log_err())
+                .collect();
+        }
+        self
+    }
+
+    fn should_send_did_rename(&self, path: &str, is_dir: bool) -> bool {
+        self.did_rename.iter().any(|pred| pred.eval(path, is_dir))
+    }
+    fn should_send_will_rename(&self, path: &str, is_dir: bool) -> bool {
+        self.will_rename.iter().any(|pred| pred.eval(path, is_dir))
+    }
+}
+
+impl TryFrom<&FileOperationFilter> for RenameActionPredicate {
+    type Error = globset::Error;
+    fn try_from(ops: &FileOperationFilter) -> Result<Self, globset::Error> {
+        Ok(Self {
+            kind: ops.pattern.matches.clone(),
+            glob: GlobBuilder::new(&ops.pattern.glob)
+                .case_insensitive(
+                    ops.pattern
+                        .options
+                        .as_ref()
+                        .map_or(false, |ops| ops.ignore_case.unwrap_or(false)),
+                )
+                .build()?
+                .compile_matcher(),
+        })
+    }
+}
+struct RenameActionPredicate {
+    glob: GlobMatcher,
+    kind: Option<FileOperationPatternKind>,
+}
+
+impl RenameActionPredicate {
+    // Returns true if language server should be notified
+    fn eval(&self, path: &str, is_dir: bool) -> bool {
+        self.kind.as_ref().map_or(true, |kind| {
+            let expected_kind = if is_dir {
+                FileOperationPatternKind::Folder
+            } else {
+                FileOperationPatternKind::File
+            };
+            kind == &expected_kind
+        }) && self.glob.is_match(path)
+    }
+}
+
+#[derive(Default)]
 struct LanguageServerWatchedPaths {
     worktree_paths: HashMap<WorktreeId, GlobSet>,
     abs_paths: HashMap<Arc<Path>, (GlobSet, Task<()>)>,
@@ -7539,78 +7756,65 @@ impl LanguageServerWatchedPathsBuilder {
         fs: Arc<dyn Fs>,
         language_server_id: LanguageServerId,
         cx: &mut ModelContext<LspStore>,
-    ) -> Model<LanguageServerWatchedPaths> {
+    ) -> LanguageServerWatchedPaths {
         let project = cx.weak_model();
 
-        cx.new_model(|cx| {
-                let this_id = cx.entity_id();
-                const LSP_ABS_PATH_OBSERVE: Duration = Duration::from_millis(100);
-                let abs_paths = self
-                    .abs_paths
-                    .into_iter()
-                    .map(|(abs_path, globset)| {
-                        let task = cx.spawn({
-                            let abs_path = abs_path.clone();
-                            let fs = fs.clone();
+        const LSP_ABS_PATH_OBSERVE: Duration = Duration::from_millis(100);
+        let abs_paths = self
+            .abs_paths
+            .into_iter()
+            .map(|(abs_path, globset)| {
+                let task = cx.spawn({
+                    let abs_path = abs_path.clone();
+                    let fs = fs.clone();
 
-                            let lsp_store = project.clone();
-                            |_, mut cx| async move {
-                                maybe!(async move {
-                                    let mut push_updates =
-                                        fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
-                                    while let Some(update) = push_updates.0.next().await {
-                                        let action = lsp_store
-                                            .update(&mut cx, |this, cx| {
-                                                let Some(local) = this.as_local() else {
-                                                    return ControlFlow::Break(());
-                                                };
-                                                let Some(watcher) = local
-                                                    .language_server_watched_paths
-                                                    .get(&language_server_id)
-                                                else {
-                                                    return ControlFlow::Break(());
-                                                };
-                                                if watcher.entity_id() != this_id {
-                                                    // This watcher is no longer registered on the project, which means that we should
-                                                    // cease operations.
-                                                    return ControlFlow::Break(());
-                                                }
-                                                let (globs, _) = watcher
-                                                    .read(cx)
-                                                    .abs_paths
-                                                    .get(&abs_path)
-                                                    .expect(
-                                                    "Watched abs path is not registered with a watcher",
-                                                );
-                                                let matching_entries = update
-                                                    .into_iter()
-                                                    .filter(|event| globs.is_match(&event.path))
-                                                    .collect::<Vec<_>>();
-                                                this.lsp_notify_abs_paths_changed(
-                                                    language_server_id,
-                                                    matching_entries,
-                                                );
-                                                ControlFlow::Continue(())
-                                            })
-                                            .ok()?;
+                    let lsp_store = project.clone();
+                    |_, mut cx| async move {
+                        maybe!(async move {
+                            let mut push_updates = fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
+                            while let Some(update) = push_updates.0.next().await {
+                                let action = lsp_store
+                                    .update(&mut cx, |this, _| {
+                                        let Some(local) = this.as_local() else {
+                                            return ControlFlow::Break(());
+                                        };
+                                        let Some(watcher) = local
+                                            .language_server_watched_paths
+                                            .get(&language_server_id)
+                                        else {
+                                            return ControlFlow::Break(());
+                                        };
+                                        let (globs, _) = watcher.abs_paths.get(&abs_path).expect(
+                                            "Watched abs path is not registered with a watcher",
+                                        );
+                                        let matching_entries = update
+                                            .into_iter()
+                                            .filter(|event| globs.is_match(&event.path))
+                                            .collect::<Vec<_>>();
+                                        this.lsp_notify_abs_paths_changed(
+                                            language_server_id,
+                                            matching_entries,
+                                        );
+                                        ControlFlow::Continue(())
+                                    })
+                                    .ok()?;
 
-                                        if action.is_break() {
-                                            break;
-                                        }
-                                    }
-                                    Some(())
-                                })
-                                    .await;
+                                if action.is_break() {
+                                    break;
+                                }
                             }
-                        });
-                        (abs_path, (globset, task))
-                    })
-                    .collect();
-                LanguageServerWatchedPaths {
-                    worktree_paths: self.worktree_paths,
-                    abs_paths,
-                }
+                            Some(())
+                        })
+                        .await;
+                    }
+                });
+                (abs_path, (globset, task))
             })
+            .collect();
+        LanguageServerWatchedPaths {
+            worktree_paths: self.worktree_paths,
+            abs_paths,
+        }
     }
 }
 

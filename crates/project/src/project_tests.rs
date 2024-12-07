@@ -9,12 +9,16 @@ use language::{
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, DiskState, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
-use lsp::{DiagnosticSeverity, NumberOrString};
+use lsp::{
+    notification::DidRenameFiles, DiagnosticSeverity, DocumentChanges, FileOperationFilter,
+    NumberOrString, TextDocumentEdit, WillRenameFiles,
+};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
+use std::{str::FromStr, sync::OnceLock};
 
 use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext};
@@ -3913,6 +3917,135 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
             },
         ]
     );
+}
+
+#[gpui::test]
+async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+            "two": {
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;"
+            }
+
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let watched_paths = lsp::FileOperationRegistrationOptions {
+        filters: vec![
+            FileOperationFilter {
+                scheme: Some("file".to_owned()),
+                pattern: lsp::FileOperationPattern {
+                    glob: "**/*.rs".to_owned(),
+                    matches: Some(lsp::FileOperationPatternKind::File),
+                    options: None,
+                },
+            },
+            FileOperationFilter {
+                scheme: Some("file".to_owned()),
+                pattern: lsp::FileOperationPattern {
+                    glob: "**/**".to_owned(),
+                    matches: Some(lsp::FileOperationPatternKind::Folder),
+                    options: None,
+                },
+            },
+        ],
+    };
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                workspace: Some(lsp::WorkspaceServerCapabilities {
+                    workspace_folders: None,
+                    file_operations: Some(lsp::WorkspaceFileOperationsServerCapabilities {
+                        did_rename: Some(watched_paths.clone()),
+                        will_rename: Some(watched_paths),
+                        ..Default::default()
+                    }),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let _ = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/one.rs", cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    let response = project.update(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        let entry = worktree.read(cx).entry_for_path("one.rs").unwrap();
+        project.rename_entry(entry.id, "three.rs".as_ref(), cx)
+    });
+    let expected_edit = lsp::WorkspaceEdit {
+        changes: None,
+        document_changes: Some(DocumentChanges::Edits({
+            vec![TextDocumentEdit {
+                edits: vec![lsp::Edit::Plain(lsp::TextEdit {
+                    range: lsp::Range {
+                        start: lsp::Position {
+                            line: 0,
+                            character: 1,
+                        },
+                        end: lsp::Position {
+                            line: 0,
+                            character: 3,
+                        },
+                    },
+                    new_text: "This is not a drill".to_owned(),
+                })],
+                text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                    uri: Url::from_str("file:///dir/two/two.rs").unwrap(),
+                    version: Some(1337),
+                },
+            }]
+        })),
+        change_annotations: None,
+    };
+    let resolved_workspace_edit = Arc::new(OnceLock::new());
+    fake_server
+        .handle_request::<WillRenameFiles, _, _>({
+            let resolved_workspace_edit = resolved_workspace_edit.clone();
+            let expected_edit = expected_edit.clone();
+            move |params, _| {
+                let resolved_workspace_edit = resolved_workspace_edit.clone();
+                let expected_edit = expected_edit.clone();
+                async move {
+                    assert_eq!(params.files.len(), 1);
+                    assert_eq!(params.files[0].old_uri, "file:///dir/one.rs");
+                    assert_eq!(params.files[0].new_uri, "file:///dir/three.rs");
+                    resolved_workspace_edit.set(expected_edit.clone()).unwrap();
+                    Ok(Some(expected_edit))
+                }
+            }
+        })
+        .next()
+        .await
+        .unwrap();
+    let _ = response.await.unwrap();
+    fake_server
+        .handle_notification::<DidRenameFiles, _>(|params, _| {
+            assert_eq!(params.files.len(), 1);
+            assert_eq!(params.files[0].old_uri, "file:///dir/one.rs");
+            assert_eq!(params.files[0].new_uri, "file:///dir/three.rs");
+        })
+        .next()
+        .await
+        .unwrap();
+    assert_eq!(resolved_workspace_edit.get(), Some(&expected_edit));
 }
 
 #[gpui::test]
