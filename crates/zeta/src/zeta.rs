@@ -63,6 +63,7 @@ impl Global for ZetaGlobal {}
 pub struct InlineCompletion {
     id: InlineCompletionId,
     path: Arc<Path>,
+    excerpt_range: Range<usize>,
     edits: Arc<[(Range<Anchor>, String)]>,
     snapshot: BufferSnapshot,
     input_events: Arc<str>,
@@ -404,6 +405,7 @@ impl Zeta {
             let inline_completion = InlineCompletion {
                 id: InlineCompletionId::new(),
                 path,
+                excerpt_range,
                 edits,
                 snapshot,
                 input_events: input_events.into(),
@@ -790,6 +792,7 @@ mod tests {
             path: Path::new("").into(),
             snapshot: buffer.read(cx).snapshot(),
             id: InlineCompletionId::new(),
+            excerpt_range: 0..0,
             input_events: "".into(),
             input_excerpt: "".into(),
             output_excerpt: "".into(),

@@ -28,7 +28,9 @@ log.workspace = true
 open_ai.workspace = true
 rpc.workspace = true
 serde_json.workspace = true
+settings.workspace = true
 similar.workspace = true
+theme.workspace = true
 util.workspace = true
 ui.workspace = true
 uuid.workspace = true
@@ -48,6 +50,7 @@ language = { workspace = true, features = ["test-support"] }
 reqwest_client = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
 tree-sitter-go.workspace = true
 tree-sitter-rust.workspace = true
 util = { workspace = true, features = ["test-support"] }

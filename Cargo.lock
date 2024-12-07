@@ -16043,6 +16043,7 @@ dependencies = [
  "serde_json",
  "settings",
  "similar",
+ "theme",
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
