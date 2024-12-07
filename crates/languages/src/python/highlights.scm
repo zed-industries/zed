@@ -26,6 +26,7 @@
 
 ; Function calls
 
+(decorator "@" @punctuation.special)
 (decorator
   "@" @punctuation.special
   (identifier) @function.decorator)
@@ -40,10 +41,31 @@
 (function_definition
   name: (identifier) @function.definition)
 
+; Function arguments
+(function_definition
+  parameters: (parameters
+  [
+      (identifier) @function.arguments ; Simple parameters
+      (typed_parameter
+        (identifier) @function.arguments) ; Typed parameters
+      (default_parameter
+        name: (identifier) @function.arguments) ; Default parameters
+  ]))
+
+; Keyword arguments
+(call
+  arguments: (argument_list
+    (keyword_argument
+      name: (identifier) @function.kwargs)))
+
 ; Class definitions and calling: needs to come after the regex matching above
 
 (class_definition
   name: (identifier) @type.class.definition)
+
+(class_definition
+  superclasses: (argument_list
+  (identifier) @type.class.inheritance))
 
 (call
   function: (identifier) @type.class.call
@@ -205,3 +227,33 @@
   "match"
   "case"
 ] @keyword
+
+; Definition keywords def, class, async def, lambda
+[
+  "async"
+  "def"
+  "class"
+  "lambda"
+] @keyword.definition
+
+((identifier) @builtin.decorators
+  (#match? @builtin.decorators "^(classmethod|staticmethod|property)$"))
+
+; Builtin types as identifiers
+[
+  (call
+    function: (identifier) @builtin.types)
+  (call
+    arguments: (argument_list
+    (identifier) @builtin.types))
+  (call
+    arguments: (argument_list
+      (keyword_argument
+        value: (identifier) @builtin.types)))
+  (type (identifier) @builtin.types)
+  ; also check if type binary operator left identifier for union types
+  (type
+    (binary_operator
+      left: (identifier) @builtin.types))
+  (#match? @builtin.types "^(bool|bytearray|bytes|complex|dict|float|frozenset|int|list|memoryview|object|range|set|slice|str|tuple)$")
+]
