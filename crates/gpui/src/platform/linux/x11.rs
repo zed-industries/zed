@@ -1,6 +1,7 @@
 mod client;
 mod display;
 mod event;
+mod screen_capture;
 mod window;
 mod xim_handler;
 

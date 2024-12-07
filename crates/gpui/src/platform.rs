@@ -244,7 +244,7 @@ pub trait ScreenCaptureSource: Send {
     /// Start capture video from this source, invoking the given callback
     /// with each frame.
     fn stream(
-        &mut self,
+        &self,
         frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
 }

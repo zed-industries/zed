@@ -2,6 +2,7 @@ mod client;
 mod clipboard;
 mod cursor;
 mod display;
+mod screen_capture;
 mod serial;
 mod window;
 

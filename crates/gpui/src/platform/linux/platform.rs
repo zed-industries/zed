@@ -846,16 +846,20 @@ impl Modifiers {
     }
 }
 
-pub struct ScapCapturer {
-    pub stream_tx: std::sync::mpsc::Sender<(
-        oneshot::Sender<anyhow::Result<Box<dyn crate::ScreenCaptureStream>>>,
-        Box<dyn Fn(crate::ScreenCaptureFrame) + Send>,
-    )>,
-    // TODO: This is incorrect on wayland, as the screen capturer
-    // can change size dynamically while streaming. But right now we
-    // need a set video resolution for Livekit, so let's cache it here.
-    pub size: Size<DevicePixels>,
+pub fn new_scap_capturer(target: Option<scap::Target>) -> anyhow::Result<scap::capturer::Capturer> {
+    Ok(scap::capturer::Capturer::build(scap::capturer::Options {
+        fps: 60,
+        show_cursor: true,
+        show_highlight: true,
+        output_type: scap::frame::FrameType::YUVFrame,
+        output_resolution: scap::capturer::Resolution::Captured,
+        crop_area: None,
+        target,
+        excluded_targets: None,
+    })?)
 }
+
+pub struct ScapFrame(pub scap::frame::Frame);
 
 pub struct ScapStream(pub Arc<AtomicBool>);
 
@@ -864,49 +868,6 @@ impl ScreenCaptureStream for ScapStream {}
 impl Drop for ScapStream {
     fn drop(&mut self) {
         self.0.store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
-pub struct ScapFrame(pub scap::frame::Frame);
-
-impl ScreenCaptureSource for ScapCapturer {
-    fn resolution(&self) -> anyhow::Result<Size<DevicePixels>> {
-        Ok(self.size)
-    }
-
-    fn stream(
-        &mut self,
-        frame_callback: Box<dyn Fn(crate::ScreenCaptureFrame) + Send>,
-    ) -> oneshot::Receiver<anyhow::Result<Box<dyn crate::ScreenCaptureStream>>> {
-        let (tx, rx) = oneshot::channel();
-        self.stream_tx.send((tx, frame_callback));
-        rx
-    }
-}
-
-pub fn get_frame_size(frame: &scap::frame::Frame) -> Size<DevicePixels> {
-    match frame {
-        scap::frame::Frame::YUVFrame(frame) => {
-            size(DevicePixels(frame.width), DevicePixels(frame.height))
-        }
-        scap::frame::Frame::RGB(frame) => {
-            size(DevicePixels(frame.width), DevicePixels(frame.height))
-        }
-        scap::frame::Frame::RGBx(frame) => {
-            size(DevicePixels(frame.width), DevicePixels(frame.height))
-        }
-        scap::frame::Frame::XBGR(frame) => {
-            size(DevicePixels(frame.width), DevicePixels(frame.height))
-        }
-        scap::frame::Frame::BGRx(frame) => {
-            size(DevicePixels(frame.width), DevicePixels(frame.height))
-        }
-        scap::frame::Frame::BGR0(frame) => {
-            size(DevicePixels(frame.width), DevicePixels(frame.height))
-        }
-        scap::frame::Frame::BGRA(frame) => {
-            size(DevicePixels(frame.width), DevicePixels(frame.height))
-        }
     }
 }
 

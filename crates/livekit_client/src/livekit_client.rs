@@ -141,7 +141,7 @@ pub fn init(
 
 #[cfg(not(target_os = "windows"))]
 pub async fn capture_local_video_track(
-    capture_source: &mut dyn ScreenCaptureSource,
+    capture_source: &dyn ScreenCaptureSource,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
     let resolution = capture_source.resolution()?;
     let track_source = NativeVideoSource::new(VideoResolution {
