@@ -6173,6 +6173,7 @@ dependencies = [
  "db",
  "file_icons",
  "gpui",
+ "image",
  "project",
  "settings",
  "theme",
