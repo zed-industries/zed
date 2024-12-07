@@ -2002,12 +2002,8 @@ impl Pane {
 
         let icon = if decorated_icon.is_none() {
             match item_diagnostic {
-                Some(&DiagnosticSeverity::ERROR) => {
-                    Some(Icon::new(IconName::X).color(Color::Error))
-                }
-                Some(&DiagnosticSeverity::WARNING) => {
-                    Some(Icon::new(IconName::Triangle).color(Color::Warning))
-                }
+                Some(&DiagnosticSeverity::ERROR) => None,
+                Some(&DiagnosticSeverity::WARNING) => None,
                 _ => item.tab_icon(cx).map(|icon| icon.color(Color::Muted)),
             }
             .map(|icon| icon.size(IconSize::Small))
@@ -2144,13 +2140,17 @@ impl Pane {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(if let Some(decorated_icon) = decorated_icon {
-                        div().child(decorated_icon.into_any_element())
-                    } else if let Some(icon) = icon {
-                        div().mt(px(2.5)).child(icon.into_any_element())
-                    } else {
-                        div()
-                    })
+                    .items_center()
+                    .children(
+                        std::iter::once(if let Some(decorated_icon) = decorated_icon {
+                            Some(div().child(decorated_icon.into_any_element()))
+                        } else if let Some(icon) = icon {
+                            Some(div().child(icon.into_any_element()))
+                        } else {
+                            None
+                        })
+                        .flatten(),
+                    )
                     .child(label),
             );
 

@@ -569,7 +569,8 @@
     //     "Neighbour"
     "activate_on_close": "history",
     /// Which files containing diagnostic errors/warnings to mark in the tabs.
-    /// This setting can take the following three values:
+    /// Diagnostics are only shown when file icons are also active.
+    /// This setting only works when can take the following three values:
     ///
     /// 1. Do not mark any files:
     ///    "off"
@@ -577,7 +578,7 @@
     ///    "errors"
     /// 3. Mark files with errors and warnings:
     ///    "all"
-    "show_diagnostics": "all"
+    "show_diagnostics": "off"
   },
   // Settings related to preview tabs.
   "preview_tabs": {
