@@ -3,7 +3,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 use ui::IconName;
-
 use crate::LanguageModelAvailability;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -90,7 +89,7 @@ impl CloudModel {
                 | google_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
-            },
+            }
         }
     }
 }

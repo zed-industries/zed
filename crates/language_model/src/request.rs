@@ -1,11 +1,12 @@
 use std::io::{Cursor, Write};
-
+use aws_sdk_bedrockruntime::types::{ContentBlock, ImageBlock};
 use crate::role::Role;
 use crate::LanguageModelToolUse;
 use base64::write::EncoderWriter;
-use gpui::{point, size, AppContext, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
+use gpui::{point, size, AppContext, DevicePixels, Image, ImageFormat, ObjectFit, RenderImage, Size, Task};
 use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};
 use serde::{Deserialize, Serialize};
+use bedrock::BedrockMessage;
 use ui::{px, SharedString};
 use util::ResultExt;
 
@@ -403,6 +404,85 @@ impl LanguageModelRequest {
                 })
                 .collect(),
             tool_choice: None,
+            metadata: None,
+            stop_sequences: Vec::new(),
+            temperature: self.temperature.or(Some(default_temperature)),
+            top_k: None,
+            top_p: None,
+        }
+    }
+
+    pub fn into_bedrock(
+        self,
+        model: String,
+        default_temperature: f32,
+        max_output_tokens: u32
+    ) -> bedrock::Request {
+        let mut new_messages: Vec<BedrockMessage> = Vec::new();
+        let mut system_message = String::new();
+
+        for message in self.messages {
+            if message.contents_empty() {
+                continue;
+            }
+
+            match message.role {
+                Role::User | Role::Assistant => {
+                    let bedrock_message_content: Vec<ContentBlock> = message
+                        .content
+                        .into_iter()
+                        .filter_map(|content| match content {
+                            MessageContent::Text(text) => {
+                                if !text.is_empty() {
+                                    Some(ContentBlock::Text(text))
+                                } else {
+                                    None
+                                }
+                            }
+                            MessageContent::Image(image) => {
+                                todo!()
+                                // Some(bedrock::RequestContent::Image(ImageBlock{
+                                //     format: ImageFormat::,
+                                //     source: None,
+                                // })
+                            }
+                            _ => {
+                                unimplemented!()
+                            }
+                        })
+                        .collect();
+                    let bedrock_role = match message.role {
+                        Role::User => bedrock::BedrockRole::User,
+                        Role::Assistant => bedrock::BedrockRole::Assistant,
+                        Role::System => unreachable!("System role should never occur here")
+                    };
+                    if let Some(last_message) = new_messages.last_mut() {
+                        if last_message.role == bedrock_role {
+                            last_message.content.extend(bedrock_message_content);
+                            continue;
+                        }
+                    }
+                    new_messages.push(
+                        BedrockMessage::builder()
+                            .role(bedrock_role)
+                            .set_content(Some(bedrock_message_content))
+                            .build().unwrap()  // unsafe unwrap, but it should be fine
+                    );
+                }
+                Role::System => {
+                    if !system_message.is_empty() {
+                        system_message.push_str("\n\n");
+                    }
+                    system_message.push_str(&message.string_contents());
+                }
+            }
+        }
+
+         bedrock::Request {
+            model,
+            messages: new_messages,
+            max_tokens: max_output_tokens,
+            system: Some(system_message),
             metadata: None,
             stop_sequences: Vec::new(),
             temperature: self.temperature.or(Some(default_temperature)),
