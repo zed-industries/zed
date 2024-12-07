@@ -237,19 +237,13 @@ impl ProjectDiffEditor {
                         for (status, entry_id, entry_path, open_task) in open_tasks {
                             let Some(buffer) = open_task
                                 .await
-                                .with_context(|| {
-                                    format!(
-                                        "loading buffer {} for git diff",
-                                        entry_path.path.display()
-                                    )
-                                })
                                 .and_then(|(_, opened_model)| {
-                                    opened_model.downcast::<Buffer>().map_err(|_| {
-                                        anyhow!(
-                                            "Unexpected non-buffer at {}",
-                                            entry_path.path.display()
-                                        )
-                                    })
+                                    opened_model
+                                        .downcast::<Buffer>()
+                                        .map_err(|_| anyhow!("Unexpected non-buffer"))
+                                })
+                                .with_context(|| {
+                                    format!("loading {} for git diff", entry_path.path.display())
                                 })
                                 .log_err()
                             else {
