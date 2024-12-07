@@ -305,6 +305,7 @@ pub struct Pane {
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
+    zoom_out_on_close: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -504,6 +505,7 @@ impl Pane {
             split_item_context_menu_handle: Default::default(),
             new_item_context_menu_handle: Default::default(),
             pinned_tab_count: 0,
+            zoom_out_on_close: true,
         }
     }
 
@@ -1541,7 +1543,7 @@ impl Pane {
                 .remove(&item.item_id());
         }
 
-        if self.items.is_empty() && close_pane_if_empty && self.zoomed {
+        if self.zoom_out_on_close && self.items.is_empty() && close_pane_if_empty && self.zoomed {
             cx.emit(Event::ZoomOut);
         }
 
@@ -2716,6 +2718,10 @@ impl Pane {
 
     pub fn drag_split_direction(&self) -> Option<SplitDirection> {
         self.drag_split_direction
+    }
+
+    pub fn set_zoom_out_on_close(&mut self, zoom_out_on_close: bool) {
+        self.zoom_out_on_close = zoom_out_on_close;
     }
 }
 

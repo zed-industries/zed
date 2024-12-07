@@ -84,9 +84,10 @@ pub struct TerminalPanel {
 impl TerminalPanel {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         let project = workspace.project();
-        let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), cx);
+        let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), false, cx);
         let center = PaneGroup::new(pane.clone());
         let enabled = project.read(cx).supports_terminal(cx);
+        cx.focus_view(&pane);
         let terminal_panel = Self {
             center,
             active_pane: pane,
@@ -299,6 +300,9 @@ impl TerminalPanel {
                 let pane_count_before_removal = self.center.panes().len();
                 let _removal_result = self.center.remove(&pane);
                 if pane_count_before_removal == 1 {
+                    self.center.first_pane().update(cx, |pane, cx| {
+                        pane.set_zoomed(false, cx);
+                    });
                     cx.emit(PanelEvent::Close);
                 } else {
                     if let Some(focus_on_pane) =
@@ -308,27 +312,49 @@ impl TerminalPanel {
                     }
                 }
             }
-            pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
-            pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
+            pane::Event::ZoomIn => {
+                for pane in self.center.panes() {
+                    pane.update(cx, |pane, cx| {
+                        pane.set_zoomed(true, cx);
+                    })
+                }
+                cx.emit(PanelEvent::ZoomIn);
+                cx.notify();
+            }
+            pane::Event::ZoomOut => {
+                for pane in self.center.panes() {
+                    pane.update(cx, |pane, cx| {
+                        pane.set_zoomed(false, cx);
+                    })
+                }
+                cx.emit(PanelEvent::ZoomOut);
+                cx.notify();
+            }
             pane::Event::AddItem { item } => {
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
                         item.added_to_pane(workspace, pane.clone(), cx)
                     })
                 }
+                self.serialize(cx);
             }
             pane::Event::Split(direction) => {
                 let new_pane = self.new_pane_with_cloned_active_terminal(cx);
                 let pane = pane.clone();
                 let direction = *direction;
-                cx.spawn(move |this, mut cx| async move {
+                cx.spawn(move |terminal_panel, mut cx| async move {
                     let Some(new_pane) = new_pane.await else {
                         return;
                     };
-                    this.update(&mut cx, |this, _| {
-                        this.center.split(&pane, &new_pane, direction).log_err();
-                    })
-                    .ok();
+                    terminal_panel
+                        .update(&mut cx, |terminal_panel, cx| {
+                            terminal_panel
+                                .center
+                                .split(&pane, &new_pane, direction)
+                                .log_err();
+                            cx.focus_view(&new_pane);
+                        })
+                        .ok();
                 })
                 .detach();
             }
@@ -365,7 +391,7 @@ impl TerminalPanel {
             .or_else(|| default_working_directory(workspace.read(cx), cx));
         let kind = TerminalKind::Shell(working_directory);
         let window = cx.window_handle();
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(move |terminal_panel, mut cx| async move {
             let terminal = project
                 .update(&mut cx, |project, cx| {
                     project.create_terminal(kind, window, cx)
@@ -380,10 +406,15 @@ impl TerminalPanel {
                 })
                 .ok()?,
             );
-            let pane = this
-                .update(&mut cx, |this, cx| {
-                    let pane = new_terminal_pane(weak_workspace, project, cx);
-                    this.apply_tab_bar_buttons(&pane, cx);
+            let pane = terminal_panel
+                .update(&mut cx, |terminal_panel, cx| {
+                    let pane = new_terminal_pane(
+                        weak_workspace,
+                        project,
+                        terminal_panel.active_pane.read(cx).is_zoomed(),
+                        cx,
+                    );
+                    terminal_panel.apply_tab_bar_buttons(&pane, cx);
                     pane
                 })
                 .ok()?;
@@ -392,7 +423,6 @@ impl TerminalPanel {
                 pane.add_item(terminal_view, true, true, None, cx);
             })
             .ok()?;
-            cx.focus_view(&pane).ok()?;
 
             Some(pane)
         })
@@ -814,6 +844,7 @@ impl TerminalPanel {
 pub fn new_terminal_pane(
     workspace: WeakView<Workspace>,
     project: Model<Project>,
+    zoomed: bool,
     cx: &mut ViewContext<TerminalPanel>,
 ) -> View<Pane> {
     let is_local = project.read(cx).is_local();
@@ -827,9 +858,11 @@ pub fn new_terminal_pane(
             NewTerminal.boxed_clone(),
             cx,
         );
+        pane.set_zoomed(zoomed, cx);
         pane.set_can_navigate(false, cx);
         pane.display_nav_history_buttons(None);
         pane.set_should_display_tab_bar(|_| true);
+        pane.set_zoom_out_on_close(false);
 
         let terminal_panel_for_split_check = terminal_panel.clone();
         pane.set_can_split(Some(Arc::new(move |pane, dragged_item, cx| {
@@ -879,8 +912,12 @@ pub fn new_terminal_pane(
 
                         let new_pane = pane.drag_split_direction().and_then(|split_direction| {
                             terminal_panel.update(cx, |terminal_panel, cx| {
-                                let new_pane =
-                                    new_terminal_pane(workspace.clone(), project.clone(), cx);
+                                let new_pane = new_terminal_pane(
+                                    workspace.clone(),
+                                    project.clone(),
+                                    terminal_panel.active_pane.read(cx).is_zoomed(),
+                                    cx,
+                                );
                                 terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
                                 terminal_panel
                                     .center
@@ -1062,14 +1099,21 @@ impl Render for TerminalPanel {
                         cx.focus_view(&pane);
                     } else {
                         let new_pane = terminal_panel.new_pane_with_cloned_active_terminal(cx);
-                        cx.spawn(|this, mut cx| async move {
+                        cx.spawn(|terminal_panel, mut cx| async move {
                             if let Some(new_pane) = new_pane.await {
-                                this.update(&mut cx, |this, _| {
-                                    this.center
-                                        .split(&this.active_pane, &new_pane, SplitDirection::Right)
-                                        .log_err();
-                                })
-                                .ok();
+                                terminal_panel
+                                    .update(&mut cx, |terminal_panel, cx| {
+                                        terminal_panel
+                                            .center
+                                            .split(
+                                                &terminal_panel.active_pane,
+                                                &new_pane,
+                                                SplitDirection::Right,
+                                            )
+                                            .log_err();
+                                        cx.focus_view(&new_pane);
+                                    })
+                                    .ok();
                             }
                         })
                         .detach();
@@ -1152,8 +1196,12 @@ impl Panel for TerminalPanel {
     }
 
     fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
-        self.active_pane
-            .update(cx, |pane, cx| pane.set_zoomed(zoomed, cx));
+        for pane in self.center.panes() {
+            pane.update(cx, |pane, cx| {
+                pane.set_zoomed(zoomed, cx);
+            })
+        }
+        cx.notify();
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
