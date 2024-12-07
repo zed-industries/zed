@@ -236,42 +236,48 @@ impl Render for RateCompletionModal {
             .p_2()
             .track_focus(&self.focus_handle)
             .child(
-                div().w_96().h_full().child(
-                    ui::List::new()
-                        .empty_message(
-                            "No completions, use the editor to generate some and rate them!",
-                        )
-                        .children(self.zeta.read(cx).recent_completions().cloned().map(
-                            |completion| {
-                                let selected =
-                                    self.active_completion.as_ref().map_or(false, |selected| {
-                                        selected.completion.id == completion.id
-                                    });
-                                let rated = self.zeta.read(cx).is_completion_rated(completion.id);
-                                ListItem::new(completion.id)
-                                    .spacing(ListItemSpacing::Sparse)
-                                    .selected(selected)
-                                    .end_slot(if rated {
-                                        Icon::new(IconName::Check).color(Color::Success)
-                                    } else if completion.edits.is_empty() {
-                                        Icon::new(IconName::Ellipsis).color(Color::Muted)
-                                    } else {
-                                        Icon::new(IconName::Diff).color(Color::Muted)
-                                    })
-                                    .child(Label::new(
-                                        completion.path.to_string_lossy().to_string(),
-                                    ))
-                                    .child(
-                                        Label::new(format!("({})", completion.id))
-                                            .color(Color::Muted)
-                                            .size(LabelSize::XSmall),
-                                    )
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.select_completion(Some(completion.clone()), cx);
-                                    }))
-                            },
-                        )),
-                ),
+                div()
+                    .id("completion_list")
+                    .w_96()
+                    .h_full()
+                    .overflow_y_scroll()
+                    .child(
+                        ui::List::new()
+                            .empty_message(
+                                "No completions, use the editor to generate some and rate them!",
+                            )
+                            .children(self.zeta.read(cx).recent_completions().cloned().map(
+                                |completion| {
+                                    let selected =
+                                        self.active_completion.as_ref().map_or(false, |selected| {
+                                            selected.completion.id == completion.id
+                                        });
+                                    let rated =
+                                        self.zeta.read(cx).is_completion_rated(completion.id);
+                                    ListItem::new(completion.id)
+                                        .spacing(ListItemSpacing::Sparse)
+                                        .selected(selected)
+                                        .end_slot(if rated {
+                                            Icon::new(IconName::Check).color(Color::Success)
+                                        } else if completion.edits.is_empty() {
+                                            Icon::new(IconName::Ellipsis).color(Color::Muted)
+                                        } else {
+                                            Icon::new(IconName::Diff).color(Color::Muted)
+                                        })
+                                        .child(Label::new(
+                                            completion.path.to_string_lossy().to_string(),
+                                        ))
+                                        .child(
+                                            Label::new(format!("({})", completion.id))
+                                                .color(Color::Muted)
+                                                .size(LabelSize::XSmall),
+                                        )
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            this.select_completion(Some(completion.clone()), cx);
+                                        }))
+                                },
+                            )),
+                    ),
             )
             .children(self.render_active_completion(cx))
             .on_mouse_down_out(cx.listener(|_, _, cx| cx.emit(DismissEvent)))
