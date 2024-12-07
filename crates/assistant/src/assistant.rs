@@ -37,7 +37,7 @@ pub use prompts::PromptBuilder;
 use prompts::PromptLoadingParams;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore};
 use slash_command::search_command::SearchSlashCommandFeatureFlag;
 use slash_command::{
     auto_command, cargo_workspace_command, default_command, delta_command, diagnostics_command,
