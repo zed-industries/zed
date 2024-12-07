@@ -184,11 +184,12 @@ impl RateCompletionModal {
                                 .label_size(LabelSize::Large)
                                 .color(Color::Error)
                                 .on_click({
+                                    let completion = active_completion.completion.clone();
                                     let feedback_editor = active_completion.feedback_editor.clone();
                                     cx.listener(move |this, _, cx| {
                                         this.zeta.update(cx, |zeta, cx| {
                                             zeta.rate_completion(
-                                                completion_id,
+                                                &completion,
                                                 InlineCompletionRating::Negative,
                                                 feedback_editor.read(cx).text(cx),
                                                 cx,
@@ -204,11 +205,12 @@ impl RateCompletionModal {
                                 .label_size(LabelSize::Large)
                                 .color(Color::Success)
                                 .on_click({
+                                    let completion = active_completion.completion.clone();
                                     let feedback_editor = active_completion.feedback_editor.clone();
                                     cx.listener(move |this, _, cx| {
                                         this.zeta.update(cx, |zeta, cx| {
                                             zeta.rate_completion(
-                                                completion_id,
+                                                &completion,
                                                 InlineCompletionRating::Positive,
                                                 feedback_editor.read(cx).text(cx),
                                                 cx,

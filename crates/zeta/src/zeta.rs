@@ -24,6 +24,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use telemetry_events::InlineCompletionRating;
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -34,7 +35,7 @@ const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
-struct InlineCompletionId(Uuid);
+pub struct InlineCompletionId(Uuid);
 
 impl From<InlineCompletionId> for gpui::ElementId {
     fn from(value: InlineCompletionId) -> Self {
@@ -129,11 +130,6 @@ impl std::fmt::Debug for InlineCompletion {
             .field("edits", &self.edits)
             .finish_non_exhaustive()
     }
-}
-
-pub enum InlineCompletionRating {
-    Positive,
-    Negative,
 }
 
 pub struct Zeta {
@@ -425,34 +421,28 @@ impl Zeta {
         })
     }
 
-    pub fn accept_completion(
-        &mut self,
-        _completion: &InlineCompletion,
-        cx: &mut ModelContext<Self>,
-    ) {
-        cx.notify();
-    }
-
-    pub fn reject_completion(
-        &mut self,
-        _completion: &InlineCompletion,
-        cx: &mut ModelContext<Self>,
-    ) {
-        cx.notify();
-    }
-
     pub fn is_completion_rated(&self, completion_id: InlineCompletionId) -> bool {
         self.rated_completions.contains(&completion_id)
     }
 
     pub fn rate_completion(
         &mut self,
-        completion_id: InlineCompletionId,
+        completion: &InlineCompletion,
         rating: InlineCompletionRating,
         feedback: String,
         cx: &mut ModelContext<Self>,
     ) {
-        self.rated_completions.insert(completion_id);
+        self.rated_completions.insert(completion.id);
+        self.client
+            .telemetry()
+            .report_inline_completion_rating_event(
+                rating,
+                completion.input_events.clone(),
+                completion.input_excerpt.clone(),
+                completion.output_excerpt.clone(),
+                feedback,
+            );
+        self.client.telemetry().flush_events();
         cx.notify();
     }
 
@@ -698,22 +688,14 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         // Right now we don't support cycling.
     }
 
-    fn accept(&mut self, cx: &mut ModelContext<Self>) {
-        if let Some(completion) = self.current_completion.as_ref() {
-            self.zeta
-                .update(cx, |zeta, cx| zeta.accept_completion(completion, cx));
-        }
-    }
+    fn accept(&mut self, _cx: &mut ModelContext<Self>) {}
 
     fn discard(
         &mut self,
         _should_report_inline_completion_event: bool,
-        cx: &mut ModelContext<Self>,
+        _cx: &mut ModelContext<Self>,
     ) {
-        if let Some(completion) = self.current_completion.take() {
-            self.zeta
-                .update(cx, |zeta, cx| zeta.reject_completion(&completion, cx));
-        }
+        self.current_completion.take();
     }
 
     fn suggest(
