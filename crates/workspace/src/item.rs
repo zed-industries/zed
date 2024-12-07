@@ -64,9 +64,9 @@ pub enum ClosePosition {
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowDiagnostics {
+    #[default]
     Off,
     Errors,
-    #[default]
     All,
 }
 
@@ -99,7 +99,7 @@ pub struct ItemSettingsContent {
     /// Which files containing diagnostic errors/warnings to mark in the tabs.
     /// This setting can take the following three values:
     ///
-    /// Default: all
+    /// Default: off
     show_diagnostics: Option<ShowDiagnostics>,
     /// Whether to always show the close button on tabs.
     ///
