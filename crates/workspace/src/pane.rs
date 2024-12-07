@@ -2000,12 +2000,8 @@ impl Pane {
 
         let icon = if decorated_icon.is_none() {
             match item_diagnostic {
-                Some(&DiagnosticSeverity::ERROR) => {
-                    Some(Icon::new(IconName::X).color(Color::Error))
-                }
-                Some(&DiagnosticSeverity::WARNING) => {
-                    Some(Icon::new(IconName::Triangle).color(Color::Warning))
-                }
+                Some(&DiagnosticSeverity::ERROR) => None,
+                Some(&DiagnosticSeverity::WARNING) => None,
                 _ => item.tab_icon(cx).map(|icon| icon.color(Color::Muted)),
             }
             .map(|icon| icon.size(IconSize::Small))
