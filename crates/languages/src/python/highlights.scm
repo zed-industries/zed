@@ -122,7 +122,10 @@
   . (expression_statement (string) @string.doc))
 
 (module
-  (expression_statement (assignment))
+  [
+    (expression_statement (assignment))
+    (type_alias_statement)
+  ]
   . (expression_statement (string) @string.doc))
 
 (class_definition
