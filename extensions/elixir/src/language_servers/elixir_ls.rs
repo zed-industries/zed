@@ -108,7 +108,8 @@ impl ElixirLs {
 
     pub fn label_for_completion(&self, completion: Completion) -> Option<CodeLabel> {
         let name = &completion.label;
-        let detail = completion.detail
+        let detail = completion
+            .detail
             .filter(|detail| detail != "alias")
             .map(|detail| format!(": {detail}"))
             .unwrap_or("".to_string());
@@ -118,7 +119,8 @@ impl ElixirLs {
         match completion.kind? {
             CompletionKind::Module | CompletionKind::Class | CompletionKind::Struct => {
                 let defmodule = "defmodule ";
-                let alias = completion.label_details
+                let alias = completion
+                    .label_details
                     .and_then(|details| details.description)
                     .filter(|description| description.starts_with("alias"))
                     .map(|description| format!(" ({description})"))
@@ -138,32 +140,29 @@ impl ElixirLs {
                     filter_range: (0..name.len()).into(),
                 })
             }
-            CompletionKind::Interface => {
-                Some(CodeLabel {
-                    code: name.to_string(),
-                    spans: vec![
-                        CodeLabelSpan::code_range(0..name.len()),
-                        detail_span,
-                    ],
-                    filter_range: (0..name.len()).into(),
-                })
-            }
-            CompletionKind::Field => {
-                Some(CodeLabel {
-                    code: name.to_string(),
-                    spans: vec![
-                        CodeLabelSpan::literal(name, Some("function".to_string())),
-                        detail_span,
-                    ],
-                    filter_range: (0..name.len()).into(),
-                })
-            }
+            CompletionKind::Interface => Some(CodeLabel {
+                code: name.to_string(),
+                spans: vec![CodeLabelSpan::code_range(0..name.len()), detail_span],
+                filter_range: (0..name.len()).into(),
+            }),
+            CompletionKind::Field => Some(CodeLabel {
+                code: name.to_string(),
+                spans: vec![
+                    CodeLabelSpan::literal(name, Some("function".to_string())),
+                    detail_span,
+                ],
+                filter_range: (0..name.len()).into(),
+            }),
             CompletionKind::Function | CompletionKind::Constant => {
-                let detail = completion.label_details.clone()
+                let detail = completion
+                    .label_details
+                    .clone()
                     .and_then(|details| details.detail)
                     .unwrap_or("".to_string());
 
-                let description = completion.label_details.clone()
+                let description = completion
+                    .label_details
+                    .clone()
                     .and_then(|details| details.description)
                     .map(|description| format!(" ({description})"))
                     .unwrap_or("".to_string());
@@ -192,9 +191,9 @@ impl ElixirLs {
 
                 Some(CodeLabel {
                     code,
-                    spans: vec![
-                        CodeLabelSpan::code_range(def_a.len()..def_a.len() + name.len()),
-                    ],
+                    spans: vec![CodeLabelSpan::code_range(
+                        def_a.len()..def_a.len() + name.len(),
+                    )],
                     filter_range: (0..name.len()).into(),
                 })
             }
