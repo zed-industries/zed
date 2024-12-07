@@ -58,8 +58,8 @@ fn generate_random_rope_points(mut rng: StdRng, rope: &Rope) -> Vec<Point> {
 }
 
 fn rope_benchmarks(c: &mut Criterion) {
-    static SEED: u64 = 9999;
-    static KB: usize = 1024;
+    const SEED: u64 = 9999;
+    const KB: usize = 1024;
 
     let rng = StdRng::seed_from_u64(SEED);
     let sizes = [4 * KB, 64 * KB];

@@ -131,7 +131,7 @@ fn main() -> Result<()> {
         not(feature = "no-bundled-uninstall")
     ))]
     if args.uninstall {
-        static UNINSTALL_SCRIPT: &[u8] = include_bytes!("../../../script/uninstall.sh");
+        const UNINSTALL_SCRIPT: &[u8] = include_bytes!("../../../script/uninstall.sh");
 
         let tmp_dir = tempfile::tempdir()?;
         let script_path = tmp_dir.path().join("uninstall.sh");
