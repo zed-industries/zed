@@ -373,6 +373,8 @@ messages!(
     (SyncExtensions, Background),
     (SyncExtensionsResponse, Background),
     (InstallExtension, Background),
+    (GetDocumentDiagnostics, Background),
+    (GetDocumentDiagnosticsResponse, Background),
 );
 
 request_messages!(
@@ -499,6 +501,7 @@ request_messages!(
     (CancelLanguageServerWork, Ack),
     (SyncExtensions, SyncExtensionsResponse),
     (InstallExtension, Ack),
+    (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
 );
 
 entity_messages!(
@@ -584,6 +587,7 @@ entity_messages!(
     ActiveToolchain,
     GetPathMetadata,
     CancelLanguageServerWork,
+    GetDocumentDiagnostics,
 );
 
 entity_messages!(

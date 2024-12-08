@@ -3,14 +3,15 @@ mod signature_help;
 use crate::{
     lsp_store::LspStore, CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
     HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
-    InlayHintTooltip, Location, LocationLink, MarkupContent, ProjectTransaction, ResolveState,
+    InlayHintTooltip, Location, LocationLink, LspDiagnostics, MarkupContent, ProjectTransaction,
+    ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashSet;
-use futures::future;
+use futures::future::{self};
 use gpui::{AppContext, AsyncAppContext, Entity, Model};
 use language::{
     language_settings::{language_settings, InlayHintKind, LanguageSettings},
@@ -25,8 +26,9 @@ use lsp::{
     LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf,
     ServerCapabilities,
 };
+use serde_json::Value;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
-use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Reverse, ops::Range, path::Path, str::FromStr, sync::Arc};
 use text::{BufferId, LineEnding};
 
 pub use signature_help::{
@@ -178,6 +180,11 @@ pub(crate) struct InlayHints {
 }
 #[derive(Debug)]
 pub(crate) struct LinkedEditingRange {
+    pub position: Anchor,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct GetDocumentDiagnostics {
     pub position: Anchor,
 }
 
@@ -3066,6 +3073,238 @@ impl LspCommand for LinkedEditingRange {
     }
 
     fn buffer_id_from_proto(message: &proto::LinkedEditingRange) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+impl GetDocumentDiagnostics {
+    pub fn deserialize_lsp_diagnostic(diagnostic: proto::LspDiagnostic) -> lsp::Diagnostic {
+        let start = diagnostic.start.unwrap();
+        let end = diagnostic.end.unwrap();
+
+        let range = Range::<PointUtf16> {
+            start: PointUtf16 {
+                row: start.row,
+                column: start.column,
+            },
+            end: PointUtf16 {
+                row: end.row,
+                column: end.column,
+            },
+        };
+
+        let data = if let Some(data) = diagnostic.data {
+            Value::from_str(&data).ok()
+        } else {
+            None
+        };
+
+        let code = if let Some(code) = diagnostic.code {
+            Some(lsp::NumberOrString::String(code))
+        } else {
+            None
+        };
+
+        lsp::Diagnostic {
+            range: language::range_to_lsp(range),
+            severity: match proto::lsp_diagnostic::Severity::from_i32(diagnostic.severity).unwrap()
+            {
+                proto::lsp_diagnostic::Severity::Error => Some(lsp::DiagnosticSeverity::ERROR),
+                proto::lsp_diagnostic::Severity::Warning => Some(lsp::DiagnosticSeverity::WARNING),
+                proto::lsp_diagnostic::Severity::Information => {
+                    Some(lsp::DiagnosticSeverity::INFORMATION)
+                }
+                proto::lsp_diagnostic::Severity::Hint => Some(lsp::DiagnosticSeverity::HINT),
+                _ => None,
+            },
+            code,
+            code_description: None,
+            related_information: Some(vec![]),
+            tags: Some(vec![]),
+            source: diagnostic.source.clone(),
+            message: diagnostic.message,
+            data,
+        }
+    }
+
+    pub fn serialize_lsp_diagnostic(diagnostic: lsp::Diagnostic) -> proto::LspDiagnostic {
+        let range = language::range_from_lsp(diagnostic.range);
+
+        proto::LspDiagnostic {
+            start: Some(proto::PointUtf16 {
+                row: range.start.0.row,
+                column: range.start.0.column,
+            }),
+            end: Some(proto::PointUtf16 {
+                row: range.end.0.row,
+                column: range.end.0.column,
+            }),
+            severity: match diagnostic.severity {
+                Some(lsp::DiagnosticSeverity::ERROR) => proto::lsp_diagnostic::Severity::Error,
+                Some(lsp::DiagnosticSeverity::WARNING) => proto::lsp_diagnostic::Severity::Warning,
+                Some(lsp::DiagnosticSeverity::INFORMATION) => {
+                    proto::lsp_diagnostic::Severity::Information
+                }
+                Some(lsp::DiagnosticSeverity::HINT) => proto::lsp_diagnostic::Severity::Hint,
+                _ => proto::lsp_diagnostic::Severity::None,
+            } as i32,
+            code: diagnostic.code.as_ref().map(|code| match code {
+                lsp::NumberOrString::Number(code) => code.to_string(),
+                lsp::NumberOrString::String(code) => code.clone(),
+            }),
+            source: diagnostic.source.clone(),
+            message: diagnostic.message,
+            data: diagnostic.data.as_ref().map(|data| data.to_string()),
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetDocumentDiagnostics {
+    type Response = LspDiagnostics;
+    type LspRequest = lsp::request::DocumentDiagnosticRequest;
+    type ProtoRequest = proto::GetDocumentDiagnostics;
+
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
+        server_capabilities
+            .server_capabilities
+            .diagnostic_provider
+            .is_some()
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        language_server: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::DocumentDiagnosticParams {
+        let identifier = match language_server.capabilities().diagnostic_provider {
+            Some(lsp::DiagnosticServerCapabilities::Options(options)) => options.identifier.clone(),
+            Some(lsp::DiagnosticServerCapabilities::RegistrationOptions(options)) => {
+                options.diagnostic_options.identifier.clone()
+            }
+            None => None,
+        };
+
+        lsp::DocumentDiagnosticParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: lsp::Url::from_file_path(path).unwrap(),
+            },
+            identifier,
+            previous_result_id: None,
+            partial_result_params: Default::default(),
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: lsp::DocumentDiagnosticReportResult,
+        _: Model<LspStore>,
+        buffer: Model<Buffer>,
+        server_id: LanguageServerId,
+        cx: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        let uri = buffer.read_with(&cx, |buffer, cx| {
+            let file = buffer.file().and_then(|file| file.as_local())?;
+            Some(lsp::Url::from_file_path(file.abs_path(cx).clone()).unwrap())
+        })?;
+
+        match message {
+            lsp::DocumentDiagnosticReportResult::Report(report) => match report {
+                lsp::DocumentDiagnosticReport::Full(report) => Ok(LspDiagnostics {
+                    server_id,
+                    uri,
+                    diagnostics: Some(report.full_document_diagnostic_report.items.clone()),
+                }),
+                lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(LspDiagnostics {
+                    server_id,
+                    uri,
+                    diagnostics: None,
+                }),
+            },
+            lsp::DocumentDiagnosticReportResult::Partial(_) => Ok(LspDiagnostics {
+                server_id,
+                uri,
+                diagnostics: None,
+            }),
+        }
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDocumentDiagnostics {
+        proto::GetDocumentDiagnostics {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::GetDocumentDiagnostics,
+        _: Model<LspStore>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        Ok(Self { position })
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        _: &mut LspStore,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut AppContext,
+    ) -> proto::GetDocumentDiagnosticsResponse {
+        let diagnostics = if let Some(diagnostics) = response.diagnostics {
+            diagnostics
+                .into_iter()
+                .map(GetDocumentDiagnostics::serialize_lsp_diagnostic)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        proto::GetDocumentDiagnosticsResponse {
+            server_id: LanguageServerId::to_proto(response.server_id),
+            uri: response.uri.unwrap().to_string(),
+            diagnostics,
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        response: proto::GetDocumentDiagnosticsResponse,
+        _: Model<LspStore>,
+        _: Model<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        let diagnostics = response
+            .diagnostics
+            .into_iter()
+            .map(GetDocumentDiagnostics::deserialize_lsp_diagnostic)
+            .collect();
+
+        Ok(LspDiagnostics {
+            server_id: LanguageServerId::from_proto(response.server_id),
+            uri: Some(lsp::Url::from_str(response.uri.as_str()).unwrap()),
+            diagnostics: Some(diagnostics),
+        })
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetDocumentDiagnostics) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }
