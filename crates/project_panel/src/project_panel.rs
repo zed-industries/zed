@@ -1207,8 +1207,11 @@ impl ProjectPanel {
 
     fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
-            let items_to_delete = self.disjoint_entries(cx);
-            if items_to_delete.is_empty() {
+            let mut items_to_delete = self.disjoint_entries(cx);
+            if self.selection.is_some() && items_to_delete.len() <= 1 {
+                items_to_delete.clear();
+                items_to_delete.insert(self.selection.unwrap());
+            } else if items_to_delete.is_empty() {
                 return None;
             }
             let project = self.project.read(cx);
@@ -2121,7 +2124,15 @@ impl ProjectPanel {
     }
 
     fn disjoint_entries(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
-        let marked_entries = self.marked_entries();
+        let marked_entries = self
+            .marked_entries
+            .iter()
+            .map(|entry| SelectedEntry {
+                entry_id: self.resolve_entry(entry.entry_id),
+                worktree_id: entry.worktree_id,
+            })
+            .collect::<BTreeSet<_>>();
+
         let mut sanitized_entries = BTreeSet::new();
         if marked_entries.is_empty() {
             return sanitized_entries;
