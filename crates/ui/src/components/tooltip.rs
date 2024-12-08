@@ -88,7 +88,7 @@ impl Render for Tooltip {
             el.child(
                 h_flex()
                     .gap_4()
-                    .child(self.title.clone())
+                    .child(div().max_w_72().child(self.title.clone()))
                     .when_some(self.key_binding.clone(), |this, key_binding| {
                         this.justify_between().child(key_binding)
                     }),

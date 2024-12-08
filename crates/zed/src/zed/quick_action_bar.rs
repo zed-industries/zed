@@ -19,6 +19,7 @@ use ui::{
     prelude::*, ButtonStyle, ContextMenu, IconButton, IconButtonShape, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip,
 };
+use vim_mode_setting::VimModeSetting;
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
@@ -154,6 +155,7 @@ impl Render for QuickActionBar {
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
             let focus = editor.focus_handle(cx);
+
             PopoverMenu::new("editor-selections-dropdown")
                 .trigger(
                     IconButton::new("toggle_editor_selections_icon", IconName::CursorIBeam)
@@ -201,34 +203,78 @@ impl Render for QuickActionBar {
         });
 
         let editor = editor.downgrade();
-        let editor_settings_dropdown = PopoverMenu::new("editor-settings")
-            .trigger(
-                IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
-                    .shape(IconButtonShape::Square)
-                    .icon_size(IconSize::Small)
-                    .style(ButtonStyle::Subtle)
-                    .selected(self.toggle_settings_handle.is_deployed())
-                    .when(!self.toggle_settings_handle.is_deployed(), |this| {
-                        this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
-                    }),
-            )
-            .anchor(AnchorCorner::TopRight)
-            .with_handle(self.toggle_settings_handle.clone())
-            .menu(move |cx| {
-                let menu = ContextMenu::build(cx, |mut menu, _| {
-                    if supports_inlay_hints {
+        let editor_settings_dropdown = {
+            let vim_mode_enabled = VimModeSetting::get_global(cx).0;
+
+            PopoverMenu::new("editor-settings")
+                .trigger(
+                    IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        .style(ButtonStyle::Subtle)
+                        .selected(self.toggle_settings_handle.is_deployed())
+                        .when(!self.toggle_settings_handle.is_deployed(), |this| {
+                            this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
+                        }),
+                )
+                .anchor(AnchorCorner::TopRight)
+                .with_handle(self.toggle_settings_handle.clone())
+                .menu(move |cx| {
+                    let menu = ContextMenu::build(cx, |mut menu, _| {
+                        if supports_inlay_hints {
+                            menu = menu.toggleable_entry(
+                                "Inlay Hints",
+                                inlay_hints_enabled,
+                                IconPosition::Start,
+                                Some(editor::actions::ToggleInlayHints.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |cx| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                editor.toggle_inlay_hints(
+                                                    &editor::actions::ToggleInlayHints,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                },
+                            );
+                        }
+
                         menu = menu.toggleable_entry(
-                            "Inlay Hints",
-                            inlay_hints_enabled,
+                            "Selection Menu",
+                            selection_menu_enabled,
                             IconPosition::Start,
-                            Some(editor::actions::ToggleInlayHints.boxed_clone()),
+                            Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
                             {
                                 let editor = editor.clone();
                                 move |cx| {
                                     editor
                                         .update(cx, |editor, cx| {
-                                            editor.toggle_inlay_hints(
-                                                &editor::actions::ToggleInlayHints,
+                                            editor.toggle_selection_menu(
+                                                &editor::actions::ToggleSelectionMenu,
+                                                cx,
+                                            )
+                                        })
+                                        .ok();
+                                }
+                            },
+                        );
+
+                        menu = menu.toggleable_entry(
+                            "Auto Signature Help",
+                            auto_signature_help_enabled,
+                            IconPosition::Start,
+                            Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
+                            {
+                                let editor = editor.clone();
+                                move |cx| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.toggle_auto_signature_help_menu(
+                                                &editor::actions::ToggleAutoSignatureHelp,
                                                 cx,
                                             );
                                         })
@@ -236,92 +282,70 @@ impl Render for QuickActionBar {
                                 }
                             },
                         );
-                    }
 
-                    menu = menu.toggleable_entry(
-                        "Selection Menu",
-                        selection_menu_enabled,
-                        IconPosition::Start,
-                        Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
-                        {
-                            let editor = editor.clone();
-                            move |cx| {
-                                editor
-                                    .update(cx, |editor, cx| {
-                                        editor.toggle_selection_menu(
-                                            &editor::actions::ToggleSelectionMenu,
-                                            cx,
-                                        )
-                                    })
-                                    .ok();
-                            }
-                        },
-                    );
+                        menu = menu.separator();
 
-                    menu = menu.toggleable_entry(
-                        "Auto Signature Help",
-                        auto_signature_help_enabled,
-                        IconPosition::Start,
-                        Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
-                        {
-                            let editor = editor.clone();
-                            move |cx| {
-                                editor
-                                    .update(cx, |editor, cx| {
-                                        editor.toggle_auto_signature_help_menu(
-                                            &editor::actions::ToggleAutoSignatureHelp,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            }
-                        },
-                    );
+                        menu = menu.toggleable_entry(
+                            "Inline Git Blame",
+                            git_blame_inline_enabled,
+                            IconPosition::Start,
+                            Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
+                            {
+                                let editor = editor.clone();
+                                move |cx| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.toggle_git_blame_inline(
+                                                &editor::actions::ToggleGitBlameInline,
+                                                cx,
+                                            )
+                                        })
+                                        .ok();
+                                }
+                            },
+                        );
 
-                    menu = menu.separator();
+                        menu = menu.toggleable_entry(
+                            "Column Git Blame",
+                            show_git_blame_gutter,
+                            IconPosition::Start,
+                            Some(editor::actions::ToggleGitBlame.boxed_clone()),
+                            {
+                                let editor = editor.clone();
+                                move |cx| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.toggle_git_blame(
+                                                &editor::actions::ToggleGitBlame,
+                                                cx,
+                                            )
+                                        })
+                                        .ok();
+                                }
+                            },
+                        );
 
-                    menu = menu.toggleable_entry(
-                        "Inline Git Blame",
-                        git_blame_inline_enabled,
-                        IconPosition::Start,
-                        Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
-                        {
-                            let editor = editor.clone();
-                            move |cx| {
-                                editor
-                                    .update(cx, |editor, cx| {
-                                        editor.toggle_git_blame_inline(
-                                            &editor::actions::ToggleGitBlameInline,
-                                            cx,
-                                        )
-                                    })
-                                    .ok();
-                            }
-                        },
-                    );
+                        menu = menu.separator();
 
-                    menu = menu.toggleable_entry(
-                        "Column Git Blame",
-                        show_git_blame_gutter,
-                        IconPosition::Start,
-                        Some(editor::actions::ToggleGitBlame.boxed_clone()),
-                        {
-                            let editor = editor.clone();
-                            move |cx| {
-                                editor
-                                    .update(cx, |editor, cx| {
-                                        editor
-                                            .toggle_git_blame(&editor::actions::ToggleGitBlame, cx)
-                                    })
-                                    .ok();
-                            }
-                        },
-                    );
+                        menu = menu.toggleable_entry(
+                            "Vim Mode",
+                            vim_mode_enabled,
+                            IconPosition::Start,
+                            None,
+                            {
+                                move |cx| {
+                                    let new_value = !vim_mode_enabled;
+                                    VimModeSetting::override_global(VimModeSetting(new_value), cx);
+                                    cx.refresh();
+                                }
+                            },
+                        );
 
-                    menu
-                });
-                Some(menu)
-            });
+                        menu
+                    });
+                    Some(menu)
+                })
+        };
 
         h_flex()
             .id("quick action bar")
