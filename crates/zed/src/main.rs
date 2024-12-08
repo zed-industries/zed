@@ -134,6 +134,13 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
 }
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    {
+        use zed::windows_only_instance::*;
+        register_zed_identifier();
+    }
+
+    let args = Args::parse();
     menu::init();
     zed_actions::init();
 
@@ -185,6 +192,10 @@ fn main() {
         };
     if failed_single_instance_check {
         println!("zed is already running");
+        #[cfg(target_os = "windows")]
+        if let Some(ref argument) = args.dock_action {
+            gpui::send_dock_action_message(argument);
+        }
         return;
     }
 
@@ -511,7 +522,6 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
-        let args = Args::parse();
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
@@ -1102,6 +1112,13 @@ struct Args {
     ///
     /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
     paths_or_urls: Vec<String>,
+
+    /// The dock action to perform. This is used on Windows only.
+    ///
+    /// To developers: If you want rename this argument, you must also update the `APP_DOCK_ACTION_ARGUMENT` constant
+    /// in `crates\gpui\src\platform\dock_action.rs`.
+    #[arg(long)]
+    dock_action: Option<String>,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
