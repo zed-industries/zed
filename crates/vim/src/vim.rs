@@ -279,6 +279,7 @@ impl Vim {
             let selections = editor.selections.all::<Point>(cx);
             let buffer = editor.buffer().read(cx);
             let snapshot = buffer.snapshot(cx);
+            let use_smartcase = VimSettings::get_global(cx).use_smartcase_find;
 
             let mut highlights = Vec::new();
 
@@ -340,8 +341,8 @@ impl Vim {
                     (start, end)
                 };
 
-                let mut seen_word_starts = HashSet::new();
-                let mut seen_char_starts: HashSet<char> = HashSet::new();
+                let mut seen_words = HashSet::new();
+                let mut seen_chars: HashSet<char> = HashSet::new();
 
                 // Iterate through positions in the appropriate direction
                 let char_iter: Vec<_> = if forward {
@@ -350,13 +351,16 @@ impl Vim {
                     searchable_positions.iter().rev().collect()
                 };
 
-                for &(byte_idx, c) in char_iter {
-                    if c.is_ascii_lowercase() {
-                        let (word_start, _) = find_word_boundaries(byte_idx);
+                for &(byte_idx, mut c) in char_iter {
+                    let (word_start, _) = find_word_boundaries(byte_idx);
 
+                    if use_smartcase {
+                        c = c.to_lowercase().next().unwrap();
+                    }
+
+                    if c.is_lowercase() {
                         // Only highlight if we haven't processed this word yet
-                        if !seen_word_starts.contains(&word_start) && !seen_char_starts.contains(&c)
-                        {
+                        if !seen_words.contains(&word_start) && !seen_chars.contains(&c) {
                             let pos = Point::new(cursor_position.row, byte_idx as u32);
 
                             let start_pos = if before {
@@ -376,12 +380,12 @@ impl Vim {
                                 Bias::Right,
                             );
 
+                            seen_words.insert(word_start);
                             highlights.push(start_pos..end_pos);
                         }
-
-                        seen_word_starts.insert(word_start);
-                        seen_char_starts.insert(c);
                     }
+
+                    seen_chars.insert(c);
                 }
             }
 
