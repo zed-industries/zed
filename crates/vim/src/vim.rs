@@ -283,6 +283,15 @@ impl Vim {
 
             let mut highlights = Vec::new();
 
+            fn should_highlight_char(c: char) -> bool {
+                c.is_ascii_lowercase()
+                    || c.is_numeric()
+                    || matches!(
+                        c,
+                        '[' | ']' | ';' | ',' | '.' | '/' | '\\' | '-' | '=' | '`'
+                    )
+            }
+
             for selection in selections {
                 let cursor_position = if forward {
                     selection.head()
@@ -358,7 +367,7 @@ impl Vim {
                         c = c.to_lowercase().next().unwrap();
                     }
 
-                    if c.is_lowercase() {
+                    if should_highlight_char(c) {
                         // Only highlight if we haven't processed this word yet
                         if !seen_words.contains(&word_start) && !seen_chars.contains(&c) {
                             let pos = Point::new(cursor_position.row, byte_idx as u32);
