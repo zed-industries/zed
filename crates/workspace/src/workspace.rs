@@ -7534,6 +7534,7 @@ mod tests {
                 pane.close_active_item(
                     &CloseActiveItem {
                         save_intent: Some(SaveIntent::Close),
+                        close_pinned: false,
                     },
                     cx,
                 )
@@ -7634,7 +7635,13 @@ mod tests {
         });
         let close_singleton_buffer_task = pane
             .update(cx, |pane, cx| {
-                pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+                pane.close_active_item(
+                    &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    cx,
+                )
             })
             .expect("should have active singleton buffer to close");
         cx.background_executor.run_until_parked();
@@ -7737,7 +7744,13 @@ mod tests {
         });
         let _close_multi_buffer_task = pane
             .update(cx, |pane, cx| {
-                pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+                pane.close_active_item(
+                    &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    cx,
+                )
             })
             .expect("should have active multi buffer to close");
         cx.background_executor.run_until_parked();
@@ -7824,7 +7837,13 @@ mod tests {
         });
         let close_multi_buffer_task = pane
             .update(cx, |pane, cx| {
-                pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+                pane.close_active_item(
+                    &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    cx,
+                )
             })
             .expect("should have active multi buffer to close");
         cx.background_executor.run_until_parked();

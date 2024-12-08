@@ -512,37 +512,45 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
             ("q", "uit"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("wq", ""),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Save),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("x", "it"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::SaveAll),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("ex", "it"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::SaveAll),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("up", "date"),
@@ -602,10 +610,12 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
             ("bd", "elete"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: true,
         }),
         VimCommand::new(("bn", "ext"), workspace::ActivateNextItem).count(),
         VimCommand::new(("bN", "ext"), workspace::ActivatePrevItem).count(),
@@ -624,6 +634,7 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
             ("tabc", "lose"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         ),
         VimCommand::new(
