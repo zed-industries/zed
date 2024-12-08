@@ -32,7 +32,12 @@ const ARROW_CIRCLE_SVG: &str = concat!(
 struct AnimationExample;
 
 impl Render for AnimationExample {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _model: &Model<Self>,
+        _window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         div().flex().flex_col().size_full().justify_around().child(
             div().flex().flex_row().w_full().justify_around().child(
                 div()
@@ -80,6 +85,6 @@ fn main() {
                 ..Default::default()
             };
             cx.activate(false);
-            cx.open_window(options, |_, _| AnimationExample).unwrap();
+            cx.open_window(options, |_, _, _| AnimationExample).unwrap();
         });
 }

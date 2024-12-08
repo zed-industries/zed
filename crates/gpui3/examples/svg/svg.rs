@@ -36,8 +36,9 @@ struct SvgExample;
 impl Render for SvgExample {
     fn render(
         &mut self,
+        _model: &Model<Self>,
         _window: &mut gpui::Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut AppContext,
     ) -> impl IntoElement {
         div()
             .flex()
@@ -80,7 +81,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |_, _| SvgExample,
+                |_, _, _| SvgExample,
             )
             .unwrap();
         });

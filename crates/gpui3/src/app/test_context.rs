@@ -2,9 +2,9 @@ use crate::{
     Action, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, DrawPhase, Drawable,
     Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
-    ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
-    TestPlatform, TestWindow, TextSystem, Window, WindowBounds, WindowHandle, WindowOptions,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
+    TextSystem, Window, WindowBounds, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -33,7 +33,7 @@ impl Context for TestAppContext {
 
     fn new_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Self::Result<Model<T>> {
         let mut app = self.app.borrow_mut();
         app.new_model(build_model)
@@ -47,7 +47,7 @@ impl Context for TestAppContext {
     fn insert_model<T: 'static>(
         &mut self,
         reservation: crate::Reservation<T>,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Self::Result<Model<T>> {
         let mut app = self.app.borrow_mut();
         app.insert_model(reservation, build_model)
@@ -56,7 +56,7 @@ impl Context for TestAppContext {
     fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &Model<T>, &mut AppContext) -> R,
     ) -> Self::Result<R> {
         let mut app = self.app.borrow_mut();
         app.update_model(handle, update)
@@ -65,7 +65,7 @@ impl Context for TestAppContext {
     fn read_model<T, R>(
         &self,
         handle: &Model<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        read: impl FnOnce(&T, &Model<T>, &AppContext) -> R,
     ) -> Self::Result<R>
     where
         T: 'static,
@@ -175,7 +175,7 @@ impl TestAppContext {
     /// can be retrieved with `self.test_window(handle)`
     pub fn add_window<T: 'static + Render>(
         &mut self,
-        builder: impl FnOnce(&mut Window, &mut ModelContext<T>) -> T,
+        builder: impl FnOnce(&Model<T>, &mut Window, &mut AppContext) -> T,
     ) -> WindowHandle<T> {
         let mut cx = self.app.borrow_mut();
 
@@ -201,7 +201,7 @@ impl TestAppContext {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |_window, _cx| Empty,
+                |_window, _model, _cx| Empty,
             )
             .unwrap();
         drop(cx);
@@ -216,7 +216,7 @@ impl TestAppContext {
     pub fn add_window_view<T, F>(&mut self, builder: F) -> (Model<T>, &mut VisualTestContext)
     where
         T: 'static + Render,
-        F: FnOnce(&mut Window, &mut ModelContext<T>) -> T,
+        F: FnOnce(&Model<T>, &mut Window, &mut AppContext) -> T,
     {
         let mut cx = self.app.borrow_mut();
         let bounds = Bounds::maximized(None, &mut cx);
@@ -440,8 +440,8 @@ impl TestAppContext {
     {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         entity
-            .update(self, |_, cx: &mut ModelContext<T>| {
-                cx.subscribe(entity, move |_model, _handle, event, _cx| {
+            .update(self, |_, _model: &Model<T>, cx: &mut AppContext| {
+                cx.subscribe(entity, move |_handle, event, _cx| {
                     let _ = tx.unbounded_send(event.clone());
                 })
             })
@@ -454,7 +454,7 @@ impl TestAppContext {
     pub async fn condition<T: 'static>(
         &mut self,
         model: &Model<T>,
-        mut predicate: impl FnMut(&mut T, &mut ModelContext<T>) -> bool,
+        mut predicate: impl FnMut(&mut T, &Model<T>, &mut AppContext) -> bool,
     ) {
         let timer = self.executor().timer(Duration::from_secs(3));
         let mut notifications = self.notifications(model);
@@ -494,8 +494,8 @@ impl<T: 'static> Model<T> {
     {
         let (tx, mut rx) = oneshot::channel();
         let mut tx = Some(tx);
-        let subscription = self.update(cx, |_, cx| {
-            cx.subscribe(self, move |_, _, event, _| {
+        let subscription = self.update(cx, |_, _, cx| {
+            cx.subscribe(self, move |_, event, _| {
                 if let Some(tx) = tx.take() {
                     _ = tx.send(event.clone());
                 }
@@ -866,7 +866,7 @@ impl Context for VisualTestContext {
 
     fn new_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Self::Result<Model<T>> {
         self.cx.new_model(build_model)
     }
@@ -878,7 +878,7 @@ impl Context for VisualTestContext {
     fn insert_model<T: 'static>(
         &mut self,
         reservation: crate::Reservation<T>,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Self::Result<Model<T>> {
         self.cx.insert_model(reservation, build_model)
     }
@@ -886,7 +886,7 @@ impl Context for VisualTestContext {
     fn update_model<T, R>(
         &mut self,
         handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &Model<T>, &mut AppContext) -> R,
     ) -> Self::Result<R>
     where
         T: 'static,
@@ -897,7 +897,7 @@ impl Context for VisualTestContext {
     fn read_model<T, R>(
         &self,
         handle: &Model<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        read: impl FnOnce(&T, &Model<T>, &AppContext) -> R,
     ) -> Self::Result<R>
     where
         T: 'static,

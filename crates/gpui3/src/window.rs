@@ -4,16 +4,15 @@ use crate::{
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Empty, EntityId, EventEmitter, FileDropEvent,
     FontId, GPUSpecs, GlobalElementId, GlyphId, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
-    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model,
-    ModelContext, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix,
-    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    SUBPIXEL_VARIANTS,
+    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine,
+    Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -3718,14 +3717,14 @@ impl<T: 'static> WindowHandle<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Window, &mut ModelContext<T>) -> R,
+        update: impl FnOnce(&mut T, &Model<T>, &mut Window, &mut AppContext) -> R,
     ) -> Result<R>
     where
         C: Context,
     {
         self.any_handle.update(cx, |window, cx| {
             let state = window.state.clone().unwrap().downcast().unwrap();
-            state.update(cx, |state, cx| update(state, window, cx))
+            state.update(cx, |state, model, cx| update(state, model, window, cx))
         })
     }
 
@@ -3753,7 +3752,7 @@ impl<T: 'static> WindowHandle<T> {
     pub fn read_with<C, R>(
         &self,
         cx: &C,
-        read: impl FnOnce(&T, &Window, &AppContext) -> R,
+        read: impl FnOnce(&T, &Model<T>, &Window, &AppContext) -> R,
     ) -> Result<R>
     where
         C: Context,
@@ -3765,7 +3764,7 @@ impl<T: 'static> WindowHandle<T> {
                 .unwrap()
                 .downcast()
                 .unwrap()
-                .read_with(cx, |state, cx| read(state, window, cx))
+                .read_with(cx, |state, model, cx| read(state, model, window, cx))
         })
     }
 

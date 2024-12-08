@@ -1,7 +1,6 @@
 use crate::{
     AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext, Context,
-    ForegroundExecutor, Global, Model, ModelContext, Render, Reservation, Result, Task, Window,
-    WindowHandle,
+    ForegroundExecutor, Global, Model, Render, Reservation, Result, Task, Window, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use std::{future::Future, rc::Weak};
@@ -21,7 +20,7 @@ impl Context for AsyncAppContext {
 
     fn new_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Self::Result<Model<T>> {
         let app = self
             .app
@@ -43,7 +42,7 @@ impl Context for AsyncAppContext {
     fn insert_model<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Result<Model<T>> {
         let app = self
             .app
@@ -56,7 +55,7 @@ impl Context for AsyncAppContext {
     fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &Model<T>, &mut AppContext) -> R,
     ) -> Self::Result<R> {
         let app = self
             .app
@@ -69,7 +68,7 @@ impl Context for AsyncAppContext {
     fn read_model<T, R>(
         &self,
         handle: &Model<T>,
-        callback: impl FnOnce(&T, &AppContext) -> R,
+        callback: impl FnOnce(&T, &Model<T>, &AppContext) -> R,
     ) -> Self::Result<R>
     where
         T: 'static,
@@ -135,7 +134,7 @@ impl AsyncAppContext {
     pub fn open_window<T>(
         &self,
         options: crate::WindowOptions,
-        builder: impl 'static + Fn(&mut Window, &mut ModelContext<T>) -> T,
+        builder: impl 'static + Fn(&Model<T>, &mut Window, &mut AppContext) -> T,
     ) -> Result<WindowHandle<T>>
     where
         T: 'static + Render,

@@ -1,6 +1,4 @@
-use crate::{
-    AppContext, Bounds, InputHandler, Model, ModelContext, Pixels, UTF16Selection, Window,
-};
+use crate::{AppContext, Bounds, InputHandler, Model, Pixels, UTF16Selection, Window};
 use std::ops::Range;
 
 /// Implement this trait to allow models to handle textual input when implementing an editor, field, etc.
@@ -12,38 +10,42 @@ use std::ops::Range;
 pub trait InputHandlerModel: 'static + Sized {
     /// See [`InputHandler::text_for_range`] for details
     fn text_for_range(
-        &mut self,
+        &self,
         range: Range<usize>,
         adjusted_range: &mut Option<Range<usize>>,
+        model: &Model<Self>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AppContext,
     ) -> Option<String>;
 
     /// See [`InputHandler::selected_text_range`] for details
     fn selected_text_range(
         &mut self,
         ignore_disabled_input: bool,
+        model: &Model<Self>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AppContext,
     ) -> Option<UTF16Selection>;
 
     /// See [`InputHandler::marked_text_range`] for details
     fn marked_text_range(
         &mut self,
+        model: &Model<Self>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AppContext,
     ) -> Option<Range<usize>>;
 
     /// See [`InputHandler::unmark_text`] for details
-    fn unmark_text(&mut self, window: &mut Window, cx: &mut ModelContext<Self>);
+    fn unmark_text(&mut self, model: &Model<Self>, window: &mut Window, cx: &mut AppContext);
 
     /// See [`InputHandler::replace_text_in_range`] for details
     fn replace_text_in_range(
         &mut self,
         range: Option<Range<usize>>,
         text: &str,
+        model: &Model<Self>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AppContext,
     );
 
     /// See [`InputHandler::replace_and_mark_text_in_range`] for details
@@ -52,8 +54,9 @@ pub trait InputHandlerModel: 'static + Sized {
         range: Option<Range<usize>>,
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
+        model: &Model<Self>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AppContext,
     );
 
     /// See [`InputHandler::bounds_for_range`] for details
@@ -61,8 +64,9 @@ pub trait InputHandlerModel: 'static + Sized {
         &mut self,
         range_utf16: Range<usize>,
         element_bounds: Bounds<Pixels>,
+        model: &Model<Self>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AppContext,
     ) -> Option<Bounds<Pixels>>;
 }
 
@@ -73,8 +77,8 @@ impl<T: InputHandlerModel> InputHandler for Model<T> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<UTF16Selection> {
-        self.update(cx, |model, cx| {
-            model.selected_text_range(ignore_disabled_input, window, cx)
+        self.update(cx, |state, model, cx| {
+            state.selected_text_range(ignore_disabled_input, model, window, cx)
         })
     }
 
@@ -83,7 +87,9 @@ impl<T: InputHandlerModel> InputHandler for Model<T> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Range<usize>> {
-        self.update(cx, |model, cx| model.marked_text_range(window, cx))
+        self.update(cx, |state, model, cx| {
+            state.marked_text_range(model, window, cx)
+        })
     }
 
     fn text_for_range(
@@ -93,8 +99,8 @@ impl<T: InputHandlerModel> InputHandler for Model<T> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<String> {
-        self.update(cx, |model, cx| {
-            model.text_for_range(range_utf16, adjusted_range, window, cx)
+        self.update(cx, |state, model, cx| {
+            state.text_for_range(range_utf16, adjusted_range, model, window, cx)
         })
     }
 
@@ -105,8 +111,8 @@ impl<T: InputHandlerModel> InputHandler for Model<T> {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        self.update(cx, |model, cx| {
-            model.replace_text_in_range(replacement_range, text, window, cx)
+        self.update(cx, |state, model, cx| {
+            state.replace_text_in_range(replacement_range, text, model, window, cx)
         })
     }
 
@@ -118,11 +124,12 @@ impl<T: InputHandlerModel> InputHandler for Model<T> {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        self.update(cx, |model, cx| {
-            model.replace_and_mark_text_in_range(
+        self.update(cx, |state, model, cx| {
+            state.replace_and_mark_text_in_range(
                 range_utf16,
                 new_text,
                 new_selected_range,
+                model,
                 window,
                 cx,
             )
@@ -130,7 +137,7 @@ impl<T: InputHandlerModel> InputHandler for Model<T> {
     }
 
     fn unmark_text(&mut self, window: &mut Window, cx: &mut AppContext) {
-        self.update(cx, |model, cx| model.unmark_text(window, cx))
+        self.update(cx, |state, model, cx| state.unmark_text(model, window, cx))
     }
 
     fn bounds_for_range(
@@ -139,8 +146,8 @@ impl<T: InputHandlerModel> InputHandler for Model<T> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Bounds<Pixels>> {
-        self.update(cx, |model, cx| {
-            model.bounds_for_range(range_utf16, Bounds::default(), window, cx)
+        self.update(cx, |state, model, cx| {
+            state.bounds_for_range(range_utf16, Bounds::default(), model, window, cx)
         })
     }
 }
@@ -172,8 +179,8 @@ impl<V: InputHandlerModel> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<UTF16Selection> {
-        self.model.update(cx, |model, cx| {
-            model.selected_text_range(ignore_disabled_input, window, cx)
+        self.model.update(cx, |state, model, cx| {
+            state.selected_text_range(ignore_disabled_input, model, window, cx)
         })
     }
 
@@ -182,8 +189,9 @@ impl<V: InputHandlerModel> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Range<usize>> {
-        self.model
-            .update(cx, |model, cx| model.marked_text_range(window, cx))
+        self.model.update(cx, |state, model, cx| {
+            state.marked_text_range(model, window, cx)
+        })
     }
 
     fn text_for_range(
@@ -193,8 +201,8 @@ impl<V: InputHandlerModel> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<String> {
-        self.model.update(cx, |model, cx| {
-            model.text_for_range(range_utf16, adjusted_range, window, cx)
+        self.model.update(cx, |state, model, cx| {
+            state.text_for_range(range_utf16, adjusted_range, model, window, cx)
         })
     }
 
@@ -205,8 +213,8 @@ impl<V: InputHandlerModel> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        self.model.update(cx, |model, cx| {
-            model.replace_text_in_range(replacement_range, text, window, cx)
+        self.model.update(cx, |state, model, cx| {
+            state.replace_text_in_range(replacement_range, text, model, window, cx)
         });
     }
 
@@ -218,11 +226,12 @@ impl<V: InputHandlerModel> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        self.model.update(cx, |model, cx| {
-            model.replace_and_mark_text_in_range(
+        self.model.update(cx, |state, model, cx| {
+            state.replace_and_mark_text_in_range(
                 range_utf16,
                 new_text,
                 new_selected_range,
+                model,
                 window,
                 cx,
             )
@@ -231,7 +240,7 @@ impl<V: InputHandlerModel> InputHandler for ElementInputHandler<V> {
 
     fn unmark_text(&mut self, window: &mut Window, cx: &mut AppContext) {
         self.model
-            .update(cx, |model, cx| model.unmark_text(window, cx));
+            .update(cx, |state, model, cx| state.unmark_text(model, window, cx));
     }
 
     fn bounds_for_range(
@@ -240,8 +249,8 @@ impl<V: InputHandlerModel> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Bounds<Pixels>> {
-        self.model.update(cx, |model, cx| {
-            model.bounds_for_range(range_utf16, self.element_bounds, window, cx)
+        self.model.update(cx, |state, model, cx| {
+            state.bounds_for_range(range_utf16, self.element_bounds, model, window, cx)
         })
     }
 }

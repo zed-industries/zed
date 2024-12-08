@@ -70,8 +70,9 @@ struct ImageShowcase {
 impl Render for ImageShowcase {
     fn render(
         &mut self,
+        _model: &Model<Self>,
         _window: &mut Window,
-        _cx: &mut ModelContext<ImageShowcase>,
+        _cx: &mut AppContext,
     ) -> impl IntoElement {
         div()
             .size_full()
@@ -155,7 +156,7 @@ fn main() {
                 ..Default::default()
             };
 
-            cx.open_window(window_options, |_, _| {
+            cx.open_window(window_options, |_, _, _| {
                 ImageShowcase {
                     // Relative path to your root project path
                     local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")

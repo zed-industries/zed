@@ -1,8 +1,13 @@
-use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext, Window};
+use crate::{
+    seal::Sealed, AppContext, AsyncAppContext, Context, Effect, Entity, EventEmitter, Subscription,
+    Task, Window,
+};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
+use futures::Future;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{KeyData, SecondaryMap, SlotMap};
+use smol::future::FutureExt;
 use std::{
     any::{type_name, Any, TypeId},
     fmt::{self, Display},
@@ -401,7 +406,7 @@ impl<T: 'static> Model<T> {
     pub fn read_with<R, C: Context>(
         &self,
         cx: &C,
-        f: impl FnOnce(&T, &AppContext) -> R,
+        f: impl FnOnce(&T, &Model<T>, &AppContext) -> R,
     ) -> C::Result<R> {
         cx.read_model(self, f)
     }
@@ -414,7 +419,7 @@ impl<T: 'static> Model<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &Model<T>, &mut AppContext) -> R,
     ) -> C::Result<R>
     where
         C: Context,
@@ -438,14 +443,195 @@ impl<T: 'static> Model<T> {
     /// and a mutable reference to the `AppContext`.
     pub fn listener<E>(
         &self,
-        callback: impl Fn(&mut T, &E, &mut Window, &mut ModelContext<T>) + 'static,
+        callback: impl Fn(&mut T, &E, &Model<T>, &mut Window, &mut AppContext) + 'static,
     ) -> impl Fn(&E, &mut Window, &mut AppContext) {
         let model = self.clone();
         move |event: &E, window: &mut Window, cx: &mut AppContext| {
-            model.update(cx, |model, cx| {
-                callback(model, event, window, cx);
+            model.update(cx, |this, model, cx| {
+                callback(this, event, model, window, cx);
             });
         }
+    }
+
+    /// Notify observers of this model that it may have changed.
+    pub fn notify(&self, app: &mut AppContext) {
+        app.notify(Some(self.entity_id))
+    }
+
+    /// Spawn the future returned by the given function.
+    /// The function is provided a weak handle to this model and a context that can be held across await points.
+    /// The returned task must be held or detached.
+    pub fn spawn<Fut, R>(
+        &self,
+        cx: &mut AppContext,
+        f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut,
+    ) -> Task<R>
+    where
+        T: 'static,
+        Fut: Future<Output = R> + 'static,
+        R: 'static,
+    {
+        let model = self.downgrade();
+        cx.spawn(|cx| f(model, cx))
+    }
+
+    /// Arranges for the given function to be called whenever [`Model::notify`] is called with the given model or view.
+    pub fn observe<U>(
+        &self,
+        entity: &Model<U>,
+        cx: &mut AppContext,
+        mut on_notify: impl FnMut(&mut T, Model<U>, &Model<T>, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+        U: 'static,
+    {
+        let this = self.downgrade();
+        cx.observe_internal(entity, move |e, cx| {
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, model, cx| on_notify(this, e, model, cx));
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Subscribe to an event type from another model or view
+    pub fn subscribe<U, E>(
+        &self,
+        entity: &Model<U>,
+        cx: &mut AppContext,
+        mut on_event: impl FnMut(&mut T, Model<U>, &E, &Model<T>, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+        U: 'static + EventEmitter<E>,
+        E: 'static,
+    {
+        let this = self.downgrade();
+        cx.subscribe_internal(entity, move |emitter, event, cx| {
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, model, cx| {
+                    on_event(this, emitter, event, model, cx)
+                });
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Emit an event of the specified type, which can be handled by other entities that have subscribed via `subscribe` methods on their respective contexts.
+    pub fn emit<E>(&self, cx: &mut AppContext, event: E)
+    where
+        T: EventEmitter<E>,
+        E: 'static,
+    {
+        cx.pending_effects.push_back(Effect::Emit {
+            emitter: self.entity_id(),
+            event_type: TypeId::of::<E>(),
+            event: Box::new(event),
+        });
+    }
+
+    /// Register a callback to be invoked when GPUI releases this model.
+    pub fn on_release(
+        &self,
+        cx: &mut AppContext,
+        on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+    {
+        let (subscription, activate) = cx.release_listeners.insert(
+            self.entity_id,
+            Box::new(move |this, cx| {
+                let this = this.downcast_mut().expect("invalid entity type");
+                on_release(this, cx);
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Register a callback to be run on the release of another model.
+    pub fn observe_release<T2, E>(
+        &self,
+        observed: &E,
+        cx: &mut AppContext,
+        on_release: impl FnOnce(&mut T, &mut T2, &Model<T>, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        T: Any,
+        T2: 'static,
+        E: Entity<T2>,
+    {
+        let entity_id = observed.entity_id();
+        let this = self.downgrade();
+        let (subscription, activate) = cx.release_listeners.insert(
+            entity_id,
+            Box::new(move |released, cx| {
+                let released = released.downcast_mut().expect("invalid entity type");
+                if let Some(this) = this.upgrade() {
+                    this.update(cx, |this, model, cx| on_release(this, released, model, cx));
+                }
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Register a callback to for updates to the given global
+    pub fn observe_global<G: 'static>(
+        &self,
+        cx: &mut AppContext,
+        mut f: impl FnMut(&mut T, &Model<T>, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+    {
+        let model = self.downgrade();
+        let (subscription, activate) = cx.global_observers.insert(
+            TypeId::of::<G>(),
+            Box::new(move |cx| {
+                model
+                    .update(cx, |this, model, cx| f(this, model, cx))
+                    .is_ok()
+            }),
+        );
+        cx.defer(move |_| activate());
+        subscription
+    }
+
+    /// Arrange for the given function to be invoked whenever the application is quit.
+    /// The future returned from this callback will be polled for up to [crate::SHUTDOWN_TIMEOUT] until the app fully quits.
+    pub fn on_app_quit<Fut>(
+        &self,
+        cx: &mut AppContext,
+        mut on_quit: impl FnMut(&mut T, &Model<T>, &mut AppContext) -> Fut + 'static,
+    ) -> Subscription
+    where
+        Fut: 'static + Future<Output = ()>,
+        T: 'static,
+    {
+        let handle = self.downgrade();
+        let (subscription, activate) = cx.quit_observers.insert(
+            (),
+            Box::new(move |cx| {
+                let future = handle
+                    .update(cx, |this, model, cx| on_quit(this, model, cx))
+                    .ok();
+                async move {
+                    if let Some(future) = future {
+                        future.await;
+                    }
+                }
+                .boxed_local()
+            }),
+        );
+        activate();
+        subscription
     }
 }
 
@@ -634,7 +820,7 @@ impl<T: 'static> WeakModel<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &Model<T>, &mut AppContext) -> R,
     ) -> Result<R>
     where
         C: Context,
@@ -650,7 +836,11 @@ impl<T: 'static> WeakModel<T> {
     /// Reads the entity referenced by this model with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
-    pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &AppContext) -> R) -> Result<R>
+    pub fn read_with<C, R>(
+        &self,
+        cx: &C,
+        read: impl FnOnce(&T, &Model<T>, &AppContext) -> R,
+    ) -> Result<R>
     where
         C: Context,
         Result<C::Result<R>>: crate::Flatten<R>,

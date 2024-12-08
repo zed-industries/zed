@@ -464,8 +464,8 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, div, FocusHandle, InteractiveElement, IntoElement, KeyBinding, Keystroke,
-        ModelContext, ParentElement, Render, TestAppContext, Window,
+        self as gpui, div, AppContext, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
+        Keystroke, Model, ParentElement, Render, TestAppContext, Window,
     };
 
     struct TestView {
@@ -479,19 +479,22 @@ mod test {
     impl Render for TestView {
         fn render(
             &mut self,
+            model: &Model<Self>,
             _window: &mut Window,
-            cx: &mut ModelContext<Self>,
+            _cx: &mut AppContext,
         ) -> impl IntoElement {
             div().id("testview").child(
                 div()
                     .key_context("parent")
-                    .on_key_down(cx.listener(|this, _, _, cx| {
+                    .on_key_down(model.listener(|this, _event, _model, _window, cx| {
                         cx.stop_propagation();
                         this.saw_key_down = true
                     }))
-                    .on_action(cx.listener(|this: &mut TestView, _: &TestAction, _, _| {
-                        this.saw_action = true
-                    }))
+                    .on_action(model.listener(
+                        |this: &mut TestView, _event: &TestAction, _model, _window, _cx| {
+                            this.saw_action = true
+                        },
+                    ))
                     .child(
                         div()
                             .key_context("nested")
@@ -505,7 +508,7 @@ mod test {
     #[gpui::test]
     fn test_on_events(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
-            cx.open_window(Default::default(), |window, _cx| TestView {
+            cx.open_window(Default::default(), |_model, window, _cx| TestView {
                 saw_key_down: false,
                 saw_action: false,
                 focus_handle: window.focus_handle(),
@@ -518,7 +521,7 @@ mod test {
         });
 
         window
-            .update(cx, |test_view, window, _cx| {
+            .update(cx, |test_view, _model, window, _cx| {
                 window.focus(&test_view.focus_handle)
             })
             .unwrap();
@@ -527,7 +530,7 @@ mod test {
         cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
 
         window
-            .update(cx, |test_view, _, _| {
+            .update(cx, |test_view, _model, _window, _app| {
                 assert!(test_view.saw_key_down || test_view.saw_action);
                 assert!(test_view.saw_key_down);
                 assert!(test_view.saw_action);

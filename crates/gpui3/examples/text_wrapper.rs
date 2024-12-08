@@ -6,8 +6,9 @@ struct TextWrapperExample;
 impl Render for TextWrapperExample {
     fn render(
         &mut self,
+        _model: &Model<Self>,
         _window: &mut gpui::Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut AppContext,
     ) -> impl IntoElement {
         let text = "The longest word 你好世界这段是中文，こんにちはこの段落は日本語です in any of the major English language dictionaries is pneumonoultramicroscopicsilicovolcanoconiosis, a word that refers to a lung disease contracted from the inhalation of very fine silica particles, specifically from a volcano; medically, it is the same as silicosis.";
         div()
@@ -88,7 +89,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, _| TextWrapperExample,
+            |_, _, _| TextWrapperExample,
         )
         .unwrap();
     });

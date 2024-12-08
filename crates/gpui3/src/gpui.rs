@@ -164,7 +164,7 @@ pub trait Context {
     /// Create a new model in the app context.
     fn new_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Self::Result<Model<T>>;
 
     /// Reserve a slot for a model to be inserted later.
@@ -177,14 +177,14 @@ pub trait Context {
     fn insert_model<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Self::Result<Model<T>>;
 
     /// Update a model in the app context.
     fn update_model<T, R>(
         &mut self,
         handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &Model<T>, &mut AppContext) -> R,
     ) -> Self::Result<R>
     where
         T: 'static;
@@ -193,7 +193,7 @@ pub trait Context {
     fn read_model<T, R>(
         &self,
         handle: &Model<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        read: impl FnOnce(&T, &Model<T>, &AppContext) -> R,
     ) -> Self::Result<R>
     where
         T: 'static;

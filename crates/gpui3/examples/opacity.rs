@@ -36,30 +36,30 @@ struct OpacityModel {
 }
 
 impl OpacityModel {
-    fn new(_: &mut ModelContext<Self>) -> Self {
+    fn new(_: &mut AppContext) -> Self {
         Self {
             _task: None,
             opacity: 0.5,
         }
     }
 
-    fn change_opacity(&mut self, _: &ClickEvent, cx: &mut ModelContext<Self>) {
+    fn change_opacity(&mut self, _: &ClickEvent, model: &Model<Self>, cx: &mut AppContext) {
         self.opacity = 0.0;
-        cx.notify();
+        model.notify(cx);
 
-        self._task = Some(cx.spawn(|model, cx| async move {
+        self._task = Some(model.spawn(cx, |model, cx| async move {
             loop {
                 Timer::after(Duration::from_secs_f32(0.05)).await;
                 let mut stop = false;
                 let _ = cx.update(|cx| {
-                    model.update(cx, |model, cx| {
-                        if model.opacity >= 1.0 {
+                    model.update(cx, |state, model, cx| {
+                        if state.opacity >= 1.0 {
                             stop = true;
                             return;
                         }
 
-                        model.opacity += 0.1;
-                        cx.notify();
+                        state.opacity += 0.1;
+                        model.notify(cx);
                     })
                 });
 
@@ -72,7 +72,12 @@ impl OpacityModel {
 }
 
 impl Render for OpacityModel {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        _window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         div()
             .flex()
             .flex_row()
@@ -92,9 +97,9 @@ impl Render for OpacityModel {
             .child(
                 div()
                     .id("panel")
-                    .on_click(
-                        cx.listener(|model, event, _window, cx| model.change_opacity(event, cx)),
-                    )
+                    .on_click(model.listener(|state, event, model, _window, cx| {
+                        state.change_opacity(event, model, cx)
+                    }))
                     .absolute()
                     .top_8()
                     .left_8()
@@ -167,7 +172,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |_window, cx| OpacityModel::new(cx),
+                |_model, _window, cx| OpacityModel::new(cx),
             )
             .unwrap();
         });

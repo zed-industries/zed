@@ -22,7 +22,6 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
 pub use entity_map::*;
 use http_client::HttpClient;
-pub use model_context::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::ResultExt;
@@ -39,7 +38,6 @@ use crate::{
 
 mod async_context;
 mod entity_map;
-mod model_context;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
 
@@ -556,7 +554,7 @@ impl AppContext {
     pub fn open_window<T>(
         &mut self,
         options: crate::WindowOptions,
-        builder: impl FnOnce(&mut Window, &mut ModelContext<T>) -> T,
+        builder: impl FnOnce(&Model<T>, &mut Window, &mut AppContext) -> T,
     ) -> anyhow::Result<WindowHandle<T>>
     where
         T: 'static + Render,
@@ -566,7 +564,10 @@ impl AppContext {
             let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
-                    window.state = Some(cx.new_model(|cx| builder(&mut window, cx)).into());
+                    window.state = Some(
+                        cx.new_model(|model, cx| builder(model, &mut window, cx))
+                            .into(),
+                    );
                     window.render = Some(Box::new(move |any_state| {
                         any_state.downcast::<T>().unwrap().into_any_element()
                     }));
@@ -1079,7 +1080,7 @@ impl AppContext {
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_models<T: 'static>(
         &self,
-        on_new: impl 'static + Fn(&mut T, &mut ModelContext<T>),
+        on_new: impl 'static + Fn(&mut T, &Model<T>, &mut AppContext),
     ) -> Subscription {
         self.new_model_observer(
             TypeId::of::<T>(),
@@ -1087,8 +1088,8 @@ impl AppContext {
                 any_model
                     .downcast::<T>()
                     .unwrap()
-                    .update(cx, |model_state, cx| {
-                        on_new(model_state, cx);
+                    .update(cx, |state, model, cx| {
+                        on_new(state, model, cx);
                     })
             }),
         )
@@ -1400,12 +1401,12 @@ impl Context for AppContext {
     /// which can be used to access the entity in a context.
     fn new_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Model<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
             let model = slot.clone();
-            let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
+            let entity = build_model(&slot, cx);
             cx.entities.insert(slot, entity);
 
             // Non-generic part to avoid leaking SubscriberSet to invokers of `new_view`.
@@ -1429,11 +1430,11 @@ impl Context for AppContext {
     fn insert_model<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Self::Result<Model<T>> {
         self.update(|cx| {
             let slot = reservation.0;
-            let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
+            let entity = build_model(&slot, cx);
             cx.entities.insert(slot, entity)
         })
     }
@@ -1443,11 +1444,11 @@ impl Context for AppContext {
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &Model<T>, &mut AppContext) -> R,
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(model);
-            let result = update(&mut entity, &mut ModelContext::new(cx, model.downgrade()));
+            let result = update(&mut entity, model, cx);
             cx.entities.end_lease(entity);
             result
         })
@@ -1456,13 +1457,13 @@ impl Context for AppContext {
     fn read_model<T, R>(
         &self,
         handle: &Model<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        read: impl FnOnce(&T, &Model<T>, &AppContext) -> R,
     ) -> Self::Result<R>
     where
         T: 'static,
     {
         let entity = self.entities.read(handle);
-        read(entity, self)
+        read(entity, handle, self)
     }
 
     fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>

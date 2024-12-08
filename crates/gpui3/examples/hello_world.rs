@@ -7,8 +7,9 @@ fn main() {
     impl Render for HelloWorld {
         fn render(
             &mut self,
+            _model: &Model<Self>,
             _window: &mut Window,
-            _cx: &mut ModelContext<Self>,
+            _cx: &mut AppContext,
         ) -> impl IntoElement {
             div()
                 .flex()
@@ -32,7 +33,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, _| HelloWorld,
+            |_, _, _| HelloWorld,
         )
         .unwrap();
 

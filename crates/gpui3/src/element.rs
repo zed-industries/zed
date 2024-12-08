@@ -33,7 +33,7 @@
 
 use crate::{
     util::FluentBuilder, AppContext, ArenaBox, AvailableSpace, Bounds, DispatchNodeId, ElementId,
-    FocusHandle, LayoutId, Model, ModelContext, Pixels, Point, Size, Style, Window, ELEMENT_ARENA,
+    FocusHandle, LayoutId, Model, Pixels, Point, Size, Style, Window, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -117,11 +117,21 @@ impl<T: IntoElement> FluentBuilder for T {}
 /// An object that can be drawn to the screen.
 pub trait Render: 'static + Sized {
     /// Render this view into an element tree.
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement;
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut Window,
+        app: &mut AppContext,
+    ) -> impl IntoElement;
 }
 
 impl Render for Empty {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _model: &Model<Self>,
+        _window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         Empty
     }
 }
@@ -150,7 +160,9 @@ impl<T: Render> Element for Model<T> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut element = self.update(cx, |model, cx| model.render(window, cx).into_any_element());
+        let mut element = self.update(cx, |state, model, cx| {
+            state.render(model, window, cx).into_any_element()
+        });
         let layout_id = element.request_layout(window, cx);
         (layout_id, element)
     }

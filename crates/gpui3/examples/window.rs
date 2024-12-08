@@ -25,7 +25,12 @@ fn button(
 }
 
 impl Render for SubWindow {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _model: &Model<Self>,
+        _window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -66,7 +71,12 @@ impl Render for SubWindow {
 struct WindowDemo;
 
 impl Render for WindowDemo {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _model: &Model<Self>,
+        _window: &mut Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let window_bounds =
             WindowBounds::Windowed(Bounds::centered(None, size(px(300.0), px(300.0)), cx));
 
@@ -85,7 +95,7 @@ impl Render for WindowDemo {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, _| SubWindow {
+                    |_, _, _| SubWindow {
                         custom_titlebar: false,
                     },
                 )
@@ -98,7 +108,7 @@ impl Render for WindowDemo {
                         kind: WindowKind::PopUp,
                         ..Default::default()
                     },
-                    |_, _| SubWindow {
+                    |_, _, _| SubWindow {
                         custom_titlebar: false,
                     },
                 )
@@ -111,7 +121,7 @@ impl Render for WindowDemo {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, _| SubWindow {
+                    |_, _, _| SubWindow {
                         custom_titlebar: true,
                     },
                 )
@@ -124,7 +134,7 @@ impl Render for WindowDemo {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, _| SubWindow {
+                    |_, _, _| SubWindow {
                         custom_titlebar: false,
                     },
                 )
@@ -138,7 +148,7 @@ impl Render for WindowDemo {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, _| SubWindow {
+                    |_, _, _| SubWindow {
                         custom_titlebar: false,
                     },
                 )
@@ -167,7 +177,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, _| WindowDemo,
+            |_, _, _| WindowDemo,
         )
         .unwrap();
     });

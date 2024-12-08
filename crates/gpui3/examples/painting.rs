@@ -2,7 +2,7 @@ use gpui::{
     canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, MouseDownEvent, Path,
     Pixels, Point, WindowOptions,
 };
-use gpui3::{self as gpui, ModelContext, Window};
+use gpui3::{self as gpui, Model, Window};
 struct PaintingViewer {
     default_lines: Vec<Path<Pixels>>,
     lines: Vec<Vec<Point<Pixels>>>,
@@ -71,14 +71,19 @@ impl PaintingViewer {
         }
     }
 
-    fn clear(&mut self, cx: &mut ModelContext<Self>) {
+    fn clear(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.lines.clear();
-        cx.notify();
+        model.notify(cx);
     }
 }
 
 impl Render for PaintingViewer {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        _window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         let default_lines = self.default_lines.clone();
         let lines = self.lines.clone();
         div()
@@ -106,8 +111,8 @@ impl Render for PaintingViewer {
                             .px_3()
                             .py_1()
                             .on_click(
-                                cx.listener(|viewer, _, _, cx| {
-                                    viewer.clear(cx);
+                                model.listener(|viewer, _event, model, _window, cx| {
+                                    viewer.clear(model, cx);
                                 })
                             ),
                     ),
@@ -147,16 +152,16 @@ impl Render for PaintingViewer {
                     )
                     .on_mouse_down(
                         gpui::MouseButton::Left,
-                        cx.listener(|viewer, ev: &MouseDownEvent, _window, cx| {
+                        model.listener(|viewer, ev: &MouseDownEvent, model, _window, cx| {
                             viewer._painting = true;
                             viewer.start = ev.position;
                             let path = vec![ev.position];
                             viewer.lines.push(path);
-                            cx.notify();
+                            model.notify(cx);
                         }),
                     )
                     .on_mouse_move({
-                        cx.listener(|viewer, ev: &gpui::MouseMoveEvent, _window, cx| {
+                        model.listener(|viewer, ev: &gpui::MouseMoveEvent, model, _window, cx| {
                             if !viewer._painting {
                                 return;
                             }
@@ -177,14 +182,14 @@ impl Render for PaintingViewer {
                             if let Some(path) = viewer.lines.last_mut() {
                                 path.push(pos);
                             }
-                            cx.notify();
+                            model.notify(cx);
                         })
                     })
                     .on_mouse_up(
                         gpui::MouseButton::Left,
-                        cx.listener(|viewer, _, _window, cx| {
+                        model.listener(|viewer, _, model, _window, cx| {
                             viewer._painting = false;
-                            cx.notify();
+                            model.notify(cx);
                         }),
                     ),
             )
@@ -198,7 +203,7 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            |_, _| PaintingViewer::new(),
+            |_, _, _| PaintingViewer::new(),
         )
         .unwrap();
         cx.activate(true);

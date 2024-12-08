@@ -13,7 +13,12 @@ Things to do:
 struct WindowShadowExample;
 
 impl Render for WindowShadowExample {
-    fn render(&mut self, window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _model: &Model<Self>,
+        window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         let decorations = window.window_decorations();
         let rounding = px(10.0);
         let shadow_size = px(10.0);
@@ -211,7 +216,7 @@ fn main() {
                 window_decorations: Some(WindowDecorations::Client),
                 ..Default::default()
             },
-            |window, _cx| {
+            |_model, window, _cx| {
                 window
                     .observe_appearance(|_, cx| {
                         cx.refresh();
