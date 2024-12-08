@@ -688,6 +688,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    tasks_pull_diagnostics_task: Option<Task<()>>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
@@ -696,7 +697,6 @@ pub struct Editor {
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
-    _pull_document_diagnostics_task: Task<Result<(), anyhow::Error>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1335,6 +1335,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            tasks_pull_diagnostics_task: None,
             linked_edit_ranges: Default::default(),
             previous_search_ranges: None,
             breadcrumb_header: None,
@@ -1345,7 +1346,6 @@ impl Editor {
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             toggle_fold_multiple_buffers: Task::ready(()),
             text_style_refinement: None,
-            _pull_document_diagnostics_task: Task::ready(Ok(())),
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -10378,36 +10378,58 @@ impl Editor {
         }
     }
 
-    fn refresh_diagnostics(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
-        let project = self.project.clone()?;
+    fn refresh_diagnostics(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+        let project = self.project.as_ref().map(Model::downgrade);
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
-        let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
-        let (end_buffer, _) = buffer.text_anchor_for_position(newest_selection.end, cx)?;
+        let (start_buffer, start) = if let Some(output) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(newest_selection.end, cx)
+        {
+            output
+        } else {
+            return Task::ready(());
+        };
+
+        let (end_buffer, _) =
+            if let Some(output) = buffer.text_anchor_for_position(newest_selection.end, cx) {
+                output
+            } else {
+                return Task::ready(());
+            };
         if start_buffer != end_buffer {
-            return None;
+            return Task::ready(());
         }
 
-        self._pull_document_diagnostics_task = cx.spawn(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let pull_diagnostics_task = this.update(&mut cx, |_, cx| {
+            let Some(project) = project.and_then(|p| p.upgrade()) else {
+                return;
+            };
+
+            let Ok(pull_diagnostics_task) = this.update(&mut cx, |_, cx| {
                 project.pull_diagnostics(&start_buffer, start, cx)
-            })?;
+            }) else {
+                return;
+            };
 
-            if let Some(pull_diagnostics_task) = pull_diagnostics_task {
-                let diagnostics = pull_diagnostics_task
-                    .await
-                    .context("Pull diagnostics task")?;
+            let diagnostics = cx.background_executor().spawn(pull_diagnostics_task);
 
-                let _ = this.update(&mut cx, |_, cx| project.update_diagnostics(diagnostics, cx));
+            if let Ok(diagnostics) = diagnostics.await {
+                this.update(&mut cx, |editor, cx| {
+                    if project.update_diagnostics(diagnostics, cx).is_ok() {
+                        editor.refresh_active_diagnostics(cx)
+                    } else {
+                        log::error!("Failed to update project diagnostics")
+                    }
+                })
+                .ok();
             }
-
-            anyhow::Ok(())
-        });
-        None
+        })
     }
 
     pub fn set_selections_from_remote(
@@ -12231,7 +12253,7 @@ impl Editor {
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
-                self.refresh_diagnostics(cx);
+                self.tasks_pull_diagnostics_task = Some(self.refresh_diagnostics(cx));
                 self.refresh_active_diagnostics(cx);
 
                 self.refresh_code_actions(cx);
@@ -13513,7 +13535,7 @@ pub trait DiagnosticsProvider {
         buffer: &Model<Buffer>,
         position: text::Anchor,
         cx: &mut AppContext,
-    ) -> Option<Task<Result<Vec<LspDiagnostics>>>>;
+    ) -> Task<Result<Vec<LspDiagnostics>>>;
 
     fn update_diagnostics(
         &self,
@@ -13862,10 +13884,10 @@ impl DiagnosticsProvider for Model<Project> {
         buffer: &Model<Buffer>,
         position: text::Anchor,
         cx: &mut AppContext,
-    ) -> Option<Task<Result<Vec<LspDiagnostics>>>> {
-        Some(self.update(cx, |project, cx| {
+    ) -> Task<Result<Vec<LspDiagnostics>>> {
+        self.update(cx, |project, cx| {
             project.document_diagnostics(buffer, position, cx)
-        }))
+        })
     }
 
     fn update_diagnostics(
@@ -13881,7 +13903,7 @@ impl DiagnosticsProvider for Model<Project> {
                         diagnostic_set.server_id,
                         lsp::PublishDiagnosticsParams {
                             uri: diagnostic_set.uri.unwrap(),
-                            diagnostics: diagnostic_set.diagnostics.unwrap_or_else(|| vec![]),
+                            diagnostics: diagnostic_set.diagnostics.unwrap_or_else(Vec::new),
                             version: None,
                         },
                         &[],
