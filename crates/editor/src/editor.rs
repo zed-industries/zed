@@ -1267,13 +1267,13 @@ impl CompletionsMenu {
 
         let aside_contents = aside_contents.map(|div| {
             div.id("multiline_docs")
-                .max_h(max_height)
                 .flex_1()
                 .px_1p5()
                 .py_1()
                 .min_w(px(260.))
-                .max_w(px(640.))
-                .w(px(500.))
+                .max_w(px(500.))
+                // FIXME: does not match height of completion list
+                .max_h(max_height)
                 .overflow_y_scroll()
                 .occlude()
         });
@@ -1374,7 +1374,9 @@ impl CompletionsMenu {
         Popover::new()
             .child(list)
             .when_some(aside_contents, |popover, aside_contents| {
-                popover.aside(aside_contents)
+                popover
+                    .aside(aside_contents)
+                    .aside_size(size(Pixels(500.), max_height))
             })
             .into_any_element()
     }
