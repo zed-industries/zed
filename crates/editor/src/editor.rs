@@ -11280,6 +11280,54 @@ impl Editor {
         self.fold_creases(ranges, true, cx);
     }
 
+    pub fn fold_multiline_comments(&mut self, _: &actions::FoldMultilineComments, cx: &mut ViewContext<Self>) {
+        if !self.buffer.read(cx).is_singleton() {
+            return;
+        }
+    
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
+        
+        if let Some(scope) = buffer.language_scope_at(Point::new(0, 0)) {
+            if let Some((start_delim, end_delim)) = scope.block_comment_delimiters() {
+                let mut ranges = Vec::new();
+                
+                let mut row = 0;
+                while row < buffer.max_row().0 {
+                    let line_text: String = buffer
+                        .text_for_range(Point::new(row, 0)..Point::new(row + 1, 0))
+                        .collect();
+                    
+                    if line_text.trim().starts_with(&start_delim.to_string()) {
+                        let start = Point::new(row, 0);
+                        let mut end_row = row;
+                        
+                        while end_row < buffer.max_row().0 {
+                            let end_text: String = buffer
+                                .text_for_range(Point::new(end_row, 0)..Point::new(end_row + 1, 0))
+                                .collect();
+                            if end_text.trim().contains(&end_delim.to_string()) {
+                                let end = Point::new(
+                                    end_row,
+                                    buffer.line_len(MultiBufferRow(end_row)),
+                                );
+                                ranges.push(Crease::simple(start..end, display_map.fold_placeholder.clone()));
+                                row = end_row;
+                                break;
+                            }
+                            end_row += 1;
+                        }
+                    }
+                    row += 1;
+                }
+    
+                if !ranges.is_empty() {
+                    self.fold_creases(ranges, true, cx);
+                }
+            }
+        }
+    }
+    
     pub fn fold_creases<T: ToOffset + Clone>(
         &mut self,
         creases: Vec<Crease<T>>,
