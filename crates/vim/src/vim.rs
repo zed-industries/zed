@@ -26,8 +26,8 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, KeyContext,
-    KeystrokeEvent, Render, Subscription, View, ViewContext, WeakView,
+    actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, FontWeight,
+    HighlightStyle, KeyContext, KeystrokeEvent, Render, Subscription, View, ViewContext, WeakView,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -39,10 +39,12 @@ use serde::Deserialize;
 use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
+use std::collections::HashSet;
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-use ui::{px, IntoElement, VisualContext};
+use ui::VisualContext;
+use ui::{px, IntoElement};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, ResizeIntent, Workspace};
 
@@ -272,6 +274,115 @@ impl Vim {
         })
     }
 
+    fn highlight_find_targets(&mut self, forward: bool, before: bool, cx: &mut ViewContext<Self>) {
+        self.update_editor(cx, |_, editor, cx| {
+            let selections = editor.selections.all::<Point>(cx);
+            let buffer = editor.buffer().read(cx);
+            let snapshot = buffer.snapshot(cx);
+
+            // Find first occurrence of each character after/before cursor
+            let mut highlights = Vec::new();
+
+            for selection in selections {
+                let cursor_position = if forward {
+                    selection.head()
+                } else {
+                    selection.tail()
+                };
+
+                // Get current line text safely
+                let line_range = {
+                    let start = Point::new(cursor_position.row, 0);
+                    let end = Point::new(cursor_position.row + 1, 0);
+                    start..end
+                };
+
+                let line_text: String = snapshot
+                    .text_for_range(line_range)
+                    .collect::<Vec<&str>>()
+                    .join("");
+
+                if line_text.is_empty() {
+                    continue;
+                }
+
+                // Get the chars and their byte positions
+                let char_positions: Vec<(usize, char)> = line_text.char_indices().collect();
+                if char_positions.is_empty() {
+                    continue;
+                }
+
+                // Find the character index corresponding to the cursor column
+                let cursor_char_idx = char_positions
+                    .iter()
+                    .position(|(byte_idx, _)| *byte_idx as u32 >= cursor_position.column)
+                    .unwrap_or(char_positions.len());
+
+                // Determine search range
+                let (search_range_start, search_range_end) = if forward {
+                    (
+                        cursor_char_idx + if before { 2 } else { 1 },
+                        char_positions.len() - 1,
+                    )
+                } else {
+                    (0, cursor_char_idx)
+                };
+
+                // Keep track of seen characters
+                let mut seen_chars = HashSet::new();
+
+                // Get the relevant subset of characters
+                let chars = &char_positions[search_range_start..search_range_end];
+
+                let char_iter: Vec<_> = if forward {
+                    chars.iter().collect()
+                } else {
+                    chars.iter().rev().collect()
+                };
+
+                for &(byte_idx, c) in char_iter {
+                    if !seen_chars.contains(&c) {
+                        seen_chars.insert(c);
+
+                        let pos = Point::new(cursor_position.row, byte_idx as u32);
+
+                        // Create anchors safely within the line bounds
+                        let start_pos = if before {
+                            snapshot.anchor_before(pos)
+                        } else {
+                            snapshot.anchor_at(pos, Bias::Left)
+                        };
+
+                        // Find the next character's byte position for the end anchor
+                        let next_byte_idx = char_positions
+                            .iter()
+                            .find(|(idx, _)| *idx > byte_idx)
+                            .map(|(idx, _)| *idx)
+                            .unwrap_or_else(|| byte_idx + c.len_utf8());
+
+                        let end_pos = snapshot.anchor_at(
+                            Point::new(cursor_position.row, next_byte_idx as u32),
+                            Bias::Right,
+                        );
+
+                        highlights.push(start_pos..end_pos);
+                    }
+                }
+            }
+
+            // Apply highlights
+            let theme_settings = ThemeSettings::get_global(cx);
+            let style = HighlightStyle {
+                background_color: Some(theme_settings.active_theme.colors().element_selected),
+                color: Some(theme_settings.active_theme.colors().editor_background),
+                font_weight: Some(FontWeight::BLACK),
+                ..Default::default()
+            };
+
+            editor.highlight_text::<Self>(highlights, style, cx)
+        });
+    }
+
     fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         if !editor.use_modal_editing() {
             return;
@@ -465,6 +576,20 @@ impl Vim {
     }
 
     fn push_operator(&mut self, operator: Operator, cx: &mut ViewContext<Self>) {
+        match operator {
+            Operator::FindForward { before } => {
+                if VimSettings::get_global(cx).use_highlight_find {
+                    self.highlight_find_targets(true, before, cx);
+                }
+            }
+            Operator::FindBackward { after } => {
+                if VimSettings::get_global(cx).use_highlight_find {
+                    self.highlight_find_targets(false, after, cx);
+                }
+            }
+            _ => {}
+        }
+
         if matches!(
             operator,
             Operator::Change
@@ -942,6 +1067,10 @@ impl Vim {
     }
 
     fn clear_operator(&mut self, cx: &mut ViewContext<Self>) {
+        self.update_editor(cx, |_, editor, cx| {
+            editor.clear_highlights::<Self>(cx);
+        });
+
         Vim::take_count(cx);
         self.selected_register.take();
         self.operator_stack.clear();
@@ -1198,17 +1327,40 @@ struct VimSettings {
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
+    pub use_highlight_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 struct VimSettingsContent {
+    /// Whether to show relative line numbers in vim mode.
+    ///
+    /// Default: false
     pub toggle_relative_line_numbers: Option<bool>,
+    /// When to use system clipboard integration.
+    ///
+    /// Default: always
     pub use_system_clipboard: Option<UseSystemClipboard>,
+    /// Whether to allow find commands to search across multiple lines.
+    ///
+    /// Default: false
     pub use_multiline_find: Option<bool>,
+    /// Whether to use smart case matching for find commands.
+    ///
+    /// Default: false
     pub use_smartcase_find: Option<bool>,
+    /// Whether to highlight the characters you can jump to with one keypress.
+    ///
+    /// Default: false
+    pub use_highlight_find: Option<bool>,
+    /// Custom digraph mappings.
+    ///
+    /// Default: {}
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
+    /// Duration in milliseconds to highlight yanked text.
+    ///
+    /// Default: 200
     pub highlight_on_yank_duration: Option<u64>,
 }
 
