@@ -9,6 +9,7 @@ pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
+    pub document_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub show_completion_documentation: bool,
@@ -188,6 +189,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: all
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    /// The debounce delay to send DocumentHighlight request to LSP when
+    //  curosr moves.
+    ///
+    /// Default: 75
+    pub document_highlight_debounce: Option<u64>,
     /// Whether to show the informational hover box when moving the mouse
     /// over symbols in the editor.
     ///
