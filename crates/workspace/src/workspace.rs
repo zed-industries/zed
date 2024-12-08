@@ -163,6 +163,9 @@ actions!(
     ]
 );
 
+#[cfg(debug_assertions)]
+actions!(workspace, [ToggleGpuiElementInspection]);
+
 #[derive(Clone, PartialEq)]
 pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
@@ -767,6 +770,8 @@ pub struct Workspace {
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
+    #[cfg(debug_assertions)]
+    inspecting_gpui_elements: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1072,6 +1077,8 @@ impl Workspace {
             _items_serializer,
             session_id: Some(session_id),
             serialized_ssh_project: None,
+            #[cfg(debug_assertions)]
+            inspecting_gpui_elements: false,
         }
     }
 
@@ -4402,7 +4409,8 @@ impl Workspace {
     }
 
     fn actions(&self, div: Div, cx: &mut ViewContext<Self>) -> Div {
-        self.add_workspace_actions_listeners(div, cx)
+        let mut div = self
+            .add_workspace_actions_listeners(div, cx)
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::save_all))
@@ -4472,7 +4480,16 @@ impl Workspace {
                     workspace.reopen_closed_item(cx).detach();
                 }),
             )
-            .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(Workspace::toggle_centered_layout));
+        #[cfg(debug_assertions)]
+        {
+            div = div.on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ToggleGpuiElementInspection, _cx| {
+                    workspace.inspecting_gpui_elements = !workspace.inspecting_gpui_elements;
+                },
+            ));
+        }
+        div
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -4799,7 +4816,7 @@ impl Render for Workspace {
         let theme = cx.theme().clone();
         let colors = theme.colors();
 
-        client_side_decorations(
+        let mut window_div = client_side_decorations(
             self.actions(div(), cx)
                 .key_context(context)
                 .relative()
@@ -4973,7 +4990,16 @@ impl Render for Workspace {
                         .child(self.modal_layer.clone()),
                 ),
             cx,
-        )
+        );
+
+        #[cfg(debug_assertions)]
+        {
+            if self.inspecting_gpui_elements {
+                window_div = window_div.debug_below();
+            }
+        }
+
+        window_div
     }
 }
 
