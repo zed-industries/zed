@@ -280,7 +280,6 @@ impl Vim {
             let buffer = editor.buffer().read(cx);
             let snapshot = buffer.snapshot(cx);
 
-            // Find first occurrence of each character after/before cursor
             let mut highlights = Vec::new();
 
             for selection in selections {
@@ -290,7 +289,6 @@ impl Vim {
                     selection.tail()
                 };
 
-                // Get current line text safely
                 let line_range = {
                     let start = Point::new(cursor_position.row, 0);
                     let end = Point::new(cursor_position.row + 1, 0);
@@ -306,71 +304,90 @@ impl Vim {
                     continue;
                 }
 
-                // Get the chars and their byte positions
-                let char_positions: Vec<(usize, char)> = line_text.char_indices().collect();
-                if char_positions.is_empty() {
-                    continue;
-                }
+                let all_char_positions: Vec<(usize, char)> = line_text.char_indices().collect();
 
-                // Find the character index corresponding to the cursor column
-                let cursor_char_idx = char_positions
+                // Get cursor position in character indices
+                let cursor_idx = all_char_positions
                     .iter()
                     .position(|(byte_idx, _)| *byte_idx as u32 >= cursor_position.column)
-                    .unwrap_or(char_positions.len());
+                    .unwrap_or(all_char_positions.len());
 
-                // Determine search range
-                let (search_range_start, search_range_end) = if forward {
-                    (
-                        cursor_char_idx + if before { 2 } else { 1 },
-                        char_positions.len() - 1,
-                    )
+                // Determine search range based on cursor position
+                let searchable_positions: Vec<(usize, char)> = if forward {
+                    all_char_positions[cursor_idx + if before { 2 } else { 1 }..]
+                        .iter()
+                        .cloned()
+                        .collect()
                 } else {
-                    (0, cursor_char_idx)
+                    all_char_positions[..cursor_idx].iter().cloned().collect()
                 };
 
-                // Keep track of seen characters
-                let mut seen_chars = HashSet::new();
+                // Find word boundaries for a position
+                let find_word_boundaries = |pos: usize| {
+                    let mut start = pos;
+                    let mut end = pos;
 
-                // Get the relevant subset of characters
-                let chars = &char_positions[search_range_start..search_range_end];
+                    while start > 0 && !line_text[start - 1..].starts_with(char::is_whitespace) {
+                        start -= 1;
+                    }
 
+                    while end < line_text.len()
+                        && !line_text[end..].starts_with(char::is_whitespace)
+                    {
+                        end += 1;
+                    }
+
+                    (start, end)
+                };
+
+                let mut seen_word_starts = HashSet::new();
+                let mut seen_char_starts: HashSet<char> = HashSet::new();
+
+                // Iterate through positions in the appropriate direction
                 let char_iter: Vec<_> = if forward {
-                    chars.iter().collect()
+                    searchable_positions.iter().collect()
                 } else {
-                    chars.iter().rev().collect()
+                    searchable_positions.iter().rev().collect()
                 };
 
                 for &(byte_idx, c) in char_iter {
-                    if !seen_chars.contains(&c) {
-                        seen_chars.insert(c);
+                    if c.is_ascii_lowercase() {
+                        let (word_start, _) = find_word_boundaries(byte_idx);
 
-                        let pos = Point::new(cursor_position.row, byte_idx as u32);
+                        // Only highlight if we haven't processed this word yet
+                        if !seen_word_starts.contains(&word_start) && !seen_char_starts.contains(&c)
+                        {
+                            let pos = Point::new(cursor_position.row, byte_idx as u32);
 
-                        // Create anchors safely within the line bounds
-                        let start_pos = if before {
-                            snapshot.anchor_before(pos)
-                        } else {
-                            snapshot.anchor_at(pos, Bias::Left)
-                        };
+                            let start_pos = if before {
+                                snapshot.anchor_before(pos)
+                            } else {
+                                snapshot.anchor_at(pos, Bias::Left)
+                            };
 
-                        // Find the next character's byte position for the end anchor
-                        let next_byte_idx = char_positions
-                            .iter()
-                            .find(|(idx, _)| *idx > byte_idx)
-                            .map(|(idx, _)| *idx)
-                            .unwrap_or_else(|| byte_idx + c.len_utf8());
+                            let next_byte_idx = all_char_positions
+                                .iter()
+                                .find(|(idx, _)| *idx > byte_idx)
+                                .map(|(idx, _)| *idx)
+                                .unwrap_or_else(|| byte_idx + 1);
 
-                        let end_pos = snapshot.anchor_at(
-                            Point::new(cursor_position.row, next_byte_idx as u32),
-                            Bias::Right,
-                        );
+                            let end_pos = snapshot.anchor_at(
+                                Point::new(cursor_position.row, next_byte_idx as u32),
+                                Bias::Right,
+                            );
 
-                        highlights.push(start_pos..end_pos);
+                            highlights.push(start_pos..end_pos);
+                        }
+
+                        seen_word_starts.insert(word_start);
+                        seen_char_starts.insert(c);
                     }
                 }
             }
 
-            // Apply highlights
+            // Throw away the first word
+            highlights.remove(0);
+
             let theme_settings = ThemeSettings::get_global(cx);
             let style = HighlightStyle {
                 background_color: Some(theme_settings.active_theme.colors().element_selected),
