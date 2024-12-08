@@ -266,11 +266,11 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn show_window_menu(&self, _position: Point<Pixels>) {
+    fn show_menu(&self, _position: Point<Pixels>) {
         unimplemented!()
     }
 
-    fn start_window_move(&self) {
+    fn start_move(&self) {
         unimplemented!()
     }
 

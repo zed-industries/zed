@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use gpui::*;
+use gpui3 as gpui;
 use std::fs;
 
 struct Assets {
@@ -48,7 +49,7 @@ impl ImageContainer {
 }
 
 impl RenderOnce for ImageContainer {
-    fn render(self, _: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _: &mut Window, _: &mut AppContext) -> impl IntoElement {
         div().child(
             div()
                 .flex_row()
@@ -67,7 +68,12 @@ struct ImageShowcase {
 }
 
 impl Render for ImageShowcase {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _model: &Model<Self>,
+        _window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         div()
             .size_full()
             .flex()
@@ -150,8 +156,8 @@ fn main() {
                 ..Default::default()
             };
 
-            cx.open_window(window_options, |cx| {
-                cx.new_view(|_cx| ImageShowcase {
+            cx.open_window(window_options, |_, _, _| {
+                ImageShowcase {
                     // Relative path to your root project path
                     local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
                         .unwrap()
@@ -160,7 +166,7 @@ fn main() {
                     remote_resource: "https://picsum.photos/512/512".into(),
 
                     asset_resource: "image/color.svg".into(),
-                })
+                }
             })
             .unwrap();
         });

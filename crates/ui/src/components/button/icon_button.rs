@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{AnyView, DefiniteLength};
+use gpui::{AnyElement, DefiniteLength};
 
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
 use crate::{prelude::*, ElevationIndex, SelectableButton};
@@ -83,7 +83,7 @@ impl SelectableButton for IconButton {
 impl Clickable for IconButton {
     fn on_click(
         mut self,
-        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static,
     ) -> Self {
         self.base = self.base.on_click(handler);
         self
@@ -122,7 +122,10 @@ impl ButtonCommon for IconButton {
         self
     }
 
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip<F>(mut self, tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F) -> Self
+    where
+        F: 'static + Fn(&mut Window, &mut AppContext) -> AnyElement,
+    {
         self.base = self.base.tooltip(tooltip);
         self
     }
@@ -141,7 +144,7 @@ impl VisibleOnHover for IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
         let selected_style = self.base.selected_style;
@@ -149,7 +152,7 @@ impl RenderOnce for IconButton {
         self.base
             .map(|this| match self.shape {
                 IconButtonShape::Square => {
-                    let size = self.icon_size.square(cx);
+                    let size = self.icon_size.square(window, cx);
                     this.width(size.into()).height(size.into())
                 }
                 IconButtonShape::Wide => this,

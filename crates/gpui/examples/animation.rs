@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use gpui::*;
+use gpui3 as gpui;
 
 struct Assets {}
 
@@ -28,10 +29,15 @@ const ARROW_CIRCLE_SVG: &str = concat!(
     "/examples/image/arrow_circle.svg"
 );
 
-struct AnimationExample {}
+struct AnimationExample;
 
 impl Render for AnimationExample {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _model: &Model<Self>,
+        _window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         div().flex().flex_col().size_full().justify_around().child(
             div().flex().flex_row().w_full().justify_around().child(
                 div()
@@ -78,10 +84,7 @@ fn main() {
                 ))),
                 ..Default::default()
             };
-            cx.open_window(options, |cx| {
-                cx.activate(false);
-                cx.new_view(|_cx| AnimationExample {})
-            })
-            .unwrap();
+            cx.activate(false);
+            cx.open_window(options, |_, _, _| AnimationExample).unwrap();
         });
 }

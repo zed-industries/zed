@@ -74,11 +74,11 @@ impl Tab {
         self
     }
 
-    pub fn content_height(cx: &mut WindowContext) -> Pixels {
+    pub fn content_height(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Pixels {
         DynamicSpacing::Base32.px(cx) - px(1.)
     }
 
-    pub fn container_height(cx: &mut WindowContext) -> Pixels {
+    pub fn container_height(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Pixels {
         DynamicSpacing::Base32.px(cx)
     }
 }
@@ -106,7 +106,7 @@ impl ParentElement for Tab {
 
 impl RenderOnce for Tab {
     #[allow(refining_impl_trait)]
-    fn render(self, cx: &mut WindowContext) -> Stateful<Div> {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> Stateful<Div> {
         let (text_color, tab_bg, _tab_hover_bg, _tab_active_bg) = match self.selected {
             false => (
                 cx.theme().colors().text_muted,
@@ -134,7 +134,7 @@ impl RenderOnce for Tab {
         };
 
         self.div
-            .h(Tab::container_height(cx))
+            .h(Tab::container_height(window, cx))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
             .map(|this| match self.position {
@@ -161,7 +161,7 @@ impl RenderOnce for Tab {
                 h_flex()
                     .group("")
                     .relative()
-                    .h(Tab::content_height(cx))
+                    .h(Tab::content_height(window, cx))
                     .px(DynamicSpacing::Base04.px(cx))
                     .gap(DynamicSpacing::Base04.rems(cx))
                     .text_color(text_color)

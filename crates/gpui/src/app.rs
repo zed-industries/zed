@@ -22,24 +22,22 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
 pub use entity_map::*;
 use http_client::HttpClient;
-pub use model_context::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
-    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyElement,
+    AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase,
+    DisplayId, Entity, EventEmitter, FocusHandle, ForegroundExecutor, Global, IntoElement,
+    KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, Point, PromptBuilder, PromptLevel, Render, Reservation,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
+    WindowAppearance, WindowHandle, WindowId,
 };
 
 mod async_context;
 mod entity_map;
-mod model_context;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
 
@@ -213,10 +211,9 @@ impl App {
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
 pub(crate) type KeystrokeObserver =
-    Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) -> bool + 'static>;
+    Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut AppContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
-type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
 type NewModelListener = Box<dyn FnMut(AnyModel, &mut AppContext) + 'static>;
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
@@ -239,7 +236,6 @@ pub struct AppContext {
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_model_observers: SubscriberSet<TypeId, NewModelListener>,
-    pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
@@ -300,7 +296,6 @@ impl AppContext {
                 http_client,
                 globals_by_type: FxHashMap::default(),
                 entities,
-                new_view_observers: SubscriberSet::new(),
                 new_model_observers: SubscriberSet::new(),
                 window_handles: FxHashMap::default(),
                 windows: SlotMap::with_key(),
@@ -416,6 +411,18 @@ impl AppContext {
         }
         self.pending_updates -= 1;
         result
+    }
+
+    /// Notifies observers of the entity with the given ID.
+    pub fn notify(&mut self, entity_id: Option<EntityId>) {
+        if let Some(entity_id) = entity_id {
+            if self.pending_notifications.insert(entity_id) {
+                self.pending_effects
+                    .push_back(Effect::Notify { emitter: entity_id });
+            }
+        } else {
+            self.refresh();
+        }
     }
 
     /// Arrange a callback to be invoked when the given model or view calls `notify` on its respective context.
@@ -544,19 +551,28 @@ impl AppContext {
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
     /// functionality.
-    pub fn open_window<V: 'static + Render>(
+    pub fn open_window<T>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
-    ) -> anyhow::Result<WindowHandle<V>> {
+        builder: impl FnOnce(&Model<T>, &mut Window, &mut AppContext) -> T,
+    ) -> anyhow::Result<WindowHandle<T>>
+    where
+        T: 'static + Render,
+    {
         self.update(|cx| {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
-                    let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
-                    window.root_view.replace(root_view.into());
-                    WindowContext::new(cx, &mut window).defer(|cx| cx.appearance_changed());
+                    window.state = Some(
+                        cx.new_model(|model, cx| builder(model, &mut window, cx))
+                            .into(),
+                    );
+                    window.render = Some(Box::new(move |any_state| {
+                        any_state.downcast::<T>().unwrap().into_any_element()
+                    }));
+
+                    window.appearance_changed(cx);
                     cx.window_handles.insert(id, window.handle);
                     cx.windows.get_mut(id).unwrap().replace(window);
                     Ok(handle)
@@ -805,7 +821,8 @@ impl AppContext {
                     })
                     .collect::<Vec<_>>()
                 {
-                    self.update_window(window, |_, cx| cx.draw()).unwrap();
+                    self.update_window(window, |window, cx| window.draw(cx))
+                        .unwrap();
                 }
 
                 if self.pending_effects.is_empty() {
@@ -839,10 +856,10 @@ impl AppContext {
     fn release_dropped_focus_handles(&mut self) {
         for window_handle in self.windows() {
             window_handle
-                .update(self, |_, cx| {
+                .update(self, |window, _cx| {
                     let mut blur_window = false;
-                    let focus = cx.window.focus;
-                    cx.window.focus_handles.write().retain(|handle_id, count| {
+                    let focus = window.focus;
+                    window.focus_handles.write().retain(|handle_id, count| {
                         if count.load(SeqCst) == 0 {
                             if focus == Some(handle_id) {
                                 blur_window = true;
@@ -854,7 +871,7 @@ impl AppContext {
                     });
 
                     if blur_window {
-                        cx.blur();
+                        window.blur();
                     }
                 })
                 .unwrap();
@@ -1053,31 +1070,6 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
-    pub(crate) fn new_view_observer(&self, key: TypeId, value: NewViewListener) -> Subscription {
-        let (subscription, activate) = self.new_view_observers.insert(key, value);
-        activate();
-        subscription
-    }
-
-    /// Arrange for the given function to be invoked whenever a view of the specified type is created.
-    /// The function will be passed a mutable reference to the view along with an appropriate context.
-    pub fn observe_new_views<V: 'static>(
-        &self,
-        on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
-    ) -> Subscription {
-        self.new_view_observer(
-            TypeId::of::<V>(),
-            Box::new(move |any_view: AnyView, cx: &mut WindowContext| {
-                any_view
-                    .downcast::<V>()
-                    .unwrap()
-                    .update(cx, |view_state, cx| {
-                        on_new(view_state, cx);
-                    })
-            }),
-        )
-    }
-
     pub(crate) fn new_model_observer(&self, key: TypeId, value: NewModelListener) -> Subscription {
         let (subscription, activate) = self.new_model_observers.insert(key, value);
         activate();
@@ -1088,7 +1080,7 @@ impl AppContext {
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_models<T: 'static>(
         &self,
-        on_new: impl 'static + Fn(&mut T, &mut ModelContext<T>),
+        on_new: impl 'static + Fn(&mut T, &Model<T>, &mut AppContext),
     ) -> Subscription {
         self.new_model_observer(
             TypeId::of::<T>(),
@@ -1096,8 +1088,8 @@ impl AppContext {
                 any_model
                     .downcast::<T>()
                     .unwrap()
-                    .update(cx, |model_state, cx| {
-                        on_new(model_state, cx);
+                    .update(cx, |state, model, cx| {
+                        on_new(state, model, cx);
                     })
             }),
         )
@@ -1130,7 +1122,7 @@ impl AppContext {
     /// and that this API will not be invoked if the event's propagation is stopped.
     pub fn observe_keystrokes(
         &mut self,
-        mut f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
+        mut f: impl FnMut(&KeystrokeEvent, &mut Window, &mut AppContext) + 'static,
     ) -> Subscription {
         fn inner(
             keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
@@ -1143,8 +1135,8 @@ impl AppContext {
 
         inner(
             &mut self.keystroke_observers,
-            Box::new(move |event, cx| {
-                f(event, cx);
+            Box::new(move |event, window, cx| {
+                f(event, window, cx);
                 true
             }),
         )
@@ -1284,7 +1276,9 @@ impl AppContext {
     pub fn dispatch_action(&mut self, action: &dyn Action) {
         if let Some(active_window) = self.active_window() {
             active_window
-                .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
+                .update(self, |window, cx| {
+                    window.dispatch_action(action.boxed_clone(), cx)
+                })
                 .log_err();
         } else {
             self.dispatch_global_action(action);
@@ -1348,17 +1342,19 @@ impl AppContext {
     /// prompts with this custom implementation.
     pub fn set_prompt_builder(
         &mut self,
-        renderer: impl Fn(
+        prompt_builder: impl Fn(
                 PromptLevel,
                 &str,
                 Option<&str>,
                 &[&str],
-                PromptHandle,
-                &mut WindowContext,
-            ) -> RenderablePromptHandle
+                FocusHandle,
+                Rc<dyn Fn(usize, &mut Window)>,
+                &mut Window,
+                &mut AppContext,
+            ) -> Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>
             + 'static,
     ) {
-        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
+        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(prompt_builder)))
     }
 
     /// Remove an asset from GPUI's cache
@@ -1405,12 +1401,12 @@ impl Context for AppContext {
     /// which can be used to access the entity in a context.
     fn new_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Model<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
             let model = slot.clone();
-            let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
+            let entity = build_model(&slot, cx);
             cx.entities.insert(slot, entity);
 
             // Non-generic part to avoid leaking SubscriberSet to invokers of `new_view`.
@@ -1434,11 +1430,11 @@ impl Context for AppContext {
     fn insert_model<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Self::Result<Model<T>> {
         self.update(|cx| {
             let slot = reservation.0;
-            let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
+            let entity = build_model(&slot, cx);
             cx.entities.insert(slot, entity)
         })
     }
@@ -1448,11 +1444,11 @@ impl Context for AppContext {
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &Model<T>, &mut AppContext) -> R,
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(model);
-            let result = update(&mut entity, &mut ModelContext::new(cx, model.downgrade()));
+            let result = update(&mut entity, model, cx);
             cx.entities.end_lease(entity);
             result
         })
@@ -1461,18 +1457,18 @@ impl Context for AppContext {
     fn read_model<T, R>(
         &self,
         handle: &Model<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        read: impl FnOnce(&T, &Model<T>, &AppContext) -> R,
     ) -> Self::Result<R>
     where
         T: 'static,
     {
         let entity = self.entities.read(handle);
-        read(entity, self)
+        read(entity, handle, self)
     }
 
     fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+        F: FnOnce(&mut Window, &mut AppContext) -> T,
     {
         self.update(|cx| {
             let mut window = cx
@@ -1482,8 +1478,7 @@ impl Context for AppContext {
                 .take()
                 .ok_or_else(|| anyhow!("window not found"))?;
 
-            let root_view = window.root_view.clone().unwrap();
-            let result = update(root_view, &mut WindowContext::new(cx, &mut window));
+            let result = update(&mut window, cx);
 
             if window.removed {
                 cx.window_handles.remove(&handle.id);
@@ -1499,27 +1494,19 @@ impl Context for AppContext {
         })
     }
 
-    fn read_window<T, R>(
+    fn read_window<R>(
         &self,
-        window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
-    ) -> Result<R>
-    where
-        T: 'static,
-    {
+        handle: AnyWindowHandle,
+        read: impl FnOnce(&Window, &AppContext) -> R,
+    ) -> Result<R> {
         let window = self
             .windows
-            .get(window.id)
+            .get(handle.id)
             .ok_or_else(|| anyhow!("window not found"))?
             .as_ref()
             .unwrap();
 
-        let root_view = window.root_view.clone().unwrap();
-        let view = root_view
-            .downcast::<T>()
-            .map_err(|_| anyhow!("root view's type has changed"))?;
-
-        Ok(read(view, self))
+        Ok(read(window, self))
     }
 }
 
@@ -1574,8 +1561,8 @@ impl<G: Global> DerefMut for GlobalLease<G> {
 /// Contains state associated with an active drag operation, started by dragging an element
 /// within the window or by dragging into the app from the underlying platform.
 pub struct AnyDrag {
-    /// The view used to render this drag
-    pub view: AnyView,
+    /// How this drag is displayed on screen
+    pub render: Box<dyn Fn(&mut dyn Any, &mut Window, &mut AppContext) -> AnyElement>,
 
     /// The value of the dragged item, to be dropped
     pub value: Box<dyn Any>,
@@ -1589,8 +1576,8 @@ pub struct AnyDrag {
 /// tooltip behavior on a custom element. Otherwise, use [Div::tooltip].
 #[derive(Clone)]
 pub struct AnyTooltip {
-    /// The view used to display the tooltip
-    pub view: AnyView,
+    /// How this tooltip is displayed on screen
+    pub render: Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
 
     /// The absolute position of the mouse when the tooltip was deployed.
     pub mouse_position: Point<Pixels>,

@@ -1,9 +1,15 @@
 use gpui::*;
+use gpui3 as gpui;
 
-struct SetMenus;
+struct SetMenusExample;
 
-impl Render for SetMenus {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+impl Render for SetMenusExample {
+    fn render(
+        &mut self,
+        _model: &Model<Self>,
+        _window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         div()
             .flex()
             .bg(rgb(0x2e7d32))
@@ -27,10 +33,8 @@ fn main() {
             name: "set_menus".into(),
             items: vec![MenuItem::action("Quit", Quit)],
         }]);
-        cx.open_window(WindowOptions::default(), |cx| {
-            cx.new_view(|_cx| SetMenus {})
-        })
-        .unwrap();
+        cx.open_window(WindowOptions::default(), |_, _, _| SetMenusExample)
+            .unwrap();
     });
 }
 

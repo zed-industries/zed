@@ -1,7 +1,6 @@
 use gpui::*;
+use gpui3 as gpui;
 use prelude::FluentBuilder;
-
-struct WindowShadow {}
 
 /*
 Things to do:
@@ -11,14 +10,21 @@ Things to do:
 3. We need to implement the techniques in here in Zed
 */
 
-impl Render for WindowShadow {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let decorations = cx.window_decorations();
+struct WindowShadowExample;
+
+impl Render for WindowShadowExample {
+    fn render(
+        &mut self,
+        _model: &Model<Self>,
+        window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
+        let decorations = window.window_decorations();
         let rounding = px(10.0);
         let shadow_size = px(10.0);
         let border_size = px(1.0);
         let grey = rgb(0x808080);
-        cx.set_client_inset(shadow_size);
+        window.set_client_inset(shadow_size);
 
         div()
             .id("window-backdrop")
@@ -29,22 +35,22 @@ impl Render for WindowShadow {
                     .bg(gpui::transparent_black())
                     .child(
                         canvas(
-                            |_bounds, cx| {
-                                cx.insert_hitbox(
+                            |_bounds, window, _cx| {
+                                window.insert_hitbox(
                                     Bounds::new(
                                         point(px(0.0), px(0.0)),
-                                        cx.window_bounds().get_bounds().size,
+                                        window.window_bounds().get_bounds().size,
                                     ),
                                     false,
                                 )
                             },
-                            move |_bounds, hitbox, cx| {
-                                let mouse = cx.mouse_position();
-                                let size = cx.window_bounds().get_bounds().size;
+                            move |_bounds, hitbox, window, _cx| {
+                                let mouse = window.mouse_position();
+                                let size = window.window_bounds().get_bounds().size;
                                 let Some(edge) = resize_edge(mouse, shadow_size, size) else {
                                     return;
                                 };
-                                cx.set_cursor_style(
+                                window.set_cursor_style(
                                     match edge {
                                         ResizeEdge::Top | ResizeEdge::Bottom => {
                                             CursorStyle::ResizeUpDown
@@ -74,14 +80,14 @@ impl Render for WindowShadow {
                     .when(!tiling.bottom, |div| div.pb(shadow_size))
                     .when(!tiling.left, |div| div.pl(shadow_size))
                     .when(!tiling.right, |div| div.pr(shadow_size))
-                    .on_mouse_move(|_e, cx| cx.refresh())
-                    .on_mouse_down(MouseButton::Left, move |e, cx| {
-                        let size = cx.window_bounds().get_bounds().size;
+                    .on_mouse_move(|_e, window, _cx| window.refresh())
+                    .on_mouse_down(MouseButton::Left, move |e, window, _cx| {
+                        let size = window.window_bounds().get_bounds().size;
                         let pos = e.position;
 
                         match resize_edge(pos, shadow_size, size) {
-                            Some(edge) => cx.start_window_resize(edge),
-                            None => cx.start_window_move(),
+                            Some(edge) => window.start_resize(edge),
+                            None => window.start_move(),
                         };
                     }),
             })
@@ -115,7 +121,7 @@ impl Render for WindowShadow {
                                 }])
                             }),
                     })
-                    .on_mouse_move(|_e, cx| {
+                    .on_mouse_move(|_e, _window, cx| {
                         cx.stop_propagation();
                     })
                     .bg(gpui::rgb(0xCCCCFF))
@@ -156,12 +162,15 @@ impl Render for WindowShadow {
                                         .map(|div| match decorations {
                                             Decorations::Server => div,
                                             Decorations::Client { .. } => div
-                                                .on_mouse_down(MouseButton::Left, |_e, cx| {
-                                                    cx.start_window_move();
-                                                })
-                                                .on_click(|e, cx| {
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    |_e, window, _cx| {
+                                                        window.start_move();
+                                                    },
+                                                )
+                                                .on_click(|e, window, _cx| {
                                                     if e.down.button == MouseButton::Right {
-                                                        cx.show_window_menu(e.up.position);
+                                                        window.show_menu(e.up.position);
                                                     }
                                                 })
                                                 .text_color(black())
@@ -207,14 +216,13 @@ fn main() {
                 window_decorations: Some(WindowDecorations::Client),
                 ..Default::default()
             },
-            |cx| {
-                cx.new_view(|cx| {
-                    cx.observe_window_appearance(|_, cx| {
+            |_model, window, _cx| {
+                window
+                    .observe_appearance(|_, cx| {
                         cx.refresh();
                     })
                     .detach();
-                    WindowShadow {}
-                })
+                WindowShadowExample
             },
         )
         .unwrap();

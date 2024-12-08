@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 use crate::prelude::*;
+use theme::ActiveTheme;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub enum Availability {
@@ -29,8 +30,8 @@ impl AvatarAvailabilityIndicator {
 }
 
 impl RenderOnce for AvatarAvailabilityIndicator {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let avatar_size = self.avatar_size.unwrap_or_else(|| cx.rem_size());
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+        let avatar_size = self.avatar_size.unwrap_or_else(|| window.rem_size());
 
         // HACK: non-integer sizes result in oval indicators.
         let indicator_size = (avatar_size * 0.4).round();

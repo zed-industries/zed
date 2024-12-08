@@ -2,9 +2,7 @@
 
 use crate::prelude::*;
 use crate::v_flex;
-use gpui::{
-    div, AnyElement, Element, IntoElement, ParentElement, RenderOnce, Styled, WindowContext,
-};
+use gpui::{div, AnyElement, Element, IntoElement, ParentElement, RenderOnce, Styled};
 use smallvec::SmallVec;
 
 /// A popover is used to display a menu or show some options.
@@ -41,15 +39,20 @@ pub struct Popover {
 }
 
 impl RenderOnce for Popover {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         div()
             .flex()
             .gap_1()
-            .child(v_flex().elevation_2(cx).py_1().children(self.children))
+            .child(
+                v_flex()
+                    .elevation_2(window, cx)
+                    .py_1()
+                    .children(self.children),
+            )
             .when_some(self.aside, |this, aside| {
                 this.child(
                     v_flex()
-                        .elevation_2(cx)
+                        .elevation_2(window, cx)
                         .bg(cx.theme().colors().surface_background)
                         .px_1()
                         .child(aside),

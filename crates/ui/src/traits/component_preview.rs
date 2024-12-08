@@ -30,20 +30,20 @@ pub trait ComponentPreview: IntoElement {
         ExampleLabelSide::default()
     }
 
-    fn examples(_cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>>;
+    fn examples(window: &Window, cx: &AppContext) -> Vec<ComponentExampleGroup<Self>>;
 
-    fn custom_example(_cx: &WindowContext) -> impl Into<Option<AnyElement>> {
+    fn custom_example(_window: &Window, _cx: &AppContext) -> impl Into<Option<AnyElement>> {
         None::<AnyElement>
     }
 
-    fn component_previews(cx: &WindowContext) -> Vec<AnyElement> {
-        Self::examples(cx)
+    fn component_previews(window: &Window, cx: &AppContext) -> Vec<AnyElement> {
+        Self::examples(window, cx)
             .into_iter()
             .map(|example| Self::render_example_group(example))
             .collect()
     }
 
-    fn render_component_previews(cx: &WindowContext) -> AnyElement {
+    fn render_component_previews(window: &Window, cx: &AppContext) -> AnyElement {
         let title = Self::title();
         let (source, title) = title
             .rsplit_once("::")
@@ -71,17 +71,18 @@ pub trait ComponentPreview: IntoElement {
                     .when_some(description, |this, description| {
                         this.child(
                             div()
-                                .text_ui_sm(cx)
+                                .text_ui_sm(window, cx)
                                 .text_color(cx.theme().colors().text_muted)
                                 .max_w(px(600.0))
                                 .child(description),
                         )
                     }),
             )
-            .when_some(Self::custom_example(cx).into(), |this, custom_example| {
-                this.child(custom_example)
-            })
-            .children(Self::component_previews(cx))
+            .when_some(
+                Self::custom_example(window, cx).into(),
+                |this, custom_example| this.child(custom_example),
+            )
+            .children(Self::component_previews(window, cx))
             .into_any_element()
     }
 

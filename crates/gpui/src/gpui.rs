@@ -96,7 +96,6 @@ mod taffy;
 pub mod test;
 mod text_system;
 mod util;
-mod view;
 mod window;
 
 /// Do not touch, here be dragons for use by gpui_macros and such.
@@ -149,7 +148,7 @@ pub use taffy::{AvailableSpace, LayoutId};
 pub use test::*;
 pub use text_system::*;
 pub use util::arc_cow::ArcCow;
-pub use view::*;
+pub use window::FocusableView;
 pub use window::*;
 
 use std::{any::Any, borrow::BorrowMut};
@@ -165,7 +164,7 @@ pub trait Context {
     /// Create a new model in the app context.
     fn new_model<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Self::Result<Model<T>>;
 
     /// Reserve a slot for a model to be inserted later.
@@ -178,14 +177,14 @@ pub trait Context {
     fn insert_model<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+        build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
     ) -> Self::Result<Model<T>>;
 
     /// Update a model in the app context.
     fn update_model<T, R>(
         &mut self,
         handle: &Model<T>,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &Model<T>, &mut AppContext) -> R,
     ) -> Self::Result<R>
     where
         T: 'static;
@@ -194,24 +193,22 @@ pub trait Context {
     fn read_model<T, R>(
         &self,
         handle: &Model<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        read: impl FnOnce(&T, &Model<T>, &AppContext) -> R,
     ) -> Self::Result<R>
     where
         T: 'static;
 
     /// Update a window for the given handle.
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T;
+        F: FnOnce(&mut Window, &mut AppContext) -> T;
 
     /// Read a window off of the application context.
-    fn read_window<T, R>(
+    fn read_window<R>(
         &self,
-        window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
-    ) -> Result<R>
-    where
-        T: 'static;
+        window: AnyWindowHandle,
+        read: impl FnOnce(&Window, &AppContext) -> R,
+    ) -> Result<R>;
 }
 
 /// Returned by [Context::reserve_model] to later be passed to [Context::insert_model].
@@ -223,43 +220,6 @@ impl<T: 'static> Reservation<T> {
     pub fn entity_id(&self) -> EntityId {
         self.0.entity_id()
     }
-}
-
-/// This trait is used for the different visual contexts in GPUI that
-/// require a window to be present.
-pub trait VisualContext: Context {
-    /// Construct a new view in the window referenced by this context.
-    fn new_view<V>(
-        &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
-    ) -> Self::Result<View<V>>
-    where
-        V: 'static + Render;
-
-    /// Update a view with the given callback
-    fn update_view<V: 'static, R>(
-        &mut self,
-        view: &View<V>,
-        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
-    ) -> Self::Result<R>;
-
-    /// Replace the root view of a window with a new view.
-    fn replace_root_view<V>(
-        &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
-    ) -> Self::Result<View<V>>
-    where
-        V: 'static + Render;
-
-    /// Focus a view in the window, if it implements the [`FocusableView`] trait.
-    fn focus_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
-    where
-        V: FocusableView;
-
-    /// Dismiss a view in the window, if it implements the [`ManagedView`] trait.
-    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
-    where
-        V: ManagedView;
 }
 
 /// A trait that allows models and views to be interchangeable in certain operations

@@ -10,7 +10,7 @@ pub struct Disclosure {
     id: ElementId,
     is_open: bool,
     selected: bool,
-    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut gpui::Window, &mut gpui::AppContext) + 'static>>,
     cursor_style: CursorStyle,
 }
 
@@ -27,7 +27,9 @@ impl Disclosure {
 
     pub fn on_toggle(
         mut self,
-        handler: impl Into<Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>>,
+        handler: impl Into<
+            Option<Arc<dyn Fn(&ClickEvent, &mut gpui::Window, &mut gpui::AppContext) + 'static>>,
+        >,
     ) -> Self {
         self.on_toggle = handler.into();
         self
@@ -42,7 +44,10 @@ impl Selectable for Disclosure {
 }
 
 impl Clickable for Disclosure {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+    fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::AppContext) + 'static,
+    ) -> Self {
         self.on_toggle = Some(Arc::new(handler));
         self
     }
@@ -54,7 +59,7 @@ impl Clickable for Disclosure {
 }
 
 impl RenderOnce for Disclosure {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         IconButton::new(
             self.id,
             match self.is_open {
@@ -67,7 +72,7 @@ impl RenderOnce for Disclosure {
         .icon_size(IconSize::Small)
         .selected(self.selected)
         .when_some(self.on_toggle, move |this, on_toggle| {
-            this.on_click(move |event, cx| on_toggle(event, cx))
+            this.on_click(move |event, window, cx| on_toggle(event, window, cx))
         })
     }
 }

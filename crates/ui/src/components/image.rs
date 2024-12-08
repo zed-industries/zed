@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{svg, IntoElement, Rems, RenderOnce, Size, Styled, WindowContext};
+use gpui::{svg, AppContext, IntoElement, Rems, RenderOnce, Size, Styled};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::{path_str, DerivePathStr};
@@ -69,7 +69,8 @@ impl Vector {
 }
 
 impl RenderOnce for Vector {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
+        let _ = window;
         let width = self.size.width;
         let height = self.size.height;
 

@@ -3,22 +3,25 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    anchored, deferred, div, px, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase,
-    Element, ElementId, GlobalElementId, Hitbox, InteractiveElement, IntoElement, LayoutId,
-    ManagedView, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext,
-    WindowContext,
+    anchored, deferred, div, px, AnchorCorner, AnyElement, AppContext, Bounds, DismissEvent,
+    DispatchPhase, Element, ElementId, EventEmitter, FocusableView, GlobalElementId, Hitbox,
+    InteractiveElement, IntoElement, LayoutId, Model, MouseButton, MouseDownEvent, ParentElement,
+    Pixels, Point, Render, Window,
 };
 
-pub struct RightClickMenu<M: ManagedView> {
+pub struct RightClickMenu<M: FocusableView + EventEmitter<DismissEvent>> {
     id: ElementId,
     child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement + 'static>>,
-    menu_builder: Option<Rc<dyn Fn(&mut WindowContext) -> View<M> + 'static>>,
+    menu_builder: Option<Rc<dyn Fn(&mut Window, &mut gpui::AppContext) -> Model<M> + 'static>>,
     anchor: Option<AnchorCorner>,
     attach: Option<AnchorCorner>,
 }
 
-impl<M: ManagedView> RightClickMenu<M> {
-    pub fn menu(mut self, f: impl Fn(&mut WindowContext) -> View<M> + 'static) -> Self {
+impl<M: FocusableView + EventEmitter<DismissEvent>> RightClickMenu<M> {
+    pub fn menu(
+        mut self,
+        f: impl Fn(&mut Window, &mut gpui::AppContext) -> Model<M> + 'static,
+    ) -> Self {
         self.menu_builder = Some(Rc::new(f));
         self
     }
@@ -44,14 +47,20 @@ impl<M: ManagedView> RightClickMenu<M> {
     fn with_element_state<R>(
         &mut self,
         global_id: &GlobalElementId,
-        cx: &mut WindowContext,
-        f: impl FnOnce(&mut Self, &mut MenuHandleElementState<M>, &mut WindowContext) -> R,
+        window: &mut Window,
+        cx: &mut gpui::AppContext,
+        f: impl FnOnce(
+            &mut Self,
+            &mut MenuHandleElementState<M>,
+            &mut Window,
+            &mut gpui::AppContext,
+        ) -> R,
     ) -> R {
-        cx.with_optional_element_state::<MenuHandleElementState<M>, _>(
+        window.with_optional_element_state::<MenuHandleElementState<M>, _>(
             Some(global_id),
-            |element_state, cx| {
+            |element_state, window| {
                 let mut element_state = element_state.unwrap().unwrap_or_default();
-                let result = f(self, &mut element_state, cx);
+                let result = f(self, &mut element_state, window, cx);
                 (result, Some(element_state))
             },
         )
@@ -59,7 +68,9 @@ impl<M: ManagedView> RightClickMenu<M> {
 }
 
 /// Creates a [`RightClickMenu`]
-pub fn right_click_menu<M: ManagedView>(id: impl Into<ElementId>) -> RightClickMenu<M> {
+pub fn right_click_menu<M: FocusableView + EventEmitter<DismissEvent>>(
+    id: impl Into<ElementId>,
+) -> RightClickMenu<M> {
     RightClickMenu {
         id: id.into(),
         child_builder: None,
@@ -70,7 +81,7 @@ pub fn right_click_menu<M: ManagedView>(id: impl Into<ElementId>) -> RightClickM
 }
 
 pub struct MenuHandleElementState<M> {
-    menu: Rc<RefCell<Option<View<M>>>>,
+    menu: Rc<RefCell<Option<Model<M>>>>,
     position: Rc<RefCell<Point<Pixels>>>,
 }
 
@@ -103,7 +114,7 @@ pub struct PrepaintState {
     child_bounds: Option<Bounds<Pixels>>,
 }
 
-impl<M: ManagedView> Element for RightClickMenu<M> {
+impl<M: FocusableView + EventEmitter<DismissEvent> + Render> Element for RightClickMenu<M> {
     type RequestLayoutState = RequestLayoutState;
     type PrepaintState = PrepaintState;
 
@@ -114,49 +125,56 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        self.with_element_state(id.unwrap(), cx, |this, element_state, cx| {
-            let mut menu_layout_id = None;
+        self.with_element_state(
+            id.unwrap(),
+            window,
+            cx,
+            |this, element_state, window, cx| {
+                let mut menu_layout_id = None;
 
-            let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
-                let mut anchored = anchored().snap_to_window_with_margin(px(8.));
-                if let Some(anchor) = this.anchor {
-                    anchored = anchored.anchor(anchor);
-                }
-                anchored = anchored.position(*element_state.position.borrow());
+                let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
+                    let mut anchored = anchored().snap_to_window_with_margin(px(8.));
+                    if let Some(anchor) = this.anchor {
+                        anchored = anchored.anchor(anchor);
+                    }
+                    anchored = anchored.position(*element_state.position.borrow());
 
-                let mut element = deferred(anchored.child(div().occlude().child(menu.clone())))
-                    .with_priority(1)
-                    .into_any();
+                    let mut element = deferred(anchored.child(div().occlude().child(menu.clone())))
+                        .with_priority(1)
+                        .into_any();
 
-                menu_layout_id = Some(element.request_layout(cx));
-                element
-            });
+                    menu_layout_id = Some(element.request_layout(window, cx));
+                    element
+                });
 
-            let mut child_element = this
-                .child_builder
-                .take()
-                .map(|child_builder| (child_builder)(element_state.menu.borrow().is_some()));
+                let mut child_element = this
+                    .child_builder
+                    .take()
+                    .map(|child_builder| (child_builder)(element_state.menu.borrow().is_some()));
 
-            let child_layout_id = child_element
-                .as_mut()
-                .map(|child_element| child_element.request_layout(cx));
+                let child_layout_id = child_element
+                    .as_mut()
+                    .map(|child_element| child_element.request_layout(window, cx));
 
-            let layout_id = cx.request_layout(
-                gpui::Style::default(),
-                menu_layout_id.into_iter().chain(child_layout_id),
-            );
+                let layout_id = window.request_layout(
+                    gpui::Style::default(),
+                    menu_layout_id.into_iter().chain(child_layout_id),
+                    cx,
+                );
 
-            (
-                layout_id,
-                RequestLayoutState {
-                    child_element,
-                    child_layout_id,
-                    menu_element,
-                },
-            )
-        })
+                (
+                    layout_id,
+                    RequestLayoutState {
+                        child_element,
+                        child_layout_id,
+                        menu_element,
+                    },
+                )
+            },
+        )
     }
 
     fn prepaint(
@@ -164,23 +182,24 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> PrepaintState {
-        let hitbox = cx.insert_hitbox(bounds, false);
+        let hitbox = window.insert_hitbox(bounds, false);
 
         if let Some(child) = request_layout.child_element.as_mut() {
-            child.prepaint(cx);
+            child.prepaint(window, cx);
         }
 
         if let Some(menu) = request_layout.menu_element.as_mut() {
-            menu.prepaint(cx);
+            menu.prepaint(window, cx);
         }
 
         PrepaintState {
             hitbox,
             child_bounds: request_layout
                 .child_layout_id
-                .map(|layout_id| cx.layout_bounds(layout_id)),
+                .map(|layout_id| window.layout_bounds(layout_id)),
         }
     }
 
@@ -190,69 +209,84 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         _bounds: Bounds<gpui::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint_state: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut gpui::AppContext,
     ) {
-        self.with_element_state(id.unwrap(), cx, |this, element_state, cx| {
-            if let Some(mut child) = request_layout.child_element.take() {
-                child.paint(cx);
-            }
-
-            if let Some(mut menu) = request_layout.menu_element.take() {
-                menu.paint(cx);
-                return;
-            }
-
-            let Some(builder) = this.menu_builder.take() else {
-                return;
-            };
-
-            let attach = this.attach;
-            let menu = element_state.menu.clone();
-            let position = element_state.position.clone();
-            let child_bounds = prepaint_state.child_bounds;
-
-            let hitbox_id = prepaint_state.hitbox.id;
-            cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && event.button == MouseButton::Right
-                    && hitbox_id.is_hovered(cx)
-                {
-                    cx.stop_propagation();
-                    cx.prevent_default();
-
-                    let new_menu = (builder)(cx);
-                    let menu2 = menu.clone();
-                    let previous_focus_handle = cx.focused();
-
-                    cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
-                        if modal.focus_handle(cx).contains_focused(cx) {
-                            if let Some(previous_focus_handle) = previous_focus_handle.as_ref() {
-                                cx.focus(previous_focus_handle);
-                            }
-                        }
-                        *menu2.borrow_mut() = None;
-                        cx.refresh();
-                    })
-                    .detach();
-                    cx.focus_view(&new_menu);
-                    *menu.borrow_mut() = Some(new_menu);
-                    *position.borrow_mut() = if let Some(child_bounds) = child_bounds {
-                        if let Some(attach) = attach {
-                            attach.corner(child_bounds)
-                        } else {
-                            cx.mouse_position()
-                        }
-                    } else {
-                        cx.mouse_position()
-                    };
-                    cx.refresh();
+        self.with_element_state(
+            id.unwrap(),
+            window,
+            cx,
+            |this, element_state, window, cx| {
+                if let Some(mut child) = request_layout.child_element.take() {
+                    child.paint(window, cx);
                 }
-            });
-        })
+
+                if let Some(mut menu) = request_layout.menu_element.take() {
+                    menu.paint(window, cx);
+                    return;
+                }
+
+                let Some(builder) = this.menu_builder.take() else {
+                    return;
+                };
+
+                let attach = this.attach;
+                let menu = element_state.menu.clone();
+                let position = element_state.position.clone();
+                let child_bounds = prepaint_state.child_bounds;
+
+                let hitbox_id = prepaint_state.hitbox.id;
+                window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && event.button == MouseButton::Right
+                        && hitbox_id.is_hovered(window)
+                    {
+                        cx.stop_propagation();
+                        window.prevent_default();
+
+                        let new_menu = (builder)(window, cx);
+                        let menu2 = menu.clone();
+                        let previous_focus_handle = window.focused();
+
+                        cx.subscribe(&new_menu, {
+                            let window = window.handle();
+                            move |modal, _: &DismissEvent, cx| {
+                                window
+                                    .update(cx, |window, cx| {
+                                        if modal.focus_handle(cx).contains_focused(window) {
+                                            if let Some(previous_focus_handle) =
+                                                previous_focus_handle.as_ref()
+                                            {
+                                                window.focus(previous_focus_handle);
+                                            }
+                                        }
+                                        *menu2.borrow_mut() = None;
+                                        window.refresh();
+                                    })
+                                    .ok();
+                            }
+                        })
+                        .detach();
+                        window.focus_view(&new_menu, cx);
+                        *menu.borrow_mut() = Some(new_menu);
+                        *position.borrow_mut() = if let Some(child_bounds) = child_bounds {
+                            if let Some(attach) = attach {
+                                attach.corner(child_bounds)
+                            } else {
+                                window.mouse_position()
+                            }
+                        } else {
+                            window.mouse_position()
+                        };
+                        cx.refresh();
+                    }
+                });
+            },
+        )
     }
 }
 
-impl<M: ManagedView> IntoElement for RightClickMenu<M> {
+impl<M: FocusableView + EventEmitter<DismissEvent> + Render> IntoElement for RightClickMenu<M> {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {

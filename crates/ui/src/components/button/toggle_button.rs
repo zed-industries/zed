@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{AnyView, ClickEvent};
+use gpui::{AnyElement, ClickEvent};
 
 use crate::{prelude::*, ButtonLike, ButtonLikeRounding, ElevationIndex};
 
@@ -79,7 +79,10 @@ impl Disableable for ToggleButton {
 }
 
 impl Clickable for ToggleButton {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+    fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::AppContext) + 'static,
+    ) -> Self {
         self.base = self.base.on_click(handler);
         self
     }
@@ -105,7 +108,10 @@ impl ButtonCommon for ToggleButton {
         self
     }
 
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip<F>(mut self, tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F) -> Self
+    where
+        F: 'static + Fn(&mut Window, &mut AppContext) -> AnyElement,
+    {
         self.base = self.base.tooltip(tooltip);
         self
     }
@@ -117,7 +123,7 @@ impl ButtonCommon for ToggleButton {
 }
 
 impl RenderOnce for ToggleButton {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 

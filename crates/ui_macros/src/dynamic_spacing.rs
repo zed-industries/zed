@@ -143,7 +143,7 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
 
         impl DynamicSpacing {
             /// Returns the spacing ratio, should only be used internally.
-            fn spacing_ratio(&self, cx: &WindowContext) -> f32 {
+            fn spacing_ratio(&self, cx: &gpui::AppContext) -> f32 {
                 const BASE_REM_SIZE_IN_PX: f32 = 16.0;
                 match self {
                     #(#spacing_ratios,)*
@@ -151,12 +151,12 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
             }
 
             /// Returns the spacing value in rems.
-            pub fn rems(&self, cx: &WindowContext) -> Rems {
+            pub fn rems(&self, cx: &gpui::AppContext) -> Rems {
                 rems(self.spacing_ratio(cx))
             }
 
             /// Returns the spacing value in pixels.
-            pub fn px(&self, cx: &WindowContext) -> Pixels {
+            pub fn px(&self, cx: &gpui::AppContext) -> Pixels {
                 let ui_font_size_f32: f32 = ThemeSettings::get_global(cx).ui_font_size.into();
                 px(ui_font_size_f32 * self.spacing_ratio(cx))
             }

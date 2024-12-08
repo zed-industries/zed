@@ -1,102 +1,30 @@
-use std::ops::Deref;
-
-use futures::channel::oneshot;
+use std::{ops::Deref, rc::Rc};
 
 use crate::{
-    div, opaque_grey, white, AnyView, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    IntoElement, ParentElement, PromptLevel, Render, StatefulInteractiveElement, Styled, View,
-    ViewContext, VisualContext, WindowContext,
+    div, opaque_grey, white, AnyElement, AppContext, Element, FocusHandle, InteractiveElement,
+    ParentElement, PromptLevel, StatefulInteractiveElement, Styled, Window,
 };
-
-/// The event emitted when a prompt's option is selected.
-/// The usize is the index of the selected option, from the actions
-/// passed to the prompt.
-pub struct PromptResponse(pub usize);
-
-/// A prompt that can be rendered in the window.
-pub trait Prompt: EventEmitter<PromptResponse> + FocusableView {}
-
-impl<V: EventEmitter<PromptResponse> + FocusableView> Prompt for V {}
-
-/// A handle to a prompt that can be used to interact with it.
-pub struct PromptHandle {
-    sender: oneshot::Sender<usize>,
-}
-
-impl PromptHandle {
-    pub(crate) fn new(sender: oneshot::Sender<usize>) -> Self {
-        Self { sender }
-    }
-
-    /// Construct a new prompt handle from a view of the appropriate types
-    pub fn with_view<V: Prompt>(
-        self,
-        view: View<V>,
-        cx: &mut WindowContext,
-    ) -> RenderablePromptHandle {
-        let mut sender = Some(self.sender);
-        let previous_focus = cx.focused();
-        cx.subscribe(&view, move |_, e: &PromptResponse, cx| {
-            if let Some(sender) = sender.take() {
-                sender.send(e.0).ok();
-                cx.window.prompt.take();
-                if let Some(previous_focus) = &previous_focus {
-                    cx.focus(previous_focus);
-                }
-            }
-        })
-        .detach();
-
-        cx.focus_view(&view);
-
-        RenderablePromptHandle {
-            view: Box::new(view),
-        }
-    }
-}
-
-/// A prompt handle capable of being rendered in a window.
-pub struct RenderablePromptHandle {
-    pub(crate) view: Box<dyn PromptViewHandle>,
-}
 
 /// Use this function in conjunction with [AppContext::set_prompt_renderer] to force
 /// GPUI to always use the fallback prompt renderer.
 pub fn fallback_prompt_renderer(
-    level: PromptLevel,
+    _level: PromptLevel,
     message: &str,
     detail: Option<&str>,
     actions: &[&str],
-    handle: PromptHandle,
-    cx: &mut WindowContext,
-) -> RenderablePromptHandle {
-    let renderer = cx.new_view({
-        |cx| FallbackPromptRenderer {
-            _level: level,
-            message: message.to_string(),
-            detail: detail.map(ToString::to_string),
-            actions: actions.iter().map(ToString::to_string).collect(),
-            focus: cx.focus_handle(),
-        }
-    });
+    focus_handle: FocusHandle,
+    confirm: Rc<dyn Fn(usize, &mut Window)>,
+    _window: &mut Window,
+    _cx: &mut AppContext,
+) -> Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement> {
+    let message = message.to_string();
+    let detail = detail.map(|s| s.to_string());
+    let actions: Vec<String> = actions.iter().map(|&s| s.to_string()).collect();
 
-    handle.with_view(renderer, cx)
-}
-
-/// The default GPUI fallback for rendering prompts, when the platform doesn't support it.
-pub struct FallbackPromptRenderer {
-    _level: PromptLevel,
-    message: String,
-    detail: Option<String>,
-    actions: Vec<String>,
-    focus: FocusHandle,
-}
-
-impl Render for FallbackPromptRenderer {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    Box::new(move |_window, _cx| {
         let prompt = div()
             .cursor_default()
-            .track_focus(&self.focus)
+            .track_focus(&focus_handle)
             .w_72()
             .bg(white())
             .rounded_lg()
@@ -108,9 +36,9 @@ impl Render for FallbackPromptRenderer {
                     .flex()
                     .flex_row()
                     .justify_around()
-                    .child(div().overflow_hidden().child(self.message.clone())),
+                    .child(div().overflow_hidden().child(message.clone())),
             )
-            .children(self.detail.clone().map(|detail| {
+            .children(detail.clone().map(|detail| {
                 div()
                     .w_full()
                     .flex()
@@ -120,7 +48,7 @@ impl Render for FallbackPromptRenderer {
                     .mb_2()
                     .child(div().child(detail))
             }))
-            .children(self.actions.iter().enumerate().map(|(ix, action)| {
+            .children(actions.iter().enumerate().map(|(ix, action)| {
                 div()
                     .flex()
                     .flex_row()
@@ -133,9 +61,10 @@ impl Render for FallbackPromptRenderer {
                     .text_sm()
                     .child(action.clone())
                     .id(ix)
-                    .on_click(cx.listener(move |_, _, cx| {
-                        cx.emit(PromptResponse(ix));
-                    }))
+                    .on_click({
+                        let confirm = confirm.clone();
+                        move |_, window, _| confirm(ix, window)
+                    })
             }));
 
         div()
@@ -166,25 +95,8 @@ impl Render for FallbackPromptRenderer {
                             .child(prompt),
                     ),
             )
-    }
-}
-
-impl EventEmitter<PromptResponse> for FallbackPromptRenderer {}
-
-impl FocusableView for FallbackPromptRenderer {
-    fn focus_handle(&self, _: &crate::AppContext) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-
-pub(crate) trait PromptViewHandle {
-    fn any_view(&self) -> AnyView;
-}
-
-impl<V: Prompt> PromptViewHandle for View<V> {
-    fn any_view(&self) -> AnyView {
-        self.clone().into()
-    }
+            .into_any()
+    })
 }
 
 pub(crate) enum PromptBuilder {
@@ -196,9 +108,11 @@ pub(crate) enum PromptBuilder {
                 &str,
                 Option<&str>,
                 &[&str],
-                PromptHandle,
-                &mut WindowContext,
-            ) -> RenderablePromptHandle,
+                FocusHandle,
+                Rc<dyn Fn(usize, &mut Window)>,
+                &mut Window,
+                &mut AppContext,
+            ) -> Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
         >,
     ),
 }
@@ -209,14 +123,16 @@ impl Deref for PromptBuilder {
         &str,
         Option<&str>,
         &[&str],
-        PromptHandle,
-        &mut WindowContext,
-    ) -> RenderablePromptHandle;
+        FocusHandle,
+        Rc<dyn Fn(usize, &mut Window)>,
+        &mut Window,
+        &mut AppContext,
+    ) -> Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>;
 
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Default => &fallback_prompt_renderer,
-            Self::Custom(f) => f.as_ref(),
+            Self::Custom(f) => f,
         }
     }
 }

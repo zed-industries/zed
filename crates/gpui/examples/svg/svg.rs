@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use gpui::*;
+use gpui3 as gpui;
 use std::fs;
 
 struct Assets {
@@ -33,7 +34,12 @@ impl AssetSource for Assets {
 struct SvgExample;
 
 impl Render for SvgExample {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _model: &Model<Self>,
+        _window: &mut gpui::Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         div()
             .flex()
             .flex_row()
@@ -75,7 +81,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |cx| cx.new_view(|_cx| SvgExample),
+                |_, _, _| SvgExample,
             )
             .unwrap();
         });

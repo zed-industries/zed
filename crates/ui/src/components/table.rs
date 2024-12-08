@@ -49,12 +49,12 @@ impl Table {
         self
     }
 
-    fn base_cell_style(cx: &WindowContext) -> Div {
+    fn base_cell_style(window: &Window, cx: &AppContext) -> Div {
         div()
             .px_1p5()
             .flex_1()
             .justify_start()
-            .text_ui(cx)
+            .text_ui(window, cx)
             .whitespace_nowrap()
             .text_ellipsis()
             .overflow_hidden()
@@ -74,7 +74,7 @@ impl Table {
 }
 
 impl RenderOnce for Table {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let header = div()
             .flex()
             .flex_row()
@@ -85,7 +85,7 @@ impl RenderOnce for Table {
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .children(self.column_headers.into_iter().map(|h| {
-                Self::base_cell_style(cx)
+                Self::base_cell_style(window, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(h)
             }));
@@ -111,8 +111,8 @@ impl RenderOnce for Table {
                     row.border_b_1().border_color(cx.theme().colors().border)
                 })
                 .children(row.into_iter().map(|cell| match cell {
-                    TableCell::String(s) => Self::base_cell_style(cx).child(s),
-                    TableCell::Element(e) => Self::base_cell_style(cx).child(e),
+                    TableCell::String(s) => Self::base_cell_style(window, cx).child(s),
+                    TableCell::Element(e) => Self::base_cell_style(window, cx).child(e),
                 }))
         });
 
@@ -160,7 +160,7 @@ impl ComponentPreview for Table {
         ExampleLabelSide::Top
     }
 
-    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &Window, _: &AppContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group(vec![
                 single_example(

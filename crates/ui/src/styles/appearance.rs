@@ -1,8 +1,8 @@
 use crate::prelude::*;
-use gpui::{WindowBackgroundAppearance, WindowContext};
+use gpui::WindowBackgroundAppearance;
 
 /// Returns the [WindowBackgroundAppearance].
-fn window_appearance(cx: &WindowContext) -> WindowBackgroundAppearance {
+fn window_appearance(cx: &AppContext) -> WindowBackgroundAppearance {
     cx.theme().styles.window_background_appearance
 }
 
@@ -11,7 +11,7 @@ fn window_appearance(cx: &WindowContext) -> WindowBackgroundAppearance {
 ///
 /// Helps determine if you need to take extra steps to prevent
 /// transparent backgrounds.
-pub fn window_is_transparent(cx: &WindowContext) -> bool {
+pub fn window_is_transparent(cx: &AppContext) -> bool {
     matches!(
         window_appearance(cx),
         WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred
