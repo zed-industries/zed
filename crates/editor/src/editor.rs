@@ -141,7 +141,7 @@ use snippet::Snippet;
 use std::{
     any::TypeId,
     borrow::Cow,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
@@ -1008,6 +1008,7 @@ struct CompletionsMenu {
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
     selected_completion_resolve_debounce: Option<Arc<Mutex<DebouncedDelay>>>,
+    aside_was_displayed: Cell<bool>,
 }
 
 impl CompletionsMenu {
@@ -1040,6 +1041,7 @@ impl CompletionsMenu {
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             selected_completion_resolve_debounce: Some(Arc::new(Mutex::new(DebouncedDelay::new()))),
+            aside_was_displayed: Cell::new(false),
         }
     }
 
@@ -1093,6 +1095,7 @@ impl CompletionsMenu {
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             selected_completion_resolve_debounce: Some(Arc::new(Mutex::new(DebouncedDelay::new()))),
+            aside_was_displayed: Cell::new(false),
         }
     }
 
@@ -1231,7 +1234,7 @@ impl CompletionsMenu {
 
         let multiline_docs = if show_completion_documentation {
             let mat = &self.matches[selected_item];
-            let multiline_docs = match &self.completions.read()[mat.candidate_id].documentation {
+            match &self.completions.read()[mat.candidate_id].documentation {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
@@ -1244,23 +1247,36 @@ impl CompletionsMenu {
                         cx,
                     )))
                 }
+                Some(Documentation::Undocumented) if self.aside_was_displayed.get() => {
+                    Some(div().child("No documentation"))
+                }
                 _ => None,
-            };
-            multiline_docs.map(|div| {
-                div.id("multiline_docs")
-                    .max_h(max_height)
-                    .flex_1()
-                    .px_1p5()
-                    .py_1()
-                    .min_w(px(260.))
-                    .max_w(px(640.))
-                    .w(px(500.))
-                    .overflow_y_scroll()
-                    .occlude()
-            })
+            }
         } else {
             None
         };
+
+        let aside_contents = if let Some(multiline_docs) = multiline_docs {
+            Some(multiline_docs)
+        } else if self.aside_was_displayed.get() {
+            Some(div().child("Fetching documentation..."))
+        } else {
+            None
+        };
+        self.aside_was_displayed.set(aside_contents.is_some());
+
+        let aside_contents = aside_contents.map(|div| {
+            div.id("multiline_docs")
+                .max_h(max_height)
+                .flex_1()
+                .px_1p5()
+                .py_1()
+                .min_w(px(260.))
+                .max_w(px(640.))
+                .w(px(500.))
+                .overflow_y_scroll()
+                .occlude()
+        });
 
         let list = uniform_list(
             cx.view().clone(),
@@ -1357,8 +1373,8 @@ impl CompletionsMenu {
 
         Popover::new()
             .child(list)
-            .when_some(multiline_docs, |popover, multiline_docs| {
-                popover.aside(multiline_docs)
+            .when_some(aside_contents, |popover, aside_contents| {
+                popover.aside(aside_contents)
             })
             .into_any_element()
     }
