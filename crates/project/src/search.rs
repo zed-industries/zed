@@ -3,14 +3,14 @@ use anyhow::Result;
 use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Model;
-use language::{Buffer, BufferSnapshot};
+use language::{Buffer, BufferSnapshot, CharKind};
 use smol::future::yield_now;
 use std::{
     borrow::Cow,
     io::{BufRead, BufReader, Read},
     ops::Range,
     path::Path,
-    sync::{Arc, OnceLock},
+    sync::{Arc, LazyLock, OnceLock},
 };
 use text::Anchor;
 use util::paths::PathMatcher;
@@ -76,6 +76,12 @@ pub enum SearchQuery {
     },
 }
 
+static WORD_MATCH_TEST: LazyLock<Regex> = LazyLock::new(|| {
+    RegexBuilder::new(r"\B")
+        .build()
+        .expect("Failed to create WORD_MATCH_TEST")
+});
+
 impl SearchQuery {
     pub fn text(
         query: impl ToString,
@@ -119,9 +125,17 @@ impl SearchQuery {
         let initial_query = Arc::from(query.as_str());
         if whole_word {
             let mut word_query = String::new();
-            word_query.push_str("\\b");
+            if let Some(first) = query.get(0..1) {
+                if WORD_MATCH_TEST.is_match(first).is_ok_and(|x| !x) {
+                    word_query.push_str("\\b");
+                }
+            }
             word_query.push_str(&query);
-            word_query.push_str("\\b");
+            if let Some(last) = query.get(query.len() - 1..) {
+                if WORD_MATCH_TEST.is_match(last).is_ok_and(|x| !x) {
+                    word_query.push_str("\\b");
+                }
+            }
             query = word_query
         }
 
@@ -313,7 +327,9 @@ impl SearchQuery {
                         let end_kind =
                             classifier.kind(rope.reversed_chars_at(mat.end()).next().unwrap());
                         let next_kind = rope.chars_at(mat.end()).next().map(|c| classifier.kind(c));
-                        if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
+                        if (Some(start_kind) == prev_kind && start_kind == CharKind::Word)
+                            || (Some(end_kind) == next_kind && end_kind == CharKind::Word)
+                        {
                             continue;
                         }
                     }

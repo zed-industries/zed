@@ -4,8 +4,8 @@ use anyhow::anyhow;
 use gpui::{
     black, div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
     AppContext, Asset, AssetLogger, AssetSource, Bounds, Hsla, ImageAssetLoader, ImageCacheError,
-    ImgResourceLoader, Length, Pixels, RenderImage, Resource, SharedString, Window, WindowBounds,
-    WindowOptions, LOADING_DELAY,
+    ImgResourceLoader, Length, Model, Pixels, RenderImage, Resource, SharedString, Window,
+    WindowBounds, WindowOptions, LOADING_DELAY,
 };
 
 struct Assets {}

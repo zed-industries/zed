@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use editor::Editor;
 use gpui::{prelude::*, Entity, View, WeakView, WindowContext};
 use language::{BufferSnapshot, Language, LanguageName, Point};
-use project::{Item as _, WorktreeId};
+use project::{ProjectItem as _, WorktreeId};
 
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;

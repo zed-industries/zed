@@ -1010,9 +1010,12 @@ impl Window {
 
     /// Returns whether this window is considered to be the window
     /// that currently owns the mouse cursor.
-    /// On mac, this is equivalent to `is_active`.
     pub fn is_hovered(&self) -> bool {
-        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+        if cfg!(any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )) {
             self.hovered.get()
         } else {
             self.is_active()
@@ -1277,7 +1280,7 @@ impl Window {
             prompt_element = Some(element);
             self.prompt = Some(prompt);
         } else if let Some(mut active_drag) = cx.active_drag.take() {
-            let mut element = (active_drag.render)(active_drag.value.as_mut(), self, cx);
+            let mut element = (active_drag.view)(self, cx);
             let offset = self.mouse_position() - active_drag.cursor_offset;
             element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
             active_drag_element = Some(element);
@@ -1500,12 +1503,19 @@ impl Window {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
-        self.next_frame.accessed_element_states.extend(
-            self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
-        );
+
+        if let Some(element_states) = self
+            .rendered_frame
+            .accessed_element_states
+            .get(range.start.accessed_element_states_index..range.end.accessed_element_states_index)
+        {
+            self.next_frame.accessed_element_states.extend(
+                element_states
+                    .iter()
+                    .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+            );
+        }
+
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
         self.next_frame.scene.replay(
@@ -2780,28 +2790,8 @@ impl Window {
     }
 
     /// Represent this action as a key binding string, to display in the UI.
-    pub fn keystroke_text_for_action(&self, action: &dyn Action) -> String {
+    pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
         self.bindings_for_action(action)
-            .into_iter()
-            .next()
-            .map(|binding| {
-                binding
-                    .keystrokes()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-            .unwrap_or_else(|| action.name().to_string())
-    }
-
-    /// Represent this action as a key binding string, to display in the UI.
-    pub fn keystroke_text_for_action_in(
-        &self,
-        action: &dyn Action,
-        focus_handle: &FocusHandle,
-    ) -> String {
-        self.bindings_for_action_in(action, focus_handle)
             .into_iter()
             .next()
             .map(|binding| {
@@ -2866,8 +2856,8 @@ impl Window {
                     self.mouse_position = position;
                     if cx.active_drag.is_none() {
                         cx.active_drag = Some(AnyDrag {
-                            value: Box::new(paths.clone()),
-                            render: Box::new(move |_, _, _| Empty.into_any_element()),
+                            value: Arc::new(paths.clone()),
+                            view: Rc::new(move |_, _| Empty.into_any_element()),
                             cursor_offset: position,
                         });
                     }

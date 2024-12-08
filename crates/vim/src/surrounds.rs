@@ -35,7 +35,7 @@ impl Vim {
         cx: &mut ViewContext<Self>,
     ) {
         self.stop_recording(cx);
-        let count = self.take_count(cx);
+        let count = Vim::take_count(cx);
         let mode = self.mode;
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);

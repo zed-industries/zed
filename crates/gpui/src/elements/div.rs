@@ -16,12 +16,12 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AppContext, Bounds, ClickEvent,
-    DispatchPhase, Element, ElementId, FocusHandle, Global, GlobalElementId, Hitbox, HitboxId,
-    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-    ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
-    Visibility, Window,
+    point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
+    ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Point, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement,
+    Styled, Task, TooltipId, Visibility, Window,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -34,6 +34,7 @@ use std::{
     marker::PhantomData,
     mem,
     rc::Rc,
+    sync::Arc,
     time::Duration,
 };
 use taffy::style::Overflow;
@@ -60,6 +61,7 @@ pub struct DragMoveEvent<T> {
     /// The bounds of this element.
     pub bounds: Bounds<Pixels>,
     drag: PhantomData<T>,
+    dragged_item: Arc<dyn Any>,
 }
 
 impl<T: 'static> DragMoveEvent<T> {
@@ -69,6 +71,11 @@ impl<T: 'static> DragMoveEvent<T> {
             .as_ref()
             .and_then(|drag| drag.value.downcast_ref::<T>())
             .expect("DragMoveEvent is only valid when the stored active drag is of the same type.")
+    }
+
+    /// An item that is about to be dropped.
+    pub fn dragged_item(&self) -> &dyn Any {
+        self.dragged_item.as_ref()
     }
 }
 
@@ -246,21 +253,21 @@ impl Interactivity {
     {
         self.mouse_move_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture
-                    && cx
-                        .active_drag
-                        .as_ref()
-                        .is_some_and(|drag| drag.value.as_ref().type_id() == TypeId::of::<T>())
-                {
-                    (listener)(
-                        &DragMoveEvent {
-                            event: event.clone(),
-                            bounds: hitbox.bounds,
-                            drag: PhantomData,
-                        },
-                        window,
-                        cx,
-                    );
+                if phase == DispatchPhase::Capture {
+                    if let Some(drag) = &cx.active_drag {
+                        if drag.value.as_ref().type_id() == TypeId::of::<T>() {
+                            (listener)(
+                                &DragMoveEvent {
+                                    event: event.clone(),
+                                    bounds: hitbox.bounds,
+                                    drag: PhantomData,
+                                    dragged_item: Arc::clone(&drag.value),
+                                },
+                                window,
+                                cx,
+                            );
+                        }
+                    }
                 }
             }));
     }
@@ -470,27 +477,22 @@ impl Interactivity {
     /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
-    pub fn on_drag<T, F, E>(
+    pub fn on_drag<T>(
         &mut self,
         value: T,
-        listener: impl 'static + Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> F,
+        constructor: impl 'static + Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> AnyView,
     ) where
         Self: Sized,
         T: 'static,
-        F: 'static + Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> E,
-        E: IntoElement,
     {
         debug_assert!(
             self.drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
         );
         self.drag_listener = Some((
-            Box::new(value),
+            Arc::new(value),
             Box::new(move |value, offset, window, cx| {
-                let renderer = listener(value.downcast_ref().unwrap(), offset, window, cx);
-                Box::new(move |value, offset, window, cx| {
-                    renderer(value.downcast_ref().unwrap(), offset, window, cx).into_any_element()
-                })
+                constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
             }),
         ));
     }
@@ -1032,16 +1034,14 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// The fluent API equivalent to [`Interactivity::on_drag`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
-    fn on_drag<T, F, E>(
+    fn on_drag<T>(
         mut self,
         value: T,
-        listener: impl Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> F + 'static,
+        listener: impl 'static + Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> AnyView,
     ) -> Self
     where
         Self: Sized,
         T: 'static,
-        F: Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> E + 'static,
-        E: IntoElement,
     {
         self.interactivity().on_drag(value, listener);
         self
@@ -1126,11 +1126,8 @@ pub(crate) type ScrollWheelListener =
 
 pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static>;
 
-pub(crate) type DragRenderer =
-    Box<dyn 'static + Fn(&dyn Any, Point<Pixels>, &mut Window, &mut AppContext) -> AnyElement>;
-
 pub(crate) type DragListener =
-    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut AppContext) -> DragRenderer>;
+    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut AppContext) -> AnyView>;
 
 type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut AppContext) + 'static>;
 
@@ -1378,7 +1375,7 @@ pub struct Interactivity {
     pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
-    pub(crate) drag_listener: Option<(Box<dyn Any>, DragListener)>,
+    pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut AppContext)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) occlude_mouse: bool,
@@ -1924,16 +1921,14 @@ impl Interactivity {
                                 if let Some((drag_value, drag_listener)) = drag_listener.take() {
                                     *clicked_state.borrow_mut() = ElementClickedState::default();
                                     let cursor_offset = event.position - hitbox.origin;
-                                    let render_drag = (drag_listener)(
+                                    let view = (drag_listener)(
                                         drag_value.as_ref(),
                                         cursor_offset,
                                         window,
                                         cx,
                                     );
                                     cx.active_drag = Some(AnyDrag {
-                                        render: Box::new(move |value, window, cx| {
-                                            render_drag(value, cursor_offset, window, cx)
-                                        }),
+                                        view,
                                         value: drag_value,
                                         cursor_offset,
                                     });

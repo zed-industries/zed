@@ -139,7 +139,7 @@ impl Render for Empty {
 /// A dynamically typed function that renders an AnyElement in a Window.
 pub type AnyView = Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>;
 
-impl<T: Render> Into<Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>> for Model<T> {
+impl<T: Render> Into<AnyView> for Model<T> {
     fn into(self) -> Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement> {
         let this = self.clone();
         Rc::new(move |_window, _cx| this.clone().into_any_element())

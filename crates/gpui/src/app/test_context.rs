@@ -3,8 +3,9 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, DrawPhase, Drawable,
     Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
-    TextSystem, Window, WindowBounds, WindowHandle, WindowOptions,
+    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, Window, WindowBounds, WindowHandle,
+    WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -282,6 +283,12 @@ impl TestAppContext {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Causes the given sources to be returned if the application queries for screen
+    /// capture sources.
+    pub fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
+        self.test_platform.set_screen_capture_sources(sources);
+    }
+
     /// Returns all windows open in the test.
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
         self.app.borrow().windows().clone()
@@ -509,13 +516,43 @@ impl<T: 'static> Model<T> {
         }
     }
 
-    /// Returns a future that resolves when the model notifies.
-    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+    // /// Returns a future that resolves when the model notifies.
+    // pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+    //     use postage::prelude::{Sink as _, Stream as _};
+
+    //     let (mut tx, mut rx) = postage::mpsc::channel(1);
+    //     let mut cx = cx.app.app.borrow_mut();
+    //     let subscription = cx.observe(self, move |_, _| {
+    //         tx.try_send(()).ok();
+    //     });
+
+    //     let duration = if std::env::var("CI").is_ok() {
+    //         Duration::from_secs(5)
+    //     } else {
+    //         Duration::from_secs(1)
+    //     };
+
+    //     async move {
+    //         let notification = crate::util::timeout(duration, rx.recv())
+    //             .await
+    //             .expect("next notification timed out");
+    //         drop(subscription);
+    //         notification.expect("model dropped while test was waiting for its next notification")
+    //     }
+    // }
+}
+
+impl<T: 'static> Model<T> {
+    /// Returns a future that resolves when the view is next updated.
+    pub fn next_notification(
+        &self,
+        advance_clock_by: Duration,
+        cx: &TestAppContext,
+    ) -> impl Future<Output = ()> {
         use postage::prelude::{Sink as _, Stream as _};
 
         let (mut tx, mut rx) = postage::mpsc::channel(1);
-        let mut cx = cx.app.app.borrow_mut();
-        let subscription = cx.observe(self, move |_, _| {
+        let subscription = cx.app.app.borrow_mut().observe(self, move |_, _| {
             tx.try_send(()).ok();
         });
 
@@ -524,6 +561,8 @@ impl<T: 'static> Model<T> {
         } else {
             Duration::from_secs(1)
         };
+
+        cx.executor().advance_clock(advance_clock_by);
 
         async move {
             let notification = crate::util::timeout(duration, rx.recv())
@@ -534,33 +573,6 @@ impl<T: 'static> Model<T> {
         }
     }
 }
-
-// impl<V: 'static> View<V> {
-//     /// Returns a future that resolves when the view is next updated.
-//     pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
-//         use postage::prelude::{Sink as _, Stream as _};
-
-//         let (mut tx, mut rx) = postage::mpsc::channel(1);
-//         let mut cx = cx.app.app.borrow_mut();
-//         let subscription = cx.observe(self, move |_, _| {
-//             tx.try_send(()).ok();
-//         });
-
-//         let duration = if std::env::var("CI").is_ok() {
-//             Duration::from_secs(5)
-//         } else {
-//             Duration::from_secs(1)
-//         };
-
-//         async move {
-//             let notification = crate::util::timeout(duration, rx.recv())
-//                 .await
-//                 .expect("next notification timed out");
-//             drop(subscription);
-//             notification.expect("model dropped while test was waiting for its next notification")
-//         }
-//     }
-// }
 
 // impl<V> View<V> {
 //     /// Returns a future that resolves when the condition becomes true.

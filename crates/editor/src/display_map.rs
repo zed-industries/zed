@@ -684,8 +684,8 @@ impl DisplaySnapshot {
             .map(|row| row.map(MultiBufferRow))
     }
 
-    pub fn max_buffer_row(&self) -> MultiBufferRow {
-        self.buffer_snapshot.max_buffer_row()
+    pub fn widest_line_number(&self) -> u32 {
+        self.buffer_snapshot.widest_line_number()
     }
 
     pub fn prev_line_boundary(&self, mut point: MultiBufferPoint) -> (Point, DisplayPoint) {
@@ -726,11 +726,10 @@ impl DisplaySnapshot {
 
     // used by line_mode selections and tries to match vim behavior
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
+        let max_row = self.buffer_snapshot.max_row().0;
         let new_start = if range.start.row == 0 {
             MultiBufferPoint::new(0, 0)
-        } else if range.start.row == self.max_buffer_row().0
-            || (range.end.column > 0 && range.end.row == self.max_buffer_row().0)
-        {
+        } else if range.start.row == max_row || (range.end.column > 0 && range.end.row == max_row) {
             MultiBufferPoint::new(
                 range.start.row - 1,
                 self.buffer_snapshot
@@ -742,7 +741,7 @@ impl DisplaySnapshot {
 
         let new_end = if range.end.column == 0 {
             range.end
-        } else if range.end.row < self.max_buffer_row().0 {
+        } else if range.end.row < max_row {
             self.buffer_snapshot
                 .clip_point(MultiBufferPoint::new(range.end.row + 1, 0), Bias::Left)
         } else {
@@ -1127,7 +1126,7 @@ impl DisplaySnapshot {
     }
 
     pub fn starts_indent(&self, buffer_row: MultiBufferRow) -> bool {
-        let max_row = self.buffer_snapshot.max_buffer_row();
+        let max_row = self.buffer_snapshot.max_row();
         if buffer_row >= max_row {
             return false;
         }

@@ -4,7 +4,7 @@ use language::LanguageName;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-use crate::LanguageSelector;
+use crate::{LanguageSelector, Toggle};
 
 pub struct ActiveBufferLanguage {
     active_language: Option<Option<LanguageName>>,
@@ -54,7 +54,7 @@ impl Render for ActiveBufferLanguage {
                             });
                         }
                     }))
-                    .tooltip(|cx| Tooltip::text("Select Language", cx)),
+                    .tooltip(|cx| Tooltip::for_action("Select Language", &Toggle, cx)),
             )
         })
     }

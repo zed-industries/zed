@@ -20,8 +20,7 @@ pub enum MenuPosition {
     /// Disappears when the position is no longer visible.
     PinnedToEditor {
         source: multi_buffer::Anchor,
-        offset_x: Pixels,
-        offset_y: Pixels,
+        offset: Point<Pixels>,
     },
 }
 
@@ -48,36 +47,22 @@ impl MouseContextMenu {
         context_menu: View<ui::ContextMenu>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<Self> {
-        let context_menu_focus = context_menu.focus_handle(cx);
-        cx.focus(&context_menu_focus);
-
-        let _subscription = cx.subscribe(
-            &context_menu,
-            move |editor, _, _event: &DismissEvent, cx| {
-                editor.mouse_context_menu.take();
-                if context_menu_focus.contains_focused(cx) {
-                    editor.focus(cx);
-                }
-            },
-        );
-
         let editor_snapshot = editor.snapshot(cx);
-        let source_point = editor.to_pixel_point(source, &editor_snapshot, cx)?;
-        let offset = position - source_point;
-
-        Some(Self {
-            position: MenuPosition::PinnedToEditor {
-                source,
-                offset_x: offset.x,
-                offset_y: offset.y,
-            },
-            context_menu,
-            _subscription,
-        })
+        let content_origin = editor.last_bounds?.origin
+            + Point {
+                x: editor.gutter_dimensions.width,
+                y: Pixels(0.0),
+            };
+        let source_position = editor.to_pixel_point(source, &editor_snapshot, cx)?;
+        let menu_position = MenuPosition::PinnedToEditor {
+            source,
+            offset: position - (source_position + content_origin),
+        };
+        return Some(MouseContextMenu::new(menu_position, context_menu, cx));
     }
 
-    pub(crate) fn pinned_to_screen(
-        position: Point<Pixels>,
+    pub(crate) fn new(
+        position: MenuPosition,
         context_menu: View<ui::ContextMenu>,
         cx: &mut ViewContext<Editor>,
     ) -> Self {
@@ -95,7 +80,7 @@ impl MouseContextMenu {
         );
 
         Self {
-            position: MenuPosition::PinnedToScreen(position),
+            position,
             context_menu,
             _subscription,
         }
@@ -119,7 +104,7 @@ fn display_ranges<'a>(
 
 pub fn deploy_context_menu(
     editor: &mut Editor,
-    position: Point<Pixels>,
+    position: Option<Point<Pixels>>,
     point: DisplayPoint,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -213,8 +198,18 @@ pub fn deploy_context_menu(
         })
     };
 
-    editor.mouse_context_menu =
-        MouseContextMenu::pinned_to_editor(editor, source_anchor, position, context_menu, cx);
+    editor.mouse_context_menu = match position {
+        Some(position) => {
+            MouseContextMenu::pinned_to_editor(editor, source_anchor, position, context_menu, cx)
+        }
+        None => {
+            let menu_position = MenuPosition::PinnedToEditor {
+                source: source_anchor,
+                offset: editor.character_size(cx),
+            };
+            Some(MouseContextMenu::new(menu_position, context_menu, cx))
+        }
+    };
     cx.notify();
 }
 
@@ -248,7 +243,9 @@ mod tests {
             }
         "});
         cx.editor(|editor, _app| assert!(editor.mouse_context_menu.is_none()));
-        cx.update_editor(|editor, cx| deploy_context_menu(editor, Default::default(), point, cx));
+        cx.update_editor(|editor, cx| {
+            deploy_context_menu(editor, Some(Default::default()), point, cx)
+        });
 
         cx.assert_editor_state(indoc! {"
             fn test() {

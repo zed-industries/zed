@@ -27,13 +27,13 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyElement,
+    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyElement, AnyView,
     AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase,
     DisplayId, Entity, EventEmitter, FocusHandle, ForegroundExecutor, Global, IntoElement,
     KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
     Platform, PlatformDisplay, Point, PromptBuilder, PromptLevel, Render, Reservation,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
-    WindowAppearance, WindowHandle, WindowId,
+    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem,
+    Window, WindowAppearance, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -613,6 +613,13 @@ impl AppContext {
     /// Returns the primary display that will be used for new windows.
     pub fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform.primary_display()
+    }
+
+    /// Returns a list of available screen capture sources.
+    pub fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        self.platform.screen_capture_sources()
     }
 
     /// Returns the display with the given ID, if one exists.
@@ -1562,10 +1569,10 @@ impl<G: Global> DerefMut for GlobalLease<G> {
 /// within the window or by dragging into the app from the underlying platform.
 pub struct AnyDrag {
     /// How this drag is displayed on screen
-    pub render: Box<dyn Fn(&mut dyn Any, &mut Window, &mut AppContext) -> AnyElement>,
+    pub view: AnyView,
 
     /// The value of the dragged item, to be dropped
-    pub value: Box<dyn Any>,
+    pub value: Arc<dyn Any>,
 
     /// This is used to render the dragged item in the same place
     /// on the original element that the drag was initiated

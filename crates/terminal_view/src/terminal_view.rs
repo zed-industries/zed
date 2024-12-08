@@ -33,8 +33,8 @@ use workspace::{
     notifications::NotifyResultExt,
     register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, Pane, ToolbarItemLocation,
-    Workspace, WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
+    WorkspaceId,
 };
 
 use anyhow::Context;
@@ -136,24 +136,36 @@ impl TerminalView {
         let working_directory = default_working_directory(workspace, cx);
 
         let window = cx.window_handle();
-        let terminal = workspace
-            .project()
-            .update(cx, |project, cx| {
-                project.create_terminal(TerminalKind::Shell(working_directory), window, cx)
-            })
-            .notify_err(workspace, cx);
+        let project = workspace.project().downgrade();
+        cx.spawn(move |workspace, mut cx| async move {
+            let terminal = project
+                .update(&mut cx, |project, cx| {
+                    project.create_terminal(TerminalKind::Shell(working_directory), window, cx)
+                })
+                .ok()?
+                .await;
+            let terminal = workspace
+                .update(&mut cx, |workspace, cx| terminal.notify_err(workspace, cx))
+                .ok()
+                .flatten()?;
 
-        if let Some(terminal) = terminal {
-            let view = cx.new_view(|cx| {
-                TerminalView::new(
-                    terminal,
-                    workspace.weak_handle(),
-                    workspace.database_id(),
-                    cx,
-                )
-            });
-            workspace.add_item_to_active_pane(Box::new(view), None, true, cx);
-        }
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    let view = cx.new_view(|cx| {
+                        TerminalView::new(
+                            terminal,
+                            workspace.weak_handle(),
+                            workspace.database_id(),
+                            cx,
+                        )
+                    });
+                    workspace.add_item_to_active_pane(Box::new(view), None, true, cx);
+                })
+                .ok();
+
+            Some(())
+        })
+        .detach()
     }
 
     pub fn new(
@@ -798,7 +810,6 @@ fn possible_open_paths_metadata(
     cx.background_executor().spawn(async move {
         let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
 
-        #[cfg(not(target_os = "windows"))]
         let mut fetch_metadata_tasks = potential_paths
             .into_iter()
             .map(|potential_path| async {
@@ -811,20 +822,6 @@ fn possible_open_paths_metadata(
                     },
                     metadata,
                 )
-            })
-            .collect::<FuturesUnordered<_>>();
-
-        #[cfg(target_os = "windows")]
-        let mut fetch_metadata_tasks = potential_paths
-            .iter()
-            .map(|potential_path| async {
-                let metadata = fs.metadata(potential_path).await.ok().flatten();
-                let path = PathBuf::from(
-                    potential_path
-                        .to_string_lossy()
-                        .trim_start_matches("\\\\?\\"),
-                );
-                (PathWithPosition { path, row, column }, metadata)
             })
             .collect::<FuturesUnordered<_>>();
 
@@ -1222,10 +1219,10 @@ impl SerializableItem for TerminalView {
         workspace: WeakView<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
-        cx: &mut ViewContext<Pane>,
+        cx: &mut WindowContext,
     ) -> Task<anyhow::Result<View<Self>>> {
         let window = cx.window_handle();
-        cx.spawn(|pane, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let cwd = cx
                 .update(|cx| {
                     let from_db = TERMINAL_DB
@@ -1246,10 +1243,12 @@ impl SerializableItem for TerminalView {
                 .ok()
                 .flatten();
 
-            let terminal = project.update(&mut cx, |project, cx| {
-                project.create_terminal(TerminalKind::Shell(cwd), window, cx)
-            })??;
-            pane.update(&mut cx, |_, cx| {
+            let terminal = project
+                .update(&mut cx, |project, cx| {
+                    project.create_terminal(TerminalKind::Shell(cwd), window, cx)
+                })?
+                .await?;
+            cx.update(|cx| {
                 cx.new_view(|cx| TerminalView::new(terminal, workspace, Some(workspace_id), cx))
             })
         })
@@ -1377,11 +1376,14 @@ impl SearchableItem for TerminalView {
 
 ///Gets the working directory for the given workspace, respecting the user's settings.
 /// None implies "~" on whichever machine we end up on.
-pub fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+pub(crate) fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
     match &TerminalSettings::get_global(cx).working_directory {
-        WorkingDirectory::CurrentProjectDirectory => {
-            workspace.project().read(cx).active_project_directory(cx)
-        }
+        WorkingDirectory::CurrentProjectDirectory => workspace
+            .project()
+            .read(cx)
+            .active_project_directory(cx)
+            .as_deref()
+            .map(Path::to_path_buf),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } => {
