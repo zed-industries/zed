@@ -12,7 +12,7 @@ pub struct EditorSettings {
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub show_completion_documentation: bool,
-    pub completion_documentation_secondary_query_debounce: u64,
+    pub completion_documentation_secondary_query_debounce: Option<u64>,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
@@ -204,10 +204,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub show_completion_documentation: Option<bool>,
-    /// The debounce delay before re-querying the language server for completion
-    /// documentation when not included in original completion list.
-    ///
-    /// Default: 300 ms
+    /// DEPRECATED
     pub completion_documentation_secondary_query_debounce: Option<u64>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
@@ -374,6 +371,15 @@ impl Settings for EditorSettings {
         sources: SettingsSources<Self::FileContent>,
         _: &mut AppContext,
     ) -> anyhow::Result<Self> {
-        sources.json_merge()
+        let editor_settings: Self = sources.json_merge()?;
+        if editor_settings
+            .completion_documentation_secondary_query_debounce
+            .is_some()
+        {
+            log::error!(
+                "completion_documentation_secondary_query_debounce setting is deprecated and no longer has an effect."
+            );
+        }
+        Ok(editor_settings)
     }
 }
