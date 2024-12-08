@@ -3684,7 +3684,7 @@ impl Editor {
 
                     if editor.focus_handle.is_focused(cx) && menu.is_some() {
                         let mut menu = menu.unwrap();
-                        menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
+                        menu.resolve_visible_completions(editor.completion_provider.as_deref(), cx);
                         *context_menu = Some(CodeContextMenu::Completions(menu));
                         drop(context_menu);
                         editor.discard_inline_completion(false, cx);
