@@ -11,6 +11,7 @@ use crate::{
     InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
+use core::fmt::Debug;
 use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
@@ -64,6 +65,25 @@ impl ScrollAnchor {
 pub enum Axis {
     Vertical,
     Horizontal,
+}
+
+#[derive(Debug, Clone)]
+pub struct AxisPair<T: Clone> {
+    pub vertical: T,
+    pub horizontal: T,
+}
+
+pub fn axis_pair<T: Clone>(horizontal: T, vertical: T) -> AxisPair<T> {
+    AxisPair {
+        vertical,
+        horizontal,
+    }
+}
+
+impl<T: Clone> AxisPair<T> {
+    pub fn as_xy(&self) -> (&T, &T) {
+        (&self.horizontal, &self.vertical)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -136,7 +156,7 @@ pub struct ScrollManager {
     last_autoscroll: Option<(gpui::Point<f32>, f32, f32, AutoscrollStrategy)>,
     show_scrollbars: bool,
     hide_scrollbar_task: Option<Task<()>>,
-    dragging_scrollbar: bool,
+    dragging_scrollbar: (bool, bool),
     visible_line_count: Option<f32>,
     forbid_vertical_scroll: bool,
 }
@@ -150,7 +170,7 @@ impl ScrollManager {
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
-            dragging_scrollbar: false,
+            dragging_scrollbar: (false, false),
             last_autoscroll: None,
             visible_line_count: None,
             forbid_vertical_scroll: false,
@@ -311,14 +331,32 @@ impl ScrollManager {
         self.autoscroll_request.map(|(autoscroll, _)| autoscroll)
     }
 
-    pub fn is_dragging_scrollbar(&self) -> bool {
-        self.dragging_scrollbar
+    pub fn is_dragging_scrollbar(&self, axis: Axis) -> bool {
+        match axis {
+            Axis::Horizontal => self.dragging_scrollbar.0,
+            Axis::Vertical => self.dragging_scrollbar.1,
+        }
     }
 
-    pub fn set_is_dragging_scrollbar(&mut self, dragging: bool, cx: &mut ViewContext<Editor>) {
-        if dragging != self.dragging_scrollbar {
-            self.dragging_scrollbar = dragging;
-            cx.notify();
+    pub fn set_is_dragging_scrollbar(
+        &mut self,
+        axis: Axis,
+        dragging: bool,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        match axis {
+            Axis::Horizontal => {
+                if dragging != self.dragging_scrollbar.0 {
+                    self.dragging_scrollbar.0 = dragging;
+                    cx.notify();
+                }
+            }
+            Axis::Vertical => {
+                if dragging != self.dragging_scrollbar.1 {
+                    self.dragging_scrollbar.1 = dragging;
+                    cx.notify();
+                }
+            }
         }
     }
 

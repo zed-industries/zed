@@ -19,6 +19,7 @@ pub struct EditorSettings {
     pub scroll_beyond_last_line: ScrollBeyondLastLine,
     pub vertical_scroll_margin: f32,
     pub autoscroll_on_clicks: bool,
+    pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
@@ -106,6 +107,7 @@ pub struct Scrollbar {
     pub search_results: bool,
     pub diagnostics: bool,
     pub cursors: bool,
+    pub axis: ScrollbarAxis,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -131,6 +133,20 @@ pub enum ShowScrollbar {
     Always,
     /// Never show the scrollbar.
     Never,
+}
+
+/// When the show option permits it, which axes should show scrollbars.
+///
+/// Default: xy
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScrollbarAxis {
+    /// Show both/either axes when applicable
+    XY,
+    /// Only show the horizotal scrollbar.
+    X,
+    /// Only show the vertical scrollbar.
+    Y,
 }
 
 /// The key to use for adding multiple cursors
@@ -227,6 +243,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub autoscroll_on_clicks: Option<bool>,
+    /// The number of characters to keep on either side when scrolling with the mouse.
+    ///
+    /// Default: 5.
+    pub horizontal_scroll_margin: Option<f32>,
     /// Scroll sensitivity multiplier. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling.
     ///
@@ -336,6 +356,10 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub cursors: Option<bool>,
+    /// When the show option permits it, which axes should show scrollbars.
+    ///
+    /// Default: xy
+    pub axis: Option<ScrollbarAxis>,
 }
 
 /// Gutter related settings
