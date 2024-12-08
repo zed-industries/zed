@@ -21,12 +21,6 @@ pub(crate) struct TypeScriptPlugin {
     pub for_extension: Option<&'static str>,
 }
 
-pub(crate) const DEFAULT_TYPESCRIPT_PLUGINS: &[TypeScriptPlugin] = &[TypeScriptPlugin {
-    name: "@astrojs/ts-plugin",
-    path: "node_modules/@astrojs/ts-plugin/dist",
-    for_extension: Some("astro"),
-}];
-
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
@@ -42,7 +36,11 @@ impl VtslsLspAdapter {
     const TYPESCRIPT_PACKAGE_NAME: &'static str = "typescript";
     const TYPESCRIPT_TSDK_PATH: &'static str = "node_modules/typescript/lib";
 
-    const DEFAULT_PLUGINS: &'static [TypeScriptPlugin] = DEFAULT_TYPESCRIPT_PLUGINS;
+    const DEFAULT_PLUGINS: &'static [TypeScriptPlugin] = &[TypeScriptPlugin {
+        name: "@astrojs/ts-plugin",
+        path: "node_modules/@astrojs/ts-plugin/dist",
+        for_extension: Some("astro"),
+    }];
 
     pub fn new(node: NodeRuntime) -> Self {
         VtslsLspAdapter { node }

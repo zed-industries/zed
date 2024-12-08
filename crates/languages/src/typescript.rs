@@ -27,12 +27,6 @@ pub(crate) struct TypeScriptPlugin {
     pub for_extension: Option<&'static str>,
 }
 
-pub(crate) const DEFAULT_TYPESCRIPT_PLUGINS: &[TypeScriptPlugin] = &[TypeScriptPlugin {
-    name: "@astrojs/ts-plugin",
-    path: "node_modules/@astrojs/ts-plugin/dist",
-    for_extension: Some("astro"),
-}];
-
 pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
         TaskTemplate {
@@ -85,7 +79,11 @@ impl TypeScriptLspAdapter {
     const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("typescript-language-server");
-    const DEFAULT_PLUGINS: &'static [TypeScriptPlugin] = DEFAULT_TYPESCRIPT_PLUGINS;
+    const DEFAULT_PLUGINS: &'static [TypeScriptPlugin] = &[TypeScriptPlugin {
+        name: "@astrojs/ts-plugin",
+        path: "node_modules/@astrojs/ts-plugin/dist",
+        for_extension: Some("astro"),
+    }];
 
     pub fn new(node: NodeRuntime) -> Self {
         TypeScriptLspAdapter { node }
