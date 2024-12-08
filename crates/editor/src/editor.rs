@@ -184,8 +184,6 @@ const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
-#[doc(hidden)]
-pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -5127,10 +5125,10 @@ impl Editor {
         if cursor_buffer != tail_buffer {
             return None;
         }
-
+        let debounce = EditorSettings::get_global(cx).document_highlight_debounce;
         self.document_highlights_task = Some(cx.spawn(|this, mut cx| async move {
             cx.background_executor()
-                .timer(DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT)
+                .timer(Duration::from_millis(debounce))
                 .await;
 
             let highlights = if let Some(highlights) = cx

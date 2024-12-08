@@ -144,6 +144,9 @@
   // 4. Highlight the full line (default):
   //    "all"
   "current_line_highlight": "all",
+  // Sets the debounce (in milliseconds) before triggering LSP DocumentHighlight
+  // to highlight references under the cursor.
+  "document_highlight_debounce": 75,
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
