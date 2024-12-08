@@ -1109,11 +1109,7 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.selected_item = 0;
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.resolve_selected_completion(provider, cx);
-        cx.notify();
+        self.update_selection_index(0, provider, cx);
     }
 
     fn select_prev(
@@ -1121,15 +1117,7 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        if self.selected_item > 0 {
-            self.selected_item -= 1;
-        } else {
-            self.selected_item = self.matches.len() - 1;
-        }
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.resolve_selected_completion(provider, cx);
-        cx.notify();
+        self.update_selection_index(self.prev_match_index(), provider, cx);
     }
 
     fn select_next(
@@ -1137,15 +1125,7 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        if self.selected_item + 1 < self.matches.len() {
-            self.selected_item += 1;
-        } else {
-            self.selected_item = 0;
-        }
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.resolve_selected_completion(provider, cx);
-        cx.notify();
+        self.update_selection_index(self.next_match_index(), provider, cx);
     }
 
     fn select_last(
@@ -1153,11 +1133,38 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.selected_item = self.matches.len() - 1;
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.resolve_selected_completion(provider, cx);
-        cx.notify();
+        self.update_selection_index(self.matches.len() - 1, provider, cx);
+    }
+
+    fn update_selection_index(
+        &mut self,
+        match_index: usize,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        if self.selected_item != match_index {
+            self.selected_item = match_index;
+            self.scroll_handle
+                .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+            self.resolve_selected_completion(provider, cx);
+            cx.notify();
+        }
+    }
+
+    fn prev_match_index(&self) -> usize {
+        if self.selected_item > 0 {
+            self.selected_item - 1
+        } else {
+            self.matches.len() - 1
+        }
+    }
+
+    fn next_match_index(&self) -> usize {
+        if self.selected_item + 1 < self.matches.len() {
+            self.selected_item + 1
+        } else {
+            0
+        }
     }
 
     fn resolve_selected_completion(
@@ -1165,7 +1172,6 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        let completion_index = self.matches[self.selected_item].candidate_id;
         let Some(provider) = provider else {
             return;
         };
@@ -1173,9 +1179,36 @@ impl CompletionsMenu {
             return;
         };
 
+        // Also resolve next and previous completions, so they are ready if the user navigates.
+        let indices_to_resolve = vec![
+            self.matches[self.prev_match_index()].candidate_id,
+            self.matches[self.selected_item].candidate_id,
+            self.matches[self.next_match_index()].candidate_id,
+        ];
+        let indices_count = indices_to_resolve.len();
+
+        // Avoid work by sometimes filtering out completions that already have documentation.
+        // This filtering doesn't happen if the completions are currently being updated.
+        let mut indices_to_resolve = self.completions.try_read().map_or_else(
+            || indices_to_resolve.clone(),
+            |completions| {
+                indices_to_resolve
+                    .iter()
+                    .filter(|index| completions[**index].documentation.is_none())
+                    .map(|index| *index)
+                    .collect::<Vec<usize>>()
+            },
+        );
+
+        if self.matches.len() < indices_count {
+            // In this case there are undesirable duplicates to remove.
+            indices_to_resolve.sort();
+            indices_to_resolve.dedup();
+        }
+
         let resolve_task = provider.resolve_completions(
             self.buffer.clone(),
-            vec![completion_index],
+            indices_to_resolve,
             self.completions.clone(),
             cx,
         );

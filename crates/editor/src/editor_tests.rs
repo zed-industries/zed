@@ -25,14 +25,14 @@ use language::{
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
+use pretty_assertions::{assert_eq, assert_ne};
 use project::{buffer_store::BufferChangeSet, FakeFs};
 use project::{
     lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
     project_settings::{LspSettings, ProjectSettings},
 };
 use serde_json::{self, json};
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::{self, AtomicBool};
+use std::sync::atomic::{self, AtomicUsize};
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
 use test::editor_lsp_test_context::rust_lang;
 use unindent::Unindent;
@@ -10719,6 +10719,96 @@ async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) 
 async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
+    let item_0 = lsp::CompletionItem {
+        label: "abs".into(),
+        insert_text: Some("abs".into()),
+        data: Some(json!({ "very": "special"})),
+        insert_text_mode: Some(lsp::InsertTextMode::ADJUST_INDENTATION),
+        text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+            lsp::InsertReplaceEdit {
+                new_text: "abs".to_string(),
+                insert: lsp::Range::default(),
+                replace: lsp::Range::default(),
+            },
+        )),
+        ..lsp::CompletionItem::default()
+    };
+    let item_1 = lsp::CompletionItem {
+        label: "acos".into(),
+        insert_text: Some("acos".into()),
+        insert_text_format: Some(lsp::InsertTextFormat::PLAIN_TEXT),
+        ..lsp::CompletionItem::default()
+    };
+    let item_2 = lsp::CompletionItem {
+        label: "acosh".into(),
+        insert_text: Some("acosh".into()),
+        insert_text_format: Some(lsp::InsertTextFormat::PLAIN_TEXT),
+        ..lsp::CompletionItem::default()
+    };
+    let item_3 = lsp::CompletionItem {
+        label: "asin".into(),
+        insert_text: Some("asin".into()),
+        insert_text_format: Some(lsp::InsertTextFormat::PLAIN_TEXT),
+        ..lsp::CompletionItem::default()
+    };
+    let items = vec![
+        item_0.clone(),
+        item_1.clone(),
+        item_2.clone(),
+        item_3.clone(),
+    ];
+
+    let default_commit_characters = vec!["?".to_string()];
+    let default_data = json!({ "default": "data"});
+    let default_insert_text_format = lsp::InsertTextFormat::SNIPPET;
+    let default_insert_text_mode = lsp::InsertTextMode::AS_IS;
+    let default_edit_range = lsp::Range {
+        start: lsp::Position {
+            line: 0,
+            character: 5,
+        },
+        end: lsp::Position {
+            line: 0,
+            character: 5,
+        },
+    };
+
+    let item_0_out = lsp::CompletionItem {
+        commit_characters: Some(default_commit_characters.clone()),
+        insert_text_format: Some(default_insert_text_format),
+        ..item_0
+    };
+    let item_1_out = lsp::CompletionItem {
+        commit_characters: Some(default_commit_characters.clone()),
+        data: Some(default_data.clone()),
+        insert_text_mode: Some(default_insert_text_mode),
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: default_edit_range,
+            new_text: "acos".to_string(),
+        })),
+        ..item_1
+    };
+    let item_2_out = lsp::CompletionItem {
+        commit_characters: Some(default_commit_characters.clone()),
+        data: Some(default_data.clone()),
+        insert_text_mode: Some(default_insert_text_mode),
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: default_edit_range,
+            new_text: "acosh".to_string(),
+        })),
+        ..item_2
+    };
+    let item_3_out = lsp::CompletionItem {
+        commit_characters: Some(default_commit_characters.clone()),
+        data: Some(default_data.clone()),
+        insert_text_mode: Some(default_insert_text_mode),
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: default_edit_range,
+            new_text: "asin".to_string(),
+        })),
+        ..item_3
+    };
+
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
@@ -10735,138 +10825,15 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
     cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
     cx.simulate_keystroke(".");
 
-    let default_commit_characters = vec!["?".to_string()];
-    let default_data = json!({ "very": "special"});
-    let default_insert_text_format = lsp::InsertTextFormat::SNIPPET;
-    let default_insert_text_mode = lsp::InsertTextMode::AS_IS;
-    let default_edit_range = lsp::Range {
-        start: lsp::Position {
-            line: 0,
-            character: 5,
-        },
-        end: lsp::Position {
-            line: 0,
-            character: 5,
-        },
-    };
-
-    let resolve_requests_number = Arc::new(AtomicUsize::new(0));
-    let expect_first_item = Arc::new(AtomicBool::new(true));
-    cx.lsp
-        .server
-        .on_request::<lsp::request::ResolveCompletionItem, _, _>({
-            let closure_default_data = default_data.clone();
-            let closure_resolve_requests_number = resolve_requests_number.clone();
-            let closure_expect_first_item = expect_first_item.clone();
-            let closure_default_commit_characters = default_commit_characters.clone();
-            move |item_to_resolve, _| {
-                closure_resolve_requests_number.fetch_add(1, atomic::Ordering::Release);
-                let default_data = closure_default_data.clone();
-                let default_commit_characters = closure_default_commit_characters.clone();
-                let expect_first_item = closure_expect_first_item.clone();
-                async move {
-                    if expect_first_item.load(atomic::Ordering::Acquire) {
-                        assert_eq!(
-                            item_to_resolve.label, "Some(2)",
-                            "Should have selected the first item"
-                        );
-                        assert_eq!(
-                            item_to_resolve.data,
-                            Some(json!({ "very": "special"})),
-                            "First item should bring its own data for resolving"
-                        );
-                        assert_eq!(
-                            item_to_resolve.commit_characters,
-                            Some(default_commit_characters),
-                            "First item had no own commit characters and should inherit the default ones"
-                        );
-                        assert!(
-                            matches!(
-                                item_to_resolve.text_edit,
-                                Some(lsp::CompletionTextEdit::InsertAndReplace { .. })
-                            ),
-                            "First item should bring its own edit range for resolving"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_format,
-                            Some(default_insert_text_format),
-                            "First item had no own insert text format and should inherit the default one"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_mode,
-                            Some(lsp::InsertTextMode::ADJUST_INDENTATION),
-                            "First item should bring its own insert text mode for resolving"
-                        );
-                        Ok(item_to_resolve)
-                    } else {
-                        assert_eq!(
-                            item_to_resolve.label, "vec![2]",
-                            "Should have selected the last item"
-                        );
-                        assert_eq!(
-                            item_to_resolve.data,
-                            Some(default_data),
-                            "Last item has no own resolve data and should inherit the default one"
-                        );
-                        assert_eq!(
-                            item_to_resolve.commit_characters,
-                            Some(default_commit_characters),
-                            "Last item had no own commit characters and should inherit the default ones"
-                        );
-                        assert_eq!(
-                            item_to_resolve.text_edit,
-                            Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                range: default_edit_range,
-                                new_text: "vec![2]".to_string()
-                            })),
-                            "Last item had no own edit range and should inherit the default one"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_format,
-                            Some(lsp::InsertTextFormat::PLAIN_TEXT),
-                            "Last item should bring its own insert text format for resolving"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_mode,
-                            Some(default_insert_text_mode),
-                            "Last item had no own insert text mode and should inherit the default one"
-                        );
-
-                        Ok(item_to_resolve)
-                    }
-                }
-            }
-        }).detach();
-
     let completion_data = default_data.clone();
     let completion_characters = default_commit_characters.clone();
     cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
         let default_data = completion_data.clone();
         let default_commit_characters = completion_characters.clone();
+        let items = items.clone();
         async move {
             Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                items: vec![
-                    lsp::CompletionItem {
-                        label: "Some(2)".into(),
-                        insert_text: Some("Some(2)".into()),
-                        data: Some(json!({ "very": "special"})),
-                        insert_text_mode: Some(lsp::InsertTextMode::ADJUST_INDENTATION),
-                        text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                            lsp::InsertReplaceEdit {
-                                new_text: "Some(2)".to_string(),
-                                insert: lsp::Range::default(),
-                                replace: lsp::Range::default(),
-                            },
-                        )),
-                        ..lsp::CompletionItem::default()
-                    },
-                    lsp::CompletionItem {
-                        label: "vec![2]".into(),
-                        insert_text: Some("vec![2]".into()),
-                        insert_text_format: Some(lsp::InsertTextFormat::PLAIN_TEXT),
-                        ..lsp::CompletionItem::default()
-                    },
-                ],
+                items,
                 item_defaults: Some(lsp::CompletionListItemDefaults {
                     data: Some(default_data.clone()),
                     commit_characters: Some(default_commit_characters.clone()),
@@ -10883,6 +10850,21 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
     .next()
     .await;
 
+    let resolved_items = Arc::new(Mutex::new(Vec::new()));
+    cx.lsp
+        .server
+        .on_request::<lsp::request::ResolveCompletionItem, _, _>({
+            let closure_resolved_items = resolved_items.clone();
+            move |item_to_resolve, _| {
+                let closure_resolved_items = closure_resolved_items.clone();
+                async move {
+                    closure_resolved_items.lock().push(item_to_resolve.clone());
+                    Ok(item_to_resolve)
+                }
+            }
+        })
+        .detach();
+
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.run_until_parked();
@@ -10896,38 +10878,25 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
                         .iter()
                         .map(|c| c.string.as_str())
                         .collect::<Vec<_>>(),
-                    vec!["Some(2)", "vec![2]"]
+                    vec!["abs", "acos", "acosh", "asin"]
                 );
             }
             ContextMenu::CodeActions(_) => panic!("Expected to have the completions menu"),
         }
     });
     assert_eq!(
-        resolve_requests_number.load(atomic::Ordering::Acquire),
-        1,
-        "While there are 2 items in the completion list, only 1 resolve request should have been sent, for the selected item"
+        *resolved_items.lock(),
+        vec![item_3_out.clone(), item_0_out.clone(), item_1_out.clone()]
     );
+    resolved_items.lock().clear();
 
     cx.update_editor(|editor, cx| {
-        editor.context_menu_first(&ContextMenuFirst, cx);
+        editor.context_menu_next(&ContextMenuNext, cx);
     });
     cx.run_until_parked();
-    assert_eq!(
-        resolve_requests_number.load(atomic::Ordering::Acquire),
-        2,
-        "After re-selecting the first item, another resolve request should have been sent"
-    );
-
-    expect_first_item.store(false, atomic::Ordering::Release);
-    cx.update_editor(|editor, cx| {
-        editor.context_menu_last(&ContextMenuLast, cx);
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        resolve_requests_number.load(atomic::Ordering::Acquire),
-        3,
-        "After selecting the other item, another resolve request should have been sent"
-    );
+    // Completions that have already been resolved are skipped.
+    assert_eq!(*resolved_items.lock(), vec![item_2_out.clone()]);
+    resolved_items.lock().clear();
 }
 
 #[gpui::test]
