@@ -20431,3 +20431,103 @@ fn assert_hunk_revert(
     cx.assert_editor_state(expected_reverted_text_with_selections);
     assert_eq!(actual_hunk_statuses_before, expected_hunk_statuses_before);
 }
+
+#[gpui::test]
+async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                lsp::DiagnosticOptions {
+                    identifier: Some("rust-analyzer".into()),
+                    inter_file_dependencies: true,
+                    workspace_diagnostics: true,
+                    work_done_progress_options: Default::default(),
+                },
+            )),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let diagnostic_requests = Arc::new(AtomicUsize::new(0));
+    let counter = diagnostic_requests.clone();
+
+    cx.lsp
+        .handle_request::<lsp::request::DocumentDiagnosticRequest, _, _>(move |params, _| {
+            counter.fetch_add(1, atomic::Ordering::Release);
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path("/root/dir/file.rs").unwrap()
+            );
+            async move {
+                Ok(lsp::DocumentDiagnosticReportResult::Report(
+                    lsp::DocumentDiagnosticReport::Full(lsp::RelatedFullDocumentDiagnosticReport {
+                        related_documents: None,
+                        full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
+                            items: vec![],
+                            result_id: None,
+                        },
+                    }),
+                ))
+            }
+        });
+
+    // Opening file should trigger diagnostics
+    cx.set_state(indoc! {"
+            fn main() {
+                let a = ˇ1;
+            }
+        "});
+    cx.executor().run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(300));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        diagnostic_requests.load(atomic::Ordering::Acquire),
+        1,
+        "Opening file should trigger diagnostic request"
+    );
+
+    // Editing should trigger diagnostics
+    cx.update_editor(|editor, cx| editor.handle_input("2", cx));
+    cx.executor().run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(300));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        diagnostic_requests.load(atomic::Ordering::Acquire),
+        2,
+        "Editing should trigger diagnostic request"
+    );
+
+    // Moving cursor should not trigger diagnostic request
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
+        });
+    });
+    cx.executor().run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(300));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        diagnostic_requests.load(atomic::Ordering::Acquire),
+        2,
+        "Cursor movement should not trigger diagnostic request"
+    );
+
+    // Multiple rapid edits should be debounced
+    for _ in 0..5 {
+        cx.update_editor(|editor, cx| editor.handle_input("x", cx));
+    }
+    cx.executor().run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(300));
+    cx.executor().run_until_parked();
+
+    let final_requests = diagnostic_requests.load(atomic::Ordering::Acquire);
+    assert!(
+        final_requests <= 4,
+        "Multiple rapid edits should be debounced (got {} requests)",
+        final_requests
+    );
+}

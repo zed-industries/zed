@@ -3783,8 +3783,7 @@ impl LspCommand for GetDocumentDiagnostics {
     ) -> Result<Self::Response> {
         let uri = buffer.read_with(&cx, |buffer, cx| {
             let file = buffer.file().and_then(|file| file.as_local())?;
-            let uri = lsp::Url::from_file_path(file.abs_path(cx).clone()).unwrap();
-            Some(uri)
+            Some(lsp::Url::from_file_path(file.abs_path(cx).clone()).unwrap())
         })?;
 
         match message {

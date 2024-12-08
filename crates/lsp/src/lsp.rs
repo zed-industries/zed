@@ -794,8 +794,8 @@ impl LanguageServer {
                         ..DocumentSymbolClientCapabilities::default()
                     }),
                     diagnostic: Some(DiagnosticClientCapabilities {
-                        dynamic_registration: Some(true),
-                        related_document_support: Some(true),
+                        dynamic_registration: Some(false),
+                        related_document_support: Some(false),
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),
