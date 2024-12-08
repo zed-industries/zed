@@ -1,5 +1,4 @@
 use gpui::*;
-use gpui3 as gpui;
 
 struct WindowContent {
     text: SharedString,

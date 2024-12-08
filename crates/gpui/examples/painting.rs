@@ -2,7 +2,6 @@ use gpui::{
     canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, MouseDownEvent, Path,
     Pixels, Point, WindowOptions,
 };
-use gpui3::{self as gpui, Model, Window};
 struct PaintingViewer {
     default_lines: Vec<Path<Pixels>>,
     lines: Vec<Vec<Point<Pixels>>>,

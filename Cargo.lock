@@ -4677,38 +4677,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fs3"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ashpd",
- "async-tar",
- "async-trait",
- "cocoa 0.26.0",
- "collections",
- "fsevent",
- "futures 0.3.31",
- "git",
- "git2",
- "gpui3",
- "libc",
- "notify",
- "objc",
- "parking_lot",
- "paths",
- "proto",
- "rope",
- "serde",
- "serde_json",
- "smol",
- "tempfile",
- "text",
- "time",
- "util",
- "windows 0.58.0",
-]
-
-[[package]]
 name = "fsevent"
 version = "0.1.0"
 dependencies = [
@@ -5166,93 +5134,6 @@ dependencies = [
 
 [[package]]
 name = "gpui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "as-raw-xcb-connection",
- "ashpd",
- "async-task",
- "backtrace",
- "bindgen",
- "blade-graphics",
- "blade-macros",
- "blade-util",
- "block",
- "bytemuck",
- "calloop",
- "calloop-wayland-source",
- "cbindgen",
- "cocoa 0.26.0",
- "collections",
- "core-foundation 0.9.4",
- "core-foundation-sys",
- "core-graphics 0.23.2",
- "core-text",
- "cosmic-text",
- "ctor",
- "derive_more",
- "embed-resource",
- "env_logger 0.11.5",
- "etagere",
- "filedescriptor",
- "flume",
- "font-kit",
- "foreign-types 0.5.0",
- "futures 0.3.31",
- "gpui_macros",
- "http_client",
- "image",
- "itertools 0.13.0",
- "linkme",
- "log",
- "media",
- "metal",
- "num_cpus",
- "objc",
- "oo7",
- "open",
- "parking",
- "parking_lot",
- "pathfinder_geometry",
- "postage",
- "profiling",
- "rand 0.8.5",
- "raw-window-handle",
- "refineable",
- "resvg",
- "schemars",
- "seahash",
- "semantic_version",
- "serde",
- "serde_derive",
- "serde_json",
- "slotmap",
- "smallvec",
- "smol",
- "strum 0.25.0",
- "sum_tree",
- "taffy",
- "thiserror 1.0.69",
- "unicode-segmentation",
- "usvg",
- "util",
- "uuid",
- "waker-fn",
- "wayland-backend",
- "wayland-client",
- "wayland-cursor",
- "wayland-protocols",
- "wayland-protocols-plasma",
- "windows 0.58.0",
- "windows-core 0.58.0",
- "x11-clipboard",
- "x11rb",
- "xim",
- "xkbcommon",
-]
-
-[[package]]
-name = "gpui3"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7409,14 +7290,6 @@ name = "menu"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "serde",
-]
-
-[[package]]
-name = "menu3"
-version = "0.1.0"
-dependencies = [
- "gpui3",
  "serde",
 ]
 
@@ -11232,34 +11105,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "settings3"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "ec4rs",
- "fs3",
- "futures 0.3.31",
- "gpui3",
- "indoc",
- "log",
- "paths",
- "pretty_assertions",
- "release_channel",
- "rust-embed",
- "schemars",
- "serde",
- "serde_derive",
- "serde_json",
- "serde_json_lenient",
- "smallvec",
- "tree-sitter",
- "tree-sitter-json",
- "unindent",
- "util",
-]
-
-[[package]]
 name = "settings_ui"
 version = "0.1.0"
 dependencies = [
@@ -12612,33 +12457,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "theme3"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "derive_more",
- "fs3",
- "futures 0.3.31",
- "gpui3",
- "indexmap 1.9.3",
- "log",
- "palette",
- "parking_lot",
- "refineable",
- "schemars",
- "serde",
- "serde_derive",
- "serde_json",
- "serde_json_lenient",
- "serde_repr",
- "settings3",
- "strum 0.25.0",
- "util",
- "uuid",
-]
-
-[[package]]
 name = "theme_extension"
 version = "0.1.0"
 dependencies = [
@@ -13641,24 +13459,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ui3"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "gpui3",
- "itertools 0.13.0",
- "menu3",
- "serde",
- "settings3",
- "smallvec",
- "story",
- "strum 0.25.0",
- "theme3",
- "ui_macros3",
- "windows 0.58.0",
-]
-
-[[package]]
 name = "ui_input"
 version = "0.1.0"
 dependencies = [
@@ -13671,16 +13471,6 @@ dependencies = [
 
 [[package]]
 name = "ui_macros"
-version = "0.1.0"
-dependencies = [
- "convert_case 0.6.0",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "ui_macros3"
 version = "0.1.0"
 dependencies = [
  "convert_case 0.6.0",

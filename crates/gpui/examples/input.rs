@@ -1,7 +1,6 @@
 use std::ops::Range;
 
 use gpui::*;
-use gpui3::{self as gpui};
 use unicode_segmentation::*;
 
 actions!(

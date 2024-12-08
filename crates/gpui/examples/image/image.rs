@@ -3,7 +3,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use gpui::*;
-use gpui3 as gpui;
 use std::fs;
 
 struct Assets {

@@ -1,5 +1,4 @@
 use gpui::*;
-use gpui3 as gpui;
 
 fn main() {
     struct HelloWorld;

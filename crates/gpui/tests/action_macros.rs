@@ -1,5 +1,4 @@
 use gpui::{actions, impl_actions};
-use gpui3 as gpui;
 use gpui_macros::register_action;
 use serde_derive::Deserialize;
 

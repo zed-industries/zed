@@ -7,7 +7,6 @@ use gpui::{
     ImgResourceLoader, Length, Pixels, RenderImage, Resource, SharedString, Window, WindowBounds,
     WindowOptions, LOADING_DELAY,
 };
-use gpui3::{self as gpui, Model};
 
 struct Assets {}
 

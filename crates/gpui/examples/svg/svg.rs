@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use gpui::*;
-use gpui3 as gpui;
 use std::fs;
 
 struct Assets {

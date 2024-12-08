@@ -1,7 +1,6 @@
 use std::{fs, path::PathBuf, time::Duration};
 
 use gpui::*;
-use gpui3 as gpui;
 
 struct Assets {
     base: PathBuf,

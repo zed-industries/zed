@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use gpui::*;
-use gpui3 as gpui;
 
 struct Assets {}
 

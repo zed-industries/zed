@@ -1,5 +1,4 @@
 use gpui::{div, img, prelude::*, App, AppContext, Window, WindowOptions};
-use gpui3::{self as gpui, Model};
 
 struct GifViewerExample {
     gif_path: std::path::PathBuf,
