@@ -73,6 +73,8 @@ use util::RangeExt;
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
 
+const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
+
 struct SelectionLayout {
     head: DisplayPoint,
     cursor_shape: CursorShape,
@@ -5227,8 +5229,51 @@ impl Element for EditorElement {
                         cx,
                     )
                     .width;
-                    let mut scroll_width =
-                        longest_line_width.max(max_visible_line_width) + overscroll.width;
+
+                    let blame_overflow = self.editor.update(cx, |editor, cx| {
+                        if !editor.render_git_blame_inline(cx) {
+                            return None;
+                        }
+
+                        let cursor_position = editor.selections.newest_anchor().head();
+                        let buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+                        let buffer_row =
+                            MultiBufferRow(cursor_position.to_point(&buffer_snapshot).row);
+                        let line_width = buffer_snapshot.line_len(buffer_row) as f32 * em_advance;
+
+                        let blame_width = editor.blame.as_ref().map_or(Pixels::ZERO, |blame| {
+                            blame
+                                .update(cx, |blame, cx| {
+                                    blame.blame_for_rows([Some(buffer_row)], cx).next()
+                                })
+                                .flatten()
+                                .map_or(Pixels::ZERO, |entry| {
+                                    let workspace =
+                                        editor.workspace.as_ref().map(|(w, _)| w.clone());
+                                    let mut element = render_inline_blame_entry(
+                                        blame, entry, &style, workspace, cx,
+                                    );
+                                    element.layout_as_root(AvailableSpace::min_size(), cx).width
+                                })
+                        });
+
+                        let blame_width_with_padding =
+                            (INLINE_BLAME_PADDING_EM_WIDTHS * em_advance) + blame_width;
+
+                        // If blame overflows the longest line, return the overflow amount.
+                        if line_width + blame_width_with_padding > longest_line_width {
+                            return Some(
+                                line_width + blame_width_with_padding - longest_line_width,
+                            );
+                        }
+
+                        // Else, blame is inside the scroll bounds.
+                        None
+                    });
+
+                    let mut scroll_width = longest_line_width.max(max_visible_line_width)
+                        + overscroll.width
+                        + blame_overflow.unwrap_or_default();
 
                     let blocks = cx.with_element_namespace("blocks", |cx| {
                         self.render_blocks(
