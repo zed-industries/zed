@@ -9,6 +9,7 @@ use util::paths::PathMatcher;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct WorktreeSettings {
+    pub disable_git_updates: bool,
     pub file_scan_inclusions: PathMatcher,
     pub file_scan_exclusions: PathMatcher,
     pub private_files: PathMatcher,
@@ -33,6 +34,12 @@ impl WorktreeSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorktreeSettingsContent {
+    /// Disable periodic updates of git repositories. Users may wish to disable
+    /// git updates if they have a very large repository, where `git status` may
+    /// take a long time (several seconds even!)
+    #[serde(default)]
+    pub disable_git_updates: bool,
+
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.
     ///
@@ -90,6 +97,7 @@ impl Settings for WorktreeSettings {
         private_files.sort();
         parsed_file_scan_inclusions.sort();
         Ok(Self {
+            disable_git_updates: result.disable_git_updates,
             file_scan_exclusions: path_matchers(&file_scan_exclusions, "file_scan_exclusions")?,
             private_files: path_matchers(&private_files, "private_files")?,
             file_scan_inclusions: path_matchers(
