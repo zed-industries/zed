@@ -19,10 +19,10 @@ use crate::{
     BlockId, ChunkReplacement, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint,
     DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp, OpenExcerpts,
-    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
+    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
+    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -31,7 +31,7 @@ use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
+    FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, View, ViewContext,
@@ -47,7 +47,10 @@ use language::{
     ChunkRendererContext,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{Anchor, ExcerptId, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow};
+use multi_buffer::{
+    Anchor, AnchorRangeExt, ExcerptId, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot,
+};
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -2720,6 +2723,157 @@ impl EditorElement {
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn layout_inline_completion_popover(
+        &self,
+        text_bounds: &Bounds<Pixels>,
+        editor_snapshot: &EditorSnapshot,
+        visible_row_range: Range<DisplayRow>,
+        scroll_top: f32,
+        scroll_bottom: f32,
+        line_layouts: &[LineWithInvisibles],
+        line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        editor_width: Pixels,
+        style: &EditorStyle,
+        cx: &mut WindowContext,
+    ) -> Option<AnyElement> {
+        const PADDING_X: Pixels = Pixels(25.);
+        const PADDING_Y: Pixels = Pixels(2.);
+
+        let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
+
+        match &active_inline_completion.completion {
+            InlineCompletion::Move(target_position) => {
+                let container_element = div()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_md()
+                    .px_1();
+
+                let target_display_point = target_position.to_display_point(editor_snapshot);
+                if target_display_point.row().as_f32() < scroll_top {
+                    let mut element = container_element
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(Icon::new(IconName::Tab))
+                                .child(Label::new("Jump to Edit"))
+                                .child(Icon::new(IconName::ArrowUp)),
+                        )
+                        .into_any();
+                    let size = element.layout_as_root(AvailableSpace::min_size(), cx);
+                    let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
+                    element.prepaint_at(text_bounds.origin + offset, cx);
+                    Some(element)
+                } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
+                    let mut element = container_element
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(Icon::new(IconName::Tab))
+                                .child(Label::new("Jump to Edit"))
+                                .child(Icon::new(IconName::ArrowDown)),
+                        )
+                        .into_any();
+                    let size = element.layout_as_root(AvailableSpace::min_size(), cx);
+                    let offset = point(
+                        (text_bounds.size.width - size.width) / 2.,
+                        text_bounds.size.height - size.height - PADDING_Y,
+                    );
+                    element.prepaint_at(text_bounds.origin + offset, cx);
+                    Some(element)
+                } else {
+                    let mut element = container_element
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(Icon::new(IconName::Tab))
+                                .child(Label::new("Jump to Edit")),
+                        )
+                        .into_any();
+
+                    let target_line_end = DisplayPoint::new(
+                        target_display_point.row(),
+                        editor_snapshot.line_len(target_display_point.row()),
+                    );
+                    let origin = self.editor.update(cx, |editor, cx| {
+                        editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
+                    })?;
+                    element.prepaint_as_root(
+                        text_bounds.origin + origin + point(PADDING_X, px(0.)),
+                        AvailableSpace::min_size(),
+                        cx,
+                    );
+                    Some(element)
+                }
+            }
+            InlineCompletion::Edit(edits) => {
+                let edit_start = edits
+                    .first()
+                    .unwrap()
+                    .0
+                    .start
+                    .to_display_point(editor_snapshot);
+                let edit_end = edits
+                    .last()
+                    .unwrap()
+                    .0
+                    .end
+                    .to_display_point(editor_snapshot);
+
+                let is_visible = visible_row_range.contains(&edit_start.row())
+                    || visible_row_range.contains(&edit_end.row());
+                if !is_visible {
+                    return None;
+                }
+
+                if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
+                    return None;
+                }
+
+                let (text, highlights) =
+                    inline_completion_popover_text(edit_start, editor_snapshot, edits, cx);
+
+                let longest_row =
+                    editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
+                let longest_line_width = if visible_row_range.contains(&longest_row) {
+                    line_layouts[(longest_row.0 - visible_row_range.start.0) as usize].width
+                } else {
+                    layout_line(
+                        longest_row,
+                        editor_snapshot,
+                        style,
+                        editor_width,
+                        |_| false,
+                        cx,
+                    )
+                    .width
+                };
+
+                let text = gpui::StyledText::new(text).with_highlights(&style.text, highlights);
+
+                let mut element = div()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_md()
+                    .px_1()
+                    .child(text)
+                    .into_any();
+
+                let origin = text_bounds.origin
+                    + point(
+                        longest_line_width + PADDING_X - scroll_pixel_position.x,
+                        edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
+                    );
+                element.prepaint_as_root(origin, AvailableSpace::min_size(), cx);
+                Some(element)
+            }
+        }
+    }
+
     fn layout_mouse_context_menu(
         &self,
         editor_snapshot: &EditorSnapshot,
@@ -3942,6 +4096,16 @@ impl EditorElement {
         }
     }
 
+    fn paint_inline_completion_popover(
+        &mut self,
+        layout: &mut EditorLayout,
+        cx: &mut WindowContext,
+    ) {
+        if let Some(inline_completion_popover) = layout.inline_completion_popover.as_mut() {
+            inline_completion_popover.paint(cx);
+        }
+    }
+
     fn paint_mouse_context_menu(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         if let Some(mouse_context_menu) = layout.mouse_context_menu.as_mut() {
             mouse_context_menu.paint(cx);
@@ -4132,6 +4296,67 @@ impl EditorElement {
         let digit_count = (snapshot.widest_line_number() as f32).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
     }
+}
+
+fn inline_completion_popover_text(
+    edit_start: DisplayPoint,
+    editor_snapshot: &EditorSnapshot,
+    edits: &Vec<(Range<Anchor>, String)>,
+    cx: &WindowContext,
+) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
+    let mut text = String::new();
+    let mut offset = DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
+    let mut highlights = Vec::new();
+    for (old_range, new_text) in edits {
+        let old_offset_range = old_range.to_offset(&editor_snapshot.buffer_snapshot);
+        text.extend(
+            editor_snapshot
+                .buffer_snapshot
+                .chunks(offset..old_offset_range.start, false)
+                .map(|chunk| chunk.text),
+        );
+        offset = old_offset_range.end;
+
+        let start = text.len();
+        text.push_str(new_text);
+        let end = text.len();
+        highlights.push((
+            start..end,
+            HighlightStyle {
+                background_color: Some(cx.theme().status().created_background),
+                ..Default::default()
+            },
+        ));
+    }
+    (text, highlights)
+}
+
+fn all_edits_insertions_or_deletions(
+    edits: &Vec<(Range<Anchor>, String)>,
+    snapshot: &MultiBufferSnapshot,
+) -> bool {
+    let mut all_insertions = true;
+    let mut all_deletions = true;
+
+    for (range, new_text) in edits.iter() {
+        let range_is_empty = range.to_offset(&snapshot).is_empty();
+        let text_is_empty = new_text.is_empty();
+
+        if range_is_empty != text_is_empty {
+            if range_is_empty {
+                all_deletions = false;
+            } else {
+                all_insertions = false;
+            }
+        } else {
+            return false;
+        }
+
+        if !all_insertions && !all_deletions {
+            return false;
+        }
+    }
+    all_insertions || all_deletions
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5566,6 +5791,20 @@ impl Element for EditorElement {
                         );
                     }
 
+                    let inline_completion_popover = self.layout_inline_completion_popover(
+                        &text_hitbox.bounds,
+                        &snapshot,
+                        start_row..end_row,
+                        scroll_position.y,
+                        scroll_position.y + height_in_lines,
+                        &line_layouts,
+                        line_height,
+                        scroll_pixel_position,
+                        editor_width,
+                        &style,
+                        cx,
+                    );
+
                     let mouse_context_menu = self.layout_mouse_context_menu(
                         &snapshot,
                         start_row..end_row,
@@ -5652,6 +5891,7 @@ impl Element for EditorElement {
                         cursors,
                         visible_cursors,
                         selections,
+                        inline_completion_popover,
                         mouse_context_menu,
                         test_indicators,
                         code_actions_indicator,
@@ -5741,6 +5981,7 @@ impl Element for EditorElement {
                     }
 
                     self.paint_scrollbar(layout, cx);
+                    self.paint_inline_completion_popover(layout, cx);
                     self.paint_mouse_context_menu(layout, cx);
                 });
             })
@@ -5796,6 +6037,7 @@ pub struct EditorLayout {
     test_indicators: Vec<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
+    inline_completion_popover: Option<AnyElement>,
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
@@ -6834,6 +7076,169 @@ mod tests {
 
                 editor_width += resize_step;
             }
+        }
+    }
+
+    #[gpui::test]
+    fn test_inline_completion_popover_text(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        // Test case 1: Simple insertion
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 6))
+                        ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
+                    let edit_start = DisplayPoint::new(DisplayRow(0), 6);
+                    let edits = vec![(edit_range, " beautiful".to_string())];
+
+                    let (text, highlights) =
+                        inline_completion_popover_text(edit_start, &snapshot, &edits, cx);
+
+                    assert_eq!(text, "Hello, beautiful");
+                    assert_eq!(highlights.len(), 1);
+                    assert_eq!(highlights[0].0, 6..16);
+                    assert_eq!(
+                        highlights[0].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                })
+                .unwrap();
+        }
+
+        // Test case 2: Replacement
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple("This is a test.", cx);
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edit_start = DisplayPoint::new(DisplayRow(0), 0);
+                    let edits = vec![(
+                        snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 4)),
+                        "That".to_string(),
+                    )];
+
+                    let (text, highlights) =
+                        inline_completion_popover_text(edit_start, &snapshot, &edits, cx);
+
+                    assert_eq!(text, "That");
+                    assert_eq!(highlights.len(), 1);
+                    assert_eq!(highlights[0].0, 0..4);
+                    assert_eq!(
+                        highlights[0].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                })
+                .unwrap();
+        }
+
+        // Test case 3: Multiple edits
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edit_start = DisplayPoint::new(DisplayRow(0), 0);
+                    let edits = vec![
+                        (
+                            snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 5)),
+                            "Greetings".into(),
+                        ),
+                        (
+                            snapshot.buffer_snapshot.anchor_after(Point::new(0, 12))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 13)),
+                            " and universe".into(),
+                        ),
+                    ];
+
+                    let (text, highlights) =
+                        inline_completion_popover_text(edit_start, &snapshot, &edits, cx);
+
+                    assert_eq!(text, "Greetings, world and universe");
+                    assert_eq!(highlights.len(), 2);
+                    assert_eq!(highlights[0].0, 0..9);
+                    assert_eq!(highlights[1].0, 16..29);
+                    assert_eq!(
+                        highlights[0].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                    assert_eq!(
+                        highlights[1].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                })
+                .unwrap();
+        }
+
+        // Test case 4: Multiple lines with edits
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple(
+                    "First line\nSecond line\nThird line\nFourth line",
+                    cx,
+                );
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edit_start = DisplayPoint::new(DisplayRow(1), 0);
+                    let edits = vec![
+                        (
+                            snapshot.buffer_snapshot.anchor_before(Point::new(1, 7))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(1, 11)),
+                            "modified".to_string(),
+                        ),
+                        (
+                            snapshot.buffer_snapshot.anchor_before(Point::new(2, 0))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(2, 10)),
+                            "New third line".to_string(),
+                        ),
+                        (
+                            snapshot.buffer_snapshot.anchor_before(Point::new(3, 6))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(3, 6)),
+                            " updated".to_string(),
+                        ),
+                    ];
+
+                    let (text, highlights) =
+                        inline_completion_popover_text(edit_start, &snapshot, &edits, cx);
+
+                    assert_eq!(text, "Second modified\nNew third line\nFourth updated");
+                    assert_eq!(highlights.len(), 3);
+                    assert_eq!(highlights[0].0, 7..15); // "modified"
+                    assert_eq!(highlights[1].0, 16..30); // "New third line"
+                    assert_eq!(highlights[2].0, 37..45); // " updated"
+
+                    for highlight in &highlights {
+                        assert_eq!(
+                            highlight.1.background_color,
+                            Some(cx.theme().status().created_background)
+                        );
+                    }
+                })
+                .unwrap();
         }
     }
 
