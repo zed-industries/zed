@@ -32,7 +32,7 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage, Rope,
     QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
@@ -1387,6 +1387,7 @@ impl ExtensionStore {
     fn prepare_remote_extension(
         &mut self,
         extension_id: Arc<str>,
+        is_dev: bool,
         tmp_dir: PathBuf,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
@@ -1397,15 +1398,30 @@ impl ExtensionStore {
         };
         let fs = self.fs.clone();
         cx.background_executor().spawn(async move {
-            for well_known_path in ["extension.toml", "extension.json", "extension.wasm"] {
-                if fs.is_file(&src_dir.join(well_known_path)).await {
-                    fs.copy_file(
-                        &src_dir.join(well_known_path),
-                        &tmp_dir.join(well_known_path),
-                        fs::CopyOptions::default(),
-                    )
-                    .await?
-                }
+            if is_dev {
+                let manifest_toml = toml::to_string(&loaded_extension.manifest)?;
+                fs.save(
+                    &tmp_dir.join("extension.toml"),
+                    &Rope::from(manifest_toml),
+                    language::LineEnding::Unix,
+                )
+                .await?;
+            } else {
+                fs.copy_file(
+                    &src_dir.join("extension.toml"),
+                    &tmp_dir.join("extension.toml"),
+                    fs::CopyOptions::default(),
+                )
+                .await?
+            }
+
+            if fs.is_file(&src_dir.join("extension.wasm")).await {
+                fs.copy_file(
+                    &src_dir.join("extension.wasm"),
+                    &tmp_dir.join("extension.wasm"),
+                    fs::CopyOptions::default(),
+                )
+                .await?
             }
 
             for language_path in loaded_extension.manifest.languages.iter() {
@@ -1462,6 +1478,7 @@ impl ExtensionStore {
             this.update(cx, |this, cx| {
                 this.prepare_remote_extension(
                     missing_extension.id.clone().into(),
+                    missing_extension.dev,
                     tmp_dir.path().to_owned(),
                     cx,
                 )
@@ -1475,6 +1492,11 @@ impl ExtensionStore {
                     client.upload_directory(tmp_dir.path().to_owned(), dest_dir.clone(), cx)
                 })?
                 .await?;
+
+            log::info!(
+                "Finished uploading extension {}",
+                missing_extension.clone().id
+            );
 
             client
                 .update(cx, |client, _cx| {
