@@ -90,10 +90,10 @@ impl ProjectIndex {
             last_status: Status::Idle,
             embedding_provider,
             _subscription: cx.subscribe(&project, Self::handle_project_event),
-            _maintain_status: cx.spawn(|this, mut cx| async move {
+            _maintain_status: model.spawn(cx, |this, mut cx| async move {
                 while status_rx.next().await.is_some() {
                     if this
-                        .update(&mut cx, |this, cx| this.update_status(cx))
+                        .update(&mut cx, |this, model, cx| this.update_status(cx))
                         .is_err()
                     {
                         break;
@@ -163,10 +163,10 @@ impl ProjectIndex {
                     cx,
                 );
 
-                let load_worktree = cx.spawn(|this, mut cx| async move {
+                let load_worktree = model.spawn(cx, |this, mut cx| async move {
                     let result = match worktree_index.await {
                         Ok(worktree_index) => {
-                            this.update(&mut cx, |this, _| {
+                            this.update(&mut cx, |this, _, _| {
                                 this.worktree_indices.insert(
                                     worktree_id,
                                     WorktreeIndexHandle::Loaded {
@@ -184,7 +184,7 @@ impl ProjectIndex {
                         }
                     };
 
-                    this.update(&mut cx, |this, cx| this.update_status(cx))?;
+                    this.update(&mut cx, |this, model, cx| this.update_status(cx))?;
 
                     result
                 });
@@ -224,7 +224,7 @@ impl ProjectIndex {
 
         if status != self.last_status {
             self.last_status = status;
-            cx.emit(status);
+            model.emit(cx, status);
         }
     }
 

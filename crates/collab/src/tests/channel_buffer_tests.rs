@@ -9,7 +9,7 @@ use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
-use gpui::{AppContext, BackgroundExecutor, Model, Model, TestAppContext};
+use gpui::{AppContext, BackgroundExecutor, Model, TestAppContext};
 use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 use serde_json::json;
 use std::ops::Range;
@@ -161,21 +161,21 @@ async fn test_channel_notes_participant_indices(
 
     // Clients A, B, and C open the channel notes
     let channel_view_a = cx_a
-        .update(|cx| ChannelView::open(channel_id, None, workspace_a.clone(), cx))
+        .update(|cx| ChannelView::open(channel_id, None, workspace_a.clone(), model, cx))
         .await
         .unwrap();
     let channel_view_b = cx_b
-        .update(|cx| ChannelView::open(channel_id, None, workspace_b.clone(), cx))
+        .update(|cx| ChannelView::open(channel_id, None, workspace_b.clone(), model, cx))
         .await
         .unwrap();
     let channel_view_c = cx_c
-        .update(|cx| ChannelView::open(channel_id, None, workspace_c.clone(), cx))
+        .update(|cx| ChannelView::open(channel_id, None, workspace_c.clone(), model, cx))
         .await
         .unwrap();
 
     // Clients A, B, and C all insert and select some text
     channel_view_a.update(cx_a, |notes, cx| {
-        notes.editor.update(cx, |editor, cx| {
+        notes.editor.update(cx, |editor, model, cx| {
             editor.insert("a", cx);
             editor.change_selections(None, cx, |selections| {
                 selections.select_ranges(vec![0..1]);
@@ -184,7 +184,7 @@ async fn test_channel_notes_participant_indices(
     });
     executor.run_until_parked();
     channel_view_b.update(cx_b, |notes, cx| {
-        notes.editor.update(cx, |editor, cx| {
+        notes.editor.update(cx, |editor, model, cx| {
             editor.move_down(&Default::default(), cx);
             editor.insert("b", cx);
             editor.change_selections(None, cx, |selections| {
@@ -194,7 +194,7 @@ async fn test_channel_notes_participant_indices(
     });
     executor.run_until_parked();
     channel_view_c.update(cx_c, |notes, cx| {
-        notes.editor.update(cx, |editor, cx| {
+        notes.editor.update(cx, |editor, model, cx| {
             editor.move_down(&Default::default(), cx);
             editor.insert("c", cx);
             editor.change_selections(None, cx, |selections| {
@@ -207,8 +207,8 @@ async fn test_channel_notes_participant_indices(
     // in a call together.
     executor.run_until_parked();
     channel_view_a.update(cx_a, |notes, cx| {
-        notes.editor.update(cx, |editor, cx| {
-            assert_remote_selections(editor, &[(None, 1..2), (None, 2..3)], cx);
+        notes.editor.update(cx, |editor, model, cx| {
+            assert_remote_selections(editor, &[(None, 1..2), (None, 2..3)], model, cx);
         });
     });
 
@@ -223,7 +223,7 @@ async fn test_channel_notes_participant_indices(
     // still doesn't have a color.
     executor.run_until_parked();
     channel_view_a.update(cx_a, |notes, cx| {
-        notes.editor.update(cx, |editor, cx| {
+        notes.editor.update(cx, |editor, model, cx| {
             assert_remote_selections(
                 editor,
                 &[(Some(ParticipantIndex(1)), 1..2), (None, 2..3)],
@@ -232,7 +232,7 @@ async fn test_channel_notes_participant_indices(
         });
     });
     channel_view_b.update(cx_b, |notes, cx| {
-        notes.editor.update(cx, |editor, cx| {
+        notes.editor.update(cx, |editor, model, cx| {
             assert_remote_selections(
                 editor,
                 &[(Some(ParticipantIndex(0)), 0..1), (None, 2..3)],
@@ -283,10 +283,10 @@ async fn test_channel_notes_participant_indices(
 
     // Clients A and B see each other with the same colors as in the channel notes.
     editor_a.update(cx_a, |editor, cx| {
-        assert_remote_selections(editor, &[(Some(ParticipantIndex(1)), 2..3)], cx);
+        assert_remote_selections(editor, &[(Some(ParticipantIndex(1)), 2..3)], model, cx);
     });
     editor_b.update(cx_b, |editor, cx| {
-        assert_remote_selections(editor, &[(Some(ParticipantIndex(0)), 0..1)], cx);
+        assert_remote_selections(editor, &[(Some(ParticipantIndex(0)), 0..1)], model, cx);
     });
 }
 
@@ -345,7 +345,7 @@ async fn test_multiple_handles_to_channel_buffer(
     assert_eq!(channel_buffer, channel_buffer_3);
 
     channel_buffer.update(cx_a, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, model, cx| {
             buffer.edit([(0..0, "hello")], None, cx);
         })
     });
@@ -366,7 +366,7 @@ async fn test_multiple_handles_to_channel_buffer(
         .unwrap();
     assert_ne!(channel_buffer.entity_id(), channel_buffer_model_id);
     channel_buffer.update(cx_a, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, _| {
+        buffer.buffer().update(cx, |buffer, model, _| {
             assert_eq!(buffer.text(), "hello");
         })
     });
@@ -466,7 +466,7 @@ async fn test_rejoin_channel_buffer(
         .unwrap();
 
     channel_buffer_a.update(cx_a, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, model, cx| {
             buffer.edit([(0..0, "1")], None, cx);
         })
     });
@@ -478,12 +478,12 @@ async fn test_rejoin_channel_buffer(
 
     // Both clients make an edit.
     channel_buffer_a.update(cx_a, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, model, cx| {
             buffer.edit([(1..1, "2")], None, cx);
         })
     });
     channel_buffer_b.update(cx_b, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, model, cx| {
             buffer.edit([(0..0, "0")], None, cx);
         })
     });
@@ -553,7 +553,7 @@ async fn test_channel_buffers_and_server_restarts(
         .unwrap();
 
     channel_buffer_a.update(cx_a, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, model, cx| {
             buffer.edit([(0..0, "1")], None, cx);
         })
     });
@@ -568,12 +568,12 @@ async fn test_channel_buffers_and_server_restarts(
 
     // While the server is down, both clients make an edit.
     channel_buffer_a.update(cx_a, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, model, cx| {
             buffer.edit([(1..1, "2")], None, cx);
         })
     });
     channel_buffer_b.update(cx_b, |buffer, cx| {
-        buffer.buffer().update(cx, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, model, cx| {
             buffer.edit([(0..0, "0")], None, cx);
         })
     });
@@ -643,7 +643,7 @@ async fn test_channel_buffer_changes(
 
     // Closing the buffer should re-enable change tracking
     cx_b.update(|cx| {
-        workspace_b.update(cx, |workspace, cx| {
+        workspace_b.update(cx, |workspace, model, cx| {
             workspace.close_all_items_and_panes(&Default::default(), cx)
         });
     });

@@ -991,7 +991,7 @@ mod tests {
             });
         });
 
-        cx.new_model(|cx| {
+        cx.new_model(|model, cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
             let append =
                 |buffer: &mut Buffer, text: &str, model: &Model<Buffer>, cx: &mut AppContext| {

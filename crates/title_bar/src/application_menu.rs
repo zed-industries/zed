@@ -13,10 +13,15 @@ impl ApplicationMenu {
 }
 
 impl Render for ApplicationMenu {
-    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        _window: &mut gpui::Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         PopoverMenu::new("application-menu")
             .menu(move |cx| {
-                ContextMenu::build(cx, move |menu, cx| {
+                ContextMenu::build(window, cx, move |menu, model, window, cx| {
                     menu.header("Workspace")
                         .action(
                             "Open Command Palette",
@@ -136,7 +141,7 @@ impl Render for ApplicationMenu {
                     .style(ButtonStyle::Subtle)
                     .icon_size(IconSize::Small)
                     .when(!self.context_menu_handle.is_deployed(), |this| {
-                        this.tooltip(|cx| Tooltip::text("Open Application Menu", cx))
+                        this.tooltip(|window, cx| Tooltip::text("Open Application Menu", cx))
                     }),
             )
             .with_handle(self.context_menu_handle.clone())

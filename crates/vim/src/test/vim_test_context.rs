@@ -67,17 +67,17 @@ impl VimTestContext {
 
         // Setup search toolbars and keypress hook
         cx.update_workspace(|workspace, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
-                pane.toolbar().update(cx, |toolbar, cx| {
-                    let buffer_search_bar = cx.new_view(BufferSearchBar::new);
+            workspace.active_pane().update(cx, |pane, model, cx| {
+                pane.toolbar().update(cx, |toolbar, model, cx| {
+                    let buffer_search_bar = cx.new_model(BufferSearchBar::new);
                     toolbar.add_item(buffer_search_bar, cx);
 
-                    let project_search_bar = cx.new_view(|_| ProjectSearchBar::new());
+                    let project_search_bar = cx.new_model(|_, _| ProjectSearchBar::new());
                     toolbar.add_item(project_search_bar, cx);
                 })
             });
-            workspace.status_bar().update(cx, |status_bar, cx| {
-                let vim_mode_indicator = cx.new_view(ModeIndicator::new);
+            workspace.status_bar().update(cx, |status_bar, model, cx| {
+                let vim_mode_indicator = cx.new_model(ModeIndicator::new);
                 status_bar.add_right_item(vim_mode_indicator, cx);
             });
         });
@@ -85,7 +85,7 @@ impl VimTestContext {
         Self { cx }
     }
 
-    pub fn update_view<F, T, R>(&mut self, view: View<T>, update: F) -> R
+    pub fn update_view<F, T, R>(&mut self, view: Model<T>, update: F) -> R
     where
         T: 'static,
         F: FnOnce(&mut T, &Model<T>, &mut AppContext) -> R + 'static,
@@ -140,7 +140,7 @@ impl VimTestContext {
         let vim = self.update_editor(|editor, _cx| editor.addon::<VimAddon>().cloned().unwrap());
 
         self.update(|cx| {
-            vim.view.update(cx, |vim, cx| {
+            vim.view.update(cx, |vim, model, cx| {
                 vim.switch_mode(mode, true, cx);
             });
         });

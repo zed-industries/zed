@@ -73,7 +73,7 @@ async fn test_sharing_an_ssh_remote_project(
     let remote_http_client = Arc::new(BlockedHttpClient);
     let node = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
-    let _headless_project = server_cx.new_model(|cx| {
+    let _headless_project = server_cx.new_model(|model, cx| {
         client::init_settings(cx);
         HeadlessProject::new(
             HeadlessAppState {
@@ -236,7 +236,7 @@ async fn test_ssh_collaboration_git_branches(
     let remote_http_client = Arc::new(BlockedHttpClient);
     let node = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
-    let headless_project = server_cx.new_model(|cx| {
+    let headless_project = server_cx.new_model(|model, cx| {
         client::init_settings(cx);
         HeadlessProject::new(
             HeadlessAppState {
@@ -273,7 +273,7 @@ async fn test_ssh_collaboration_git_branches(
     let root_path = ProjectPath::root_path(worktree_id);
 
     let branches_b = cx_b
-        .update(|cx| project_b.update(cx, |project, cx| project.branches(root_path.clone(), cx)))
+        .update(|cx| project_b.update(cx, |project, model, cx| project.branches(root_path.clone(), cx)))
         .await
         .unwrap();
 
@@ -287,7 +287,7 @@ async fn test_ssh_collaboration_git_branches(
     assert_eq!(&branches_b, &branches);
 
     cx_b.update(|cx| {
-        project_b.update(cx, |project, cx| {
+        project_b.update(cx, |project, model, cx| {
             project.update_or_create_branch(root_path.clone(), new_branch.to_string(), cx)
         })
     })
@@ -297,10 +297,10 @@ async fn test_ssh_collaboration_git_branches(
     executor.run_until_parked();
 
     let server_branch = server_cx.update(|cx| {
-        headless_project.update(cx, |headless_project, cx| {
+        headless_project.update(cx, |headless_project, model, cx| {
             headless_project
                 .worktree_store
-                .update(cx, |worktree_store, cx| {
+                .update(cx, |worktree_store, model, cx| {
                     worktree_store
                         .current_branch(root_path.clone(), cx)
                         .unwrap()
@@ -312,7 +312,7 @@ async fn test_ssh_collaboration_git_branches(
 
     // Also try creating a new branch
     cx_b.update(|cx| {
-        project_b.update(cx, |project, cx| {
+        project_b.update(cx, |project, model, cx| {
             project.update_or_create_branch(root_path.clone(), "totally-new-branch".to_string(), cx)
         })
     })
@@ -322,10 +322,10 @@ async fn test_ssh_collaboration_git_branches(
     executor.run_until_parked();
 
     let server_branch = server_cx.update(|cx| {
-        headless_project.update(cx, |headless_project, cx| {
+        headless_project.update(cx, |headless_project, model, cx| {
             headless_project
                 .worktree_store
-                .update(cx, |worktree_store, cx| {
+                .update(cx, |worktree_store, model, cx| {
                     worktree_store.current_branch(root_path, cx).unwrap()
                 })
         })
@@ -394,7 +394,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     // User A connects to the remote project via SSH.
     server_cx.update(HeadlessProject::init);
     let remote_http_client = Arc::new(BlockedHttpClient);
-    let _headless_project = server_cx.new_model(|cx| {
+    let _headless_project = server_cx.new_model(|model, cx| {
         client::init_settings(cx);
         HeadlessProject::new(
             HeadlessAppState {

@@ -82,7 +82,7 @@ impl RenderOnce for ThemeControl {
         DropdownMenu::new(
             "theme",
             value.clone(),
-            ContextMenu::build(cx, |mut menu, cx| {
+            ContextMenu::build(cx, window, |mut menu, model, window, cx| {
                 let theme_registry = ThemeRegistry::global(cx);
 
                 for theme in theme_registry.list_names() {
@@ -203,7 +203,7 @@ impl RenderOnce for UiFontFamilyControl {
             .child(DropdownMenu::new(
                 "ui-font-family",
                 value.clone(),
-                ContextMenu::build(cx, |mut menu, cx| {
+                ContextMenu::build(cx, window, |mut menu, model, window, cx| {
                     let font_family_cache = FontFamilyCache::global(cx);
 
                     for font_name in font_family_cache.list_font_families(cx) {
@@ -307,7 +307,7 @@ impl RenderOnce for UiFontWeightControl {
             .child(DropdownMenu::new(
                 "ui-font-weight",
                 value.0.to_string(),
-                ContextMenu::build(cx, |mut menu, _cx| {
+                ContextMenu::build(cx, window, |mut menu, model, window, cx| {
                     for weight in FontWeight::ALL {
                         menu = menu.custom_entry(
                             move |_cx| Label::new(weight.0.to_string()).into_any_element(),

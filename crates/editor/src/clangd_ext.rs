@@ -42,7 +42,7 @@ pub fn switch_source_header(
         .unwrap()
         .to_owned();
 
-    let switch_source_header_task = project.update(cx, |project, cx| {
+    let switch_source_header_task = project.update(cx, |project, model, cx| {
         project.request_lsp(
             buffer,
             project::LanguageServerToQuery::Other(server_to_query),
@@ -86,11 +86,11 @@ pub fn switch_source_header(
 }
 
 pub fn apply_related_actions(
-    editor: &View<Editor>,
+    editor: &Model<Editor>,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
 ) {
-    if editor.update(cx, |e, cx| {
+    if editor.update(cx, |e, model, cx| {
         find_specific_language_server_in_selection(e, cx, is_c_language, CLANGD_SERVER_NAME)
             .is_some()
     }) {

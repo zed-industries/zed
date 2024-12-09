@@ -76,32 +76,36 @@ impl ImageItem {
         if old_state != new_state {
             file_changed = true;
             if matches!(new_state, DiskState::Present { .. }) {
-                cx.emit(ImageItemEvent::ReloadNeeded)
+                model.emit(cx, ImageItemEvent::ReloadNeeded)
             }
         }
 
         self.file = new_file;
         if file_changed {
-            cx.emit(ImageItemEvent::FileHandleChanged);
-            cx.notify();
+            model.emit(cx, ImageItemEvent::FileHandleChanged);
+            model.notify(cx);
         }
     }
 
-    fn reload(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Option<oneshot::Receiver<()>> {
+    fn reload(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<oneshot::Receiver<()>> {
         let local_file = self.file.as_local()?;
         let (tx, rx) = futures::channel::oneshot::channel();
 
         let content = local_file.load_bytes(cx);
-        self.reload_task = Some(cx.spawn(|this, mut cx| async move {
+        self.reload_task = Some(model.spawn(cx, |this, mut cx| async move {
             if let Some(image) = content
                 .await
                 .context("Failed to load image content")
                 .and_then(create_gpui_image)
                 .log_err()
             {
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     this.image = image;
-                    cx.emit(ImageItemEvent::Reloaded);
+                    model.emit(cx, ImageItemEvent::Reloaded);
                 })
                 .log_err();
             }
@@ -159,13 +163,15 @@ trait ImageStoreImpl {
         &self,
         path: Arc<Path>,
         worktree: Model<Worktree>,
-        model: &Model<ImageStore>, cx: &mut AppContext,
+        model: &Model<ImageStore>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<ImageItem>>>;
 
     fn reload_images(
         &self,
         images: HashSet<Model<ImageItem>>,
-        model: &Model<ImageStore>, cx: &mut AppContext,
+        model: &Model<ImageStore>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>>;
 
     fn as_local(&self) -> Option<Model<LocalImageStore>>;
@@ -192,10 +198,14 @@ pub struct ImageStore {
 }
 
 impl ImageStore {
-    pub fn local(worktree_store: Model<WorktreeStore>, model: &Model<Self>, cx: &mut AppContext) -> Self {
+    pub fn local(
+        worktree_store: Model<WorktreeStore>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Self {
         let this = cx.weak_model();
         Self {
-            state: Box::new(cx.new_model(|cx| {
+            state: Box::new(cx.new_model(|model, cx| {
                 let subscription = cx.subscribe(
                     &worktree_store,
                     |this: &mut LocalImageStore, _, event, cx| {
@@ -226,7 +236,7 @@ impl ImageStore {
         cx: &mut AppContext,
     ) -> Self {
         Self {
-            state: Box::new(cx.new_model(|_| RemoteImageStore {})),
+            state: Box::new(cx.new_model(|_, _| RemoteImageStore {})),
             opened_images: Default::default(),
             loading_images_by_path: Default::default(),
             worktree_store,
@@ -325,7 +335,8 @@ impl ImageStore {
     pub fn reload_images(
         &self,
         images: HashSet<Model<ImageItem>>,
-        model: &Model<ImageStore>, cx: &mut AppContext,
+        model: &Model<ImageStore>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         if images.is_empty() {
             return Task::ready(Ok(()));
@@ -337,14 +348,15 @@ impl ImageStore {
     fn add_image(
         &mut self,
         image: Model<ImageItem>,
-        model: &Model<ImageStore>, cx: &mut AppContext,
+        model: &Model<ImageStore>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         let image_id = image.read(cx).id;
 
         self.opened_images.insert(image_id, image.downgrade());
 
         cx.subscribe(&image, Self::on_image_event).detach();
-        cx.emit(ImageStoreEvent::ImageAdded(image));
+        model.emit(cx, ImageStoreEvent::ImageAdded(image));
         Ok(())
     }
 
@@ -358,7 +370,7 @@ impl ImageStore {
         match event {
             ImageItemEvent::FileHandleChanged => {
                 if let Some(local) = self.state.as_local() {
-                    local.update(cx, |local, cx| {
+                    local.update(cx, |local, model, cx| {
                         local.image_changed_file(image, cx);
                     })
                 }
@@ -373,18 +385,19 @@ impl ImageStoreImpl for Model<LocalImageStore> {
         &self,
         path: Arc<Path>,
         worktree: Model<Worktree>,
-        model: &Model<ImageStore>, cx: &mut AppContext,
+        model: &Model<ImageStore>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<ImageItem>>> {
         let this = self.clone();
 
-        let load_file = worktree.update(cx, |worktree, cx| {
+        let load_file = worktree.update(cx, |worktree, model, cx| {
             worktree.load_binary_file(path.as_ref(), cx)
         });
         cx.spawn(move |image_store, mut cx| async move {
             let LoadedBinaryFile { file, content } = load_file.await?;
             let image = create_gpui_image(content)?;
 
-            let model = cx.new_model(|cx| ImageItem {
+            let model = cx.new_model(|model, cx| ImageItem {
                 id: cx.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
                 image,
@@ -393,8 +406,8 @@ impl ImageStoreImpl for Model<LocalImageStore> {
 
             let image_id = cx.read_model(&model, |model, _| model.id)?;
 
-            this.update(&mut cx, |this, cx| {
-                image_store.update(cx, |image_store, cx| {
+            this.update(&mut cx, |this, model, cx| {
+                image_store.update(cx, |image_store, model, cx| {
                     image_store.add_image(model.clone(), cx)
                 })??;
                 this.local_image_ids_by_path.insert(
@@ -419,7 +432,8 @@ impl ImageStoreImpl for Model<LocalImageStore> {
     fn reload_images(
         &self,
         images: HashSet<Model<ImageItem>>,
-        model: &Model<ImageStore>, cx: &mut AppContext,
+        model: &Model<ImageStore>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         cx.spawn(move |_, mut cx| async move {
             for image in images {
@@ -437,7 +451,12 @@ impl ImageStoreImpl for Model<LocalImageStore> {
 }
 
 impl LocalImageStore {
-    fn subscribe_to_worktree(&mut self, worktree: &Model<Worktree>, model: &Model<Self>, cx: &mut AppContext) {
+    fn subscribe_to_worktree(
+        &mut self,
+        worktree: &Model<Worktree>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         cx.subscribe(worktree, |this, worktree, event, cx| {
             if worktree.read(cx).is_local() {
                 match event {
@@ -484,7 +503,7 @@ impl LocalImageStore {
 
         let image = self
             .image_store
-            .update(cx, |image_store, _| {
+            .update(cx, |image_store, model, _| {
                 if let Some(image) = image_store.get(image_id) {
                     Some(image)
                 } else {
@@ -502,7 +521,7 @@ impl LocalImageStore {
             return None;
         };
 
-        image.update(cx, |image, cx| {
+        image.update(cx, |image, model, cx| {
             let Some(old_file) = worktree::File::from_dyn(Some(&image.file)) else {
                 return;
             };
@@ -619,7 +638,8 @@ impl ImageStoreImpl for Model<RemoteImageStore> {
         &self,
         _path: Arc<Path>,
         _worktree: Model<Worktree>,
-        model: &Model<ImageStore>, _cx: &mut AppContext,
+        model: &Model<ImageStore>,
+        _cx: &mut AppContext,
     ) -> Task<Result<Model<ImageItem>>> {
         Task::ready(Err(anyhow::anyhow!(
             "Opening images from remote is not supported"
@@ -629,7 +649,8 @@ impl ImageStoreImpl for Model<RemoteImageStore> {
     fn reload_images(
         &self,
         _images: HashSet<Model<ImageItem>>,
-        model: &Model<ImageStore>, _cx: &mut AppContext,
+        model: &Model<ImageStore>,
+        _cx: &mut AppContext,
     ) -> Task<Result<()>> {
         Task::ready(Err(anyhow::anyhow!(
             "Reloading images from remote is not supported"
@@ -692,7 +713,7 @@ mod tests {
             path: PathBuf::from("image_1.png").into(),
         };
 
-        let (task1, task2) = project.update(cx, |project, cx| {
+        let (task1, task2) = project.update(cx, |project, model, cx| {
             (
                 project.open_image(project_path.clone(), cx),
                 project.open_image(project_path.clone(), cx),

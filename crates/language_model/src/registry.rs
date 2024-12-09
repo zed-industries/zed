@@ -8,7 +8,7 @@ use std::sync::Arc;
 use ui::Context;
 
 pub fn init(cx: &mut AppContext) {
-    let registry = cx.new_model(|_cx| LanguageModelRegistry::default());
+    let registry = cx.new_model(|_model, _cx| LanguageModelRegistry::default());
     cx.set_global(GlobalLanguageModelRegistry(registry));
 }
 
@@ -49,7 +49,7 @@ impl LanguageModelRegistry {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> crate::fake_provider::FakeLanguageModelProvider {
         let fake_provider = crate::fake_provider::FakeLanguageModelProvider;
-        let registry = cx.new_model(|cx| {
+        let registry = cx.new_model(|model, cx| {
             let mut registry = Self::default();
             registry.register_provider(fake_provider.clone(), cx);
             let model = fake_provider.provided_models(cx)[0].clone();
@@ -69,14 +69,14 @@ impl LanguageModelRegistry {
         let id = provider.id();
 
         let subscription = provider.subscribe(cx, |_, cx| {
-            cx.emit(Event::ProviderStateChanged);
+            model.emit(cx, Event::ProviderStateChanged);
         });
         if let Some(subscription) = subscription {
             subscription.detach();
         }
 
         self.providers.insert(id.clone(), Arc::new(provider));
-        cx.emit(Event::AddedProvider(id));
+        model.emit(cx, Event::AddedProvider(id));
     }
 
     pub fn unregister_provider(
@@ -86,7 +86,7 @@ impl LanguageModelRegistry {
         cx: &mut AppContext,
     ) {
         if self.providers.remove(&id).is_some() {
-            cx.emit(Event::RemovedProvider(id));
+            model.emit(cx, Event::RemovedProvider(id));
         }
     }
 
@@ -146,7 +146,7 @@ impl LanguageModelRegistry {
             provider,
             model: None,
         });
-        cx.emit(Event::ActiveModelChanged);
+        model.emit(cx, Event::ActiveModelChanged);
     }
 
     pub fn set_active_model(
@@ -162,13 +162,13 @@ impl LanguageModelRegistry {
                     provider,
                     model: Some(model),
                 });
-                cx.emit(Event::ActiveModelChanged);
+                model.emit(cx, Event::ActiveModelChanged);
             } else {
                 log::warn!("Active model's provider not found in registry");
             }
         } else {
             self.active_model = None;
-            cx.emit(Event::ActiveModelChanged);
+            model.emit(cx, Event::ActiveModelChanged);
         }
     }
 
@@ -220,9 +220,9 @@ mod tests {
 
     #[gpui::test]
     fn test_register_providers(cx: &mut AppContext) {
-        let registry = cx.new_model(|_| LanguageModelRegistry::default());
+        let registry = cx.new_model(|_, _| LanguageModelRegistry::default());
 
-        registry.update(cx, |registry, cx| {
+        registry.update(cx, |registry, model, cx| {
             registry.register_provider(FakeLanguageModelProvider, cx);
         });
 
@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id(), crate::fake_provider::provider_id());
 
-        registry.update(cx, |registry, cx| {
+        registry.update(cx, |registry, model, cx| {
             registry.unregister_provider(crate::fake_provider::provider_id(), cx);
         });
 

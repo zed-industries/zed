@@ -10,7 +10,7 @@ use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 
 pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
-    let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();
+    let editors: Rc<RefCell<HashMap<WeakModel<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new_views({
         let editors = editors.clone();
         let telemetry = telemetry.clone();
@@ -19,7 +19,7 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
                 return;
             }
 
-            register_backward_compatible_actions(editor, cx);
+            register_backward_compatible_actions(editor, model, cx);
 
             let editor_handle = cx.view().downgrade();
             cx.on_release({
@@ -33,7 +33,9 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
             editors
                 .borrow_mut()
                 .insert(editor_handle, cx.window_handle());
-            let provider = all_language_settings(None, cx).inline_completions.provider;
+            let provider = all_language_settings(None, model, cx)
+                .inline_completions
+                .provider;
             assign_inline_completion_provider(editor, provider, &telemetry, cx);
         }
     })
@@ -41,8 +43,8 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
 
     let mut provider = all_language_settings(None, cx).inline_completions.provider;
     for (editor, window) in editors.borrow().iter() {
-        _ = window.update(cx, |_window, cx| {
-            _ = editor.update(cx, |editor, cx| {
+        _ = window.update(cx, |_window, model, cx| {
+            _ = editor.update(cx, |editor, model, cx| {
                 assign_inline_completion_provider(editor, provider, &telemetry, cx);
             })
         });
@@ -53,8 +55,8 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
         if new_provider != provider {
             provider = new_provider;
             for (editor, window) in editors.borrow().iter() {
-                _ = window.update(cx, |_window, cx| {
-                    _ = editor.update(cx, |editor, cx| {
+                _ = window.update(cx, |_window, model, cx| {
+                    _ = editor.update(cx, |editor, model, cx| {
                         assign_inline_completion_provider(editor, provider, &telemetry, cx);
                     })
                 });
@@ -121,12 +123,12 @@ fn assign_inline_completion_provider(
             if let Some(copilot) = Copilot::global(cx) {
                 if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                     if buffer.read(cx).file().is_some() {
-                        copilot.update(cx, |copilot, cx| {
+                        copilot.update(cx, |copilot, model, cx| {
                             copilot.register_buffer(&buffer, cx);
                         });
                     }
                 }
-                let provider = cx.new_model(|_| {
+                let provider = cx.new_model(|_, _| {
                     CopilotCompletionProvider::new(copilot).with_telemetry(telemetry.clone())
                 });
                 editor.set_inline_completion_provider(Some(provider), cx);
@@ -134,7 +136,7 @@ fn assign_inline_completion_provider(
         }
         language::language_settings::InlineCompletionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
-                let provider = cx.new_model(|_| {
+                let provider = cx.new_model(|_, _| {
                     SupermavenCompletionProvider::new(supermaven).with_telemetry(telemetry.clone())
                 });
                 editor.set_inline_completion_provider(Some(provider), cx);

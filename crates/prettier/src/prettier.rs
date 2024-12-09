@@ -206,7 +206,7 @@ impl Prettier {
         match self {
             Self::Real(local) => {
                 let params = buffer
-                    .update(cx, |buffer, cx| {
+                    .update(cx, |buffer, model, cx| {
                         let buffer_language = buffer.language();
                         let language_settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
                         let prettier_settings = &language_settings.prettier;
@@ -335,12 +335,12 @@ impl Prettier {
                     .context("prettier params calculation")?;
 
                 let response = local.server.request::<Format>(params).await?;
-                let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
+                let diff_task = buffer.update(cx, |buffer, model, cx| buffer.diff(response.text, cx))?;
                 Ok(diff_task.await)
             }
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(buffer
-                .update(cx, |buffer, cx| {
+                .update(cx, |buffer, model, cx| {
                     match buffer
                         .language()
                         .map(|language| language.lsp_id())

@@ -72,10 +72,10 @@ impl Markdown {
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
-        window: &Model<Self>,
+        model: &Model<Self>,
         cx: &AppContext,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle();
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -90,7 +90,7 @@ impl Markdown {
             fallback_code_block_language,
             parse_links_only: false,
         };
-        this.parse(cx);
+        this.parse(model, cx);
         this
     }
 
@@ -99,10 +99,10 @@ impl Markdown {
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
-        window: &Model<Self>,
+        model: &Model<Self>,
         cx: &AppContext,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle();
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -117,7 +117,7 @@ impl Markdown {
             fallback_code_block_language,
             parse_links_only: true,
         };
-        this.parse(cx);
+        this.parse(model, cx);
         this
     }
 
@@ -125,12 +125,12 @@ impl Markdown {
         &self.source
     }
 
-    pub fn append(&mut self, text: &str, window: &Model<Self>, cx: &AppContext) {
+    pub fn append(&mut self, text: &str, model: &Model<Self>, cx: &AppContext) {
         self.source.push_str(text);
-        self.parse(cx);
+        self.parse(model, cx);
     }
 
-    pub fn reset(&mut self, source: String, window: &Model<Self>, cx: &AppContext) {
+    pub fn reset(&mut self, source: String, model: &Model<Self>, cx: &AppContext) {
         if source == self.source() {
             return;
         }
@@ -140,14 +140,14 @@ impl Markdown {
         self.pending_parse = None;
         self.should_reparse = false;
         self.parsed_markdown = ParsedMarkdown::default();
-        self.parse(cx);
+        self.parse(model, cx);
     }
 
     pub fn parsed_markdown(&self) -> &ParsedMarkdown {
         &self.parsed_markdown
     }
 
-    fn copy(&self, text: &RenderedText, window: &Model<Self>, cx: &AppContext) {
+    fn copy(&self, text: &RenderedText, model: &Model<Self>, cx: &AppContext) {
         if self.selection.end <= self.selection.start {
             return;
         }
@@ -155,7 +155,7 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn parse(&mut self, window: &Model<Self>, cx: &AppContext) {
+    fn parse(&mut self, model: &Model<Self>, cx: &AppContext) {
         if self.source.is_empty() {
             return;
         }
@@ -180,16 +180,16 @@ impl Markdown {
         });
 
         self.should_reparse = false;
-        self.pending_parse = Some(cx.spawn(|this, mut cx| {
+        self.pending_parse = Some(model.spawn(cx, |this, mut cx| {
             async move {
                 let parsed = parsed.await?;
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     this.parsed_markdown = parsed;
                     this.pending_parse.take();
                     if this.should_reparse {
                         this.parse(cx);
                     }
-                    cx.notify();
+                    model.notify(cx);
                 })
                 .ok();
                 anyhow::Ok(())
@@ -200,7 +200,12 @@ impl Markdown {
 }
 
 impl Render for Markdown {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         MarkdownElement::new(
             cx.view().clone(),
             self.style.clone(),
@@ -267,7 +272,7 @@ impl ParsedMarkdown {
 }
 
 pub struct MarkdownElement {
-    markdown: View<Markdown>,
+    markdown: Model<Markdown>,
     style: MarkdownStyle,
     language_registry: Option<Arc<LanguageRegistry>>,
     fallback_code_block_language: Option<String>,
@@ -275,7 +280,7 @@ pub struct MarkdownElement {
 
 impl MarkdownElement {
     fn new(
-        markdown: View<Markdown>,
+        markdown: Model<Markdown>,
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
@@ -317,7 +322,7 @@ impl MarkdownElement {
                 let markdown = self.markdown.downgrade();
                 cx.spawn(|mut cx| async move {
                     language.await;
-                    markdown.update(&mut cx, |_, cx| cx.notify())
+                    markdown.update(&mut cx, |_, cx| model.notify(cx))
                 })
                 .detach_and_log_err(cx);
                 None
@@ -438,12 +443,12 @@ impl MarkdownElement {
                             cx.prevent_default()
                         }
 
-                        cx.notify();
+                        model.notify(cx);
                     }
                 } else if phase.capture() {
                     markdown.selection = Selection::default();
                     markdown.pressed_link = None;
-                    cx.notify();
+                    model.notify(cx);
                 }
             }
         });
@@ -463,12 +468,12 @@ impl MarkdownElement {
                     };
                     markdown.selection.set_head(source_index);
                     markdown.autoscroll_request = Some(source_index);
-                    cx.notify();
+                    model.notify(cx);
                 } else {
                     let is_hovering_link = hitbox.is_hovered(cx)
                         && rendered_text.link_for_position(event.position).is_some();
                     if is_hovering_link != was_hovering_link {
-                        cx.notify();
+                        model.notify(cx);
                     }
                 }
             }
@@ -490,7 +495,7 @@ impl MarkdownElement {
                             .text_for_range(markdown.selection.start..markdown.selection.end);
                         cx.write_to_primary(ClipboardItem::new_string(text))
                     }
-                    cx.notify();
+                    model.notify(cx);
                 }
             }
         });
@@ -504,7 +509,7 @@ impl MarkdownElement {
     ) -> Option<()> {
         let autoscroll_index = self
             .markdown
-            .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
+            .update(cx, |markdown, model, _| markdown.autoscroll_request.take())?;
         let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
 
         let text_style = self.style.base_text_style.clone();
@@ -533,7 +538,7 @@ impl MarkdownElement {
             let markdown = self.markdown.downgrade();
             move |event, phase, cx| {
                 markdown
-                    .update(cx, |markdown, cx| f(markdown, event, phase, cx))
+                    .update(cx, |markdown, model, cx| f(markdown, event, phase, cx))
                     .log_err();
             }
         });
@@ -604,7 +609,7 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::CodeBlock(kind) => {
                             let language = if let CodeBlockKind::Fenced(language) = kind {
-                                self.load_language(language.as_ref(), cx)
+                                self.load_language(language.as_ref(), model, cx)
                             } else {
                                 None
                             };
@@ -744,7 +749,7 @@ impl Element for MarkdownElement {
             }
         }
         let mut rendered_markdown = builder.build();
-        let child_layout_id = rendered_markdown.element.request_layout(cx);
+        let child_layout_id = rendered_markdown.element.request_layout(model, cx);
         let layout_id = cx.request_layout(gpui::Style::default(), [child_layout_id]);
         (layout_id, rendered_markdown)
     }
@@ -761,8 +766,8 @@ impl Element for MarkdownElement {
         cx.set_focus_handle(&focus_handle);
 
         let hitbox = cx.insert_hitbox(bounds, false);
-        rendered_markdown.element.prepaint(cx);
-        self.autoscroll(&rendered_markdown.text, cx);
+        rendered_markdown.element.prepaint(model, cx);
+        self.autoscroll(&rendered_markdown.text, model, cx);
         hitbox
     }
 
@@ -784,14 +789,14 @@ impl Element for MarkdownElement {
             move |_, phase, cx| {
                 let text = text.clone();
                 if phase == DispatchPhase::Bubble {
-                    view.update(cx, move |this, cx| this.copy(&text, cx))
+                    view.update(cx, move |this, model, cx| this.copy(&text, model, cx))
                 }
             }
         });
 
-        self.paint_mouse_listeners(hitbox, &rendered_markdown.text, cx);
-        rendered_markdown.element.paint(cx);
-        self.paint_selection(bounds, &rendered_markdown.text, cx);
+        self.paint_mouse_listeners(hitbox, &rendered_markdown.text, model, cx);
+        rendered_markdown.element.paint(model, cx);
+        self.paint_selection(bounds, &rendered_markdown.text, model, cx);
     }
 }
 

@@ -35,7 +35,7 @@ use super::{build_editor, build_editor_with_project};
 pub struct EditorTestContext {
     pub cx: gpui::VisualTestContext,
     pub window: AnyWindowHandle,
-    pub editor: View<Editor>,
+    pub editor: Model<Editor>,
     pub assertion_cx: AssertionContextManager,
 }
 
@@ -53,7 +53,7 @@ impl EditorTestContext {
         .await;
         let project = Project::test(fs.clone(), [root], cx).await;
         let buffer = project
-            .update(cx, |project, cx| {
+            .update(cx, |project, model, cx| {
                 project.open_local_buffer(root.join("file"), cx)
             })
             .await
@@ -100,16 +100,17 @@ impl EditorTestContext {
         excerpts: [&str; COUNT],
     ) -> EditorTestContext {
         let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new_model(|model, cx| {
             for excerpt in excerpts.into_iter() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);
-                let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+                let buffer = cx.new_model(|model, cx| Buffer::local(text, cx));
                 multibuffer.push_excerpts(
                     buffer,
                     ranges.into_iter().map(|range| ExcerptRange {
                         context: range,
                         primary: None,
                     }),
+                    model,
                     cx,
                 );
             }

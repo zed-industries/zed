@@ -6,7 +6,12 @@ use crate::{prelude::*, Tab, TabBar, TabPosition};
 pub struct TabBarStory;
 
 impl Render for TabBarStory {
-    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        _window: &mut gpui::Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         let tab_count = 20;
         let selected_tab_index = 3;
 

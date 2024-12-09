@@ -333,7 +333,7 @@ impl SettingsObserver {
                 .with_context(|| format!("unknown kind {kind}"))?,
             None => proto::LocalSettingsKind::Settings,
         };
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, model, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             let Some(worktree) = this
                 .worktree_store
@@ -482,7 +482,7 @@ impl SettingsObserver {
             let settings_contents: Vec<(Arc<Path>, _, _)> =
                 futures::future::join_all(settings_contents).await;
             cx.update(|cx| {
-                this.update(cx, |this, cx| {
+                this.update(cx, |this, model, cx| {
                     this.update_settings(
                         worktree,
                         settings_contents.into_iter().map(|(path, kind, content)| {
@@ -526,7 +526,7 @@ impl SettingsObserver {
                                     path,
                                     message
                                 );
-                                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Err(
+                                model.emit(cx, SettingsObserverEvent::LocalSettingsUpdated(Err(
                                     InvalidSettingsError::LocalSettings { path, message },
                                 )));
                             }
@@ -534,11 +534,11 @@ impl SettingsObserver {
                                 log::error!("Failed to set local settings: {e}");
                             }
                             Ok(_) => {
-                                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(())));
+                                model.emit(cx, SettingsObserverEvent::LocalSettingsUpdated(Ok(())));
                             }
                         }
                     }),
-                LocalSettingsKind::Tasks => task_store.update(cx, |task_store, cx| {
+                LocalSettingsKind::Tasks => task_store.update(cx, |task_store, model, cx| {
                     task_store
                         .update_user_tasks(
                             Some(SettingsLocation {

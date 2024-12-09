@@ -6,7 +6,7 @@ use ui::prelude::*;
 pub struct ViewportUnitsStory;
 
 impl Render for ViewportUnitsStory {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         Story::container().child(
             div()
                 .flex()

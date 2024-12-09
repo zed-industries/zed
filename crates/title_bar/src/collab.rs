@@ -24,7 +24,7 @@ fn toggle_screen_sharing(
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         let client = call.client();
-        let toggle_screen_sharing = room.update(cx, |room, cx| {
+        let toggle_screen_sharing = room.update(cx, |room, model, cx| {
             if room.is_screen_sharing() {
                 report_call_event_for_room(
                     "disable screen share",
@@ -51,7 +51,7 @@ fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         let client = call.client();
-        room.update(cx, |room, cx| {
+        room.update(cx, |room, model, cx| {
             let operation = if room.is_muted() {
                 "enable microphone"
             } else {
@@ -66,7 +66,7 @@ fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
 
 fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-        room.update(cx, |room, cx| room.toggle_deafen(cx));
+        room.update(cx, |room, model, cx| room.toggle_deafen(cx));
     }
 }
 
@@ -162,6 +162,7 @@ impl TitleBar {
                             room,
                             project_id,
                             &current_user,
+                            model,
                             cx,
                         )?;
 
@@ -173,9 +174,9 @@ impl TitleBar {
                                 .cursor_pointer()
                                 .on_click({
                                     let peer_id = collaborator.peer_id;
-                                    cx.listener(move |this, _, cx| {
+                                    model.listener(move |this, _, cx| {
                                         this.workspace
-                                            .update(cx, |workspace, cx| {
+                                            .update(cx, |workspace, model, cx| {
                                                 if is_following {
                                                     workspace.unfollow(peer_id, cx);
                                                 } else {
@@ -207,7 +208,7 @@ impl TitleBar {
         room: &Room,
         project_id: Option<u64>,
         current_user: &Arc<User>,
-        window: &Model<Self>,
+        model: &Model<Self>,
         cx: &AppContext,
     ) -> Option<Div> {
         if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
@@ -297,7 +298,7 @@ impl TitleBar {
 
         let is_connecting_to_project = self
             .workspace
-            .update(cx, |workspace, cx| workspace.has_active_modal(cx))
+            .update(cx, |workspace, model, cx| workspace.has_active_modal(cx))
             .unwrap_or(false);
 
         let room = room.read(cx);
@@ -322,7 +323,7 @@ impl TitleBar {
                     "toggle_sharing",
                     if is_shared { "Unshare" } else { "Share" },
                 )
-                .tooltip(move |cx| {
+                .tooltip(move |window, cx| {
                     Tooltip::text(
                         if is_shared {
                             "Stop sharing project with call participants"
@@ -336,7 +337,7 @@ impl TitleBar {
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .selected(is_shared)
                 .label_size(LabelSize::Small)
-                .on_click(cx.listener(move |this, _, cx| {
+                .on_click(model.listener(move |this, _, cx| {
                     if is_shared {
                         this.unshare_project(&Default::default(), cx);
                     } else {
@@ -353,12 +354,12 @@ impl TitleBar {
                 .child(
                     IconButton::new("leave-call", ui::IconName::Exit)
                         .style(ButtonStyle::Subtle)
-                        .tooltip(|cx| Tooltip::text("Leave call", cx))
+                        .tooltip(|window, cx| Tooltip::text("Leave call", cx))
                         .icon_size(IconSize::Small)
                         .on_click(move |_, cx| {
                             ActiveCall::global(cx)
-                                .update(cx, |call, cx| call.hang_up(cx))
-                                .detach_and_log_err(cx);
+                                .update(cx, |call, model, cx| call.hang_up(cx))
+                                .detach_and_log_err(model, cx);
                         }),
                 )
                 .into_any_element(),
@@ -374,7 +375,7 @@ impl TitleBar {
                         ui::IconName::Mic
                     },
                 )
-                .tooltip(move |cx| {
+                .tooltip(move |window, cx| {
                     Tooltip::text(
                         if is_muted {
                             "Unmute microphone"
@@ -407,7 +408,7 @@ impl TitleBar {
                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                 .icon_size(IconSize::Small)
                 .selected(is_deafened)
-                .tooltip(move |cx| {
+                .tooltip(move |window, cx| {
                     Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
                 })
                 .on_click(move |_, cx| toggle_deafen(&Default::default(), cx))
@@ -422,7 +423,7 @@ impl TitleBar {
                     .icon_size(IconSize::Small)
                     .selected(is_screen_sharing)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                    .tooltip(move |cx| {
+                    .tooltip(move |window, cx| {
                         Tooltip::text(
                             if is_screen_sharing {
                                 "Stop Sharing Screen"

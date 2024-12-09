@@ -114,7 +114,7 @@ where
         debounce: bool,
         cx: &mut AppContext,
     ) {
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.refresh(buffer, cursor_position, debounce, cx)
         })
     }
@@ -126,17 +126,17 @@ where
         direction: Direction,
         cx: &mut AppContext,
     ) {
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.cycle(buffer, cursor_position, direction, cx)
         })
     }
 
     fn accept(&self, cx: &mut AppContext) {
-        self.update(cx, |this, cx| this.accept(cx))
+        self.update(cx, |this, model, cx| this.accept(cx))
     }
 
     fn discard(&self, should_report_inline_completion_event: bool, cx: &mut AppContext) {
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.discard(should_report_inline_completion_event, cx)
         })
     }

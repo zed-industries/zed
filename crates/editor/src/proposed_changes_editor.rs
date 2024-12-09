@@ -15,7 +15,7 @@ use workspace::{
 };
 
 pub struct ProposedChangesEditor {
-    editor: View<Editor>,
+    editor: Model<Editor>,
     multibuffer: Model<MultiBuffer>,
     title: SharedString,
     buffer_entries: Vec<BufferEntry>,
@@ -35,7 +35,7 @@ struct BufferEntry {
 }
 
 pub struct ProposedChangesEditorToolbar {
-    current_editor: Option<View<ProposedChangesEditor>>,
+    current_editor: Option<Model<ProposedChangesEditor>>,
 }
 
 struct RecalculateDiff {
@@ -54,13 +54,15 @@ impl ProposedChangesEditor {
         title: impl Into<SharedString>,
         locations: Vec<ProposedChangeLocation<T>>,
         project: Option<Model<Project>>,
-        model: &Model<Self>, cx: &mut AppContext,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_, _| MultiBuffer::new(Capability::ReadWrite));
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
         let mut this = Self {
-            editor: cx.new_view(|cx| {
-                let mut editor = Editor::for_multibuffer(multibuffer.clone(), project, true, cx);
+            editor: cx.new_model(|model, cx| {
+                let mut editor =
+                    Editor::for_multibuffer(multibuffer.clone(), project, true, model, cx);
                 editor.set_expand_all_diff_hunks();
                 editor.set_completion_provider(None);
                 editor.clear_code_action_providers();
@@ -75,7 +77,7 @@ impl ProposedChangesEditor {
             title: title.into(),
             buffer_entries: Vec::new(),
             recalculate_diffs_tx,
-            _recalculate_diffs_task: cx.spawn(|this, mut cx| async move {
+            _recalculate_diffs_task: model.spawn(cx, |this, mut cx| async move {
                 let mut buffers_to_diff = HashSet::default();
                 while let Some(mut recalculate_diff) = recalculate_diffs_rx.next().await {
                     buffers_to_diff.insert(recalculate_diff.buffer);
@@ -97,24 +99,25 @@ impl ProposedChangesEditor {
                     }
 
                     let recalculate_diff_futures = this
-                        .update(&mut cx, |this, cx| {
+                        .update(&mut cx, |this, model, cx| {
                             buffers_to_diff
                                 .drain()
                                 .filter_map(|buffer| {
                                     let buffer = buffer.read(cx);
                                     let base_buffer = buffer.base_buffer()?;
                                     let buffer = buffer.text_snapshot();
-                                    let change_set = this.editor.update(cx, |editor, _| {
-                                        Some(
-                                            editor
-                                                .diff_map
-                                                .diff_bases
-                                                .get(&buffer.remote_id())?
-                                                .change_set
-                                                .clone(),
-                                        )
-                                    })?;
-                                    Some(change_set.update(cx, |change_set, cx| {
+                                    let change_set =
+                                        this.editor.update(cx, |editor, model, _| {
+                                            Some(
+                                                editor
+                                                    .diff_map
+                                                    .diff_bases
+                                                    .get(&buffer.remote_id())?
+                                                    .change_set
+                                                    .clone(),
+                                            )
+                                        })?;
+                                    Some(change_set.update(cx, |change_set, model, cx| {
                                         change_set.set_base_text(
                                             base_buffer.read(cx).text(),
                                             buffer,
@@ -147,18 +150,19 @@ impl ProposedChangesEditor {
 
     pub fn set_title(&mut self, title: SharedString, model: &Model<Self>, cx: &mut AppContext) {
         self.title = title;
-        cx.notify();
+        model.notify(cx);
     }
 
     pub fn reset_locations<T: ToOffset>(
         &mut self,
         locations: Vec<ProposedChangeLocation<T>>,
-        model: &Model<Self>, cx: &mut AppContext,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         // Undo all branch changes
         for entry in &self.buffer_entries {
             let base_version = entry.base.read(cx).version();
-            entry.branch.update(cx, |buffer, cx| {
+            entry.branch.update(cx, |buffer, model, cx| {
                 let undo_counts = buffer
                     .operations()
                     .iter()
@@ -174,7 +178,7 @@ impl ProposedChangesEditor {
             });
         }
 
-        self.multibuffer.update(cx, |multibuffer, cx| {
+        self.multibuffer.update(cx, |multibuffer, model, cx| {
             multibuffer.clear(cx);
         });
 
@@ -191,12 +195,15 @@ impl ProposedChangesEditor {
                 branch_buffer = entry.branch.clone();
                 buffer_entries.push(entry);
             } else {
-                branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-                new_change_sets.push(cx.new_model(|cx| {
+                branch_buffer = location
+                    .buffer
+                    .update(cx, |buffer, model, cx| buffer.branch(cx));
+                new_change_sets.push(cx.new_model(|model, cx| {
                     let mut change_set = BufferChangeSet::new(branch_buffer.read(cx));
                     let _ = change_set.set_base_text(
                         location.buffer.read(cx).text(),
                         branch_buffer.read(cx).text_snapshot(),
+                        model,
                         cx,
                     );
                     change_set
@@ -208,20 +215,21 @@ impl ProposedChangesEditor {
                 });
             }
 
-            self.multibuffer.update(cx, |multibuffer, cx| {
+            self.multibuffer.update(cx, |multibuffer, model, cx| {
                 multibuffer.push_excerpts(
                     branch_buffer,
                     location.ranges.into_iter().map(|range| ExcerptRange {
                         context: range,
                         primary: None,
                     }),
+                    model,
                     cx,
                 );
             });
         }
 
         self.buffer_entries = buffer_entries;
-        self.editor.update(cx, |editor, cx| {
+        self.editor.update(cx, |editor, model, cx| {
             editor.change_selections(None, cx, |selections| selections.refresh());
             for change_set in new_change_sets {
                 editor.diff_map.add_change_set(change_set, cx)
@@ -244,7 +252,8 @@ impl ProposedChangesEditor {
         &mut self,
         buffer: Model<Buffer>,
         event: &BufferEvent,
-        model: &Model<>Self, _cx: &mut AppContext,
+        model: &Model<Self>,
+        _cx: &mut AppContext,
     ) {
         match event {
             BufferEvent::Operation { .. } => {
@@ -269,7 +278,7 @@ impl ProposedChangesEditor {
 }
 
 impl Render for ProposedChangesEditor {
-    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, _cx: &mut AppContext) -> impl IntoElement {
         div()
             .size_full()
             .key_context("ProposedChangesEditor")
@@ -296,14 +305,14 @@ impl Item for ProposedChangesEditor {
         Some(self.title.clone())
     }
 
-    fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Model<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
-        self_handle: &'a View<Self>,
+        self_handle: &'a Model<Self>,
         _: &'a AppContext,
     ) -> Option<gpui::AnyView> {
         if type_id == TypeId::of::<Self>() {
@@ -315,8 +324,13 @@ impl Item for ProposedChangesEditor {
         }
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, model: &Model<Self>, cx: &mut AppContext) {
-        self.editor.update(cx, |editor, cx| {
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
+        self.editor.update(cx, |editor, model, cx| {
             Item::added_to_workspace(editor, workspace, cx)
         });
     }
@@ -325,17 +339,23 @@ impl Item for ProposedChangesEditor {
         self.editor.update(cx, Item::deactivated);
     }
 
-    fn navigate(&mut self, data: Box<dyn std::any::Any>, model: &Model<Self>, cx: &mut AppContext) -> bool {
+    fn navigate(
+        &mut self,
+        data: Box<dyn std::any::Any>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> bool {
         self.editor
-            .update(cx, |editor, cx| Item::navigate(editor, data, cx))
+            .update(cx, |editor, model, cx| Item::navigate(editor, data, cx))
     }
 
     fn set_nav_history(
         &mut self,
         nav_history: workspace::ItemNavHistory,
-        model: &Model<Self>, cx: &mut AppContext,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
-        self.editor.update(cx, |editor, cx| {
+        self.editor.update(cx, |editor, model, cx| {
             Item::set_nav_history(editor, nav_history, cx)
         });
     }
@@ -348,10 +368,12 @@ impl Item for ProposedChangesEditor {
         &mut self,
         format: bool,
         project: Model<Project>,
-        model: &Model<Self>, cx: &mut AppContext,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<gpui::Result<()>> {
-        self.editor
-            .update(cx, |editor, cx| Item::save(editor, format, project, cx))
+        self.editor.update(cx, |editor, model, cx| {
+            Item::save(editor, format, project, cx)
+        })
     }
 }
 
@@ -372,7 +394,12 @@ impl ProposedChangesEditorToolbar {
 }
 
 impl Render for ProposedChangesEditorToolbar {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let button_like = ButtonLike::new("apply-changes").child(Label::new("Apply All"));
 
         match &self.current_editor {
@@ -396,7 +423,8 @@ impl ToolbarItemView for ProposedChangesEditorToolbar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn workspace::ItemHandle>,
-        model: &Model<>Self, _cx: &mut AppContext,
+        model: &Model<Self>,
+        _cx: &mut AppContext,
     ) -> workspace::ToolbarItemLocation {
         self.current_editor =
             active_pane_item.and_then(|item| item.downcast::<ProposedChangesEditor>());

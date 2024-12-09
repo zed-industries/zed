@@ -140,7 +140,7 @@ impl ResolvedPatch {
                 edits.push((suggestion.range.clone(), suggestion.new_text.clone()));
             }
         }
-        buffer.update(cx, |buffer, cx| {
+        buffer.update(cx, |buffer, model, cx| {
             buffer.edit(
                 edits,
                 Some(AutoindentMode::Block {
@@ -461,7 +461,7 @@ impl AssistantPatch {
         // Expand the context ranges of each edit and group edits with overlapping context ranges.
         let mut edit_groups_by_buffer = HashMap::default();
         for (buffer, edits) in edits_by_buffer {
-            if let Ok(snapshot) = buffer.update(cx, |buffer, _| buffer.text_snapshot()) {
+            if let Ok(snapshot) = buffer.update(cx, |buffer, model, _| buffer.text_snapshot()) {
                 edit_groups_by_buffer.insert(buffer, Self::group_edits(edits, &snapshot));
             }
         }
@@ -918,7 +918,7 @@ mod tests {
         cx: &mut AppContext,
     ) {
         let (text, _) = marked_text_ranges(text_with_expected_range, false);
-        let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
+        let buffer = cx.new_model(|model, cx| Buffer::local(text.clone(), model, cx));
         let snapshot = buffer.read(cx).snapshot();
         let range = AssistantEditKind::resolve_location(&snapshot, query).to_offset(&snapshot);
         let text_with_actual_range = generate_marked_text(&text, &[range], false);
@@ -932,8 +932,9 @@ mod tests {
         new_text: String,
         cx: &mut AppContext,
     ) {
-        let buffer =
-            cx.new_model(|cx| Buffer::local(old_text, cx).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|model, cx| {
+            Buffer::local(old_text, model, cx).with_language(Arc::new(rust_lang()), model, cx)
+        });
         let snapshot = buffer.read(cx).snapshot();
         let resolved_edits = edits
             .into_iter()

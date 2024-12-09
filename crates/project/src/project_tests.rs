@@ -86,7 +86,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(Arc::new(RealFs::default()), [root_link_path.as_ref()], cx).await;
 
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         let tree = project.worktrees(cx).next().unwrap().read(cx);
         assert_eq!(tree.file_count(), 5);
         assert_eq!(
@@ -143,7 +143,9 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     language_registry.add(json_lang());
     language_registry.add(rust_lang());
 
-    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree = project.update(cx, |project, model, cx| {
+        project.worktrees(cx).next().unwrap()
+    });
 
     cx.executor().run_until_parked();
 
@@ -222,12 +224,14 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     .await;
 
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
-    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree = project.update(cx, |project, model, cx| {
+        project.worktrees(cx).next().unwrap()
+    });
     let task_context = TaskContext::default();
 
     cx.executor().run_until_parked();
     let worktree_id = cx.update(|cx| {
-        project.update(cx, |project, cx| {
+        project.update(cx, |project, model, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         })
     });
@@ -295,14 +299,14 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .into_iter()
         .find(|(source_kind, _)| source_kind == &topmost_local_task_source_kind)
         .expect("should have one global task");
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         let task_inventory = project
             .task_store
             .read(cx)
             .task_inventory()
             .cloned()
             .unwrap();
-        task_inventory.update(cx, |inventory, _| {
+        task_inventory.update(cx, |inventory, model, _| {
             inventory.task_scheduled(topmost_local_task_source_kind.clone(), resolved_task);
             inventory
                 .update_file_based_tasks(
@@ -442,7 +446,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // Open a buffer without an associated language server.
     let toml_buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer("/the-root/Cargo.toml", cx)
         })
         .await
@@ -450,12 +454,12 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // Open a buffer with an associated language server before the language for it has been loaded.
     let rust_buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer("/the-root/test.rs", cx)
         })
         .await
         .unwrap();
-    rust_buffer.update(cx, |buffer, _| {
+    rust_buffer.update(cx, |buffer, model, _| {
         assert_eq!(buffer.language().map(|l| l.name()), None);
     });
 
@@ -464,7 +468,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     language_registry.add(json_lang());
     language_registry.add(rust_lang());
     cx.executor().run_until_parked();
-    rust_buffer.update(cx, |buffer, _| {
+    rust_buffer.update(cx, |buffer, model, _| {
         assert_eq!(buffer.language().map(|l| l.name()), Some("Rust".into()));
     });
 
@@ -484,7 +488,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     );
 
     // The buffer is configured based on the language server's capabilities.
-    rust_buffer.update(cx, |buffer, _| {
+    rust_buffer.update(cx, |buffer, model, _| {
         assert_eq!(
             buffer
                 .completion_triggers()
@@ -494,12 +498,14 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             &[".".to_string(), "::".to_string()]
         );
     });
-    toml_buffer.update(cx, |buffer, _| {
+    toml_buffer.update(cx, |buffer, model, _| {
         assert!(buffer.completion_triggers().is_empty());
     });
 
     // Edit a buffer. The changes are reported to the language server.
-    rust_buffer.update(cx, |buffer, cx| buffer.edit([(16..16, "2")], None, cx));
+    rust_buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(16..16, "2")], None, model, cx)
+    });
     assert_eq!(
         fake_rust_server
             .receive_notification::<lsp::notification::DidChangeTextDocument>()
@@ -513,7 +519,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // Open a third buffer with a different associated language server.
     let json_buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer("/the-root/package.json", cx)
         })
         .await
@@ -536,7 +542,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // This buffer is configured based on the second language server's
     // capabilities.
-    json_buffer.update(cx, |buffer, _| {
+    json_buffer.update(cx, |buffer, model, _| {
         assert_eq!(
             buffer
                 .completion_triggers()
@@ -550,12 +556,12 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // When opening another buffer whose language server is already running,
     // it is also configured based on the existing language server's capabilities.
     let rust_buffer2 = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer("/the-root/test2.rs", cx)
         })
         .await
         .unwrap();
-    rust_buffer2.update(cx, |buffer, _| {
+    rust_buffer2.update(cx, |buffer, model, _| {
         assert_eq!(
             buffer
                 .completion_triggers()
@@ -567,9 +573,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     });
 
     // Changes are reported only to servers matching the buffer's language.
-    toml_buffer.update(cx, |buffer, cx| buffer.edit([(5..5, "23")], None, cx));
-    rust_buffer2.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "let x = 1;")], None, cx)
+    toml_buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(5..5, "23")], None, model, cx)
+    });
+    rust_buffer2.update(cx, |buffer, model, cx| {
+        buffer.edit([(0..0, "let x = 1;")], None, model, cx)
     });
     assert_eq!(
         fake_rust_server
@@ -584,7 +592,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // Save notifications are reported to all servers.
     project
-        .update(cx, |project, cx| project.save_buffer(toml_buffer, cx))
+        .update(cx, |project, model, cx| {
+            project.save_buffer(toml_buffer, cx)
+        })
         .await
         .unwrap();
     assert_eq!(
@@ -625,12 +635,12 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         lsp::TextDocumentItem {
             uri: lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),
             version: 0,
-            text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
+            text: rust_buffer2.update(cx, |buffer, model, _| buffer.text()),
             language_id: "rust".to_string(),
         },
     );
 
-    rust_buffer2.update(cx, |buffer, cx| {
+    rust_buffer2.update(cx, |buffer, model, cx| {
         buffer.update_diagnostics(
             LanguageServerId(0),
             DiagnosticSet::from_sorted_entries(
@@ -675,13 +685,13 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         lsp::TextDocumentItem {
             uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
             version: 0,
-            text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
+            text: rust_buffer2.update(cx, |buffer, model, _| buffer.text()),
             language_id: "json".to_string(),
         },
     );
 
     // We clear the diagnostics, since the language has changed.
-    rust_buffer2.update(cx, |buffer, _| {
+    rust_buffer2.update(cx, |buffer, model, _| {
         assert_eq!(
             buffer
                 .snapshot()
@@ -692,7 +702,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     });
 
     // The renamed file's version resets after changing language server.
-    rust_buffer2.update(cx, |buffer, cx| buffer.edit([(0..0, "// ")], None, cx));
+    rust_buffer2.update(cx, |buffer, model, cx| {
+        buffer.edit([(0..0, "// ")], None, model, cx)
+    });
     assert_eq!(
         fake_json_server
             .receive_notification::<lsp::notification::DidChangeTextDocument>()
@@ -705,7 +717,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     );
 
     // Restart language servers
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         project.restart_language_servers_for_buffers(
             vec![rust_buffer.clone(), json_buffer.clone()],
             cx,
@@ -730,7 +742,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         lsp::TextDocumentItem {
             uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
             version: 0,
-            text: rust_buffer.update(cx, |buffer, _| buffer.text()),
+            text: rust_buffer.update(cx, |buffer, model, _| buffer.text()),
             language_id: "rust".to_string(),
         }
     );
@@ -751,13 +763,13 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             lsp::TextDocumentItem {
                 uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
                 version: 0,
-                text: json_buffer.update(cx, |buffer, _| buffer.text()),
+                text: json_buffer.update(cx, |buffer, model, _| buffer.text()),
                 language_id: "json".to_string(),
             },
             lsp::TextDocumentItem {
                 uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
                 version: 0,
-                text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
+                text: rust_buffer2.update(cx, |buffer, model, _| buffer.text()),
                 language_id: "json".to_string(),
             }
         ]
@@ -827,14 +839,14 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     // Start the language server by opening a buffer with a compatible file extension.
     let _buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer("/the-root/src/a.rs", cx)
         })
         .await
         .unwrap();
 
     // Initially, we don't load ignored files because the language server has not explicitly asked us to watch them.
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         let worktree = project.worktrees(cx).next().unwrap();
         assert_eq!(
             worktree
@@ -908,7 +920,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     // Now the language server has asked us to watch an ignored directory path,
     // so we recursively load it.
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         let worktree = project.worktrees(cx).next().unwrap();
         assert_eq!(
             worktree
@@ -989,15 +1001,19 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/dir/a.rs".as_ref(), "/dir/b.rs".as_ref()], cx).await;
 
     let buffer_a = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
     let buffer_b = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/b.rs", cx)
+        })
         .await
         .unwrap();
 
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         project
             .update_diagnostics(
                 LanguageServerId(0),
@@ -1034,7 +1050,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
             .unwrap();
     });
 
-    buffer_a.update(cx, |buffer, _| {
+    buffer_a.update(cx, |buffer, model, _| {
         let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
         assert_eq!(
             chunks
@@ -1048,7 +1064,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
             ]
         );
     });
-    buffer_b.update(cx, |buffer, _| {
+    buffer_b.update(cx, |buffer, model, _| {
         let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
         assert_eq!(
             chunks
@@ -1087,23 +1103,23 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs, ["/root/dir".as_ref()], cx).await;
     let (worktree, _) = project
-        .update(cx, |project, cx| {
-            project.find_or_create_worktree("/root/dir", true, cx)
+        .update(cx, |project, model, cx| {
+            project.find_or_create_worktree("/root/dir", true, model, cx)
         })
         .await
         .unwrap();
     let main_worktree_id = worktree.read_with(cx, |tree, _| tree.id());
 
     let (worktree, _) = project
-        .update(cx, |project, cx| {
-            project.find_or_create_worktree("/root/other.rs", false, cx)
+        .update(cx, |project, model, cx| {
+            project.find_or_create_worktree("/root/other.rs", false, model, cx)
         })
         .await
         .unwrap();
-    let other_worktree_id = worktree.update(cx, |tree, _| tree.id());
+    let other_worktree_id = worktree.update(cx, |tree, model, _| tree.id());
 
     let server_id = LanguageServerId(0);
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         project
             .update_diagnostics(
                 server_id,
@@ -1141,12 +1157,12 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
     });
 
     let main_ignored_buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_buffer((main_worktree_id, "b.rs"), cx)
         })
         .await
         .unwrap();
-    main_ignored_buffer.update(cx, |buffer, _| {
+    main_ignored_buffer.update(cx, |buffer, model, _| {
         let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
         assert_eq!(
             chunks
@@ -1162,12 +1178,12 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
         );
     });
     let other_buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_buffer((other_worktree_id, ""), cx)
         })
         .await
         .unwrap();
-    other_buffer.update(cx, |buffer, _| {
+    other_buffer.update(cx, |buffer, model, _| {
         let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
         assert_eq!(
             chunks
@@ -1183,7 +1199,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         assert_eq!(project.diagnostic_summaries(false, cx).next(), None);
         assert_eq!(
             project.diagnostic_summaries(true, cx).collect::<Vec<_>>(),
@@ -1233,11 +1249,15 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         },
     );
 
-    let worktree_id = project.update(cx, |p, cx| p.worktrees(cx).next().unwrap().read(cx).id());
+    let worktree_id = project.update(cx, |p, model, cx| {
+        p.worktrees(cx).next().unwrap().read(cx).id()
+    });
 
     // Cause worktree to start the fake language server
     let _buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/b.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1290,11 +1310,11 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/a.rs", cx))
         .await
         .unwrap();
 
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         let snapshot = buffer.snapshot();
         let diagnostics = snapshot
             .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
@@ -1360,10 +1380,14 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         },
     );
 
-    let worktree_id = project.update(cx, |p, cx| p.worktrees(cx).next().unwrap().read(cx).id());
+    let worktree_id = project.update(cx, |p, model, cx| {
+        p.worktrees(cx).next().unwrap().read(cx).id()
+    });
 
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1372,7 +1396,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     fake_server.start_progress(progress_token).await;
 
     // Restart the server before the diagnostics finish updating.
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         project.restart_language_servers_for_buffers([buffer], cx);
     });
     let mut events = cx.events(&project);
@@ -1394,7 +1418,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             language_server_id: LanguageServerId(1)
         }
     );
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         assert_eq!(
             project
                 .language_servers_running_disk_based_diagnostics(cx)
@@ -1412,7 +1436,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             language_server_id: LanguageServerId(1)
         }
     );
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         assert_eq!(
             project
                 .language_servers_running_disk_based_diagnostics(cx)
@@ -1436,7 +1460,9 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1454,7 +1480,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
 
     cx.executor().run_until_parked();
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         assert_eq!(
             buffer
                 .snapshot()
@@ -1464,7 +1490,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             ["the message".to_string()]
         );
     });
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         assert_eq!(
             project.diagnostic_summary(false, cx),
             DiagnosticSummary {
@@ -1474,13 +1500,13 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
         );
     });
 
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         project.restart_language_servers_for_buffers([buffer.clone()], cx);
     });
 
     // The diagnostics are cleared.
     cx.executor().run_until_parked();
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         assert_eq!(
             buffer
                 .snapshot()
@@ -1490,7 +1516,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             Vec::<String>::new(),
         );
     });
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         assert_eq!(
             project.diagnostic_summary(false, cx),
             DiagnosticSummary {
@@ -1515,7 +1541,9 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1528,7 +1556,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     });
     cx.executor().run_until_parked();
 
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         project.restart_language_servers_for_buffers([buffer.clone()], cx);
     });
     let mut fake_server = fake_servers.next().await.unwrap();
@@ -1563,7 +1591,9 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1589,7 +1619,7 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
         .await;
     cx.executor().run_until_parked();
 
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         project.cancel_language_server_work_for_buffers([buffer.clone()], cx)
     });
 
@@ -1631,11 +1661,15 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     language_registry.add(js_lang());
 
     let _rs_buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
     let _js_buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/b.js", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/b.js", cx)
+        })
         .await
         .unwrap();
 
@@ -1743,7 +1777,9 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1753,7 +1789,9 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
         .await;
 
     // Edit the buffer, moving the content down
-    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "\n\n")], None, cx));
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(0..0, "\n\n")], None, model, cx)
+    });
     let change_notification_1 = fake_server
         .receive_notification::<lsp::notification::DidChangeTextDocument>()
         .await;
@@ -1790,7 +1828,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
     // The diagnostics have moved down since they were created.
     cx.executor().run_until_parked();
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         assert_eq!(
             buffer
                 .snapshot()
@@ -1868,7 +1906,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     });
 
     cx.executor().run_until_parked();
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         assert_eq!(
             buffer
                 .snapshot()
@@ -1921,14 +1959,24 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
     // Keep editing the buffer and ensure disk-based diagnostics get translated according to the
     // changes since the last save.
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "    ")], None, cx);
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), "    ")],
+            None,
+            model,
+            cx,
+        );
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 10), "(x: usize)")],
             None,
             cx,
         );
-        buffer.edit([(Point::new(3, 10)..Point::new(3, 10), "xxx")], None, cx);
+        buffer.edit(
+            [(Point::new(3, 10)..Point::new(3, 10), "xxx")],
+            None,
+            model,
+            cx,
+        );
     });
     let change_notification_2 = fake_server
         .receive_notification::<lsp::notification::DidChangeTextDocument>()
@@ -1960,7 +2008,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     });
 
     cx.executor().run_until_parked();
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         assert_eq!(
             buffer
                 .snapshot()
@@ -2011,12 +2059,14 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
-    project.update(cx, |project, cx| {
-        project.lsp_store.update(cx, |lsp_store, cx| {
+    project.update(cx, |project, model, cx| {
+        project.lsp_store.update(cx, |lsp_store, model, cx| {
             lsp_store
                 .update_buffer_diagnostics(
                     &buffer,
@@ -2051,7 +2101,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
     // An empty range is extended forward to include the following character.
     // At the end of a line, an empty range is extended backward to include
     // the preceding character.
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
         assert_eq!(
             chunks
@@ -2079,7 +2129,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
 
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         project
             .update_diagnostic_entries(
                 LanguageServerId(0),
@@ -2159,7 +2209,9 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -2171,7 +2223,7 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
         .version;
 
     // Simulate editing the buffer after the language server computes some edits.
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         buffer.edit(
             [(
                 Point::new(0, 0)..Point::new(0, 0),
@@ -2217,7 +2269,7 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     });
 
     let edits = lsp_store
-        .update(cx, |lsp_store, cx| {
+        .update(cx, |lsp_store, model, cx| {
             lsp_store.edits_from_lsp(
                 &buffer,
                 vec![
@@ -2254,9 +2306,9 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         for (range, new_text) in edits {
-            buffer.edit([(range, new_text)], None, cx);
+            buffer.edit([(range, new_text)], None, model, cx);
         }
         assert_eq!(
             buffer.text(),
@@ -2305,14 +2357,16 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
     // Simulate the language server sending us a small edit in the form of a very large diff.
     // Rust-analyzer does this when performing a merge-imports code action.
     let edits = lsp_store
-        .update(cx, |lsp_store, cx| {
+        .update(cx, |lsp_store, model, cx| {
             lsp_store.edits_from_lsp(
                 &buffer,
                 [
@@ -2350,7 +2404,7 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
         .await
         .unwrap();
 
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         let edits = edits
             .into_iter()
             .map(|(range, text)| {
@@ -2370,7 +2424,7 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
         );
 
         for (range, new_text) in edits {
-            buffer.edit([(range, new_text)], None, cx);
+            buffer.edit([(range, new_text)], None, model, cx);
         }
         assert_eq!(
             buffer.text(),
@@ -2414,14 +2468,16 @@ async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
     // Simulate the language server sending us edits in a non-ordered fashion,
     // with ranges sometimes being inverted or pointing to invalid locations.
     let edits = lsp_store
-        .update(cx, |lsp_store, cx| {
+        .update(cx, |lsp_store, model, cx| {
             lsp_store.edits_from_lsp(
                 &buffer,
                 [
@@ -2455,7 +2511,7 @@ async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         let edits = edits
             .into_iter()
             .map(|(range, text)| {
@@ -2475,7 +2531,7 @@ async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
         );
 
         for (range, new_text) in edits {
-            buffer.edit([(range, new_text)], None, cx);
+            buffer.edit([(range, new_text)], None, model, cx);
         }
         assert_eq!(
             buffer.text(),
@@ -2530,7 +2586,9 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
+        .update(cx, |project, model, cx| {
+            project.open_local_buffer("/dir/b.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -2552,7 +2610,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     });
 
     let mut definitions = project
-        .update(cx, |project, cx| project.definition(&buffer, 22, cx))
+        .update(cx, |project, model, cx| project.definition(&buffer, 22, cx))
         .await
         .unwrap();
 
@@ -2635,15 +2693,15 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/a.ts", cx))
         .await
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
 
     let text = "let a = b.fqn";
-    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-    let completions = project.update(cx, |project, cx| {
+    buffer.update(cx, |buffer, model, cx| buffer.set_text(text, cx));
+    let completions = project.update(cx, |project, model, cx| {
         project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
@@ -2660,7 +2718,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
     let completions = completions.await.unwrap();
-    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let snapshot = buffer.update(cx, |buffer, model, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fullyQualifiedName");
     assert_eq!(
@@ -2669,8 +2727,8 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     );
 
     let text = "let a = \"atoms/cmp\"";
-    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-    let completions = project.update(cx, |project, cx| {
+    buffer.update(cx, |buffer, model, cx| buffer.set_text(text, cx));
+    let completions = project.update(cx, |project, model, cx| {
         project.completions(&buffer, text.len() - 1, DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
@@ -2686,7 +2744,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
     let completions = completions.await.unwrap();
-    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let snapshot = buffer.update(cx, |buffer, model, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "component");
     assert_eq!(
@@ -2727,15 +2785,15 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/a.ts", cx))
         .await
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
 
     let text = "let a = b.fqn";
-    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
-    let completions = project.update(cx, |project, cx| {
+    buffer.update(cx, |buffer, model, cx| buffer.set_text(text, cx));
+    let completions = project.update(cx, |project, model, cx| {
         project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
@@ -2790,15 +2848,15 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/a.ts", cx))
         .await
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
 
     // Language server returns code actions that contain commands, and not edits.
-    let actions = project.update(cx, |project, cx| {
-        project.code_actions(&buffer, 0..0, None, cx)
+    let actions = project.update(cx, |project, model, cx| {
+        project.code_actions(&buffer, 0..0, None, model, cx)
     });
     fake_server
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
@@ -2820,8 +2878,8 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         .await;
 
     let action = actions.await.unwrap()[0].clone();
-    let apply = project.update(cx, |project, cx| {
-        project.apply_code_action(buffer.clone(), action, true, cx)
+    let apply = project.update(cx, |project, model, cx| {
+        project.apply_code_action(buffer.clone(), action, true, model, cx)
     });
 
     // Resolving the code action does not populate its edits. In absence of
@@ -2884,7 +2942,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     // sent by the language server in its `workspaceEdit` request.
     let transaction = apply.await.unwrap();
     assert!(transaction.0.contains_key(&buffer));
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         assert_eq!(buffer.text(), "Xa");
         buffer.undo(cx);
         assert_eq!(buffer.text(), "a");
@@ -2906,21 +2964,31 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/file1", cx))
         .await
         .unwrap();
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         assert_eq!(buffer.text(), "the old contents");
-        buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
+        buffer.edit(
+            [(0..0, "a line of text.\n".repeat(10 * 1024))],
+            None,
+            model,
+            cx,
+        );
     });
 
     project
-        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .update(cx, |project, model, cx| {
+            project.save_buffer(buffer.clone(), cx)
+        })
         .await
         .unwrap();
 
     let new_text = fs.load(Path::new("/dir/file1")).await.unwrap();
-    assert_eq!(new_text, buffer.update(cx, |buffer, _| buffer.text()));
+    assert_eq!(
+        new_text,
+        buffer.update(cx, |buffer, model, _| buffer.text())
+    );
 }
 
 #[gpui::test(iterations = 30)]
@@ -2939,7 +3007,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/file1", cx))
         .await
         .unwrap();
 
@@ -2994,7 +3062,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/file1", cx))
         .await
         .unwrap();
 
@@ -3018,8 +3086,8 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
         .await;
 
     // Perform a noop edit, causing the buffer's version to increase.
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, " ")], None, cx);
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(0..0, " ")], None, model, cx);
         buffer.undo(cx);
     });
 
@@ -3057,20 +3125,30 @@ async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs.clone(), ["/dir/file1".as_ref()], cx).await;
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/file1", cx))
         .await
         .unwrap();
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit(
+            [(0..0, "a line of text.\n".repeat(10 * 1024))],
+            None,
+            model,
+            cx,
+        );
     });
 
     project
-        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .update(cx, |project, model, cx| {
+            project.save_buffer(buffer.clone(), cx)
+        })
         .await
         .unwrap();
 
     let new_text = fs.load(Path::new("/dir/file1")).await.unwrap();
-    assert_eq!(new_text, buffer.update(cx, |buffer, _| buffer.text()));
+    assert_eq!(
+        new_text,
+        buffer.update(cx, |buffer, model, _| buffer.text())
+    );
 }
 
 #[gpui::test]
@@ -3082,18 +3160,20 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
-    let languages = project.update(cx, |project, _| project.languages().clone());
+    let languages = project.update(cx, |project, model, _| project.languages().clone());
     languages.add(rust_lang());
 
-    let buffer = project.update(cx, |project, cx| project.create_local_buffer("", None, cx));
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "abc")], None, cx);
+    let buffer = project.update(cx, |project, model, cx| {
+        project.create_local_buffer("", None, model, cx)
+    });
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(0..0, "abc")], None, model, cx);
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
         assert_eq!(buffer.language().unwrap().name(), "Plain Text".into());
     });
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
             let path = ProjectPath {
                 worktree_id,
@@ -3106,7 +3186,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     assert_eq!(fs.load(Path::new("/dir/file1.rs")).await.unwrap(), "abc");
 
     cx.executor().run_until_parked();
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         assert_eq!(
             buffer.file().unwrap().full_path(cx),
             Path::new("dir/file1.rs")
@@ -3117,7 +3197,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     });
 
     let opened_buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer("/dir/file1.rs", cx)
         })
         .await
@@ -3149,11 +3229,13 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     let project = Project::test(Arc::new(RealFs::default()), [dir.path()], cx).await;
 
     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
-        let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
+        let buffer = project.update(cx, |p, model, cx| {
+            p.open_local_buffer(dir.path().join(path), cx)
+        });
         async move { buffer.await.unwrap() }
     };
     let id_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
-        project.update(cx, |project, cx| {
+        project.update(cx, |project, model, cx| {
             let tree = project.worktrees(cx).next().unwrap();
             tree.read(cx)
                 .entry_for_path(path)
@@ -3172,11 +3254,13 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     let file4_id = id_for_path("b/c/file4", cx);
 
     // Create a remote copy of this worktree.
-    let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    let metadata = tree.update(cx, |tree, _| tree.metadata_proto());
+    let tree = project.update(cx, |project, model, cx| {
+        project.worktrees(cx).next().unwrap()
+    });
+    let metadata = tree.update(cx, |tree, model, _| tree.metadata_proto());
 
     let updates = Arc::new(Mutex::new(Vec::new()));
-    tree.update(cx, |tree, cx| {
+    tree.update(cx, |tree, model, cx| {
         let updates = updates.clone();
         tree.observe_updates(0, cx, move |update| {
             updates.lock().push(update);
@@ -3268,13 +3352,13 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     // local worktree.
     cx.executor().run_until_parked();
 
-    remote.update(cx, |remote, _| {
+    remote.update(cx, |remote, model, _| {
         for update in updates.lock().drain(..) {
             remote.as_remote_mut().unwrap().update_from_remote(update);
         }
     });
     cx.executor().run_until_parked();
-    remote.update(cx, |remote, _| {
+    remote.update(cx, |remote, model, _| {
         assert_eq!(
             remote
                 .paths()
@@ -3301,11 +3385,13 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs, [Path::new("/dir")], cx).await;
-    let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    let tree_id = tree.update(cx, |tree, _| tree.id());
+    let tree = project.update(cx, |project, model, cx| {
+        project.worktrees(cx).next().unwrap()
+    });
+    let tree_id = tree.update(cx, |tree, model, _| tree.id());
 
     let id_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
-        project.update(cx, |project, cx| {
+        project.update(cx, |project, model, cx| {
             let tree = project.worktrees(cx).next().unwrap();
             tree.read(cx)
                 .entry_for_path(path)
@@ -3317,13 +3403,13 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
     let dir_id = id_for_path("a", cx);
     let file_id = id_for_path("a/file1", cx);
     let buffer = project
-        .update(cx, |p, cx| p.open_buffer((tree_id, "a/file1"), cx))
+        .update(cx, |p, model, cx| p.open_buffer((tree_id, "a/file1"), cx))
         .await
         .unwrap();
-    buffer.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+    buffer.update(cx, |buffer, model, _| assert!(!buffer.is_dirty()));
 
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.rename_entry(dir_id, Path::new("b"), cx)
         })
         .unwrap()
@@ -3334,7 +3420,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
 
     assert_eq!(id_for_path("b", cx), dir_id);
     assert_eq!(id_for_path("b/file1", cx), file_id);
-    buffer.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+    buffer.update(cx, |buffer, model, _| assert!(!buffer.is_dirty()));
 }
 
 #[gpui::test]
@@ -3354,7 +3440,7 @@ async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
     // Spawn multiple tasks to open paths, repeating some paths.
-    let (buffer_a_1, buffer_b, buffer_a_2) = project.update(cx, |p, cx| {
+    let (buffer_a_1, buffer_b, buffer_a_2) = project.update(cx, |p, model, cx| {
         (
             p.open_local_buffer("/dir/a.txt", cx),
             p.open_local_buffer("/dir/b.txt", cx),
@@ -3365,8 +3451,8 @@ async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
     let buffer_a_1 = buffer_a_1.await.unwrap();
     let buffer_a_2 = buffer_a_2.await.unwrap();
     let buffer_b = buffer_b.await.unwrap();
-    assert_eq!(buffer_a_1.update(cx, |b, _| b.text()), "a-contents");
-    assert_eq!(buffer_b.update(cx, |b, _| b.text()), "b-contents");
+    assert_eq!(buffer_a_1.update(cx, |b, model, _| b.text()), "a-contents");
+    assert_eq!(buffer_b.update(cx, |b, model, _| b.text()), "b-contents");
 
     // There is only one buffer per path.
     let buffer_a_id = buffer_a_1.entity_id();
@@ -3375,7 +3461,7 @@ async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
     // Open the same path again while it is still open.
     drop(buffer_a_1);
     let buffer_a_3 = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.txt", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/a.txt", cx))
         .await
         .unwrap();
 
@@ -3401,13 +3487,13 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
     let buffer1 = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/file1", cx))
         .await
         .unwrap();
     let events = Arc::new(Mutex::new(Vec::new()));
 
     // initially, the buffer isn't dirty.
-    buffer1.update(cx, |buffer, cx| {
+    buffer1.update(cx, |buffer, model, cx| {
         cx.subscribe(&buffer1, {
             let events = events.clone();
             move |_, _, event, _| match event {
@@ -3420,11 +3506,11 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.is_dirty());
         assert!(events.lock().is_empty());
 
-        buffer.edit([(1..2, "")], None, cx);
+        buffer.edit([(1..2, "")], None, model, cx);
     });
 
     // after the first edit, the buffer is dirty, and emits a dirtied event.
-    buffer1.update(cx, |buffer, cx| {
+    buffer1.update(cx, |buffer, model, cx| {
         assert!(buffer.text() == "ac");
         assert!(buffer.is_dirty());
         assert_eq!(
@@ -3443,17 +3529,17 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     });
 
     // after saving, the buffer is not dirty, and emits a saved event.
-    buffer1.update(cx, |buffer, cx| {
+    buffer1.update(cx, |buffer, model, cx| {
         assert!(!buffer.is_dirty());
         assert_eq!(*events.lock(), &[language::BufferEvent::Saved]);
         events.lock().clear();
 
-        buffer.edit([(1..1, "B")], None, cx);
-        buffer.edit([(2..2, "D")], None, cx);
+        buffer.edit([(1..1, "B")], None, model, cx);
+        buffer.edit([(2..2, "D")], None, model, cx);
     });
 
     // after editing again, the buffer is dirty, and emits another dirty event.
-    buffer1.update(cx, |buffer, cx| {
+    buffer1.update(cx, |buffer, model, cx| {
         assert!(buffer.text() == "aBDc");
         assert!(buffer.is_dirty());
         assert_eq!(
@@ -3468,7 +3554,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
 
         // After restoring the buffer to its previously-saved state,
         // the buffer is not considered dirty anymore.
-        buffer.edit([(1..3, "")], None, cx);
+        buffer.edit([(1..3, "")], None, model, cx);
         assert!(buffer.text() == "ac");
         assert!(!buffer.is_dirty());
     });
@@ -3484,10 +3570,10 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     // When a file is deleted, the buffer is considered dirty.
     let events = Arc::new(Mutex::new(Vec::new()));
     let buffer2 = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file2", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/file2", cx))
         .await
         .unwrap();
-    buffer2.update(cx, |_, cx| {
+    buffer2.update(cx, |_, model, cx| {
         cx.subscribe(&buffer2, {
             let events = events.clone();
             move |_, _, event, _| events.lock().push(event.clone())
@@ -3499,7 +3585,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     cx.executor().run_until_parked();
-    buffer2.update(cx, |buffer, _| assert!(buffer.is_dirty()));
+    buffer2.update(cx, |buffer, model, _| assert!(buffer.is_dirty()));
     assert_eq!(
         *events.lock(),
         &[
@@ -3511,10 +3597,10 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     // When a file is already dirty when deleted, we don't emit a Dirtied event.
     let events = Arc::new(Mutex::new(Vec::new()));
     let buffer3 = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file3", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/file3", cx))
         .await
         .unwrap();
-    buffer3.update(cx, |_, cx| {
+    buffer3.update(cx, |_, model, cx| {
         cx.subscribe(&buffer3, {
             let events = events.clone();
             move |_, _, event, _| events.lock().push(event.clone())
@@ -3522,8 +3608,8 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         .detach();
     });
 
-    buffer3.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "x")], None, cx);
+    buffer3.update(cx, |buffer, model, cx| {
+        buffer.edit([(0..0, "x")], None, model, cx);
     });
     events.lock().clear();
     fs.remove_file("/dir/file3".as_ref(), Default::default())
@@ -3549,17 +3635,17 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/the-file", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/the-file", cx))
         .await
         .unwrap();
 
     let anchors = (0..3)
-        .map(|row| buffer.update(cx, |b, _| b.anchor_before(Point::new(row, 1))))
+        .map(|row| buffer.update(cx, |b, model, _| b.anchor_before(Point::new(row, 1))))
         .collect::<Vec<_>>();
 
     // Change the file on disk, adding two new lines of text, and removing
     // one line.
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
     });
@@ -3576,7 +3662,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     // contents are edited according to the diff between the old and new
     // file contents.
     cx.executor().run_until_parked();
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         assert_eq!(buffer.text(), new_contents);
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
@@ -3592,8 +3678,8 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     });
 
     // Modify the buffer
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, " ")], None, cx);
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(0..0, " ")], None, model, cx);
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
     });
@@ -3610,7 +3696,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     // Because the buffer is modified, it doesn't reload from disk, but is
     // marked as having a conflict.
     cx.executor().run_until_parked();
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         assert!(buffer.has_conflict());
     });
 }
@@ -3631,19 +3717,19 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     let buffer1 = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/file1", cx))
         .await
         .unwrap();
     let buffer2 = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file2", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/file2", cx))
         .await
         .unwrap();
 
-    buffer1.update(cx, |buffer, _| {
+    buffer1.update(cx, |buffer, model, _| {
         assert_eq!(buffer.text(), "a\nb\nc\n");
         assert_eq!(buffer.line_ending(), LineEnding::Unix);
     });
-    buffer2.update(cx, |buffer, _| {
+    buffer2.update(cx, |buffer, model, _| {
         assert_eq!(buffer.text(), "one\ntwo\nthree\n");
         assert_eq!(buffer.line_ending(), LineEnding::Windows);
     });
@@ -3658,17 +3744,17 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
     .await
     .unwrap();
     cx.executor().run_until_parked();
-    buffer1.update(cx, |buffer, _| {
+    buffer1.update(cx, |buffer, model, _| {
         assert_eq!(buffer.text(), "aaa\nb\nc\n");
         assert_eq!(buffer.line_ending(), LineEnding::Windows);
     });
 
     // Save a file with windows line endings. The file is written correctly.
-    buffer2.update(cx, |buffer, cx| {
+    buffer2.update(cx, |buffer, model, cx| {
         buffer.set_text("one\ntwo\nthree\nfour\n", cx);
     });
     project
-        .update(cx, |project, cx| project.save_buffer(buffer2, cx))
+        .update(cx, |project, model, cx| project.save_buffer(buffer2, cx))
         .await
         .unwrap();
     assert_eq!(
@@ -3699,7 +3785,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs.clone(), ["/the-dir".as_ref()], cx).await;
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/the-dir/a.rs", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/the-dir/a.rs", cx))
         .await
         .unwrap();
 
@@ -3792,11 +3878,11 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
     };
 
     project
-        .update(cx, |p, cx| {
+        .update(cx, |p, model, cx| {
             p.update_diagnostics(LanguageServerId(0), message, &[], cx)
         })
         .unwrap();
-    let buffer = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let buffer = buffer.update(cx, |buffer, model, _| buffer.snapshot());
 
     assert_eq!(
         buffer
@@ -3978,14 +4064,14 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
     );
 
     let _ = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer("/dir/one.rs", cx)
         })
         .await
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
-    let response = project.update(cx, |project, cx| {
+    let response = project.update(cx, |project, model, cx| {
         let worktree = project.worktrees(cx).next().unwrap();
         let entry = worktree.read(cx).entry_for_path("one.rs").unwrap();
         project.rename_entry(entry.id, "three.rs".as_ref(), cx)
@@ -4082,7 +4168,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer("/dir/one.rs", cx)
         })
         .await
@@ -4090,7 +4176,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
 
     let fake_server = fake_servers.next().await.unwrap();
 
-    let response = project.update(cx, |project, cx| {
+    let response = project.update(cx, |project, model, cx| {
         project.prepare_rename(buffer.clone(), 7, cx)
     });
     fake_server
@@ -4106,10 +4192,10 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     let range = response.await.unwrap().unwrap();
-    let range = buffer.update(cx, |buffer, _| range.to_offset(buffer));
+    let range = buffer.update(cx, |buffer, model, _| range.to_offset(buffer));
     assert_eq!(range, 6..9);
 
-    let response = project.update(cx, |project, cx| {
+    let response = project.update(cx, |project, model, cx| {
         project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
     });
     fake_server
@@ -4169,7 +4255,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
             .remove_entry(&buffer)
             .unwrap()
             .0
-            .update(cx, |buffer, _| buffer.text()),
+            .update(cx, |buffer, model, _| buffer.text()),
         "const THREE: usize = 1;"
     );
     assert_eq!(
@@ -4177,7 +4263,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
             .into_keys()
             .next()
             .unwrap()
-            .update(cx, |buffer, _| buffer.text()),
+            .update(cx, |buffer, model, _| buffer.text()),
         "const TWO: usize = one::THREE + one::THREE;"
     );
 }
@@ -4222,14 +4308,14 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer_4 = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer("/dir/four.rs", cx)
         })
         .await
         .unwrap();
-    buffer_4.update(cx, |buffer, cx| {
+    buffer_4.update(cx, |buffer, model, cx| {
         let text = "two::TWO";
-        buffer.edit([(20..28, text), (31..43, text)], None, cx);
+        buffer.edit([(20..28, text), (31..43, text)], None, model, cx);
     });
 
     assert_eq!(
@@ -4825,9 +4911,9 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs.clone(), ["/one/two/three".as_ref()], cx).await;
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             let id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.create_entry((id, "b.."), true, cx)
+            project.create_entry((id, "b.."), true, model, cx)
         })
         .await
         .unwrap()
@@ -4836,18 +4922,18 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
 
     // Can't create paths outside the project
     let result = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             let id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.create_entry((id, "../../boop"), true, cx)
+            project.create_entry((id, "../../boop"), true, model, cx)
         })
         .await;
     assert!(result.is_err());
 
     // Can't create paths with '..'
     let result = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             let id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.create_entry((id, "four/../beep"), true, cx)
+            project.create_entry((id, "four/../beep"), true, model, cx)
         })
         .await;
     assert!(result.is_err());
@@ -4868,7 +4954,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
 
     // And we cannot open buffers with '..'
     let result = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             let id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.open_buffer((id, "../c.rs"), cx)
         })
@@ -4947,7 +5033,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
     ];
 
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.tsx", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/a.tsx", cx))
         .await
         .unwrap();
     cx.executor().run_until_parked();
@@ -5003,7 +5089,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         }
     }
 
-    let hover_task = project.update(cx, |project, cx| {
+    let hover_task = project.update(cx, |project, model, cx| {
         project.hover(&buffer, Point::new(0, 0), cx)
     });
     let _: Vec<()> = futures::future::join_all(servers_with_hover_requests.into_values().map(
@@ -5056,7 +5142,7 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/a.ts", cx))
         .await
         .unwrap();
     cx.executor().run_until_parked();
@@ -5078,7 +5164,7 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
             }))
         });
 
-    let hover_task = project.update(cx, |project, cx| {
+    let hover_task = project.update(cx, |project, model, cx| {
         project.hover(&buffer, Point::new(0, 0), cx)
     });
     let () = request_handled
@@ -5126,7 +5212,7 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/a.ts", cx))
         .await
         .unwrap();
     cx.executor().run_until_parked();
@@ -5153,7 +5239,7 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
         },
     );
 
-    let code_actions_task = project.update(cx, |project, cx| {
+    let code_actions_task = project.update(cx, |project, model, cx| {
         project.code_actions(
             &buffer,
             0..buffer.read(cx).len(),
@@ -5247,7 +5333,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     ];
 
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.tsx", cx))
+        .update(cx, |p, model, cx| p.open_local_buffer("/dir/a.tsx", cx))
         .await
         .unwrap();
     cx.executor().run_until_parked();
@@ -5305,8 +5391,8 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         }
     }
 
-    let code_actions_task = project.update(cx, |project, cx| {
-        project.code_actions(&buffer, 0..buffer.read(cx).len(), None, cx)
+    let code_actions_task = project.update(cx, |project, model, cx| {
+        project.code_actions(&buffer, 0..buffer.read(cx).len(), None, model, cx)
     });
 
     // cx.run_until_parked();
@@ -5359,7 +5445,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     .await;
 
     // check the initial state and get the worktrees
-    let (worktree_a, worktree_b, worktree_c) = project.update(cx, |project, cx| {
+    let (worktree_a, worktree_b, worktree_c) = project.update(cx, |project, model, cx| {
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 3);
 
@@ -5382,7 +5468,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // move first worktree to after the second
     // [a, b, c] -> [b, a, c]
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             let first = worktree_a.read(cx);
             let second = worktree_b.read(cx);
             project.move_worktree(first.id(), second.id(), cx)
@@ -5390,7 +5476,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         .expect("moving first after second");
 
     // check the state after moving
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 3);
 
@@ -5407,7 +5493,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // move the second worktree to before the first
     // [b, a, c] -> [a, b, c]
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             let second = worktree_a.read(cx);
             let first = worktree_b.read(cx);
             project.move_worktree(first.id(), second.id(), cx)
@@ -5415,7 +5501,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         .expect("moving second before first");
 
     // check the state after moving
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 3);
 
@@ -5432,7 +5518,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // move the second worktree to after the third
     // [a, b, c] -> [a, c, b]
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             let second = worktree_b.read(cx);
             let third = worktree_c.read(cx);
             project.move_worktree(second.id(), third.id(), cx)
@@ -5440,7 +5526,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         .expect("moving second after third");
 
     // check the state after moving
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 3);
 
@@ -5457,7 +5543,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // move the third worktree to before the second
     // [a, c, b] -> [a, b, c]
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             let third = worktree_c.read(cx);
             let second = worktree_b.read(cx);
             project.move_worktree(third.id(), second.id(), cx)
@@ -5465,7 +5551,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         .expect("moving third before second");
 
     // check the state after moving
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 3);
 
@@ -5482,7 +5568,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // move the first worktree to after the third
     // [a, b, c] -> [b, c, a]
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             let first = worktree_a.read(cx);
             let third = worktree_c.read(cx);
             project.move_worktree(first.id(), third.id(), cx)
@@ -5490,7 +5576,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         .expect("moving first after third");
 
     // check the state after moving
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 3);
 
@@ -5507,7 +5593,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // move the third worktree to before the first
     // [b, c, a] -> [a, b, c]
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             let third = worktree_a.read(cx);
             let first = worktree_b.read(cx);
             project.move_worktree(third.id(), first.id(), cx)
@@ -5515,7 +5601,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         .expect("moving third before first");
 
     // check the state after moving
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 3);
 
@@ -5568,20 +5654,20 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
     let buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer("/dir/src/main.rs", cx)
         })
         .await
         .unwrap();
     let unstaged_changes = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_unstaged_changes(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
     cx.run_until_parked();
-    unstaged_changes.update(cx, |unstaged_changes, cx| {
+    unstaged_changes.update(cx, |unstaged_changes, model, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
             unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
@@ -5611,7 +5697,7 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
     );
 
     cx.run_until_parked();
-    unstaged_changes.update(cx, |unstaged_changes, cx| {
+    unstaged_changes.update(cx, |unstaged_changes, model, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
             unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
@@ -5627,7 +5713,7 @@ async fn search(
     query: SearchQuery,
     cx: &mut gpui::TestAppContext,
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
-    let mut search_rx = project.update(cx, |project, cx| project.search(query, cx));
+    let mut search_rx = project.update(cx, |project, model, cx| project.search(query, cx));
     let mut results = HashMap::default();
     while let Some(search_result) = search_rx.next().await {
         match search_result {
@@ -5640,7 +5726,7 @@ async fn search(
     Ok(results
         .into_iter()
         .map(|(buffer, ranges)| {
-            buffer.update(cx, |buffer, cx| {
+            buffer.update(cx, |buffer, model, cx| {
                 let path = buffer
                     .file()
                     .unwrap()
@@ -5747,7 +5833,7 @@ fn get_all_tasks(
     task_context: &TaskContext,
     cx: &mut AppContext,
 ) -> Vec<(TaskSourceKind, ResolvedTask)> {
-    let (mut old, new) = project.update(cx, |project, cx| {
+    let (mut old, new) = project.update(cx, |project, model, cx| {
         project
             .task_store
             .read(cx)

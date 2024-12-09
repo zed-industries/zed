@@ -17,7 +17,7 @@ use crate::{
 
 pub fn assign_kernelspec(
     kernel_specification: KernelSpecification,
-    weak_editor: WeakView<Editor>,
+    weak_editor: WeakModel<Editor>,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
 ) -> Result<()> {
@@ -29,7 +29,7 @@ pub fn assign_kernelspec(
     let worktree_id = crate::repl_editor::worktree_id_for_editor(weak_editor.clone(), cx)
         .context("editor is not in a worktree")?;
 
-    store.update(cx, |store, cx| {
+    store.update(cx, |store, model, cx| {
         store.set_active_kernelspec(worktree_id, kernel_specification.clone(), cx);
     });
 
@@ -38,10 +38,10 @@ pub fn assign_kernelspec(
 
     if let Some(session) = store.read(cx).get_session(weak_editor.entity_id()).cloned() {
         // Drop previous session, start new one
-        session.update(cx, |session, cx| {
+        session.update(cx, |session, model, cx| {
             session.clear_outputs(cx);
             session.shutdown(cx);
-            cx.notify();
+            model.notify(cx);
         });
     }
 
@@ -49,14 +49,14 @@ pub fn assign_kernelspec(
         .new_view(|cx| Session::new(weak_editor.clone(), fs, telemetry, kernel_specification, cx));
 
     weak_editor
-        .update(cx, |_editor, cx| {
-            cx.notify();
+        .update(cx, |_editor, model, cx| {
+            model.notify(cx);
 
             cx.subscribe(&session, {
                 let store = store.clone();
                 move |_this, _session, event, cx| match event {
                     SessionEvent::Shutdown(shutdown_event) => {
-                        store.update(cx, |store, _cx| {
+                        store.update(cx, |store, model, _cx| {
                             store.remove_session(shutdown_event.entity_id());
                         });
                     }
@@ -66,7 +66,7 @@ pub fn assign_kernelspec(
         })
         .ok();
 
-    store.update(cx, |store, _cx| {
+    store.update(cx, |store, model, _cx| {
         store.insert_session(weak_editor.entity_id(), session.clone());
     });
 
@@ -74,7 +74,7 @@ pub fn assign_kernelspec(
 }
 
 pub fn run(
-    editor: WeakView<Editor>,
+    editor: WeakModel<Editor>,
     move_down: bool,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
@@ -86,7 +86,9 @@ pub fn run(
 
     let editor = editor.upgrade().context("editor was dropped")?;
     let selected_range = editor
-        .update(cx, |editor, cx| editor.selections.newest_adjusted(cx))
+        .update(cx, |editor, model, cx| {
+            editor.selections.newest_adjusted(cx)
+        })
         .range();
     let multibuffer = editor.read(cx).buffer().clone();
     let Some(buffer) = multibuffer.read(cx).as_singleton() else {
@@ -121,14 +123,14 @@ pub fn run(
             let session = cx
                 .new_view(|cx| Session::new(weak_editor, fs, telemetry, kernel_specification, cx));
 
-            editor.update(cx, |_editor, cx| {
-                cx.notify();
+            editor.update(cx, |_editor, model, cx| {
+                model.notify(cx);
 
                 cx.subscribe(&session, {
                     let store = store.clone();
                     move |_this, _session, event, cx| match event {
                         SessionEvent::Shutdown(shutdown_event) => {
-                            store.update(cx, |store, _cx| {
+                            store.update(cx, |store, model, _cx| {
                                 store.remove_session(shutdown_event.entity_id());
                             });
                         }
@@ -137,7 +139,7 @@ pub fn run(
                 .detach();
             });
 
-            store.update(cx, |store, _cx| {
+            store.update(cx, |store, model, _cx| {
                 store.insert_session(editor.entity_id(), session.clone());
             });
 
@@ -157,7 +159,7 @@ pub fn run(
             next_cursor = next_cell_point.map(|point| snapshot.anchor_after(point));
         }
 
-        session.update(cx, |session, cx| {
+        session.update(cx, |session, model, cx| {
             session.execute(selected_text, anchor_range, next_cursor, move_down, cx);
         });
     }
@@ -167,14 +169,14 @@ pub fn run(
 
 #[allow(clippy::large_enum_variant)]
 pub enum SessionSupport {
-    ActiveSession(View<Session>),
+    ActiveSession(Model<Session>),
     Inactive(KernelSpecification),
     RequiresSetup(LanguageName),
     Unsupported,
 }
 
 pub fn worktree_id_for_editor(
-    editor: WeakView<Editor>,
+    editor: WeakModel<Editor>,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
 ) -> Option<WorktreeId> {
@@ -191,7 +193,7 @@ pub fn worktree_id_for_editor(
 }
 
 pub fn session(
-    editor: WeakView<Editor>,
+    editor: WeakModel<Editor>,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
 ) -> SessionSupport {
@@ -229,7 +231,7 @@ pub fn session(
 }
 
 pub fn clear_outputs(
-    editor: WeakView<Editor>,
+    editor: WeakModel<Editor>,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
 ) {
@@ -238,39 +240,39 @@ pub fn clear_outputs(
     let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
         return;
     };
-    session.update(cx, |session, cx| {
+    session.update(cx, |session, model, cx| {
         session.clear_outputs(cx);
-        cx.notify();
+        model.notify(cx);
     });
 }
 
-pub fn interrupt(editor: WeakView<Editor>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
+pub fn interrupt(editor: WeakModel<Editor>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
         return;
     };
 
-    session.update(cx, |session, cx| {
+    session.update(cx, |session, model, cx| {
         session.interrupt(cx);
-        cx.notify();
+        model.notify(cx);
     });
 }
 
-pub fn shutdown(editor: WeakView<Editor>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
+pub fn shutdown(editor: WeakModel<Editor>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
         return;
     };
 
-    session.update(cx, |session, cx| {
+    session.update(cx, |session, model, cx| {
         session.shutdown(cx);
-        cx.notify();
+        model.notify(cx);
     });
 }
 
-pub fn restart(editor: WeakView<Editor>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
+pub fn restart(editor: WeakModel<Editor>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
     let Some(editor) = editor.upgrade() else {
         return;
     };
@@ -285,13 +287,13 @@ pub fn restart(editor: WeakView<Editor>, window: &mut gpui::Window, cx: &mut gpu
         return;
     };
 
-    session.update(cx, |session, cx| {
+    session.update(cx, |session, model, cx| {
         session.restart(cx);
-        cx.notify();
+        model.notify(cx);
     });
 }
 
-pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakView<Editor>) {
+pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakModel<Editor>) {
     editor
         .register_action({
             let editor_handle = editor_handle.clone();
@@ -468,12 +470,12 @@ fn language_supported(language: &Arc<Language>) -> bool {
 }
 
 fn get_language(
-    editor: WeakView<Editor>,
+    editor: WeakModel<Editor>,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
 ) -> Option<Arc<Language>> {
     editor
-        .update(cx, |editor, cx| {
+        .update(cx, |editor, model, cx| {
             let selection = editor.selections.newest::<usize>(cx);
             let buffer = editor.buffer().read(cx).snapshot(cx);
             buffer.language_at(selection.head()).cloned()
@@ -501,7 +503,7 @@ mod tests {
             None,
         ));
 
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new_model(|model, cx| {
             Buffer::local(
                 indoc! { r#"
                     print(1 + 1)
@@ -567,7 +569,7 @@ mod tests {
             None,
         ));
 
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new_model(|model, cx| {
             Buffer::local(
                 indoc! { r#"
                     # Hello!
@@ -647,7 +649,7 @@ mod tests {
         language_registry.add(python.clone());
 
         // Two code blocks intersecting with selection
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new_model(|model, cx| {
             let mut buffer = Buffer::local(
                 indoc! { r#"
                     Hey this is Markdown!
@@ -689,7 +691,7 @@ mod tests {
         );
 
         // Three code blocks intersecting with selection
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new_model(|model, cx| {
             let mut buffer = Buffer::local(
                 indoc! { r#"
                     Hey this is Markdown!
@@ -735,7 +737,7 @@ mod tests {
         );
 
         // Python code block
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new_model(|model, cx| {
             let mut buffer = Buffer::local(
                 indoc! { r#"
                     Hey this is Markdown!

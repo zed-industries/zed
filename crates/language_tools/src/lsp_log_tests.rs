@@ -53,10 +53,10 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
     );
 
     let log_store = cx.new_model(LogStore::new);
-    log_store.update(cx, |store, cx| store.add_project(&project, cx));
+    log_store.update(cx, |store, model, cx| store.add_project(&project, cx));
 
     let _rust_buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer("/the-root/test.rs", cx)
         })
         .await

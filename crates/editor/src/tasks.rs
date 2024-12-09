@@ -68,8 +68,8 @@ fn task_context_with_editor(
         variables
     };
 
-    project.update(cx, |project, cx| {
-        project.task_store().update(cx, |task_store, cx| {
+    project.update(cx, |project, model, cx| {
+        project.task_store().update(cx, |task_store, model, cx| {
             task_store.task_context_for_location(captured_variables, location, cx)
         })
     })
@@ -86,7 +86,7 @@ pub fn task_context(
     else {
         return AsyncTask::ready(TaskContext::default());
     };
-    editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, model, cx| {
         let context_task = task_context_with_editor(editor, cx);
         cx.background_executor()
             .spawn(async move { context_task.await.unwrap_or_default() })

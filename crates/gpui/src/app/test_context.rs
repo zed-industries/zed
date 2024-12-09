@@ -574,7 +574,7 @@ impl<T: 'static> Model<T> {
     }
 }
 
-// impl<V> View<V> {
+// impl<V> Model<V> {
 //     /// Returns a future that resolves when the condition becomes true.
 //     pub fn condition<Evt>(
 //         &self,

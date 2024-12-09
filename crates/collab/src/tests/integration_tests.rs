@@ -252,7 +252,7 @@ async fn test_basic_calls(
             .update(cx_a, |call, cx| {
                 call.room()
                     .unwrap()
-                    .update(cx, |room, cx| room.share_screen(cx))
+                    .update(cx, |room, model, cx| room.share_screen(cx))
             })
             .await
             .unwrap();
@@ -6078,7 +6078,7 @@ async fn test_join_call_after_screen_was_shared(
         .update(cx_a, |call, cx| {
             call.room()
                 .unwrap()
-                .update(cx, |room, cx| room.share_screen(cx))
+                .update(cx, |room, model, cx| room.share_screen(cx))
         })
         .await
         .unwrap();
@@ -6173,11 +6173,11 @@ async fn test_pane_split_left(cx: &mut TestAppContext) {
     let (workspace, cx) = client.build_test_workspace(cx).await;
 
     cx.simulate_keystrokes("cmd-n");
-    workspace.update(cx, |workspace, cx| {
+    workspace.update(cx, |workspace, model, cx| {
         assert!(workspace.items(cx).collect::<Vec<_>>().len() == 1);
     });
     cx.simulate_keystrokes("cmd-k left");
-    workspace.update(cx, |workspace, cx| {
+    workspace.update(cx, |workspace, model, cx| {
         assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
     });
     cx.simulate_keystrokes("cmd-k");
@@ -6185,7 +6185,7 @@ async fn test_pane_split_left(cx: &mut TestAppContext) {
     // to verify that it doesn't fire in this case.
     cx.executor().advance_clock(Duration::from_secs(2));
     cx.simulate_keystrokes("left");
-    workspace.update(cx, |workspace, cx| {
+    workspace.update(cx, |workspace, model, cx| {
         assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
     });
 }
@@ -6207,9 +6207,9 @@ async fn test_join_after_restart(cx1: &mut TestAppContext, cx2: &mut TestAppCont
 async fn test_preview_tabs(cx: &mut TestAppContext) {
     let (_server, client) = TestServer::start1(cx).await;
     let (workspace, cx) = client.build_test_workspace(cx).await;
-    let project = workspace.update(cx, |workspace, _| workspace.project().clone());
+    let project = workspace.update(cx, |workspace, model, _| workspace.project().clone());
 
-    let worktree_id = project.update(cx, |project, cx| {
+    let worktree_id = project.update(cx, |project, model, cx| {
         project.worktrees(cx).next().unwrap().read(cx).id()
     });
 
@@ -6226,7 +6226,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         path: Path::new("3.rs").into(),
     };
 
-    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
     let get_path = |pane: &Pane, idx: usize, cx: &AppContext| {
         pane.item_for_index(idx).unwrap().project_path(cx).unwrap()
@@ -6234,13 +6234,13 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Opening item 3 as a "permanent" tab
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, model, cx| {
             workspace.open_path(path_3.clone(), None, false, cx)
         })
         .await
         .unwrap();
 
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_3.clone());
         assert_eq!(pane.preview_item_id(), None);
@@ -6251,13 +6251,13 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Open item 1 as preview
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, model, cx| {
             workspace.open_path_preview(path_1.clone(), None, true, true, cx)
         })
         .await
         .unwrap();
 
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_3.clone());
         assert_eq!(get_path(pane, 1, cx), path_1.clone());
@@ -6272,13 +6272,13 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Open item 2 as preview
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, model, cx| {
             workspace.open_path_preview(path_2.clone(), None, true, true, cx)
         })
         .await
         .unwrap();
 
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_3.clone());
         assert_eq!(get_path(pane, 1, cx), path_2.clone());
@@ -6293,11 +6293,11 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Going back should show item 1 as preview
     workspace
-        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
+        .update(cx, |workspace, model, cx| workspace.go_back(pane.downgrade(), cx))
         .await
         .unwrap();
 
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_3.clone());
         assert_eq!(get_path(pane, 1, cx), path_1.clone());
@@ -6311,7 +6311,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Closing item 1
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         pane.close_item_by_id(
             pane.active_item().unwrap().item_id(),
             workspace::SaveIntent::Skip,
@@ -6321,7 +6321,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_3.clone());
         assert_eq!(pane.preview_item_id(), None);
@@ -6332,11 +6332,11 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Going back should show item 1 as preview
     workspace
-        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
+        .update(cx, |workspace, model, cx| workspace.go_back(pane.downgrade(), cx))
         .await
         .unwrap();
 
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_3.clone());
         assert_eq!(get_path(pane, 1, cx), path_1.clone());
@@ -6350,14 +6350,14 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Close permanent tab
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         let id = pane.items().next().unwrap().item_id();
         pane.close_item_by_id(id, workspace::SaveIntent::Skip, cx)
     })
     .await
     .unwrap();
 
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(
@@ -6370,13 +6370,13 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Split pane to the right
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         pane.split(workspace::SplitDirection::Right, cx);
     });
 
-    let right_pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let right_pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(
@@ -6388,7 +6388,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert!(pane.can_navigate_forward());
     });
 
-    right_pane.update(cx, |pane, cx| {
+    right_pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(pane.preview_item_id(), None);
@@ -6399,13 +6399,13 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Open item 2 as preview in right pane
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, model, cx| {
             workspace.open_path_preview(path_2.clone(), None, true, true, cx)
         })
         .await
         .unwrap();
 
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(
@@ -6417,7 +6417,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert!(pane.can_navigate_forward());
     });
 
-    right_pane.update(cx, |pane, cx| {
+    right_pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(get_path(pane, 1, cx), path_2.clone());
@@ -6431,19 +6431,19 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Focus left pane
-    workspace.update(cx, |workspace, cx| {
+    workspace.update(cx, |workspace, model, cx| {
         workspace.activate_pane_in_direction(workspace::SplitDirection::Left, cx)
     });
 
     // Open item 2 as preview in left pane
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, model, cx| {
             workspace.open_path_preview(path_2.clone(), None, true, true, cx)
         })
         .await
         .unwrap();
 
-    pane.update(cx, |pane, cx| {
+    pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_2.clone());
         assert_eq!(
@@ -6455,7 +6455,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         assert!(!pane.can_navigate_forward());
     });
 
-    right_pane.update(cx, |pane, cx| {
+    right_pane.update(cx, |pane, model, cx| {
         assert_eq!(pane.items_len(), 2);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
         assert_eq!(get_path(pane, 1, cx), path_2.clone());
@@ -6545,12 +6545,12 @@ async fn test_context_collaboration_with_reconnect(
 
     // Host and guest make changes
     context_a.update(cx_a, |context, cx| {
-        context.buffer().update(cx, |buffer, cx| {
+        context.buffer().update(cx, |buffer, model, cx| {
             buffer.edit([(0..0, "Host change\n")], None, cx)
         })
     });
     context_b.update(cx_b, |context, cx| {
-        context.buffer().update(cx, |buffer, cx| {
+        context.buffer().update(cx, |buffer, model, cx| {
             buffer.edit([(0..0, "Guest change\n")], None, cx)
         })
     });
@@ -6568,12 +6568,12 @@ async fn test_context_collaboration_with_reconnect(
     server.disconnect_client(client_a.peer_id().unwrap());
     server.forbid_connections();
     context_a.update(cx_a, |context, cx| {
-        context.buffer().update(cx, |buffer, cx| {
+        context.buffer().update(cx, |buffer, model, cx| {
             buffer.edit([(0..0, "Host offline change\n")], None, cx)
         })
     });
     context_b.update(cx_b, |context, cx| {
-        context.buffer().update(cx, |buffer, cx| {
+        context.buffer().update(cx, |buffer, model, cx| {
             buffer.edit([(0..0, "Guest offline change\n")], None, cx)
         })
     });
@@ -6643,7 +6643,7 @@ async fn test_remote_git_branches(
     executor.run_until_parked();
 
     let branches_b = cx_b
-        .update(|cx| project_b.update(cx, |project, cx| project.branches(root_path.clone(), cx)))
+        .update(|cx| project_b.update(cx, |project, model, cx| project.branches(root_path.clone(), cx)))
         .await
         .unwrap();
 
@@ -6657,7 +6657,7 @@ async fn test_remote_git_branches(
     assert_eq!(&branches_b, &branches);
 
     cx_b.update(|cx| {
-        project_b.update(cx, |project, cx| {
+        project_b.update(cx, |project, model, cx| {
             project.update_or_create_branch(root_path.clone(), new_branch.to_string(), cx)
         })
     })
@@ -6667,8 +6667,8 @@ async fn test_remote_git_branches(
     executor.run_until_parked();
 
     let host_branch = cx_a.update(|cx| {
-        project_a.update(cx, |project, cx| {
-            project.worktree_store().update(cx, |worktree_store, cx| {
+        project_a.update(cx, |project, model, cx| {
+            project.worktree_store().update(cx, |worktree_store, model, cx| {
                 worktree_store
                     .current_branch(root_path.clone(), cx)
                     .unwrap()
@@ -6680,7 +6680,7 @@ async fn test_remote_git_branches(
 
     // Also try creating a new branch
     cx_b.update(|cx| {
-        project_b.update(cx, |project, cx| {
+        project_b.update(cx, |project, model, cx| {
             project.update_or_create_branch(root_path.clone(), "totally-new-branch".to_string(), cx)
         })
     })
@@ -6690,8 +6690,8 @@ async fn test_remote_git_branches(
     executor.run_until_parked();
 
     let host_branch = cx_a.update(|cx| {
-        project_a.update(cx, |project, cx| {
-            project.worktree_store().update(cx, |worktree_store, cx| {
+        project_a.update(cx, |project, model, cx| {
+            project.worktree_store().update(cx, |worktree_store, model, cx| {
                 worktree_store.current_branch(root_path, cx).unwrap()
             })
         })

@@ -91,7 +91,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
         let Some(workspace) = vim.workspace(cx) else {
             return;
         };
-        workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, model, cx| {
             command_palette::CommandPalette::toggle(workspace, "'<,'>", cx);
         })
     });
@@ -101,7 +101,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
-        workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, model, cx| {
             command_palette::CommandPalette::toggle(
                 workspace,
                 &format!(".,.+{}", count.saturating_sub(1)),
@@ -121,7 +121,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
                 let Some(workspace) = vim.workspace(cx) else {
                     return;
                 };
-                workspace.update(cx, |workspace, cx| {
+                workspace.update(cx, |workspace, model, cx| {
                     e.notify_err(workspace, cx);
                 });
                 return;
@@ -145,6 +145,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
                     true,
                     true,
                     vec![Point::new(range.start.0, 0)..end],
+                    model,
                     cx,
                 )
             }
@@ -168,7 +169,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
                 let Some(workspace) = vim.workspace(cx) else {
                     return;
                 };
-                workspace.update(cx, |workspace, cx| {
+                workspace.update(cx, |workspace, model, cx| {
                     e.notify_err(workspace, cx);
                 });
                 return;

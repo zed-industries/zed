@@ -574,8 +574,8 @@ mod tests {
         .unindent();
 
         let buffer =
-            cx.new_model(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+            cx.new_model(|model, cx| language::Buffer::local(text, cx).with_language(language, cx));
+        let outline = buffer.update(cx, |buffer, model, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline
                 .items

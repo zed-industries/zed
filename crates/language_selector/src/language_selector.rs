@@ -26,13 +26,13 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct LanguageSelector {
-    picker: View<Picker<LanguageSelectorDelegate>>,
+    picker: Model<Picker<LanguageSelectorDelegate>>,
 }
 
 impl LanguageSelector {
     fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
         workspace.register_action(move |workspace, _: &Toggle, cx| {
-            Self::toggle(workspace, cx);
+            Self::toggle(workspace, model, cx);
         });
     }
 
@@ -46,7 +46,7 @@ impl LanguageSelector {
         let project = workspace.project().clone();
 
         workspace.toggle_modal(cx, move |cx| {
-            LanguageSelector::new(buffer, project, registry, cx)
+            LanguageSelector::new(buffer, project, registry, model, cx)
         });
         Some(())
     }
@@ -64,7 +64,7 @@ impl LanguageSelector {
             language_registry,
         );
 
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+        let picker = cx.new_model(|model, cx| Picker::uniform_list(delegate, model, cx));
         Self { picker }
     }
 }
@@ -85,7 +85,7 @@ impl EventEmitter<DismissEvent> for LanguageSelector {}
 impl ModalView for LanguageSelector {}
 
 pub struct LanguageSelectorDelegate {
-    language_selector: WeakView<LanguageSelector>,
+    language_selector: WeakModel<LanguageSelector>,
     buffer: Model<Buffer>,
     project: Model<Project>,
     language_registry: Arc<LanguageRegistry>,
@@ -96,7 +96,7 @@ pub struct LanguageSelectorDelegate {
 
 impl LanguageSelectorDelegate {
     fn new(
-        language_selector: WeakView<LanguageSelector>,
+        language_selector: WeakModel<LanguageSelector>,
         buffer: Model<Buffer>,
         project: Model<Project>,
         language_registry: Arc<LanguageRegistry>,
@@ -214,7 +214,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.language_selector
-            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
             .log_err();
     }
 
@@ -233,7 +233,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
     ) -> gpui::Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self.candidates.clone();
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -257,13 +257,13 @@ impl PickerDelegate for LanguageSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 let delegate = &mut this.delegate;
                 delegate.matches = matches;
                 delegate.selected_index = delegate
                     .selected_index
                     .min(delegate.matches.len().saturating_sub(1));
-                cx.notify();
+                model.notify(cx);
             })
             .log_err();
         })

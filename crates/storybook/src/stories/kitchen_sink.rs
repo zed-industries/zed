@@ -8,13 +8,18 @@ use crate::story_selector::ComponentStory;
 pub struct KitchenSinkStory;
 
 impl KitchenSinkStory {
-    pub fn view(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> View<Self> {
-        cx.new_view(|_cx| Self)
+    pub fn view(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Model<Self> {
+        cx.new_model(|_model, _cx| Self)
     }
 }
 
 impl Render for KitchenSinkStory {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let component_stories = ComponentStory::iter()
             .map(|selector| selector.story(cx))
             .collect::<Vec<_>>();

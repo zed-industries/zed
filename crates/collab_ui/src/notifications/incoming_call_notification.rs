@@ -37,7 +37,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                     {
                         let window = cx
                             .open_window(options, |cx| {
-                                cx.new_view(|_| {
+                                cx.new_model(|_, _| {
                                     IncomingCallNotification::new(
                                         incoming_call.clone(),
                                         app_state.clone(),
@@ -70,7 +70,8 @@ impl IncomingCallNotificationState {
     fn respond(&self, accept: bool, cx: &mut AppContext) {
         let active_call = ActiveCall::global(cx);
         if accept {
-            let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
+            let join =
+                active_call.update(cx, |active_call, model, cx| active_call.accept_incoming(cx));
             let caller_user_id = self.call.calling_user.id;
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
             let app_state = self.app_state.clone();
@@ -95,7 +96,7 @@ impl IncomingCallNotificationState {
             })
             .detach_and_log_err(cx);
         } else {
-            active_call.update(cx, |active_call, cx| {
+            active_call.update(cx, |active_call, model, cx| {
                 active_call.decline_incoming(cx).log_err();
             });
         }
@@ -111,7 +112,12 @@ impl IncomingCallNotification {
 }
 
 impl Render for IncomingCallNotification {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(cx);
 
         div().size_full().font(ui_font).child(

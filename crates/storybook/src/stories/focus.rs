@@ -11,17 +11,17 @@ pub struct FocusStory {
 }
 
 impl FocusStory {
-    pub fn view(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> View<Self> {
+    pub fn view(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Model<Self> {
         cx.bind_keys([
             KeyBinding::new("cmd-a", ActionA, Some("parent")),
             KeyBinding::new("cmd-a", ActionB, Some("child-1")),
             KeyBinding::new("cmd-c", ActionC, None),
         ]);
 
-        cx.new_view(move |cx| {
-            let parent_focus = cx.focus_handle();
-            let child_1_focus = cx.focus_handle();
-            let child_2_focus = cx.focus_handle();
+        cx.new_model(move |cx| {
+            let parent_focus = window.focus_handle();
+            let child_1_focus = window.focus_handle();
+            let child_2_focus = window.focus_handle();
             let _focus_subscriptions = vec![
                 cx.on_focus(&parent_focus, |_, _| {
                     println!("Parent focused");
@@ -54,7 +54,12 @@ impl FocusStory {
 }
 
 impl Render for FocusStory {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let theme = cx.theme();
         let color_1 = theme.status().created;
         let color_2 = theme.status().modified;

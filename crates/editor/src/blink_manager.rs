@@ -42,9 +42,11 @@ impl BlinkManager {
 
         let epoch = self.next_blink_epoch();
         let interval = self.blink_interval;
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             Timer::after(interval).await;
-            this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
+            this.update(&mut cx, |this, model, cx| {
+                this.resume_cursor_blinking(epoch, cx)
+            })
         })
         .detach();
     }
@@ -52,7 +54,7 @@ impl BlinkManager {
     fn resume_cursor_blinking(&mut self, epoch: usize, model: &Model<Self>, cx: &mut AppContext) {
         if epoch == self.blink_epoch {
             self.blinking_paused = false;
-            self.blink_cursors(epoch, cx);
+            self.blink_cursors(epoch, model, cx);
         }
     }
 
@@ -60,14 +62,14 @@ impl BlinkManager {
         if EditorSettings::get_global(cx).cursor_blink {
             if epoch == self.blink_epoch && self.enabled && !self.blinking_paused {
                 self.visible = !self.visible;
-                cx.notify();
+                model.notify(cx);
 
                 let epoch = self.next_blink_epoch();
                 let interval = self.blink_interval;
-                cx.spawn(|this, mut cx| async move {
+                model.spawn(cx, |this, mut cx| async move {
                     Timer::after(interval).await;
                     if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
+                        this.update(&mut cx, |this, model, cx| this.blink_cursors(epoch, cx))
                             .ok();
                     }
                 })
@@ -81,7 +83,7 @@ impl BlinkManager {
     pub fn show_cursor(&mut self, model: &Model<_>, cx: &mut AppContext) {
         if !self.visible {
             self.visible = true;
-            cx.notify();
+            model.notify(cx);
         }
     }
 
@@ -94,7 +96,7 @@ impl BlinkManager {
         // Set cursors as invisible and start blinking: this causes cursors
         // to be visible during the next render.
         self.visible = false;
-        self.blink_cursors(self.blink_epoch, cx);
+        self.blink_cursors(self.blink_epoch, model, cx);
     }
 
     pub fn disable(&mut self, model: &Model<Self>, _cx: &mut AppContext) {

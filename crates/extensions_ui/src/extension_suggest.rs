@@ -169,7 +169,7 @@ pub(crate) fn suggest(buffer: Model<Buffer>, model: &Model<Workspace>, cx: &mut 
         );
 
         workspace.show_notification(notification_id, cx, |cx| {
-            cx.new_view(move |_cx| {
+            cx.new_model(move |_cx| {
                 simple_message_notification::MessageNotification::new(format!(
                     "Do you want to install the recommended '{}' extension for '{}' files?",
                     extension_id, file_name_or_extension
@@ -180,7 +180,7 @@ pub(crate) fn suggest(buffer: Model<Buffer>, model: &Model<Workspace>, cx: &mut 
                     move |cx| {
                         let extension_id = extension_id.clone();
                         let extension_store = ExtensionStore::global(cx);
-                        extension_store.update(cx, move |store, cx| {
+                        extension_store.update(cx, move |store, model, cx| {
                             store.install_latest_extension(extension_id, cx);
                         });
                     }

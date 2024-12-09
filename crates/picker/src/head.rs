@@ -7,19 +7,19 @@ use ui::prelude::*;
 /// The head of a [`Picker`](crate::Picker).
 pub(crate) enum Head {
     /// Picker has an editor that allows the user to filter the list.
-    Editor(View<Editor>),
+    Editor(Model<Editor>),
 
     /// Picker has no head, it's just a list of items.
-    Empty(View<EmptyHead>),
+    Empty(Model<EmptyHead>),
 }
 
 impl Head {
     pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
-        edit_handler: impl FnMut(&mut V, View<Editor>, &EditorEvent,&Model<'>,  &mut AppContext) + 'static,
+        edit_handler: impl FnMut(&mut V, Model<Editor>, &EditorEvent,&Model<'>,  &mut AppContext) + 'static,
         model: &Model<V>, cx: &mut AppContext,
     ) -> Self {
-        let editor = cx.new_view(|cx| {
+        let editor = cx.new_model(|model, cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text(placeholder_text, cx);
             editor
@@ -32,7 +32,7 @@ impl Head {
         blur_handler: impl FnMut(&mut V,&Model<'>,  &mut AppContext) + 'static,
         model: &Model<V>, cx: &mut AppContext,
     ) -> Self {
-        let head = cx.new_view(EmptyHead::new);
+        let head = cx.new_model(EmptyHead::new);
         cx.on_blur(&head.focus_handle(cx), blur_handler).detach();
         Self::Empty(head)
     }
@@ -46,13 +46,13 @@ pub(crate) struct EmptyHead {
 impl EmptyHead {
     fn new(model: &Model<Self>, cx: &mut AppContext) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(),
         }
     }
 }
 
 impl Render for EmptyHead {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         div().track_focus(&self.focus_handle(cx))
     }
 }

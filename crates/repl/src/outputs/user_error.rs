@@ -7,7 +7,7 @@ use crate::outputs::plain::TerminalOutput;
 pub struct ErrorView {
     pub ename: String,
     pub evalue: String,
-    pub traceback: View<TerminalOutput>,
+    pub traceback: Model<TerminalOutput>,
 }
 
 impl ErrorView {

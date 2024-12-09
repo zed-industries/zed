@@ -41,7 +41,7 @@ impl Tool for NowTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _workspace: WeakView<workspace::Workspace>,
+        _workspace: WeakModel<workspace::Workspace>,
         _window: &mut gpui::Window,
         _cx: &mut gpui::AppContext,
     ) -> Task<Result<String>> {

@@ -7,7 +7,7 @@
 ///
 /// ```rust
 /// actions!(editor,[Undo, Redo]);;
-AppContext
+/// AppContext
 ///       .keymap_context("Editor")
 ///       .on_action(cx.listener(Editor::undo))
 ///       .on_action(cx.listener(Editor::redo))

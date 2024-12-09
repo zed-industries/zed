@@ -36,7 +36,7 @@ impl SlashCommand for DefaultSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancellation_flag: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
+        _workspace: Option<WeakModel<Workspace>>,
         _window: &mut gpui::Window,
         _cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -48,7 +48,7 @@ impl SlashCommand for DefaultSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut gpui::Window, cx: &mut gpui::AppContext,
     ) -> Task<SlashCommandResult> {

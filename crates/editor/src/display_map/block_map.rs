@@ -1785,7 +1785,7 @@ mod tests {
 
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
-        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let subscription = buffer.update(cx, |buffer, model, _| buffer.subscribe());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
@@ -1927,7 +1927,7 @@ mod tests {
         );
 
         // Insert a line break, separating two block decorations into separate lines.
-        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+        let buffer_snapshot = buffer.update(cx, |buffer, model, cx| {
             buffer.edit([(Point::new(1, 1)..Point::new(1, 1), "!!!\n")], None, cx);
             buffer.snapshot(cx)
         });
@@ -1937,7 +1937,7 @@ mod tests {
         let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
         let (tab_snapshot, tab_edits) =
             tab_map.sync(fold_snapshot, fold_edits, 4.try_into().unwrap());
-        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, model, cx| {
             wrap_map.sync(tab_snapshot, tab_edits, cx)
         });
         let snapshot = block_map.read(wraps_snapshot, wrap_edits);
@@ -1948,12 +1948,12 @@ mod tests {
     fn test_multibuffer_headers_and_footers(cx: &mut AppContext) {
         init_test(cx);
 
-        let buffer1 = cx.new_model(|cx| Buffer::local("Buffer 1", cx));
-        let buffer2 = cx.new_model(|cx| Buffer::local("Buffer 2", cx));
-        let buffer3 = cx.new_model(|cx| Buffer::local("Buffer 3", cx));
+        let buffer1 = cx.new_model(|model, cx| Buffer::local("Buffer 1", cx));
+        let buffer2 = cx.new_model(|model, cx| Buffer::local("Buffer 2", cx));
+        let buffer3 = cx.new_model(|model, cx| Buffer::local("Buffer 3", cx));
 
         let mut excerpt_ids = Vec::new();
-        let multi_buffer = cx.new_model(|cx| {
+        let multi_buffer = cx.new_model(|model, cx| {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer1.clone(),
@@ -2033,7 +2033,7 @@ mod tests {
 
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
-        let _subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let _subscription = buffer.update(cx, |buffer, model, _| buffer.subscribe());
         let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
@@ -2178,7 +2178,7 @@ mod tests {
         let text = "line1\nline2\nline3\nline4\nline5";
 
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
-        let buffer_subscription = buffer.update(cx, |buffer, _cx| buffer.subscribe());
+        let buffer_subscription = buffer.update(cx, |buffer, model, _cx| buffer.subscribe());
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
@@ -2203,7 +2203,7 @@ mod tests {
         let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
 
-        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+        let buffer_snapshot = buffer.update(cx, |buffer, model, cx| {
             buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
             buffer.snapshot(cx)
         });
@@ -2213,13 +2213,13 @@ mod tests {
         );
         let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
         let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
-        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, model, cx| {
             wrap_map.sync(tab_snapshot, tab_edits, cx)
         });
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
 
-        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+        let buffer_snapshot = buffer.update(cx, |buffer, model, cx| {
             buffer.edit(
                 [(
                     Point::new(1, 5)..Point::new(1, 5),
@@ -2236,7 +2236,7 @@ mod tests {
         );
         let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
         let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
-        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, model, cx| {
             wrap_map.sync(tab_snapshot, tab_edits, cx)
         });
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
@@ -2355,7 +2355,7 @@ mod tests {
                         Some(px(rng.gen_range(0.0..=100.0)))
                     };
                     log::info!("Setting wrap width to {:?}", wrap_width);
-                    wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                    wrap_map.update(cx, |map, model, cx| map.set_wrap_width(wrap_width, cx));
                 }
                 20..=39 => {
                     let block_count = rng.gen_range(1..=5);
@@ -2400,9 +2400,10 @@ mod tests {
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tab_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
-                    let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-                        wrap_map.sync(tab_snapshot, tab_edits, cx)
-                    });
+                    let (wraps_snapshot, wrap_edits) = wrap_map
+                        .update(cx, |wrap_map, model, cx| {
+                            wrap_map.sync(tab_snapshot, tab_edits, cx)
+                        });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
                     block_map.insert(block_properties.iter().map(|props| BlockProperties {
                         placement: props.placement.clone(),
@@ -2425,14 +2426,15 @@ mod tests {
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tab_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
-                    let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-                        wrap_map.sync(tab_snapshot, tab_edits, cx)
-                    });
+                    let (wraps_snapshot, wrap_edits) = wrap_map
+                        .update(cx, |wrap_map, model, cx| {
+                            wrap_map.sync(tab_snapshot, tab_edits, cx)
+                        });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
                     block_map.remove(block_ids_to_remove);
                 }
                 _ => {
-                    buffer.update(cx, |buffer, cx| {
+                    buffer.update(cx, |buffer, model, cx| {
                         let mutation_count = rng.gen_range(1..=5);
                         let subscription = buffer.subscribe();
                         buffer.randomly_mutate(&mut rng, mutation_count, cx);
@@ -2447,7 +2449,7 @@ mod tests {
                 inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
             let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
             let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
-            let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+            let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, model, cx| {
                 wrap_map.sync(tab_snapshot, tab_edits, cx)
             });
             let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);

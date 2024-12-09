@@ -77,7 +77,7 @@ impl TaskSourceKind {
 
 impl Inventory {
     pub fn new(cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|_| Self::default())
+        cx.new_model(|_, _| Self::default())
     }
 
     /// Pulls its task sources relevant to the worktree and the language given,
@@ -373,7 +373,7 @@ mod test_inventory {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
-        inventory.update(cx, |inventory, cx| {
+        inventory.update(cx, |inventory, model, cx| {
             inventory
                 .list_tasks(None, None, worktree, cx)
                 .into_iter()
@@ -388,7 +388,7 @@ mod test_inventory {
         task_name: &str,
         cx: &mut TestAppContext,
     ) {
-        inventory.update(cx, |inventory, cx| {
+        inventory.update(cx, |inventory, model, cx| {
             let (task_source_kind, task) = inventory
                 .list_tasks(None, None, None, cx)
                 .into_iter()
@@ -408,7 +408,7 @@ mod test_inventory {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
-        let (used, current) = inventory.update(cx, |inventory, cx| {
+        let (used, current) = inventory.update(cx, |inventory, model, cx| {
             inventory.used_and_current_resolved_tasks(worktree, None, &TaskContext::default(), cx)
         });
         let mut all = used;
@@ -577,7 +577,7 @@ mod tests {
             "3_task".to_string(),
         ];
 
-        inventory.update(cx, |inventory, _| {
+        inventory.update(cx, |inventory, model, _| {
             inventory
                 .update_file_based_tasks(
                     None,
@@ -630,7 +630,7 @@ mod tests {
             ],
         );
 
-        inventory.update(cx, |inventory, _| {
+        inventory.update(cx, |inventory, model, _| {
             inventory
                 .update_file_based_tasks(
                     None,
@@ -754,7 +754,7 @@ mod tests {
             ),
         ];
 
-        inventory.update(cx, |inventory, _| {
+        inventory.update(cx, |inventory, model, _| {
             inventory
                 .update_file_based_tasks(
                     None,
@@ -826,7 +826,7 @@ mod tests {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
-        let (used, current) = inventory.update(cx, |inventory, cx| {
+        let (used, current) = inventory.update(cx, |inventory, model, cx| {
             inventory.used_and_current_resolved_tasks(worktree, None, &TaskContext::default(), cx)
         });
         used.into_iter()

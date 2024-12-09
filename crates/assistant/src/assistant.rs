@@ -321,9 +321,9 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
             )
         })
         .collect::<Vec<_>>();
-    LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-        registry.select_active_model(&provider_name, &model_id, cx);
-        registry.select_inline_alternative_models(inline_alternatives, cx);
+    LanguageModelRegistry::global(cx).update(cx, |registry, model, cx| {
+        registry.select_active_model(&provider_name, &model_id, model, cx);
+        registry.select_inline_alternative_models(inline_alternatives, model, cx);
     });
 }
 

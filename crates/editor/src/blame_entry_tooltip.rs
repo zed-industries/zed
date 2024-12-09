@@ -27,7 +27,11 @@ impl<'a> CommitAvatar<'a> {
 }
 
 impl<'a> CommitAvatar<'a> {
-    fn render(&'a self, model: &Model<BlameEntryTooltip>, cx: &mut AppContext) -> Option<impl IntoElement> {
+    fn render(
+        &'a self,
+        model: &Model<BlameEntryTooltip>,
+        cx: &mut AppContext,
+    ) -> Option<impl IntoElement> {
         let remote = self
             .details
             .and_then(|details| details.remote.as_ref())
@@ -91,7 +95,7 @@ pub(crate) struct BlameEntryTooltip {
     blame_entry: BlameEntry,
     details: Option<CommitDetails>,
     editor_style: EditorStyle,
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakModel<Workspace>>,
     scroll_handle: ScrollHandle,
 }
 
@@ -100,7 +104,7 @@ impl BlameEntryTooltip {
         blame_entry: BlameEntry,
         details: Option<CommitDetails>,
         style: &EditorStyle,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
     ) -> Self {
         Self {
             editor_style: style.clone(),
@@ -113,8 +117,14 @@ impl BlameEntryTooltip {
 }
 
 impl Render for BlameEntryTooltip {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
-        let avatar = CommitAvatar::new(self.details.as_ref(), self.blame_entry.sha).render(cx);
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
+        let avatar = CommitAvatar::new(self.details.as_ref(), self.blame_entry.sha)
+            .render(model, window, cx);
 
         let author = self
             .blame_entry

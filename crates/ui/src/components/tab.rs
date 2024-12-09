@@ -78,7 +78,7 @@ impl Tab {
         DynamicSpacing::Base32.px(cx) - px(1.)
     }
 
-    pub fn container_height(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Pixels {
+    pub fn container_height(cx: &mut gpui::AppContext) -> Pixels {
         DynamicSpacing::Base32.px(cx)
     }
 }
@@ -134,7 +134,7 @@ impl RenderOnce for Tab {
         };
 
         self.div
-            .h(Tab::container_height(window, cx))
+            .h(Tab::container_height(cx))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
             .map(|this| match self.position {

@@ -19,7 +19,7 @@ actions!(auto_update, [ViewReleaseNotesLocally]);
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, cx| {
-            view_release_notes_locally(workspace, cx);
+            view_release_notes_locally(workspace, model, cx);
         });
     })
     .detach();
@@ -64,7 +64,7 @@ fn view_release_notes_locally(
         .language_for_name("Markdown");
 
     workspace
-        .with_local_workspace(cx, move |_, cx| {
+        .with_local_workspace(model, cx, move |_, model, cx| {
             cx.spawn(|workspace, mut cx| async move {
                 let markdown = markdown.await.log_err();
                 let response = client.get(&url, Default::default(), true).await;
@@ -82,27 +82,29 @@ fn view_release_notes_locally(
                     workspace
                         .update(&mut cx, |workspace, cx| {
                             let project = workspace.project().clone();
-                            let buffer = project.update(cx, |project, cx| {
+                            let buffer = project.update(cx, |project, model, cx| {
                                 project.create_local_buffer("", markdown, cx)
                             });
-                            buffer.update(cx, |buffer, cx| {
+                            buffer.update(cx, |buffer, model, cx| {
                                 buffer.edit([(0..0, body.release_notes)], None, cx)
                             });
                             let language_registry = project.read(cx).languages().clone();
 
-                            let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+                            let buffer =
+                                cx.new_model(|model, cx| MultiBuffer::singleton(buffer, model, cx));
 
                             let tab_description = SharedString::from(body.title.to_string());
-                            let editor = cx.new_view(|cx| {
-                                Editor::for_multibuffer(buffer, Some(project), true, cx)
+                            let editor = cx.new_model(|model, cx| {
+                                Editor::for_multibuffer(buffer, Some(project), true, model, cx)
                             });
                             let workspace_handle = workspace.weak_handle();
-                            let view: View<MarkdownPreviewView> = MarkdownPreviewView::new(
+                            let view: Model<MarkdownPreviewView> = MarkdownPreviewView::new(
                                 MarkdownPreviewMode::Default,
                                 editor,
                                 workspace_handle,
                                 language_registry,
                                 Some(tab_description),
+                                model,
                                 cx,
                             );
                             workspace.add_item_to_active_pane(
@@ -111,7 +113,7 @@ fn view_release_notes_locally(
                                 true,
                                 cx,
                             );
-                            cx.notify();
+                            model.notify(cx);
                         })
                         .log_err();
                 }
@@ -134,9 +136,9 @@ pub fn notify_of_any_new_update(model: &Model<Workspace>, cx: &mut AppContext) -
                 workspace.show_notification(
                     NotificationId::unique::<UpdateNotification>(),
                     cx,
-                    |cx| cx.new_view(|_| UpdateNotification::new(version, workspace_handle)),
+                    |cx| cx.new_model(|_, _| UpdateNotification::new(version, workspace_handle)),
                 );
-                updater.update(cx, |updater, cx| {
+                updater.update(cx, |updater, model, cx| {
                     updater
                         .set_should_show_update_notification(false, cx)
                         .detach_and_log_err(cx);

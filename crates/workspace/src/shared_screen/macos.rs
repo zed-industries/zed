@@ -35,7 +35,7 @@ impl SharedScreen {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
-        cx.focus_handle();
+        window.focus_handle();
         let mut frames = track.frames();
         Self {
             track: Arc::downgrade(&track),
@@ -43,17 +43,17 @@ impl SharedScreen {
             peer_id,
             user,
             nav_history: Default::default(),
-            _maintain_frame: cx.spawn(|this, mut cx| async move {
+            _maintain_frame: model.spawn(cx, |this, mut cx| async move {
                 while let Some(frame) = frames.next().await {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(&mut cx, |this, model, cx| {
                         this.frame = Some(frame);
-                        cx.notify();
+                        model.notify(cx);
                     })?;
                 }
-                this.update(&mut cx, |_, cx| cx.emit(Event::Close))?;
+                this.update(&mut cx, |_, cx| model.emit(cx, Event::Close))?;
                 Ok(())
             }),
-            focus: cx.focus_handle(),
+            focus: window.focus_handle(),
         }
     }
 }
@@ -66,7 +66,12 @@ impl FocusableView for SharedScreen {
     }
 }
 impl Render for SharedScreen {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         div()
             .bg(cx.theme().colors().editor_background)
             .track_focus(&self.focus)
@@ -114,9 +119,9 @@ impl Item for SharedScreen {
         _workspace_id: Option<WorkspaceId>,
         model: &Model<Self>,
         cx: &mut AppContext,
-    ) -> Option<View<Self>> {
+    ) -> Option<Model<Self>> {
         let track = self.track.upgrade()?;
-        Some(cx.new_view(|cx| Self::new(track, self.peer_id, self.user.clone(), cx)))
+        Some(cx.new_model(|model, cx| Self::new(track, self.peer_id, self.user.clone(), cx)))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {

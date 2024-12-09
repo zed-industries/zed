@@ -436,7 +436,7 @@ impl Worktree {
                     let settings = WorktreeSettings::get(settings_location, cx).clone();
                     if this.settings != settings {
                         this.settings = settings;
-                        this.restart_background_scanners(cx);
+                        this.restart_background_scanners(model, cx);
                     }
                 }
             })
@@ -524,34 +524,35 @@ impl Worktree {
 
             // On the foreground task, update to the latest snapshot and notify
             // any update observer of all updates that led to that snapshot.
-            cx.spawn(|this, mut cx| async move {
-                while (snapshot_updated_rx.recv().await).is_some() {
-                    this.update(&mut cx, |this, cx| {
-                        let this = this.as_remote_mut().unwrap();
-                        {
-                            let mut lock = this.background_snapshot.lock();
-                            this.snapshot = lock.0.clone();
-                            if let Some(tx) = &this.update_observer {
-                                for update in lock.1.drain(..) {
-                                    tx.unbounded_send(update).ok();
+            model
+                .spawn(cx, |this, mut cx| async move {
+                    while (snapshot_updated_rx.recv().await).is_some() {
+                        this.update(&mut cx, |this, model, cx| {
+                            let this = this.as_remote_mut().unwrap();
+                            {
+                                let mut lock = this.background_snapshot.lock();
+                                this.snapshot = lock.0.clone();
+                                if let Some(tx) = &this.update_observer {
+                                    for update in lock.1.drain(..) {
+                                        tx.unbounded_send(update).ok();
+                                    }
+                                }
+                            };
+                            model.emit(cx, Event::UpdatedEntries(Arc::default()));
+                            model.notify(cx);
+                            while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
+                                if this.observed_snapshot(*scan_id) {
+                                    let (_, tx) = this.snapshot_subscriptions.pop_front().unwrap();
+                                    let _ = tx.send(());
+                                } else {
+                                    break;
                                 }
                             }
-                        };
-                        cx.emit(Event::UpdatedEntries(Arc::default()));
-                        cx.notify();
-                        while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
-                            if this.observed_snapshot(*scan_id) {
-                                let (_, tx) = this.snapshot_subscriptions.pop_front().unwrap();
-                                let _ = tx.send(());
-                            } else {
-                                break;
-                            }
-                        }
-                    })?;
-                }
-                anyhow::Ok(())
-            })
-            .detach();
+                        })?;
+                    }
+                    anyhow::Ok(())
+                })
+                .detach();
 
             Worktree::Remote(worktree)
         })
@@ -597,7 +598,11 @@ impl Worktree {
         !self.is_local()
     }
 
-    pub fn settings_location(&self, _&Model<Self>, : &AppContext) -> SettingsLocation<'static> {
+    pub fn settings_location(
+        &self,
+        _: &Model<Self>,
+        _: &AppContext,
+    ) -> SettingsLocation<'staticmodel> {
         SettingsLocation {
             worktree_id: self.id(),
             path: Path::new(EMPTY_PATH),
@@ -832,7 +837,7 @@ impl Worktree {
         self.get_children_ids_recursive(path, &mut ids);
 
         for id in ids {
-            cx.emit(Event::DeletedEntry(id));
+            model.emit(cx, Event::DeletedEntry(id));
         }
         Some(task)
     }
@@ -936,7 +941,7 @@ impl Worktree {
                 });
                 Some(cx.spawn(move |this, mut cx| async move {
                     let response = response.await?;
-                    this.update(&mut cx, |this, _| {
+                    this.update(&mut cx, |this, _, _| {
                         this.as_remote_mut()
                             .unwrap()
                             .wait_for_snapshot(response.worktree_scan_id as usize)
@@ -953,7 +958,7 @@ impl Worktree {
         request: proto::CreateProjectEntry,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
-        let (scan_id, entry) = this.update(&mut cx, |this, cx| {
+        let (scan_id, entry) = this.update(&mut cx, |this, model, cx| {
             (
                 this.scan_id(),
                 this.create_entry(PathBuf::from(request.path), request.is_directory, cx),
@@ -973,12 +978,13 @@ impl Worktree {
         request: proto::DeleteProjectEntry,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
-        let (scan_id, task) = this.update(&mut cx, |this, cx| {
+        let (scan_id, task) = this.update(&mut cx, |this, model, cx| {
             (
                 this.scan_id(),
                 this.delete_entry(
                     ProjectEntryId::from_proto(request.entry_id),
                     request.use_trash,
+                    model,
                     cx,
                 ),
             )
@@ -995,7 +1001,7 @@ impl Worktree {
         request: proto::ExpandProjectEntry,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ExpandProjectEntryResponse> {
-        let task = this.update(&mut cx, |this, cx| {
+        let task = this.update(&mut cx, |this, model, cx| {
             this.expand_entry(ProjectEntryId::from_proto(request.entry_id), cx)
         })?;
         task.ok_or_else(|| anyhow!("no such entry"))?.await?;
@@ -1010,12 +1016,13 @@ impl Worktree {
         request: proto::RenameProjectEntry,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
-        let (scan_id, task) = this.update(&mut cx, |this, cx| {
+        let (scan_id, task) = this.update(&mut cx, |this, model, cx| {
             (
                 this.scan_id(),
                 this.rename_entry(
                     ProjectEntryId::from_proto(request.entry_id),
                     PathBuf::from(request.new_path),
+                    model,
                     cx,
                 ),
             )
@@ -1034,7 +1041,7 @@ impl Worktree {
         request: proto::CopyProjectEntry,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
-        let (scan_id, task) = this.update(&mut cx, |this, cx| {
+        let (scan_id, task) = this.update(&mut cx, |this, model, cx| {
             let relative_worktree_source_path =
                 request.relative_worktree_source_path.map(PathBuf::from);
             (
@@ -1043,6 +1050,7 @@ impl Worktree {
                     ProjectEntryId::from_proto(request.entry_id),
                     relative_worktree_source_path,
                     PathBuf::from(request.new_path),
+                    model,
                     cx,
                 ),
             )
@@ -1148,9 +1156,9 @@ impl LocalWorktree {
                     .await;
             }
         });
-        let scan_state_updater = cx.spawn(|this, mut cx| async move {
+        let scan_state_updater = model.spawn(cx, |this, mut cx| async move {
             while let Some((state, this)) = scan_states_rx.next().await.zip(this.upgrade()) {
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     let this = this.as_local_mut().unwrap();
                     match state {
                         ScanState::Started => {
@@ -1179,7 +1187,7 @@ impl LocalWorktree {
                             this.restart_background_scanners(cx);
                         }
                     }
-                    cx.notify();
+                    model.notify(cx);
                 })
                 .ok();
             }
@@ -1210,10 +1218,10 @@ impl LocalWorktree {
         }
 
         if !entry_changes.is_empty() {
-            cx.emit(Event::UpdatedEntries(entry_changes));
+            model.emit(cx, Event::UpdatedEntries(entry_changes));
         }
         if !repo_changes.is_empty() {
-            cx.emit(Event::UpdatedGitRepositories(repo_changes));
+            model.emit(cx, Event::UpdatedGitRepositories(repo_changes));
         }
     }
 
@@ -1352,7 +1360,7 @@ impl LocalWorktree {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
-        let entry = self.refresh_entry(path.clone(), None, cx);
+        let entry = self.refresh_entry(path.clone(), None, model, cx);
         let is_private = self.is_path_private(path.as_ref());
 
         let worktree = cx.weak_model();
@@ -1401,7 +1409,7 @@ impl LocalWorktree {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
-        let entry = self.refresh_entry(path.clone(), None, cx);
+        let entry = self.refresh_entry(path.clone(), None, model, cx);
         let is_private = self.is_path_private(path.as_ref());
 
         cx.spawn(|this, _cx| async move {
@@ -1481,13 +1489,13 @@ impl LocalWorktree {
         });
 
         let lowest_ancestor = self.lowest_ancestor(&path);
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             write.await?;
             if path_excluded {
                 return Ok(CreatedEntry::Excluded { abs_path });
             }
 
-            let (result, refreshes) = this.update(&mut cx, |this, cx| {
+            let (result, refreshes) = this.update(&mut cx, |this, model, cx| {
                 let mut refreshes = Vec::new();
                 let refresh_paths = path.strip_prefix(&lowest_ancestor).unwrap();
                 for refresh_path in refresh_paths.ancestors() {
@@ -1503,7 +1511,9 @@ impl LocalWorktree {
                     ));
                 }
                 (
-                    this.as_local_mut().unwrap().refresh_entry(path, None, cx),
+                    this.as_local_mut()
+                        .unwrap()
+                        .refresh_entry(path, None, model, cx),
                     refreshes,
                 )
             })?;
@@ -1542,7 +1552,7 @@ impl LocalWorktree {
         cx.spawn(move |this, mut cx| async move {
             write.await?;
             let entry = this
-                .update(&mut cx, |this, cx| {
+                .update(&mut cx, |this, model, cx| {
                     this.as_local_mut()
                         .unwrap()
                         .refresh_entry(path.clone(), None, cx)
@@ -1615,9 +1625,9 @@ impl LocalWorktree {
             anyhow::Ok(entry.path)
         });
 
-        Some(cx.spawn(|this, mut cx| async move {
+        Some(model.spawn(cx, |this, mut cx| async move {
             let path = delete.await?;
-            this.update(&mut cx, |this, _| {
+            this.update(&mut cx, |this, _, _| {
                 this.as_local_mut()
                     .unwrap()
                     .refresh_entries_for_paths(vec![path])
@@ -1672,10 +1682,10 @@ impl LocalWorktree {
             .with_context(|| format!("Renaming {abs_old_path:?} into {abs_new_path:?}"))
         });
 
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             rename.await?;
             Ok(this
-                .update(&mut cx, |this, cx| {
+                .update(&mut cx, |this, model, cx| {
                     this.as_local_mut()
                         .unwrap()
                         .refresh_entry(new_path.clone(), Some(old_path), cx)
@@ -1717,12 +1727,12 @@ impl LocalWorktree {
             .await
         });
 
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             copy.await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.as_local_mut()
                     .unwrap()
-                    .refresh_entry(new_path.clone(), None, cx)
+                    .refresh_entry(new_path.clone(), None, model, cx)
             })?
             .await
         })
@@ -1859,7 +1869,7 @@ impl LocalWorktree {
         cx.spawn(move |this, mut cx| async move {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
-            let new_entry = this.update(&mut cx, |this, _| {
+            let new_entry = this.update(&mut cx, |this, _, _| {
                 this.entry_for_path(path)
                     .cloned()
                     .ok_or_else(|| anyhow!("failed to read path after update"))
@@ -1930,7 +1940,7 @@ impl LocalWorktree {
 
     pub fn share_private_files(&mut self, model: &Model<Worktree>, cx: &AppContext) {
         self.share_private_files = true;
-        self.restart_background_scanners(cx);
+        self.restart_background_scanners(model, cx);
     }
 }
 
@@ -1972,31 +1982,32 @@ impl RemoteWorktree {
             .snapshot
             .build_initial_update(project_id, self.id().to_proto());
         self.update_observer = Some(tx);
-        cx.spawn(|this, mut cx| async move {
-            let mut update = initial_update;
-            'outer: loop {
-                // SSH projects use a special project ID of 0, and we need to
-                // remap it to the correct one here.
-                update.project_id = project_id;
+        model
+            .spawn(cx, |this, mut cx| async move {
+                let mut update = initial_update;
+                'outer: loop {
+                    // SSH projects use a special project ID of 0, and we need to
+                    // remap it to the correct one here.
+                    update.project_id = project_id;
 
-                for chunk in split_worktree_update(update) {
-                    if !callback(chunk).await {
-                        break 'outer;
+                    for chunk in split_worktree_update(update) {
+                        if !callback(chunk).await {
+                            break 'outer;
+                        }
+                    }
+
+                    if let Some(next_update) = rx.next().await {
+                        update = next_update;
+                    } else {
+                        break;
                     }
                 }
-
-                if let Some(next_update) = rx.next().await {
-                    update = next_update;
-                } else {
-                    break;
-                }
-            }
-            this.update(&mut cx, |this, _| {
-                let this = this.as_remote_mut().unwrap();
-                this.update_observer.take();
+                this.update(&mut cx, |this, _, _| {
+                    let this = this.as_remote_mut().unwrap();
+                    this.update_observer.take();
+                })
             })
-        })
-        .detach();
+            .detach();
     }
 
     fn observed_snapshot(&self, scan_id: usize) -> bool {
@@ -2032,7 +2043,7 @@ impl RemoteWorktree {
         cx: &AppContext,
     ) -> Task<Result<Entry>> {
         let wait_for_snapshot = self.wait_for_snapshot(scan_id);
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             wait_for_snapshot.await?;
             this.update(&mut cx, |worktree, _| {
                 let worktree = worktree.as_remote_mut().unwrap();
@@ -2065,7 +2076,7 @@ impl RemoteWorktree {
             })?
             .await?;
 
-            this.update(&mut cx, |this, _| {
+            this.update(&mut cx, |this, _, _| {
                 let this = this.as_remote_mut().unwrap();
                 let snapshot = &mut this.background_snapshot.lock().0;
                 snapshot.delete_entry(entry_id);
@@ -2091,7 +2102,7 @@ impl RemoteWorktree {
             let response = response.await?;
             match response.entry {
                 Some(entry) => this
-                    .update(&mut cx, |this, cx| {
+                    .update(&mut cx, |this, model, cx| {
                         this.as_remote_mut().unwrap().insert_entry(
                             entry,
                             response.worktree_scan_id as usize,
@@ -5224,7 +5235,7 @@ impl WorktreeModelHandle for Model<Worktree> {
         let file_name = "fs-event-sentinel";
 
         let tree = self.clone();
-        let (fs, root_path) = self.update(cx, |tree, _| {
+        let (fs, root_path) = self.update(cx, |tree, model, _| {
             let tree = tree.as_local().unwrap();
             (tree.fs.clone(), tree.abs_path().clone())
         });
@@ -5263,7 +5274,7 @@ impl WorktreeModelHandle for Model<Worktree> {
         let file_name = "fs-event-sentinel";
 
         let tree = self.clone();
-        let (fs, root_path, mut git_dir_scan_id) = self.update(cx, |tree, _| {
+        let (fs, root_path, mut git_dir_scan_id) = self.update(cx, |tree, model, _| {
             let tree = tree.as_local().unwrap();
             let root_entry = tree.root_git_entry().unwrap();
             let local_repo_entry = tree.get_local_repo(&root_entry).unwrap();

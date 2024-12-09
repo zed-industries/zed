@@ -70,8 +70,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 fn fail_to_launch(e: anyhow::Error) {
     eprintln!("Zed failed to launch: {e:?}");
     App::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |cx| cx.new_view(|_| gpui::Empty)) {
-            window.update(cx, |_, cx| {
+        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |cx| cx.new_model(|_, _| gpui::Empty)) {
+            window.update(cx, |_, model, cx| {
                 let response = cx.prompt(gpui::PromptLevel::Critical, "Zed failed to launch", Some(&format!("{e}\n\nFor help resolving this, please open an issue on https://github.com/zed-industries/zed")), &["Exit"]);
 
                 cx.spawn(|_, mut cx| async move {
@@ -319,8 +319,8 @@ fn main() {
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
-        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
-        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let user_store = cx.new_model(|model, cx| UserStore::new(client.clone(), cx));
+        let workspace_store = cx.new_model(|model, cx| WorkspaceStore::new(client.clone(), cx));
 
         Client::set_global(client.clone(), cx);
 
@@ -350,7 +350,7 @@ fn main() {
                 }
             }
         }
-        let app_session = cx.new_model(|cx| AppSession::new(session, cx));
+        let app_session = cx.new_model(|model, cx| AppSession::new(session, cx));
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
@@ -473,7 +473,7 @@ fn main() {
                 for &mut window in cx.windows().iter_mut() {
                     let background_appearance = cx.theme().window_background_appearance();
                     window
-                        .update(cx, |_, cx| {
+                        .update(cx, |_, model, cx| {
                             cx.set_background_appearance(background_appearance)
                         })
                         .ok();
@@ -565,15 +565,15 @@ fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
 
     for workspace in workspace::local_workspace_windows(cx) {
         workspace
-            .update(cx, |workspace, cx| match &error {
+            .update(cx, |workspace, model, cx| match &error {
                 Some(error) => {
                     workspace.show_notification(id.clone(), cx, |cx| {
-                        cx.new_view(|_| {
+                        cx.new_model(|_, _| {
                             MessageNotification::new(format!("Invalid keymap file\n{error}"))
                                 .with_click_message("Open keymap file")
                                 .on_click(|cx| {
                                     cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
-                                    cx.emit(DismissEvent);
+                                    model.emit(cx, DismissEvent);
                                 })
                         })
                     });
@@ -590,7 +590,7 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
 
     for workspace in workspace::local_workspace_windows(cx) {
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 match error.as_ref() {
                     Some(error) => {
                         if let Some(InvalidSettingsError::LocalSettings { .. }) =
@@ -599,14 +599,14 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                             // Local settings will be displayed by the projects
                         } else {
                             workspace.show_notification(id.clone(), cx, |cx| {
-                                cx.new_view(|_| {
+                                cx.new_model(|_, _| {
                                     MessageNotification::new(format!(
                                         "Invalid user settings file\n{error}"
                                     ))
                                     .with_click_message("Open settings file")
                                     .on_click(|cx| {
                                         cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
-                                        cx.emit(DismissEvent);
+                                        model.emit(cx, DismissEvent);
                                     })
                                 })
                             });
@@ -700,6 +700,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             client::ChannelId(channel_id),
                             heading,
                             workspace.clone(),
+                            model,
                             cx,
                         )
                         .log_err()
@@ -822,8 +823,8 @@ async fn restore_or_create_workspace(
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
         cx.update(|cx| {
-            workspace::open_new(Default::default(), app_state, cx, |workspace, cx| {
-                Editor::new_file(workspace, &Default::default(), cx)
+            workspace::open_new(Default::default(), app_state, cx, |workspace, model, cx| {
+                Editor::new_file(workspace, &Default::default(), model, cx)
             })
         })?
         .await?;

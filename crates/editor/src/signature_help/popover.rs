@@ -25,7 +25,7 @@ impl SignatureHelpPopover {
         &mut self,
         style: &EditorStyle,
         max_size: Size<Pixels>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         model: &Model<Editor>, cx: &mut AppContext,
     ) -> AnyElement {
         div()

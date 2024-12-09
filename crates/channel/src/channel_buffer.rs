@@ -62,7 +62,7 @@ impl ChannelBuffer {
             .map(language::proto::deserialize_operation)
             .collect::<Result<Vec<_>, _>>()?;
 
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new_model(|model, cx| {
             let capability = channel_store.read(cx).channel_capability(channel.id);
             language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
         })?;
@@ -70,7 +70,7 @@ impl ChannelBuffer {
 
         let subscription = client.subscribe_to_entity(channel.id.0)?;
 
-        anyhow::Ok(cx.new_model(|cx| {
+        anyhow::Ok(cx.new_model(|model, cx| {
             cx.subscribe(&buffer, Self::on_buffer_update).detach();
             cx.on_release(Self::release).detach();
             let mut this = Self {
@@ -85,7 +85,7 @@ impl ChannelBuffer {
                 user_store,
                 channel_store,
             };
-            this.replace_collaborators(response.collaborators, cx);
+            this.replace_collaborators(response.collaborators, model, cx);
             this
         })?)
     }
@@ -126,14 +126,14 @@ impl ChannelBuffer {
 
         for (_, old_collaborator) in &self.collaborators {
             if !new_collaborators.contains_key(&old_collaborator.peer_id) {
-                self.buffer.update(cx, |buffer, cx| {
-                    buffer.remove_peer(old_collaborator.replica_id, cx)
+                self.buffer.update(cx, |buffer, model, cx| {
+                    buffer.remove_peer(old_collaborator.replica_id, model, cx)
                 });
             }
         }
         self.collaborators = new_collaborators;
-        cx.emit(ChannelBufferEvent::CollaboratorsChanged);
-        cx.notify();
+        model.emit(cx, ChannelBufferEvent::CollaboratorsChanged);
+        model.notify(cx);
     }
 
     async fn handle_update_channel_buffer(
@@ -148,10 +148,10 @@ impl ChannelBuffer {
             .map(language::proto::deserialize_operation)
             .collect::<Result<Vec<_>, _>>()?;
 
-        this.update(&mut cx, |this, cx| {
-            cx.notify();
+        this.update(&mut cx, |this, model, cx| {
+            model.notify(cx);
             this.buffer
-                .update(cx, |buffer, cx| buffer.apply_ops(ops, cx))
+                .update(cx, |buffer, model, cx| buffer.apply_ops(ops, cx))
         })?;
 
         Ok(())
@@ -162,10 +162,10 @@ impl ChannelBuffer {
         message: TypedEnvelope<proto::UpdateChannelBufferCollaborators>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, model, cx| {
             this.replace_collaborators(message.payload.collaborators, cx);
-            cx.emit(ChannelBufferEvent::CollaboratorsChanged);
-            cx.notify();
+            model.emit(cx, ChannelBufferEvent::CollaboratorsChanged);
+            model.notify(cx);
         })
     }
 
@@ -197,7 +197,7 @@ impl ChannelBuffer {
                     .log_err();
             }
             language::BufferEvent::Edited => {
-                cx.emit(ChannelBufferEvent::BufferEdited);
+                model.emit(cx, ChannelBufferEvent::BufferEdited);
             }
             _ => {}
         }
@@ -249,14 +249,14 @@ impl ChannelBuffer {
         if self.connected {
             self.connected = false;
             self.subscription.take();
-            cx.emit(ChannelBufferEvent::Disconnected);
-            cx.notify()
+            model.emit(cx, ChannelBufferEvent::Disconnected);
+            model.notify(cx)
         }
     }
 
     pub(crate) fn channel_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        cx.emit(ChannelBufferEvent::ChannelChanged);
-        cx.notify()
+        model.emit(cx, ChannelBufferEvent::ChannelChanged);
+        model.notify(cx)
     }
 
     pub fn is_connected(&self) -> bool {

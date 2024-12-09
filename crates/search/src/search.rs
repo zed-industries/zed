@@ -117,7 +117,7 @@ impl SearchOptions {
             .tooltip({
                 let action = self.to_toggle_action();
                 let label = self.label();
-                move |cx| Tooltip::for_action_in(label, &*action, &focus_handle, cx)
+                move |window, cx| Tooltip::for_action_in(label, &*action, &focus_handle, window, cx)
             })
     }
 }
@@ -130,7 +130,7 @@ pub(crate) fn show_no_more_matches(window: &mut gpui::Window, cx: &mut gpui::App
             return;
         };
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.show_toast(
                     Toast::new(notification_id.clone(), "No more matches").autohide(),
                     cx,

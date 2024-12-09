@@ -27,16 +27,16 @@ use zed_actions::InlineAssist;
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
     active_item: Option<Box<dyn ItemHandle>>,
-    buffer_search_bar: View<BufferSearchBar>,
+    buffer_search_bar: Model<BufferSearchBar>,
     show: bool,
     toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
     toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
 }
 
 impl QuickActionBar {
     pub fn new(
-        buffer_search_bar: View<BufferSearchBar>,
+        buffer_search_bar: Model<BufferSearchBar>,
         workspace: &Workspace,
         model: &Model<Self>,
         cx: &mut AppContext,
@@ -50,13 +50,13 @@ impl QuickActionBar {
             toggle_settings_handle: Default::default(),
             workspace: workspace.weak_handle(),
         };
-        this.apply_settings(cx);
+        this.apply_settings(model, cx);
         cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx))
             .detach();
         this
     }
 
-    fn active_editor(&self) -> Option<View<Editor>> {
+    fn active_editor(&self) -> Option<Model<Editor>> {
         self.active_item
             .as_ref()
             .and_then(|item| item.downcast::<Editor>())
@@ -66,9 +66,10 @@ impl QuickActionBar {
         let new_show = EditorSettings::get_global(cx).toolbar.quick_actions;
         if new_show != self.show {
             self.show = new_show;
-            cx.emit(ToolbarItemEvent::ChangeLocation(
-                self.get_toolbar_item_location(),
-            ));
+            model.emit(
+                cx,
+                ToolbarItemEvent::ChangeLocation(self.get_toolbar_item_location()),
+            );
         }
     }
 
@@ -82,7 +83,12 @@ impl QuickActionBar {
 }
 
 impl Render for QuickActionBar {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };
@@ -126,7 +132,7 @@ impl Render for QuickActionBar {
                 {
                     let buffer_search_bar = self.buffer_search_bar.clone();
                     move |_, cx| {
-                        buffer_search_bar.update(cx, |search_bar, cx| {
+                        buffer_search_bar.update(cx, |search_bar, model, cx| {
                             search_bar.toggle(&buffer_search::Deploy::find(), cx)
                         });
                     }
@@ -145,8 +151,13 @@ impl Render for QuickActionBar {
                 let workspace = self.workspace.clone();
                 move |_, cx| {
                     if let Some(workspace) = workspace.upgrade() {
-                        workspace.update(cx, |workspace, cx| {
-                            AssistantPanel::inline_assist(workspace, &InlineAssist::default(), cx);
+                        workspace.update(cx, |workspace, model, cx| {
+                            AssistantPanel::inline_assist(
+                                workspace,
+                                &InlineAssist::default(),
+                                model,
+                                cx,
+                            );
                         });
                     }
                 }
@@ -163,14 +174,14 @@ impl Render for QuickActionBar {
                         .style(ButtonStyle::Subtle)
                         .selected(self.toggle_selections_handle.is_deployed())
                         .when(!self.toggle_selections_handle.is_deployed(), |this| {
-                            this.tooltip(|cx| Tooltip::text("Selection Controls", cx))
+                            this.tooltip(|window, cx| Tooltip::text("Selection Controls", cx))
                         }),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
                 .anchor(AnchorCorner::TopRight)
                 .menu(move |cx| {
                     let focus = focus.clone();
-                    let menu = ContextMenu::build(cx, move |menu, _| {
+                    let menu = ContextMenu::build(window, cx, move |menu, model, window, _| {
                         menu.context(focus.clone())
                             .action("Select All", Box::new(SelectAll))
                             .action(
@@ -210,13 +221,13 @@ impl Render for QuickActionBar {
                     .style(ButtonStyle::Subtle)
                     .selected(self.toggle_settings_handle.is_deployed())
                     .when(!self.toggle_settings_handle.is_deployed(), |this| {
-                        this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
+                        this.tooltip(|window, cx| Tooltip::text("Editor Controls", cx))
                     }),
             )
             .anchor(AnchorCorner::TopRight)
             .with_handle(self.toggle_settings_handle.clone())
             .menu(move |cx| {
-                let menu = ContextMenu::build(cx, |mut menu, _| {
+                let menu = ContextMenu::build(cx, |mut menu, model, window, cx| {
                     if supports_inlay_hints {
                         menu = menu.toggleable_entry(
                             "Inlay Hints",
@@ -227,7 +238,7 @@ impl Render for QuickActionBar {
                                 let editor = editor.clone();
                                 move |cx| {
                                     editor
-                                        .update(cx, |editor, cx| {
+                                        .update(cx, |editor, model, cx| {
                                             editor.toggle_inlay_hints(
                                                 &editor::actions::ToggleInlayHints,
                                                 cx,
@@ -248,7 +259,7 @@ impl Render for QuickActionBar {
                             let editor = editor.clone();
                             move |cx| {
                                 editor
-                                    .update(cx, |editor, cx| {
+                                    .update(cx, |editor, model, cx| {
                                         editor.toggle_selection_menu(
                                             &editor::actions::ToggleSelectionMenu,
                                             cx,
@@ -268,7 +279,7 @@ impl Render for QuickActionBar {
                             let editor = editor.clone();
                             move |cx| {
                                 editor
-                                    .update(cx, |editor, cx| {
+                                    .update(cx, |editor, model, cx| {
                                         editor.toggle_auto_signature_help_menu(
                                             &editor::actions::ToggleAutoSignatureHelp,
                                             cx,
@@ -290,7 +301,7 @@ impl Render for QuickActionBar {
                             let editor = editor.clone();
                             move |cx| {
                                 editor
-                                    .update(cx, |editor, cx| {
+                                    .update(cx, |editor, model, cx| {
                                         editor.toggle_git_blame_inline(
                                             &editor::actions::ToggleGitBlameInline,
                                             cx,
@@ -310,7 +321,7 @@ impl Render for QuickActionBar {
                             let editor = editor.clone();
                             move |cx| {
                                 editor
-                                    .update(cx, |editor, cx| {
+                                    .update(cx, |editor, model, cx| {
                                         editor
                                             .toggle_git_blame(&editor::actions::ToggleGitBlame, cx)
                                     })
@@ -328,7 +339,7 @@ impl Render for QuickActionBar {
             .id("quick action bar")
             .gap(DynamicSpacing::Base06.rems(cx))
             .children(self.render_repl_menu(cx))
-            .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
+            .children(self.render_toggle_markdown_preview(self.workspace.clone(), model, cx))
             .children(search_button)
             .when(
                 AssistantSettings::get_global(cx).enabled
@@ -385,8 +396,8 @@ impl RenderOnce for QuickActionBarButton {
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .selected(self.toggled)
-            .tooltip(move |cx| {
-                Tooltip::for_action_in(tooltip.clone(), &*action, &self.focus_handle, cx)
+            .tooltip(move |window, cx| {
+                Tooltip::for_action_in(tooltip.clone(), &*action, &self.focus_handle, window, cx)
             })
             .on_click(move |event, cx| (self.on_click)(event, cx))
     }
@@ -416,7 +427,7 @@ impl ToolbarItemView for QuickActionBar {
                         inlay_hints_enabled = new_inlay_hints_enabled;
                         supports_inlay_hints = new_supports_inlay_hints;
                         if should_notify {
-                            cx.notify()
+                            model.notify(cx)
                         }
                     }));
             }

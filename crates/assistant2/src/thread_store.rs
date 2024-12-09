@@ -31,8 +31,13 @@ impl ThreadStore {
             let this = cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
                 let context_server_factory_registry =
                     ContextServerFactoryRegistry::default_global(cx);
-                let context_server_manager = cx.new_model(|cx| {
-                    ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
+                let context_server_manager = cx.new_model(|model, cx| {
+                    ContextServerManager::new(
+                        context_server_factory_registry,
+                        project.clone(),
+                        model,
+                        cx,
+                    )
                 });
 
                 let mut this = Self {
@@ -73,7 +78,7 @@ impl ThreadStore {
     }
 
     pub fn create_thread(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Model<Thread> {
-        let thread = cx.new_model(|cx| Thread::new(self.tools.clone(), cx));
+        let thread = cx.new_model(|model, cx| Thread::new(self.tools.clone(), model, cx));
         self.threads.push(thread.clone());
         thread
     }
@@ -167,20 +172,20 @@ impl ThreadStore {
     fn mock_recent_threads(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         use language_model::Role;
 
-        self.threads.push(cx.new_model(|cx| {
-            let mut thread = Thread::new(self.tools.clone(), cx);
-            thread.set_summary("Introduction to quantum computing", cx);
-            thread.insert_user_message("Hello! Can you help me understand quantum computing?", cx);
-            thread.insert_message(Role::Assistant, "Of course! I'd be happy to help you understand quantum computing. Quantum computing is a fascinating field that uses the principles of quantum mechanics to process information. Unlike classical computers that use bits (0s and 1s), quantum computers use quantum bits or 'qubits'. These qubits can exist in multiple states simultaneously, a property called superposition. This allows quantum computers to perform certain calculations much faster than classical computers. What specific aspect of quantum computing would you like to know more about?", cx);
-            thread.insert_user_message("That's interesting! Can you explain how quantum entanglement is used in quantum computing?", cx);
-            thread.insert_message(Role::Assistant, "Certainly! Quantum entanglement is a key principle used in quantum computing. When two qubits become entangled, the state of one qubit is directly related to the state of the other, regardless of the distance between them. This property is used in quantum computing to create complex quantum states and to perform operations on multiple qubits simultaneously. Entanglement allows quantum computers to process information in ways that classical computers cannot, potentially solving certain problems much more efficiently. For example, it's crucial in quantum error correction and in algorithms like quantum teleportation, which is important for quantum communication.", cx);
+        self.threads.push(cx.new_model(|model, cx| {
+            let mut thread = Thread::new(self.tools.clone(), model, cx);
+            thread.set_summary("Introduction to quantum computing", model, cx);
+            thread.insert_user_message("Hello! Can you help me understand quantum computing?", model, cx);
+            thread.insert_message(Role::Assistant, "Of course! I'd be happy to help you understand quantum computing. Quantum computing is a fascinating field that uses the principles of quantum mechanics to process information. Unlike classical computers that use bits (0s and 1s), quantum computers use quantum bits or 'qubits'. These qubits can exist in multiple states simultaneously, a property called superposition. This allows quantum computers to perform certain calculations much faster than classical computers. What specific aspect of quantum computing would you like to know more about?", model, cx);
+            thread.insert_user_message("That's interesting! Can you explain how quantum entanglement is used in quantum computing?", model, cx);
+            thread.insert_message(Role::Assistant, "Certainly! Quantum entanglement is a key principle used in quantum computing. When two qubits become entangled, the state of one qubit is directly related to the state of the other, regardless of the distance between them. This property is used in quantum computing to create complex quantum states and to perform operations on multiple qubits simultaneously. Entanglement allows quantum computers to process information in ways that classical computers cannot, potentially solving certain problems much more efficiently. For example, it's crucial in quantum error correction and in algorithms like quantum teleportation, which is important for quantum communication.", model, cx);
             thread
         }));
 
-        self.threads.push(cx.new_model(|cx| {
-            let mut thread = Thread::new(self.tools.clone(), cx);
-            thread.set_summary("Rust web development and async programming", cx);
-            thread.insert_user_message("Can you show me an example of Rust code for a simple web server?", cx);
+        self.threads.push(cx.new_model(|model, cx| {
+            let mut thread = Thread::new(self.tools.clone(), model, cx);
+            thread.set_summary("Rust web development and async programming", model, cx);
+            thread.insert_user_message("Can you show me an example of Rust code for a simple web server?", model, cx);
             thread.insert_message(Role::Assistant, "Certainly! Here's an example of a simple web server in Rust using the `actix-web` framework:
 
         ```rust
@@ -216,8 +221,8 @@ impl ThreadStore {
         actix-web = \"4.0\"
         ```
 
-        Then you can run the server with `cargo run` and access it at `http://localhost:8080`.".unindent(), cx);
-            thread.insert_user_message("That's great! Can you explain more about async functions in Rust?", cx);
+        Then you can run the server with `cargo run` and access it at `http://localhost:8080`.".unindent(), model, cx);
+            thread.insert_user_message("That's great! Can you explain more about async functions in Rust?", model, cx);
             thread.insert_message(Role::Assistant, "Certainly! Async functions are a key feature in Rust for writing efficient, non-blocking code, especially for I/O-bound operations. Here's an overview:
 
         1. **Syntax**: Async functions are declared using the `async` keyword:
@@ -246,7 +251,7 @@ impl ThreadStore {
 
         6. **Error Handling**: Async functions work well with Rust's `?` operator for error handling.
 
-        Async programming in Rust provides a powerful way to write concurrent code that's both safe and efficient. It's particularly useful for servers, network programming, and any application that deals with many concurrent operations.".unindent(), cx);
+        Async programming in Rust provides a powerful way to write concurrent code that's both safe and efficient. It's particularly useful for servers, network programming, and any application that deals with many concurrent operations.".unindent(), model, cx);
             thread
         }));
     }

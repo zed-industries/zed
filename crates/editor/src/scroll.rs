@@ -242,7 +242,15 @@ impl ScrollManager {
             )
         };
 
-        self.set_anchor(new_anchor, top_row, local, autoscroll, workspace_id, cx);
+        self.set_anchor(
+            new_anchor,
+            top_row,
+            local,
+            autoscroll,
+            workspace_id,
+            model,
+            cx,
+        );
     }
 
     fn set_anchor(
@@ -259,7 +267,7 @@ impl ScrollManager {
             return;
         }
         self.anchor = anchor;
-        cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
+        model.emit(cx, EditorEvent::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbar(cx);
         self.autoscroll_request.take();
         if let Some(workspace_id) = workspace_id {
@@ -279,13 +287,13 @@ impl ScrollManager {
                 })
                 .detach()
         }
-        cx.notify();
+        model.notify(cx);
     }
 
     pub fn show_scrollbar(&mut self, model: &Model<Editor>, cx: &mut AppContext) {
         if !self.show_scrollbars {
             self.show_scrollbars = true;
-            cx.notify();
+            model.notify(cx);
         }
 
         if cx.default_global::<ScrollbarAutoHide>().0 {
@@ -296,7 +304,7 @@ impl ScrollManager {
                 editor
                     .update(&mut cx, |editor, cx| {
                         editor.scroll_manager.show_scrollbars = false;
-                        cx.notify();
+                        model.notify(cx);
                     })
                     .log_err();
             }));
@@ -325,7 +333,7 @@ impl ScrollManager {
     ) {
         if dragging != self.dragging_scrollbar {
             self.dragging_scrollbar = dragging;
-            cx.notify();
+            model.notify(cx);
         }
     }
 
@@ -359,7 +367,7 @@ impl Editor {
         cx: &mut AppContext,
     ) {
         self.scroll_manager.vertical_scroll_margin = margin_rows as f32;
-        cx.notify();
+        model.notify(cx);
     }
 
     pub fn visible_line_count(&self) -> Option<f32> {
@@ -400,9 +408,11 @@ impl Editor {
         if self.scroll_manager.forbid_vertical_scroll {
             return;
         }
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let display_map = self
+            .display_map
+            .update(cx, |map, model, cx| map.snapshot(cx));
         let position = self.scroll_manager.anchor.scroll_position(&display_map) + scroll_delta;
-        self.set_scroll_position_taking_display_map(position, true, false, display_map, cx);
+        self.set_scroll_position_taking_display_map(position, true, false, display_map, model, cx);
     }
 
     pub fn set_scroll_position(
@@ -414,7 +424,7 @@ impl Editor {
         if self.scroll_manager.forbid_vertical_scroll {
             return;
         }
-        self.set_scroll_position_internal(scroll_position, true, false, cx);
+        self.set_scroll_position_internal(scroll_position, true, false, model, cx);
     }
 
     pub(crate) fn set_scroll_position_internal(
@@ -425,8 +435,17 @@ impl Editor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        self.set_scroll_position_taking_display_map(scroll_position, local, autoscroll, map, cx);
+        let map = self
+            .display_map
+            .update(cx, |map, model, cx| map.snapshot(cx));
+        self.set_scroll_position_taking_display_map(
+            scroll_position,
+            local,
+            autoscroll,
+            map,
+            model,
+            cx,
+        );
     }
 
     fn set_scroll_position_taking_display_map(
@@ -438,7 +457,7 @@ impl Editor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        hide_hover(self, cx);
+        hide_hover(self, model, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
 
         self.scroll_manager.set_scroll_position(
@@ -447,14 +466,17 @@ impl Editor {
             local,
             autoscroll,
             workspace_id,
+            model,
             cx,
         );
 
-        self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+        self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, model, cx);
     }
 
     pub fn scroll_position(&self, model: &Model<Self>, cx: &mut AppContext) -> gpui::Point<f32> {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let display_map = self
+            .display_map
+            .update(cx, |map, model, cx| map.snapshot(cx));
         self.scroll_manager.anchor.scroll_position(&display_map)
     }
 
@@ -464,14 +486,21 @@ impl Editor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        hide_hover(self, cx);
+        hide_hover(self, model, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
         let top_row = scroll_anchor
             .anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
             .row;
-        self.scroll_manager
-            .set_anchor(scroll_anchor, top_row, true, false, workspace_id, cx);
+        self.scroll_manager.set_anchor(
+            scroll_anchor,
+            top_row,
+            true,
+            false,
+            workspace_id,
+            model,
+            cx,
+        );
     }
 
     pub(crate) fn set_scroll_anchor_remote(
@@ -480,7 +509,7 @@ impl Editor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        hide_hover(self, cx);
+        hide_hover(self, model, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
         let snapshot = &self.buffer().read(cx).snapshot(cx);
         if !scroll_anchor.anchor.is_valid(snapshot) {
@@ -488,8 +517,15 @@ impl Editor {
             return;
         }
         let top_row = scroll_anchor.anchor.to_point(snapshot).row;
-        self.scroll_manager
-            .set_anchor(scroll_anchor, top_row, false, false, workspace_id, cx);
+        self.scroll_manager.set_anchor(
+            scroll_anchor,
+            top_row,
+            false,
+            false,
+            workspace_id,
+            model,
+            cx,
+        );
     }
 
     pub fn scroll_screen(
@@ -503,7 +539,7 @@ impl Editor {
             return;
         }
 
-        if self.take_rename(true, cx).is_some() {
+        if self.take_rename(true, model, cx).is_some() {
             return;
         }
 
@@ -512,7 +548,7 @@ impl Editor {
             return;
         };
         let new_pos = cur_position + point(0., amount.lines(visible_line_count));
-        self.set_scroll_position(new_pos, cx);
+        self.set_scroll_position(new_pos, model, cx);
     }
 
     /// Returns an ordering. The newest selection is:
@@ -520,7 +556,9 @@ impl Editor {
     ///     Ordering::Less => above the screen
     ///     Ordering::Greater => below the screen
     pub fn newest_selection_on_screen(&self, cx: &mut AppContext) -> Ordering {
-        let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let snapshot = self
+            .display_map
+            .update(cx, |map, model, cx| map.snapshot(cx));
         let newest_head = self
             .selections
             .newest_anchor()
@@ -563,7 +601,7 @@ impl Editor {
                 offset: gpui::Point::new(x, y),
                 anchor: top_anchor,
             };
-            self.set_scroll_anchor(scroll_anchor, cx);
+            self.set_scroll_anchor(scroll_anchor, model, cx);
         }
     }
 }

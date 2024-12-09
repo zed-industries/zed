@@ -53,7 +53,7 @@ impl SlashCommand for TerminalSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
+        _workspace: Option<WeakModel<Workspace>>,
         _window: &mut gpui::Window,
         _cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -65,7 +65,7 @@ impl SlashCommand for TerminalSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
@@ -74,7 +74,7 @@ impl SlashCommand for TerminalSlashCommand {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
 
-        let Some(active_terminal) = resolve_active_terminal(&workspace, cx) else {
+        let Some(active_terminal) = resolve_active_terminal(&workspace, model, cx) else {
             return Task::ready(Err(anyhow::anyhow!("no active terminal")));
         };
 
@@ -109,10 +109,10 @@ impl SlashCommand for TerminalSlashCommand {
 }
 
 fn resolve_active_terminal(
-    workspace: &View<Workspace>,
+    workspace: &Model<Workspace>,
     window: &Window,
     cx: &AppContext,
-) -> Option<View<TerminalView>> {
+) -> Option<Model<TerminalView>> {
     if let Some(terminal_view) = workspace
         .read(cx)
         .active_item(cx)

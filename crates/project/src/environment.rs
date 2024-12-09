@@ -25,7 +25,7 @@ impl ProjectEnvironment {
         cli_environment: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        cx.new_model(|cx| {
+        cx.new_model(|model, cx| {
             cx.subscribe(worktree_store, |this: &mut Self, _, event, _| {
                 if let WorktreeStoreEvent::WorktreeRemoved(_, id) = event {
                     this.remove_worktree_environment(*id);
@@ -146,7 +146,7 @@ impl ProjectEnvironment {
         } else {
             let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
-            cx.spawn(|this, mut cx| async move {
+            model.spawn(cx, |this, mut cx| async move {
                 let (mut shell_env, error_message) = cx
                     .background_executor()
                     .spawn({
@@ -165,7 +165,7 @@ impl ProjectEnvironment {
                         worktree_abs_path,
                         path
                     );
-                    this.update(&mut cx, |this, _| {
+                    this.update(&mut cx, |this, _, _| {
                         this.cached_shell_environments
                             .insert(worktree_id, shell_env.clone());
                     })
@@ -175,7 +175,7 @@ impl ProjectEnvironment {
                 }
 
                 if let Some(error) = error_message {
-                    this.update(&mut cx, |this, _| {
+                    this.update(&mut cx, |this, _, _| {
                         this.environment_error_messages.insert(worktree_id, error);
                     })
                     .log_err();

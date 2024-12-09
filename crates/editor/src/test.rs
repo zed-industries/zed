@@ -34,7 +34,7 @@ pub fn marked_display_snapshot(
     let font_size: Pixels = 14usize.into();
 
     let buffer = MultiBuffer::build_simple(&unmarked_text, cx);
-    let display_map = cx.new_model(|cx| {
+    let display_map = cx.new_model(|model, cx| {
         DisplayMap::new(
             buffer,
             font,
@@ -45,10 +45,11 @@ pub fn marked_display_snapshot(
             1,
             1,
             FoldPlaceholder::test(),
+            model,
             cx,
         )
     });
-    let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+    let snapshot = display_map.update(cx, |map, model, cx| map.snapshot(cx));
     let markers = markers
         .into_iter()
         .map(|offset| offset.to_display_point(&snapshot))

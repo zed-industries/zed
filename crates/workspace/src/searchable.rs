@@ -196,7 +196,7 @@ pub trait SearchableItemHandle: ItemHandle {
     );
 }
 
-impl<T: SearchableItem> SearchableItemHandle for View<T> {
+impl<T: SearchableItem> SearchableItemHandle for Model<T> {
     fn downgrade(&self) -> Box<dyn WeakSearchableItemHandle> {
         Box::new(self.downgrade())
     }
@@ -219,7 +219,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
     }
 
     fn clear_matches(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
-        self.update(cx, |this, cx| this.clear_matches(cx));
+        self.update(cx, |this, model, cx| this.clear_matches(cx));
     }
     fn update_matches(
         &self,
@@ -228,10 +228,10 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         cx: &mut gpui::AppContext,
     ) {
         let matches = matches.downcast_ref().unwrap();
-        self.update(cx, |this, cx| this.update_matches(matches.as_slice(), cx));
+        self.update(cx, |this, model, cx| this.update_matches(matches.as_slice(), cx));
     }
     fn query_suggestion(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> String {
-        self.update(cx, |this, cx| this.query_suggestion(cx))
+        self.update(cx, |this, model, cx| this.query_suggestion(cx))
     }
     fn activate_match(
         &self,
@@ -241,7 +241,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         cx: &mut gpui::AppContext,
     ) {
         let matches = matches.downcast_ref().unwrap();
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.activate_match(index, matches.as_slice(), cx)
         });
     }
@@ -253,7 +253,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         cx: &mut gpui::AppContext,
     ) {
         let matches = matches.downcast_ref().unwrap();
-        self.update(cx, |this, cx| this.select_matches(matches.as_slice(), cx));
+        self.update(cx, |this, model, cx| this.select_matches(matches.as_slice(), cx));
     }
 
     fn match_index_for_direction(
@@ -266,7 +266,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         cx: &mut gpui::AppContext,
     ) -> usize {
         let matches = matches.downcast_ref().unwrap();
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.match_index_for_direction(matches.as_slice(), current_index, direction, count, cx)
         })
     }
@@ -276,7 +276,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Task<AnyVec<dyn Send>> {
-        let matches = self.update(cx, |this, cx| this.find_matches(query, cx));
+        let matches = self.update(cx, |this, model, cx| this.find_matches(query, cx));
         cx.spawn(|_| async {
             let matches = matches.await;
             let mut any_matches = AnyVec::with_capacity::<T::Match>(matches.len());
@@ -296,7 +296,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         cx: &mut gpui::AppContext,
     ) -> Option<usize> {
         let matches = matches.downcast_ref()?;
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.active_match_index(matches.as_slice(), cx)
         })
     }
@@ -309,7 +309,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         cx: &mut gpui::AppContext,
     ) {
         let mat = mat.downcast_ref().unwrap();
-        self.update(cx, |this, cx| this.replace(mat, query, cx))
+        self.update(cx, |this, model, cx| this.replace(mat, query, cx))
     }
 
     fn replace_all(
@@ -319,7 +319,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) {
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.replace_all(&mut matches.map(|m| m.downcast_ref().unwrap()), query, cx);
         })
     }
@@ -330,7 +330,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) {
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.search_bar_visibility_changed(visible, cx)
         });
     }
@@ -341,7 +341,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) {
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.toggle_filtered_search_ranges(enabled, cx)
         });
     }
@@ -373,7 +373,7 @@ pub trait WeakSearchableItemHandle: WeakItemHandle {
     fn into_any(self) -> AnyWeakView;
 }
 
-impl<T: SearchableItem> WeakSearchableItemHandle for WeakView<T> {
+impl<T: SearchableItem> WeakSearchableItemHandle for WeakModel<T> {
     fn upgrade(&self, _cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.upgrade()?))
     }

@@ -15,7 +15,7 @@ use crate::Chat;
 
 pub struct MessageEditor {
     thread: Model<Thread>,
-    editor: View<Editor>,
+    editor: Model<Editor>,
     pub(crate) context_picker_handle: PopoverMenuHandle<Picker<ContextPickerDelegate>>,
     use_tools: bool,
 }
@@ -24,9 +24,9 @@ impl MessageEditor {
     pub fn new(thread: Model<Thread>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         Self {
             thread,
-            editor: cx.new_view(|cx| {
-                let mut editor = Editor::auto_height(80, cx);
-                editor.set_placeholder_text("Ask anything…", cx);
+            editor: cx.new_model(|model, cx| {
+                let mut editor = Editor::auto_height(80, model, cx);
+                editor.set_placeholder_text("Ask anything…", model, cx);
 
                 editor
             }),
@@ -36,33 +36,34 @@ impl MessageEditor {
     }
 
     fn chat(&mut self, _: &Chat, model: &Model<Self>, cx: &mut AppContext) {
-        self.send_to_model(RequestKind::Chat, cx);
+        self.send_to_model(RequestKind::Chat, model, cx);
     }
 
     fn send_to_model(
         &mut self,
         request_kind: RequestKind,
-        model: &Model<Self>, cx: &mut AppContext,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<()> {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
             .as_ref()
             .map_or(false, |provider| provider.must_accept_terms(cx))
         {
-            cx.notify();
+            model.notify(cx);
             return None;
         }
 
         let model_registry = LanguageModelRegistry::read_global(cx);
         let model = model_registry.active_model()?;
 
-        let user_message = self.editor.update(cx, |editor, cx| {
+        let user_message = self.editor.update(cx, |editor, model, cx| {
             let text = editor.text(cx);
             editor.clear(cx);
             text
         });
 
-        self.thread.update(cx, |thread, cx| {
+        self.thread.update(cx, |thread, model, cx| {
             thread.insert_user_message(user_message, cx);
             let mut request = thread.to_completion_request(request_kind, cx);
 
@@ -93,7 +94,12 @@ impl FocusableView for MessageEditor {
 }
 
 impl Render for MessageEditor {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
         let focus_handle = self.editor.focus_handle(cx);
@@ -160,11 +166,11 @@ impl Render for MessageEditor {
                                     .layer(ElevationIndex::ModalSurface)
                                     .child(Label::new("Chat"))
                                     .children(
-                                        KeyBinding::for_action_in(&Chat, &focus_handle, cx)
+                                        KeyBinding::for_action_in(&Chat, &focus_handle, model, cx)
                                             .map(|binding| binding.into_any_element()),
                                     )
                                     .on_click(move |_event, cx| {
-                                        focus_handle.dispatch_action(&Chat, cx);
+                                        focus_handle.dispatch_action(&Chat, model, cx);
                                     }),
                             ),
                     ),

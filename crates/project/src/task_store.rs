@@ -282,7 +282,7 @@ impl TaskStore {
             .map(|json| json.trim())
             .filter(|json| !json.is_empty());
 
-        task_inventory.update(cx, |inventory, _| {
+        task_inventory.update(cx, |inventory, model, _| {
             inventory.update_file_based_tasks(location, raw_tasks_json)
         })
     }
@@ -310,7 +310,7 @@ impl TaskStore {
                     let result = task_store.update_user_tasks(None, Some(&user_tasks_content), cx);
                     if let Err(err) = &result {
                         log::error!("Failed to load user tasks: {err}");
-                        cx.emit(crate::Event::Toast {
+                        model.emit(cx, crate::Event::Toast {
                             notification_id: "load-user-tasks".into(),
                             message: format!("Invalid global tasks file\n{err}"),
                         });

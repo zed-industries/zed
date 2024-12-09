@@ -19,7 +19,7 @@ enum Host {
 }
 
 pub struct DisconnectedOverlay {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     host: Host,
     focus_handle: FocusHandle,
     finished: bool,
@@ -66,7 +66,7 @@ impl DisconnectedOverlay {
                 finished: false,
                 workspace: handle,
                 host,
-                focus_handle: cx.focus_handle(),
+                focus_handle: window.focus_handle(),
             });
         })
         .detach();
@@ -74,7 +74,7 @@ impl DisconnectedOverlay {
 
     fn handle_reconnect(&mut self, _: &ClickEvent, model: &Model<Self>, cx: &mut AppContext) {
         self.finished = true;
-        cx.emit(DismissEvent);
+        model.emit(cx, DismissEvent);
 
         match &self.host {
             Host::SshRemoteProject(ssh_connection_options) => {
@@ -125,12 +125,17 @@ impl DisconnectedOverlay {
 
     fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         self.finished = true;
-        cx.emit(DismissEvent)
+        model.emit(cx, DismissEvent)
     }
 }
 
 impl Render for DisconnectedOverlay {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let can_reconnect = matches!(self.host, Host::SshRemoteProject(_));
 
         let message = match &self.host {
@@ -176,9 +181,11 @@ impl Render for DisconnectedOverlay {
                                     Button::new("close-window", "Close Window")
                                         .style(ButtonStyle::Filled)
                                         .layer(ElevationIndex::ModalSurface)
-                                        .on_click(cx.listener(move |_, _, cx| {
-                                            cx.remove_window();
-                                        })),
+                                        .on_click(model.listener(
+                                            move |_, _, model, window, cx| {
+                                                cx.remove_window();
+                                            },
+                                        )),
                                 )
                                 .when(can_reconnect, |el| {
                                     el.child(

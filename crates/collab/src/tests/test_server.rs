@@ -273,10 +273,11 @@ impl TestServer {
         git_hosting_provider_registry
             .register_hosting_provider(Arc::new(git_hosting_providers::Github));
 
-        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
-        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let user_store = cx.new_model(|model, cx| UserStore::new(client.clone(), model, cx));
+        let workspace_store =
+            cx.new_model(|model, cx| WorkspaceStore::new(client.clone(), model, cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
+        let session = cx.new_model(|model, cx| AppSession::new(Session::test(), model, cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -435,10 +436,11 @@ impl TestServer {
 
         client
             .channel_store()
-            .update(cx, |channel_store, cx| {
+            .update(cx, |channel_store, model, cx| {
                 channel_store.set_channel_visibility(
                     channel_id,
                     proto::ChannelVisibility::Public,
+                    model,
                     cx,
                 )
             })
@@ -634,7 +636,7 @@ impl TestClient {
     pub async fn clear_contacts(&self, cx: &mut TestAppContext) {
         self.app_state
             .user_store
-            .update(cx, |store, _| store.clear_contacts())
+            .update(cx, |store, model, _| store.clear_contacts())
             .await;
     }
 
@@ -705,7 +707,9 @@ impl TestClient {
     ) -> (Model<Project>, WorktreeId) {
         let project = self.build_empty_local_project(cx);
         let (worktree, _) = project
-            .update(cx, |p, cx| p.find_or_create_worktree(root_path, true, cx))
+            .update(cx, |p, model, cx| {
+                p.find_or_create_worktree(root_path, true, model, cx)
+            })
             .await
             .unwrap();
         worktree
@@ -732,7 +736,9 @@ impl TestClient {
             )
         });
         let (worktree, _) = project
-            .update(cx, |p, cx| p.find_or_create_worktree(root_path, true, cx))
+            .update(cx, |p, model, cx| {
+                p.find_or_create_worktree(root_path, true, model, cx)
+            })
             .await
             .unwrap();
         (project, worktree.read_with(cx, |tree, _| tree.id()))
@@ -754,20 +760,22 @@ impl TestClient {
 
     pub async fn host_workspace(
         &self,
-        workspace: &View<Workspace>,
+        workspace: &Model<Workspace>,
         channel_id: ChannelId,
         cx: &mut VisualTestContext,
     ) {
         cx.update(|cx| {
             let active_call = ActiveCall::global(cx);
-            active_call.update(cx, |call, cx| call.join_channel(channel_id, cx))
+            active_call.update(cx, |call, model, cx| {
+                call.join_channel(channel_id, model, cx)
+            })
         })
         .await
         .unwrap();
         cx.update(|cx| {
             let active_call = ActiveCall::global(cx);
             let project = workspace.read(cx).project().clone();
-            active_call.update(cx, |call, cx| call.share_project(project, cx))
+            active_call.update(cx, |call, model, cx| call.share_project(project, model, cx))
         })
         .await
         .unwrap();
@@ -778,7 +786,7 @@ impl TestClient {
         &'a self,
         channel_id: ChannelId,
         cx: &'a mut TestAppContext,
-    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+    ) -> (Model<Workspace>, &'a mut VisualTestContext) {
         cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, cx))
             .await
             .unwrap();
@@ -824,28 +832,28 @@ impl TestClient {
         &'a self,
         project: &Model<Project>,
         cx: &'a mut TestAppContext,
-    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+    ) -> (Model<Workspace>, &'a mut VisualTestContext) {
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(None, project.clone(), self.app_state.clone(), cx)
+            Workspace::new(None, project.clone(), self.app_state.clone(), model, cx)
         })
     }
 
     pub async fn build_test_workspace<'a>(
         &'a self,
         cx: &'a mut TestAppContext,
-    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+    ) -> (Model<Workspace>, &'a mut VisualTestContext) {
         let project = self.build_test_project(cx).await;
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(None, project.clone(), self.app_state.clone(), cx)
+            Workspace::new(None, project.clone(), self.app_state.clone(), model, cx)
         })
     }
 
     pub fn active_workspace<'a>(
         &'a self,
         cx: &'a mut TestAppContext,
-    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+    ) -> (Model<Workspace>, &'a mut VisualTestContext) {
         let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
 
         let view = window.root_view(cx).unwrap();
@@ -858,11 +866,11 @@ impl TestClient {
 pub fn open_channel_notes(
     channel_id: ChannelId,
     cx: &mut VisualTestContext,
-) -> Task<anyhow::Result<View<ChannelView>>> {
+) -> Task<anyhow::Result<Model<ChannelView>>> {
     let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
     let view = window.root_view(cx).unwrap();
 
-    cx.update(|cx| ChannelView::open(channel_id, None, view.clone(), cx))
+    cx.update(|cx| ChannelView::open(channel_id, None, view.clone(), model, cx))
 }
 
 impl Drop for TestClient {

@@ -118,7 +118,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     // B is promoted
     active_call_a
         .update(cx_a, |call, cx| {
-            call.room().unwrap().update(cx, |room, cx| {
+            call.room().unwrap().update(cx, |room, model, cx| {
                 room.set_participant_role(
                     client_b.user_id().unwrap(),
                     proto::ChannelRole::Member,
@@ -146,7 +146,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     // B is demoted
     active_call_a
         .update(cx_a, |call, cx| {
-            call.room().unwrap().update(cx, |room, cx| {
+            call.room().unwrap().update(cx, |room, model, cx| {
                 room.set_participant_role(
                     client_b.user_id().unwrap(),
                     proto::ChannelRole::Guest,
@@ -238,7 +238,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     // yet signed the zed CLA.
     active_call_a
         .update(cx_a, |call, cx| {
-            call.room().unwrap().update(cx, |room, cx| {
+            call.room().unwrap().update(cx, |room, model, cx| {
                 room.set_participant_role(
                     client_b.user_id().unwrap(),
                     proto::ChannelRole::Member,
@@ -258,7 +258,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     // yet signed the zed CLA.
     active_call_a
         .update(cx_a, |call, cx| {
-            call.room().unwrap().update(cx, |room, cx| {
+            call.room().unwrap().update(cx, |room, model, cx| {
                 room.set_participant_role(
                     client_b.user_id().unwrap(),
                     proto::ChannelRole::Talker,
@@ -285,7 +285,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     // A can now grant write access to B.
     active_call_a
         .update(cx_a, |call, cx| {
-            call.room().unwrap().update(cx, |room, cx| {
+            call.room().unwrap().update(cx, |room, model, cx| {
                 room.set_participant_role(
                     client_b.user_id().unwrap(),
                     proto::ChannelRole::Member,

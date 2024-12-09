@@ -59,7 +59,7 @@ impl SelectionsCollection {
     }
 
     pub fn display_map(&self, cx: &mut AppContext) -> DisplaySnapshot {
-        self.display_map.update(cx, |map, cx| map.snapshot(cx))
+        self.display_map.update(cx, |map, model, cx| map.snapshot(cx))
     }
 
     fn buffer<'a>(&self, cx: &'a AppContext) -> Ref<'a, MultiBufferSnapshot> {

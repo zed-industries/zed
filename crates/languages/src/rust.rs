@@ -1039,7 +1039,7 @@ mod tests {
 
         let language = crate::language("rust", tree_sitter_rust::LANGUAGE.into());
 
-        cx.new_model(|cx| {
+        cx.new_model(|model, cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
             // indent between braces

@@ -59,8 +59,8 @@ use thiserror::Error;
 
 use gpui::{
     actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
+    Keystroke, Model, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -481,62 +481,63 @@ impl TerminalBuilder {
 
     pub fn subscribe(mut self, model: &Model<Terminal>, cx: &AppContext) -> Terminal {
         //Event loop
-        cx.spawn(|terminal, mut cx| async move {
-            while let Some(event) = self.events_rx.next().await {
-                terminal.update(&mut cx, |terminal, cx| {
-                    //Process the first event immediately for lowered latency
-                    terminal.process_event(&event, cx);
-                })?;
+        model
+            .spawn(cx, |terminal, mut cx| async move {
+                while let Some(event) = self.events_rx.next().await {
+                    terminal.update(&mut cx, |terminal, model, cx| {
+                        //Process the first event immediately for lowered latency
+                        terminal.process_event(&event, cx);
+                    })?;
 
-                'outer: loop {
-                    let mut events = Vec::new();
-                    let mut timer = cx
-                        .background_executor()
-                        .timer(Duration::from_millis(4))
-                        .fuse();
-                    let mut wakeup = false;
-                    loop {
-                        futures::select_biased! {
-                            _ = timer => break,
-                            event = self.events_rx.next() => {
-                                if let Some(event) = event {
-                                    if matches!(event, AlacTermEvent::Wakeup) {
-                                        wakeup = true;
+                    'outer: loop {
+                        let mut events = Vec::new();
+                        let mut timer = cx
+                            .background_executor()
+                            .timer(Duration::from_millis(4))
+                            .fuse();
+                        let mut wakeup = false;
+                        loop {
+                            futures::select_biased! {
+                                _ = timer => break,
+                                event = self.events_rx.next() => {
+                                    if let Some(event) = event {
+                                        if matches!(event, AlacTermEvent::Wakeup) {
+                                            wakeup = true;
+                                        } else {
+                                            events.push(event);
+                                        }
+
+                                        if events.len() > 100 {
+                                            break;
+                                        }
                                     } else {
-                                        events.push(event);
-                                    }
-
-                                    if events.len() > 100 {
                                         break;
                                     }
-                                } else {
-                                    break;
-                                }
-                            },
+                                },
+                            }
                         }
-                    }
 
-                    if events.is_empty() && !wakeup {
+                        if events.is_empty() && !wakeup {
+                            smol::future::yield_now().await;
+                            break 'outer;
+                        }
+
+                        terminal.update(&mut cx, |this, model, cx| {
+                            if wakeup {
+                                this.process_event(&AlacTermEvent::Wakeup, cx);
+                            }
+
+                            for event in events {
+                                this.process_event(&event, cx);
+                            }
+                        })?;
                         smol::future::yield_now().await;
-                        break 'outer;
                     }
-
-                    terminal.update(&mut cx, |this, cx| {
-                        if wakeup {
-                            this.process_event(&AlacTermEvent::Wakeup, cx);
-                        }
-
-                        for event in events {
-                            this.process_event(&event, cx);
-                        }
-                    })?;
-                    smol::future::yield_now().await;
                 }
-            }
 
-            anyhow::Ok(())
-        })
-        .detach();
+                anyhow::Ok(())
+            })
+            .detach();
 
         self.terminal
     }
@@ -674,11 +675,11 @@ impl Terminal {
         match event {
             AlacTermEvent::Title(title) => {
                 self.breadcrumb_text = title.to_string();
-                cx.emit(Event::BreadcrumbsChanged);
+                model.emit(cx, Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ResetTitle => {
                 self.breadcrumb_text = String::new();
-                cx.emit(Event::BreadcrumbsChanged);
+                model.emit(cx, Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(data.to_string()))
@@ -699,20 +700,20 @@ impl Terminal {
             AlacTermEvent::CursorBlinkingChange => {
                 let terminal = self.term.lock();
                 let blinking = terminal.cursor_style().blinking;
-                cx.emit(Event::BlinkChanged(blinking));
+                model.emit(cx, Event::BlinkChanged(blinking));
             }
             AlacTermEvent::Bell => {
-                cx.emit(Event::Bell);
+                model.emit(cx, Event::Bell);
             }
-            AlacTermEvent::Exit => self.register_task_finished(None, cx),
+            AlacTermEvent::Exit => self.register_task_finished(None, model, cx),
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
             AlacTermEvent::Wakeup => {
-                cx.emit(Event::Wakeup);
+                model.emit(cx, Event::Wakeup);
 
                 if self.pty_info.has_changed() {
-                    cx.emit(Event::TitleChanged);
+                    model.emit(cx, Event::TitleChanged);
                 }
             }
             AlacTermEvent::ColorRequest(index, format) => {
@@ -730,7 +731,7 @@ impl Terminal {
                 self.write_to_pty(format(color));
             }
             AlacTermEvent::ChildExit(error_code) => {
-                self.register_task_finished(Some(*error_code), cx);
+                self.register_task_finished(Some(*error_code), model, cx);
             }
         }
     }
@@ -788,7 +789,7 @@ impl Terminal {
                     term.grid_mut().reset_region((new_cursor.line + 1)..);
                 }
 
-                cx.emit(Event::Wakeup);
+                model.emit(cx, Event::Wakeup);
             }
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
@@ -827,7 +828,7 @@ impl Terminal {
                         }
 
                         self.selection_head = Some(point);
-                        cx.emit(Event::SelectionsChanged)
+                        model.emit(cx, Event::SelectionsChanged)
                     }
                 }
             }
@@ -842,7 +843,7 @@ impl Terminal {
                 if let Some((_, head)) = selection {
                     self.selection_head = Some(*head);
                 }
-                cx.emit(Event::SelectionsChanged)
+                model.emit(cx, Event::SelectionsChanged)
             }
             InternalEvent::UpdateSelection(position) => {
                 if let Some(mut selection) = term.selection.take() {
@@ -861,7 +862,7 @@ impl Terminal {
                     }
 
                     self.selection_head = Some(point);
-                    cx.emit(Event::SelectionsChanged)
+                    model.emit(cx, Event::SelectionsChanged)
                 }
             }
 
@@ -960,7 +961,7 @@ impl Terminal {
                                     terminal_dir: self.working_directory(),
                                 })
                             };
-                            cx.emit(Event::Open(target));
+                            model.emit(cx, Event::Open(target));
                         } else {
                             self.update_selected_word(
                                 prev_hovered_word,
@@ -974,7 +975,7 @@ impl Terminal {
                     }
                     None => {
                         if self.hovered_word {
-                            cx.emit(Event::NewNavigationTarget(None));
+                            model.emit(cx, Event::NewNavigationTarget(None));
                         }
                         self.hovered_word = false;
                     }
@@ -1016,7 +1017,7 @@ impl Terminal {
                 terminal_dir: self.working_directory(),
             })
         };
-        cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
+        model.emit(cx, Event::NewNavigationTarget(Some(navigation_target)));
     }
 
     fn next_link_id(&mut self) -> usize {
@@ -1304,7 +1305,7 @@ impl Terminal {
         let mut terminal = term.lock_unfair();
         //Note that the ordering of events matters for event processing
         while let Some(e) = self.events.pop_front() {
-            self.process_terminal_event(&e, &mut terminal, cx)
+            self.process_terminal_event(&e, &mut terminal, model, cx)
         }
 
         self.last_content = Self::make_content(&terminal, &self.last_content);
@@ -1755,7 +1756,7 @@ impl Terminal {
             Some(task) => task,
             None => {
                 if error_code.is_none() {
-                    cx.emit(Event::CloseTerminal);
+                    model.emit(cx, Event::CloseTerminal);
                 }
                 return;
             }
@@ -1792,11 +1793,11 @@ impl Terminal {
         match task.hide {
             HideStrategy::Never => {}
             HideStrategy::Always => {
-                cx.emit(Event::CloseTerminal);
+                model.emit(cx, Event::CloseTerminal);
             }
             HideStrategy::OnSuccess => {
                 if finished_successfully {
-                    cx.emit(Event::CloseTerminal);
+                    model.emit(cx, Event::CloseTerminal);
                 }
             }
         }

@@ -165,7 +165,7 @@ pub fn init(
         let system_id = system_id.clone();
 
         if let Some(ssh_client) = project.ssh_client() {
-            ssh_client.update(cx, |client, cx| {
+            ssh_client.update(cx, |client, model, cx| {
                 if TelemetrySettings::get_global(cx).diagnostics {
                     let request = client.proto_client().request(proto::GetPanicFiles {});
                     cx.background_executor()

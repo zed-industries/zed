@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use gpui::{Action, AnyElement, AnyView, FocusHandle, IntoElement, Render};
+use gpui::{Action, AnyElement, AnyView, FocusHandle, IntoElement, Model, Render};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -16,12 +16,8 @@ pub struct Tooltip {
 }
 
 impl Tooltip {
-    pub fn text(
-        title: impl Into<SharedString>,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    ) -> Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement> {
-        cx.new_model(|_cx| Self {
+    pub fn text(title: impl Into<SharedString>, cx: &mut gpui::AppContext) -> AnyView {
+        cx.new_model(|_model, _cx| Self {
             title: title.into(),
             meta: None,
             key_binding: None,
@@ -34,8 +30,8 @@ impl Tooltip {
         action: &dyn Action,
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
-    ) -> Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement> {
-        cx.new_model(|cx| Self {
+    ) -> AnyView {
+        cx.new_model(|model, cx| Self {
             title: title.into(),
             meta: None,
             key_binding: KeyBinding::for_action(action, window, cx),
@@ -49,22 +45,23 @@ impl Tooltip {
         focus_handle: &FocusHandle,
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
-    ) -> Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement> {
-        cx.new_model(|cx| Self {
+    ) -> AnyView {
+        cx.new_model(|model, cx| Self {
             title: title.into(),
             meta: None,
             key_binding: KeyBinding::for_action_in(action, focus_handle, window, cx),
         })
         .into()
     }
+
     pub fn with_meta(
         title: impl Into<SharedString>,
         action: Option<&dyn Action>,
         meta: impl Into<SharedString>,
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
-    ) -> Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement> {
-        cx.new_model(|cx| Self {
+    ) -> AnyView {
+        cx.new_model(|model, cx| Self {
             title: title.into(),
             meta: Some(meta.into()),
             key_binding: action.and_then(|action| KeyBinding::for_action(action, window, cx)),
@@ -94,11 +91,11 @@ impl Tooltip {
 impl Render for Tooltip {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
         model: &Model<Self>,
+        window: &mut gpui::Window,
         cx: &mut AppContext,
     ) -> impl IntoElement {
-        tooltip_container(window, cx, |el, _| {
+        tooltip_container(model, window, cx, |el, _model, _window, _cx| {
             el.child(
                 h_flex()
                     .gap_4()
@@ -115,23 +112,23 @@ impl Render for Tooltip {
 }
 
 pub fn tooltip_container<V>(
-    window: &mut Window,
     model: &Model<V>,
+    window: &mut Window,
     cx: &mut AppContext,
-    f: impl FnOnce(Div, &Model<V>, &mut AppContext) -> Div,
+    f: impl FnOnce(Div, &Model<V>, &mut Window, &mut AppContext) -> Div,
 ) -> impl IntoElement {
     let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
     // padding to avoid tooltip appearing right below the mouse cursor
     div().pl_2().pt_2p5().child(
         v_flex()
-            .elevation_2(window, cx)
+            .elevation_2(cx)
             .font(ui_font)
-            .text_ui(window, cx)
+            .text_ui(cx)
             .text_color(cx.theme().colors().text)
             .py_1()
             .px_2()
-            .map(|el| f(el, cx)),
+            .map(|el| f(el, model, window, cx)),
     )
 }
 
@@ -152,7 +149,7 @@ impl LinkPreview {
             }
             wrapped_url.push(ch);
         }
-        cx.new_model(|_cx| LinkPreview {
+        cx.new_model(|_model, _cx| LinkPreview {
             link: wrapped_url.into(),
         })
         .into()

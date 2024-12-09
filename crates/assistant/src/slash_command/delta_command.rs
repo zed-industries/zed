@@ -40,7 +40,7 @@ impl SlashCommand for DeltaSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancellation_flag: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
+        _workspace: Option<WeakModel<Workspace>>,
         _window: &mut gpui::Window,
         _cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -52,7 +52,7 @@ impl SlashCommand for DeltaSlashCommand {
         _arguments: &[String],
         context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
@@ -79,6 +79,7 @@ impl SlashCommand for DeltaSlashCommand {
                         context_buffer.clone(),
                         workspace.clone(),
                         delegate.clone(),
+                        model,
                         cx,
                     ));
                 }

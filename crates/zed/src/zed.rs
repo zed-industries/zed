@@ -196,22 +196,22 @@ pub fn initialize_workspace(
             }
         }
 
-        let inline_completion_button = cx.new_view(|cx| {
+        let inline_completion_button = cx.new_model(|model, cx| {
             inline_completion_button::InlineCompletionButton::new(app_state.fs.clone(), cx)
         });
 
         let diagnostic_summary =
-            cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
+            cx.new_model(|model, cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
             activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
         let active_buffer_language =
-            cx.new_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
+            cx.new_model(|_, _| language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =
-            cx.new_view(|cx| toolchain_selector::ActiveToolchain::new(workspace, cx));
-        let vim_mode_indicator = cx.new_view(vim::ModeIndicator::new);
+            cx.new_model(|model, cx| toolchain_selector::ActiveToolchain::new(workspace, cx));
+        let vim_mode_indicator = cx.new_model(vim::ModeIndicator::new);
         let cursor_position =
-            cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
-        workspace.status_bar().update(cx, |status_bar, cx| {
+            cx.new_model(|_, _| go_to_line::cursor_position::CursorPosition::new(workspace));
+        workspace.status_bar().update(cx, |status_bar, model, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
             status_bar.add_right_item(inline_completion_button, cx);
@@ -227,7 +227,7 @@ pub fn initialize_workspace(
         cx.on_window_should_close(move |cx| {
 
             handle
-                .update(cx, |workspace, cx| {
+                .update(cx, |workspace, model, cx| {
                     // We'll handle closing asynchronously
                     workspace.close_window(&Default::default(), cx);
                     false
@@ -339,13 +339,13 @@ pub fn initialize_workspace(
                         cx,
                     );
 
-                    cx.spawn(|this, mut cx| async move {
+                    model.spawn(cx, |this, mut cx| async move {
                         let Some(paths) = paths.await.log_err().flatten() else {
                             return;
                         };
 
                         if let Some(task) = this
-                            .update(&mut cx, |this, cx| {
+                            .update(&mut cx, |this, model, cx| {
                                 if this.project().read(cx).is_local() {
                                     this.open_workspace_for_paths(false, paths, cx)
                                 } else {
@@ -453,6 +453,7 @@ pub fn initialize_workspace(
                     asset_str::<Assets>("licenses.md"),
                     "Open Source License Attribution",
                     "Markdown",
+                    model,
                     cx,
                 );
             })
@@ -475,6 +476,7 @@ pub fn initialize_workspace(
                     open_settings_file(
                         paths::settings_file(),
                         || settings::initial_user_settings_content().as_ref().into(),
+                        model,
                         cx,
                     );
                 },
@@ -489,6 +491,7 @@ pub fn initialize_workspace(
                     open_settings_file(
                         paths::tasks_file(),
                         || settings::initial_tasks_content().as_ref().into(),
+                        model,
                         cx,
                     );
                 },
@@ -504,6 +507,7 @@ pub fn initialize_workspace(
                         settings::default_keymap(),
                         "Default Key Bindings",
                         "JSON",
+                        model,
                         cx,
                     );
                 },
@@ -517,6 +521,7 @@ pub fn initialize_workspace(
                         settings::default_settings(),
                         "Default Settings",
                         "JSON",
+                        model,
                         cx,
                     );
                 },
@@ -589,7 +594,7 @@ pub fn initialize_workspace(
         if workspace.project().read(cx).is_via_ssh() {
             workspace.register_action({
                 move |workspace, _: &OpenServerSettings, cx| {
-                    let open_server_settings = workspace.project().update(cx, |project, cx| {
+                    let open_server_settings = workspace.project().update(cx, |project, model, cx| {
                         project.open_server_settings(cx)
                     });
 
@@ -636,32 +641,33 @@ fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
 
 fn initialize_pane(
     workspace: &Workspace,
-    pane: &View<Pane>,
+    pane: &Model<Pane>,
     model: &Model<Workspace>,
     cx: &mut AppContext,
 ) {
-    pane.update(cx, |pane, cx| {
-        pane.toolbar().update(cx, |toolbar, cx| {
-            let multibuffer_hint = cx.new_view(|_| MultibufferHint::new());
+    pane.update(cx, |pane, model, cx| {
+        pane.toolbar().update(cx, |toolbar, model, cx| {
+            let multibuffer_hint = cx.new_model(|_, _| MultibufferHint::new());
             toolbar.add_item(multibuffer_hint, cx);
-            let breadcrumbs = cx.new_view(|_| Breadcrumbs::new());
+            let breadcrumbs = cx.new_model(|_, _| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, cx);
-            let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
+            let buffer_search_bar = cx.new_model(search::BufferSearchBar::new);
             toolbar.add_item(buffer_search_bar.clone(), cx);
 
-            let proposed_change_bar = cx.new_view(|_| ProposedChangesEditorToolbar::new());
+            let proposed_change_bar = cx.new_model(|_, _| ProposedChangesEditorToolbar::new());
             toolbar.add_item(proposed_change_bar, cx);
             let quick_action_bar =
-                cx.new_view(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
+                cx.new_model(|model, cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, cx);
-            let diagnostic_editor_controls = cx.new_view(|_| diagnostics::ToolbarControls::new());
+            let diagnostic_editor_controls =
+                cx.new_model(|_, _| diagnostics::ToolbarControls::new());
             toolbar.add_item(diagnostic_editor_controls, cx);
-            let project_search_bar = cx.new_view(|_| ProjectSearchBar::new());
+            let project_search_bar = cx.new_model(|_, _| ProjectSearchBar::new());
             toolbar.add_item(project_search_bar, cx);
-            let lsp_log_item = cx.new_view(|_| language_tools::LspLogToolbarItemView::new());
+            let lsp_log_item = cx.new_model(|_, _| language_tools::LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, cx);
             let syntax_tree_item =
-                cx.new_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
+                cx.new_model(|_, _| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, cx);
         })
     });
@@ -781,7 +787,7 @@ fn open_log_file(workspace: &mut Workspace, model: &Model<Workspace>, cx: &mut A
                                 NotificationId::unique::<OpenLogError>(),
                                 cx,
                                 |cx| {
-                                    cx.new_view(|_| {
+                                    cx.new_model(|_, _| {
                                         MessageNotification::new(format!(
                                             "Unable to access/open log file at path {:?}",
                                             paths::log_file().as_path()
@@ -792,16 +798,16 @@ fn open_log_file(workspace: &mut Workspace, model: &Model<Workspace>, cx: &mut A
                             return;
                         };
                         let project = workspace.project().clone();
-                        let buffer = project.update(cx, |project, cx| {
+                        let buffer = project.update(cx, |project, model, cx| {
                             project.create_local_buffer(&log, None, cx)
                         });
 
-                        let buffer = cx.new_model(|cx| {
+                        let buffer = cx.new_model(|model, cx| {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
                         });
-                        let editor = cx.new_view(|cx| {
+                        let editor = cx.new_model(|model, cx| {
                             let mut editor =
-                                Editor::for_multibuffer(buffer, Some(project), true, cx);
+                                Editor::for_multibuffer(buffer, Some(project), true, model, cx);
                             editor.set_breadcrumb_header(format!(
                                 "Last {} lines in {}",
                                 MAX_LINES,
@@ -810,7 +816,7 @@ fn open_log_file(workspace: &mut Workspace, model: &Model<Workspace>, cx: &mut A
                             editor
                         });
 
-                        editor.update(cx, |editor, cx| {
+                        editor.update(cx, |editor, model, cx| {
                             let last_multi_buffer_offset = editor.buffer().read(cx).len(cx);
                             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                                 s.select_ranges(Some(
@@ -1019,7 +1025,7 @@ fn open_local_file(
                 .update(&mut cx, |editor, cx| {
                     if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                         if buffer.read(cx).is_empty() {
-                            buffer.update(cx, |buffer, cx| {
+                            buffer.update(cx, |buffer, model, cx| {
                                 buffer.edit([(0..0, initial_contents)], None, cx)
                             });
                         }
@@ -1034,7 +1040,7 @@ fn open_local_file(
         struct NoOpenFolders;
 
         workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
-            cx.new_view(|_| MessageNotification::new("This project has no folders open."))
+            cx.new_model(|_, _| MessageNotification::new("This project has no folders open."))
         })
     }
 }
@@ -1070,13 +1076,13 @@ fn open_telemetry_log_file(
 
             workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
-                let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json, cx));
-                let buffer = cx.new_model(|cx| {
+                let buffer = project.update(cx, |project, model, cx| project.create_local_buffer(&content, json, cx));
+                let buffer = cx.new_model(|model, cx| {
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
                 workspace.add_item_to_active_pane(
-                    Box::new(cx.new_view(|cx| {
-                        let mut editor = Editor::for_multibuffer(buffer, Some(project), true, cx);
+                    Box::new(cx.new_model(|model, cx| {
+                        let mut editor = Editor::for_multibuffer(buffer, Some(project), true, model, cx);
                         editor.set_breadcrumb_header("Telemetry Log".into());
                         editor
                     })),
@@ -1107,16 +1113,21 @@ fn open_bundled_file(
             .update(&mut cx, |workspace, cx| {
                 workspace.with_local_workspace(cx, |workspace, cx| {
                     let project = workspace.project();
-                    let buffer = project.update(cx, move |project, cx| {
+                    let buffer = project.update(cx, move |project, model, cx| {
                         project.create_local_buffer(text.as_ref(), language, cx)
                     });
-                    let buffer = cx.new_model(|cx| {
+                    let buffer = cx.new_model(|model, cx| {
                         MultiBuffer::singleton(buffer, cx).with_title(title.into())
                     });
                     workspace.add_item_to_active_pane(
-                        Box::new(cx.new_view(|cx| {
-                            let mut editor =
-                                Editor::for_multibuffer(buffer, Some(project.clone()), true, cx);
+                        Box::new(cx.new_model(|model, cx| {
+                            let mut editor = Editor::for_multibuffer(
+                                buffer,
+                                Some(project.clone()),
+                                true,
+                                model,
+                                cx,
+                            );
                             editor.set_read_only(true);
                             editor.set_breadcrumb_header(title.into());
                             editor
@@ -1142,18 +1153,23 @@ fn open_settings_file(
         let (worktree_creation_task, settings_open_task) = workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.with_local_workspace(cx, move |workspace, cx| {
-                    let worktree_creation_task = workspace.project().update(cx, |project, cx| {
-                        // Set up a dedicated worktree for settings, since
-                        // otherwise we're dropping and re-starting LSP servers
-                        // for each file inside on every settings file
-                        // close/open
+                    let worktree_creation_task =
+                        workspace.project().update(cx, |project, model, cx| {
+                            // Set up a dedicated worktree for settings, since
+                            // otherwise we're dropping and re-starting LSP servers
+                            // for each file inside on every settings file
+                            // close/open
 
-                        // TODO: Do note that all other external files (e.g.
-                        // drag and drop from OS) still have their worktrees
-                        // released on file close, causing LSP servers'
-                        // restarts.
-                        project.find_or_create_worktree(paths::config_dir().as_path(), false, cx)
-                    });
+                            // TODO: Do note that all other external files (e.g.
+                            // drag and drop from OS) still have their worktrees
+                            // released on file close, causing LSP servers'
+                            // restarts.
+                            project.find_or_create_worktree(
+                                paths::config_dir().as_path(),
+                                false,
+                                cx,
+                            )
+                        });
                     let settings_open_task =
                         create_and_open_local_file(abs_path, cx, default_content);
                     (worktree_creation_task, settings_open_task)
@@ -1226,7 +1242,7 @@ mod tests {
 
         let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some())
             })
             .unwrap();
@@ -1293,14 +1309,14 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         workspace_1
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 assert_eq!(workspace.worktrees(cx).count(), 2);
                 assert!(workspace.left_dock().read(cx).is_open());
                 assert!(workspace
                     .active_pane()
                     .read(cx)
                     .focus_handle(cx)
-                    .is_focused(cx));
+                    .is_focused(window));
             })
             .unwrap();
 
@@ -1339,7 +1355,7 @@ mod tests {
             .update(|cx| cx.windows()[0].downcast::<Workspace>())
             .unwrap();
         workspace_1
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 assert_eq!(
                     workspace
                         .worktrees(cx)
@@ -1348,7 +1364,7 @@ mod tests {
                     &[Path::new("/root/e").into()]
                 );
                 assert!(workspace.left_dock().read(cx).is_open());
-                assert!(workspace.active_pane().focus_handle(cx).is_focused(cx));
+                assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
             })
             .unwrap();
     }
@@ -1524,8 +1540,8 @@ mod tests {
 
         // Editing a buffer marks the window as edited.
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| editor.insert("EDIT", cx));
             })
             .unwrap();
 
@@ -1533,24 +1549,24 @@ mod tests {
 
         // Undoing the edit restores the window's edited state.
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| editor.undo(&Default::default(), cx));
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| editor.undo(&Default::default(), cx));
             })
             .unwrap();
         assert!(!window_is_edited(window, cx));
 
         // Redoing the edit marks the window as edited again.
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| editor.redo(&Default::default(), cx));
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| editor.redo(&Default::default(), cx));
             })
             .unwrap();
         assert!(window_is_edited(window, cx));
 
         // Closing the item restores the window's edited state.
         let close = window
-            .update(cx, |_, cx| {
-                pane.update(cx, |pane, cx| {
+            .update(cx, |_, model, cx| {
+                pane.update(cx, |pane, model, cx| {
                     drop(editor);
                     pane.close_active_item(&Default::default(), cx).unwrap()
                 })
@@ -1579,14 +1595,14 @@ mod tests {
         executor.run_until_parked();
 
         window
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 let editor = workspace
                     .active_item(cx)
                     .unwrap()
                     .downcast::<Editor>()
                     .unwrap();
 
-                editor.update(cx, |editor, cx| {
+                editor.update(cx, |editor, model, cx| {
                     assert_eq!(editor.text(cx), "hey");
                 });
             })
@@ -1605,8 +1621,8 @@ mod tests {
 
         // Editing the buffer marks the window as edited.
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| editor.insert("EDIT", cx));
             })
             .unwrap();
         executor.run_until_parked();
@@ -1667,8 +1683,8 @@ mod tests {
 
         // Editing a buffer marks the window as edited.
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| editor.insert("EDIT", cx));
             })
             .unwrap();
 
@@ -1704,13 +1720,13 @@ mod tests {
         assert!(window_is_edited(window, cx));
 
         window
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 let editor = workspace
                     .active_item(cx)
                     .unwrap()
                     .downcast::<editor::Editor>()
                     .unwrap();
-                editor.update(cx, |editor, cx| {
+                editor.update(cx, |editor, model, cx| {
                     assert_eq!(editor.text(cx), "EDIThey");
                     assert!(editor.is_dirty(cx));
                 });
@@ -1740,13 +1756,13 @@ mod tests {
             .unwrap();
 
         let editor = workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 let editor = workspace
                     .active_item(cx)
                     .unwrap()
                     .downcast::<editor::Editor>()
                     .unwrap();
-                editor.update(cx, |editor, cx| {
+                editor.update(cx, |editor, model, cx| {
                     assert!(editor.text(cx).is_empty());
                     assert!(!editor.is_dirty(cx));
                 });
@@ -1756,7 +1772,7 @@ mod tests {
             .unwrap();
 
         let save_task = workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.save_active_item(SaveIntent::Save, cx)
             })
             .unwrap();
@@ -1765,8 +1781,8 @@ mod tests {
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
         workspace
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name");
                 });
@@ -1793,7 +1809,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
+        project.update(cx, |project, model, _cx| {
             project.languages().add(markdown_language())
         });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
@@ -1806,7 +1822,9 @@ mod tests {
 
         // Open the first entry
         let entry_1 = window
-            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .update(cx, |w, model, cx| {
+                w.open_path(file1.clone(), None, true, cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -1821,7 +1839,9 @@ mod tests {
 
         // Open the second entry
         window
-            .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
+            .update(cx, |w, model, cx| {
+                w.open_path(file2.clone(), None, true, cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -1836,7 +1856,9 @@ mod tests {
 
         // Open the first entry again. The existing pane item is activated.
         let entry_1b = window
-            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .update(cx, |w, model, cx| {
+                w.open_path(file1.clone(), None, true, cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -1853,7 +1875,7 @@ mod tests {
 
         // Split the pane with the first entry, then open the second entry again.
         window
-            .update(cx, |w, cx| {
+            .update(cx, |w, model, cx| {
                 w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, cx);
                 w.open_path(file2.clone(), None, true, cx)
             })
@@ -1876,7 +1898,7 @@ mod tests {
 
         // Open the third entry twice concurrently. Only one pane item is added.
         let (t1, t2) = window
-            .update(cx, |w, cx| {
+            .update(cx, |w, model, cx| {
                 (
                     w.open_path(file3.clone(), None, true, cx),
                     w.open_path(file3.clone(), None, true, cx),
@@ -1970,7 +1992,7 @@ mod tests {
 
         // Open a file within an existing worktree.
         window
-            .update(cx, |view, cx| {
+            .update(cx, |view, model, cx| {
                 view.open_paths(vec!["/dir1/a.txt".into()], OpenVisible::All, None, cx)
             })
             .unwrap()
@@ -1994,7 +2016,7 @@ mod tests {
 
         // Open a file outside of any existing worktree.
         window
-            .update(cx, |view, cx| {
+            .update(cx, |view, model, cx| {
                 view.open_paths(vec!["/dir2/b.txt".into()], OpenVisible::All, None, cx)
             })
             .unwrap()
@@ -2029,7 +2051,7 @@ mod tests {
 
         // Ensure opening a directory and one of its children only adds one worktree.
         window
-            .update(cx, |view, cx| {
+            .update(cx, |view, model, cx| {
                 view.open_paths(
                     vec!["/dir3".into(), "/dir3/c.txt".into()],
                     OpenVisible::All,
@@ -2069,7 +2091,7 @@ mod tests {
 
         // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
         window
-            .update(cx, |view, cx| {
+            .update(cx, |view, model, cx| {
                 view.open_paths(vec!["/d.txt".into()], OpenVisible::None, None, cx)
             })
             .unwrap()
@@ -2157,7 +2179,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
+        project.update(cx, |project, model, _cx| {
             project.languages().add(markdown_language())
         });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
@@ -2255,7 +2277,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
+        project.update(cx, |project, model, _cx| {
             project.languages().add(markdown_language())
         });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
@@ -2263,7 +2285,7 @@ mod tests {
 
         // Open a file within an existing worktree.
         window
-            .update(cx, |view, cx| {
+            .update(cx, |view, model, cx| {
                 view.open_paths(
                     vec![PathBuf::from("/root/a.txt")],
                     OpenVisible::All,
@@ -2280,8 +2302,8 @@ mod tests {
         });
 
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| editor.handle_input("x", cx));
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| editor.handle_input("x", cx));
             })
             .unwrap();
 
@@ -2296,7 +2318,7 @@ mod tests {
         cx.read(|cx| assert!(editor.has_conflict(cx)));
 
         let save_task = window
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.save_active_item(SaveIntent::Save, cx)
             })
             .unwrap();
@@ -2304,8 +2326,8 @@ mod tests {
         cx.simulate_prompt_answer(0);
         save_task.await.unwrap();
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert!(!editor.has_conflict(cx));
                 });
@@ -2319,7 +2341,7 @@ mod tests {
         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        project.update(cx, |project, _| {
+        project.update(cx, |project, model, _| {
             project.languages().add(markdown_language());
             project.languages().add(rust_lang());
         });
@@ -2339,8 +2361,8 @@ mod tests {
             .unwrap();
 
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "untitled");
                     assert!(Arc::ptr_eq(
@@ -2355,7 +2377,7 @@ mod tests {
 
         // Save the buffer. This prompts for a filename.
         let save_task = window
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.save_active_item(SaveIntent::Save, cx)
             })
             .unwrap();
@@ -2373,8 +2395,8 @@ mod tests {
         // on the path.
         save_task.await.unwrap();
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name.rs");
                     assert_eq!(
@@ -2387,8 +2409,8 @@ mod tests {
 
         // Edit the file and save it again. This time, there is no filename prompt.
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| {
                     editor.handle_input(" there", cx);
                     assert!(editor.is_dirty(cx));
                 });
@@ -2396,7 +2418,7 @@ mod tests {
             .unwrap();
 
         let save_task = window
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.save_active_item(SaveIntent::Save, cx)
             })
             .unwrap();
@@ -2404,8 +2426,8 @@ mod tests {
 
         assert!(!cx.did_prompt_for_new_path());
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name.rs")
                 });
@@ -2416,7 +2438,7 @@ mod tests {
         // the same buffer.
         cx.dispatch_action(window.into(), NewFile);
         window
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.split_and_clone(
                     workspace.active_pane().clone(),
                     SplitDirection::Right,
@@ -2428,7 +2450,7 @@ mod tests {
             .await
             .unwrap();
         let editor2 = window
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace
                     .active_item(cx)
                     .unwrap()
@@ -2450,7 +2472,7 @@ mod tests {
         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        project.update(cx, |project, _| {
+        project.update(cx, |project, model, _| {
             project.languages().add(rust_lang());
             project.languages().add(markdown_language());
         });
@@ -2468,8 +2490,8 @@ mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| {
                     assert!(Arc::ptr_eq(
                         &editor.buffer().read(cx).language_at(0, cx).unwrap(),
                         &languages::PLAIN_TEXT
@@ -2482,7 +2504,7 @@ mod tests {
 
         // Save the buffer. This prompts for a filename.
         let save_task = window
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.save_active_item(SaveIntent::Save, cx)
             })
             .unwrap();
@@ -2491,8 +2513,8 @@ mod tests {
         save_task.await.unwrap();
         // The buffer is not dirty anymore and the language is assigned based on the path.
         window
-            .update(cx, |_, cx| {
-                editor.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor.update(cx, |editor, model, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(
                         editor.buffer().read(cx).language_at(0, cx).unwrap().name(),
@@ -2522,7 +2544,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
+        project.update(cx, |project, model, _cx| {
             project.languages().add(markdown_language())
         });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
@@ -2534,17 +2556,19 @@ mod tests {
         let pane_1 = cx.read(|cx| workspace.read(cx).active_pane().clone());
 
         window
-            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .update(cx, |w, model, cx| {
+                w.open_path(file1.clone(), None, true, cx)
+            })
             .unwrap()
             .await
             .unwrap();
 
         let (editor_1, buffer) = window
-            .update(cx, |_, cx| {
-                pane_1.update(cx, |pane_1, cx| {
+            .update(cx, |_, model, cx| {
+                pane_1.update(cx, |pane_1, model, cx| {
                     let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
                     assert_eq!(editor.project_path(cx), Some(file1.clone()));
-                    let buffer = editor.update(cx, |editor, cx| {
+                    let buffer = editor.update(cx, |editor, model, cx| {
                         editor.insert("dirt", cx);
                         editor.buffer().downgrade()
                     });
@@ -2585,7 +2609,7 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         window
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 assert_eq!(workspace.panes().len(), 1);
                 assert!(workspace.active_item(cx).is_none());
             })
@@ -2616,7 +2640,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
+        project.update(cx, |project, model, _cx| {
             project.languages().add(markdown_language())
         });
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
@@ -2630,15 +2654,17 @@ mod tests {
         let file3 = entries[2].clone();
 
         let editor1 = workspace
-            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .update(cx, |w, model, cx| {
+                w.open_path(file1.clone(), None, true, cx)
+            })
             .unwrap()
             .await
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
         workspace
-            .update(cx, |_, cx| {
-                editor1.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor1.update(cx, |editor, model, cx| {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(10), 0)
                             ..DisplayPoint::new(DisplayRow(10), 0)])
@@ -2648,14 +2674,18 @@ mod tests {
             .unwrap();
 
         let editor2 = workspace
-            .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
+            .update(cx, |w, model, cx| {
+                w.open_path(file2.clone(), None, true, cx)
+            })
             .unwrap()
             .await
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
         let editor3 = workspace
-            .update(cx, |w, cx| w.open_path(file3.clone(), None, true, cx))
+            .update(cx, |w, model, cx| {
+                w.open_path(file3.clone(), None, true, cx)
+            })
             .unwrap()
             .await
             .unwrap()
@@ -2663,8 +2693,8 @@ mod tests {
             .unwrap();
 
         workspace
-            .update(cx, |_, cx| {
-                editor3.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor3.update(cx, |editor, model, cx| {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(12), 0)
                             ..DisplayPoint::new(DisplayRow(12), 0)])
@@ -2680,8 +2710,8 @@ mod tests {
             .await
             .unwrap();
         workspace
-            .update(cx, |_, cx| {
-                editor3.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor3.update(cx, |editor, model, cx| {
                     editor.set_scroll_position(point(0., 12.5), cx)
                 });
             })
@@ -2692,7 +2722,9 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_back(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2702,7 +2734,9 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_back(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2712,7 +2746,9 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_back(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2722,7 +2758,9 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_back(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2733,7 +2771,9 @@ mod tests {
 
         // Go back one more time and ensure we don't navigate past the first item in the history.
         workspace
-            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_back(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2743,7 +2783,9 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_forward(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2753,7 +2795,9 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_forward(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2765,8 +2809,8 @@ mod tests {
         // Go forward to an item that has been closed, ensuring it gets re-opened at the same
         // location.
         workspace
-            .update(cx, |_, cx| {
-                pane.update(cx, |pane, cx| {
+            .update(cx, |_, model, cx| {
+                pane.update(cx, |pane, model, cx| {
                     let editor3_id = editor3.entity_id();
                     drop(editor3);
                     pane.close_item_by_id(editor3_id, SaveIntent::Close, cx)
@@ -2776,7 +2820,9 @@ mod tests {
             .await
             .unwrap();
         workspace
-            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_forward(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2786,7 +2832,9 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_forward(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2796,7 +2844,9 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_back(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2807,8 +2857,8 @@ mod tests {
 
         // Go back to an item that has been closed and removed from disk
         workspace
-            .update(cx, |_, cx| {
-                pane.update(cx, |pane, cx| {
+            .update(cx, |_, model, cx| {
+                pane.update(cx, |pane, model, cx| {
                     let editor2_id = editor2.entity_id();
                     drop(editor2);
                     pane.close_item_by_id(editor2_id, SaveIntent::Close, cx)
@@ -2825,7 +2875,9 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         workspace
-            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_back(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2834,7 +2886,9 @@ mod tests {
             (file2.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
         );
         workspace
-            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_forward(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2846,8 +2900,8 @@ mod tests {
         // Modify file to collapse multiple nav history entries into the same location.
         // Ensure we don't visit the same location twice when navigating.
         workspace
-            .update(cx, |_, cx| {
-                editor1.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor1.update(cx, |editor, model, cx| {
                     editor.change_selections(None, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(15), 0)
                             ..DisplayPoint::new(DisplayRow(15), 0)])
@@ -2857,8 +2911,8 @@ mod tests {
             .unwrap();
         for _ in 0..5 {
             workspace
-                .update(cx, |_, cx| {
-                    editor1.update(cx, |editor, cx| {
+                .update(cx, |_, model, cx| {
+                    editor1.update(cx, |editor, model, cx| {
                         editor.change_selections(None, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(3), 0)
                                 ..DisplayPoint::new(DisplayRow(3), 0)])
@@ -2868,8 +2922,8 @@ mod tests {
                 .unwrap();
 
             workspace
-                .update(cx, |_, cx| {
-                    editor1.update(cx, |editor, cx| {
+                .update(cx, |_, model, cx| {
+                    editor1.update(cx, |editor, model, cx| {
                         editor.change_selections(None, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(13), 0)
                                 ..DisplayPoint::new(DisplayRow(13), 0)])
@@ -2879,8 +2933,8 @@ mod tests {
                 .unwrap();
         }
         workspace
-            .update(cx, |_, cx| {
-                editor1.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor1.update(cx, |editor, model, cx| {
                     editor.transact(cx, |editor, cx| {
                         editor.change_selections(None, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(2), 0)
@@ -2893,8 +2947,8 @@ mod tests {
             .unwrap();
 
         workspace
-            .update(cx, |_, cx| {
-                editor1.update(cx, |editor, cx| {
+            .update(cx, |_, model, cx| {
+                editor1.update(cx, |editor, model, cx| {
                     editor.change_selections(None, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(1), 0)
                             ..DisplayPoint::new(DisplayRow(1), 0)])
@@ -2903,7 +2957,9 @@ mod tests {
             })
             .unwrap();
         workspace
-            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_back(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2912,7 +2968,9 @@ mod tests {
             (file1.clone(), DisplayPoint::new(DisplayRow(2), 0), 0.)
         );
         workspace
-            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .update(cx, |w, model, cx| {
+                w.go_back(w.active_pane().downgrade(), cx)
+            })
             .unwrap()
             .await
             .unwrap();
@@ -2926,10 +2984,10 @@ mod tests {
             cx: &mut TestAppContext,
         ) -> (ProjectPath, DisplayPoint, f32) {
             workspace
-                .update(cx, |workspace, cx| {
+                .update(cx, |workspace, model, cx| {
                     let item = workspace.active_item(cx).unwrap();
                     let editor = item.downcast::<Editor>().unwrap();
-                    let (selections, scroll_position) = editor.update(cx, |editor, cx| {
+                    let (selections, scroll_position) = editor.update(cx, |editor, model, cx| {
                         (
                             editor.selections.display_ranges(cx),
                             editor.scroll_position(cx),
@@ -2965,7 +3023,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
+        project.update(cx, |project, model, _cx| {
             project.languages().add(markdown_language())
         });
         let workspace = cx.add_window(|cx| Workspace::test_new(project, cx));
@@ -2980,25 +3038,33 @@ mod tests {
         let file4 = entries[3].clone();
 
         let file1_item_id = workspace
-            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .update(cx, |w, model, cx| {
+                w.open_path(file1.clone(), None, true, cx)
+            })
             .unwrap()
             .await
             .unwrap()
             .item_id();
         let file2_item_id = workspace
-            .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
+            .update(cx, |w, model, cx| {
+                w.open_path(file2.clone(), None, true, cx)
+            })
             .unwrap()
             .await
             .unwrap()
             .item_id();
         let file3_item_id = workspace
-            .update(cx, |w, cx| w.open_path(file3.clone(), None, true, cx))
+            .update(cx, |w, model, cx| {
+                w.open_path(file3.clone(), None, true, cx)
+            })
             .unwrap()
             .await
             .unwrap()
             .item_id();
         let file4_item_id = workspace
-            .update(cx, |w, cx| w.open_path(file4.clone(), None, true, cx))
+            .update(cx, |w, model, cx| {
+                w.open_path(file4.clone(), None, true, cx)
+            })
             .unwrap()
             .await
             .unwrap()
@@ -3007,8 +3073,8 @@ mod tests {
 
         // Close all the pane items in some arbitrary order.
         workspace
-            .update(cx, |_, cx| {
-                pane.update(cx, |pane, cx| {
+            .update(cx, |_, model, cx| {
+                pane.update(cx, |pane, model, cx| {
                     pane.close_item_by_id(file1_item_id, SaveIntent::Close, cx)
                 })
             })
@@ -3018,8 +3084,8 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         workspace
-            .update(cx, |_, cx| {
-                pane.update(cx, |pane, cx| {
+            .update(cx, |_, model, cx| {
+                pane.update(cx, |pane, model, cx| {
                     pane.close_item_by_id(file4_item_id, SaveIntent::Close, cx)
                 })
             })
@@ -3029,8 +3095,8 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         workspace
-            .update(cx, |_, cx| {
-                pane.update(cx, |pane, cx| {
+            .update(cx, |_, model, cx| {
+                pane.update(cx, |pane, model, cx| {
                     pane.close_item_by_id(file2_item_id, SaveIntent::Close, cx)
                 })
             })
@@ -3039,8 +3105,8 @@ mod tests {
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
         workspace
-            .update(cx, |_, cx| {
-                pane.update(cx, |pane, cx| {
+            .update(cx, |_, model, cx| {
+                pane.update(cx, |pane, model, cx| {
                     pane.close_item_by_id(file3_item_id, SaveIntent::Close, cx)
                 })
             })
@@ -3090,7 +3156,7 @@ mod tests {
 
         // Reopening closed items doesn't interfere with navigation history.
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.go_back(workspace.active_pane().downgrade(), cx)
             })
             .unwrap()
@@ -3099,7 +3165,7 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.go_back(workspace.active_pane().downgrade(), cx)
             })
             .unwrap()
@@ -3108,7 +3174,7 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.go_back(workspace.active_pane().downgrade(), cx)
             })
             .unwrap()
@@ -3117,7 +3183,7 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.go_back(workspace.active_pane().downgrade(), cx)
             })
             .unwrap()
@@ -3126,7 +3192,7 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.go_back(workspace.active_pane().downgrade(), cx)
             })
             .unwrap()
@@ -3135,7 +3201,7 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.go_back(workspace.active_pane().downgrade(), cx)
             })
             .unwrap()
@@ -3144,7 +3210,7 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.go_back(workspace.active_pane().downgrade(), cx)
             })
             .unwrap()
@@ -3153,7 +3219,7 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.go_back(workspace.active_pane().downgrade(), cx)
             })
             .unwrap()
@@ -3236,12 +3302,12 @@ mod tests {
             handle_keymap_file_changes(keymap_rx, cx, |_, _| {});
         });
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.register_action(|_, _: &A, _cx| {});
                 workspace.register_action(|_, _: &B, _cx| {});
                 workspace.register_action(|_, _: &ActivatePreviousPane, _cx| {});
                 workspace.register_action(|_, _: &ActivatePrevItem, _cx| {});
-                cx.notify();
+                model.notify(cx);
             })
             .unwrap();
         executor.run_until_parked();
@@ -3308,7 +3374,7 @@ mod tests {
         use diagnostics::Deploy;
 
         workspace
-            .update(cx, |workspace, _| {
+            .update(cx, |workspace, model, _| {
                 workspace.register_action(|_, _: &A, _cx| {});
                 workspace.register_action(|_, _: &B, _cx| {});
                 workspace.register_action(|_, _: &Deploy, _cx| {});
@@ -3540,11 +3606,11 @@ mod tests {
         line: u32,
     ) {
         let available_actions = cx
-            .update(|cx| window.update(cx, |_, cx| cx.available_actions()))
+            .update(|cx| window.update(cx, |_, model, cx| cx.available_actions()))
             .unwrap();
         for (key, action) in actions {
             let bindings = cx
-                .update(|cx| window.update(cx, |_, cx| cx.bindings_for_action(action)))
+                .update(|cx| window.update(cx, |_, model, cx| cx.bindings_for_action(action)))
                 .unwrap();
             // assert that...
             assert!(

@@ -234,8 +234,8 @@ pub async fn open_paths_with_positions(
         };
         if let Some(active_editor) = item.downcast::<Editor>() {
             workspace
-                .update(cx, |_, cx| {
-                    active_editor.update(cx, |editor, cx| {
+                .update(cx, |_, model, cx| {
+                    active_editor.update(cx, |editor, model, cx| {
                         let snapshot = editor.snapshot(cx).display_snapshot;
                         let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                         editor.change_selections(Some(Autoscroll::center()), cx, |s| {
@@ -471,7 +471,7 @@ async fn open_local_workspace(
                 let wait = async move {
                     if paths_with_position.is_empty() {
                         let (done_tx, done_rx) = oneshot::channel();
-                        let _subscription = workspace.update(cx, |_, cx| {
+                        let _subscription = workspace.update(cx, |_, model, cx| {
                             cx.on_release(move |_, _, _| {
                                 let _ = done_tx.send(());
                             })
@@ -570,7 +570,7 @@ mod tests {
         assert_eq!(cx.windows().len(), 1);
         let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_none())
             })
             .unwrap();
@@ -580,7 +580,7 @@ mod tests {
 
         assert_eq!(cx.windows().len(), 1);
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some());
             })
             .unwrap();
@@ -592,7 +592,7 @@ mod tests {
 
         let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
         workspace_2
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some());
                 let items = workspace.items(cx).collect::<Vec<_>>();
                 assert_eq!(items.len(), 1, "Workspace should have two items");
@@ -614,7 +614,7 @@ mod tests {
         assert_eq!(cx.windows().len(), 1);
         let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap();
         workspace_1
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some())
             })
             .unwrap();
@@ -625,7 +625,7 @@ mod tests {
 
         assert_eq!(cx.windows().len(), 1);
         workspace_1
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 let items = workspace.items(cx).collect::<Vec<_>>();
                 assert_eq!(items.len(), 2, "Workspace should have two items");
             })
@@ -638,7 +638,7 @@ mod tests {
         assert_eq!(cx.windows().len(), 2);
         let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
         workspace_2
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 let items = workspace.items(cx).collect::<Vec<_>>();
                 assert_eq!(items.len(), 1, "Workspace should have two items");
             })

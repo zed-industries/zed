@@ -267,7 +267,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
 
-    let store = cx.new_model(|cx| {
+    let store = cx.new_model(|model, cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
@@ -365,7 +365,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     );
 
     #[allow(clippy::let_underscore_future)]
-    let _ = store.update(cx, |store, cx| store.reload(None, cx));
+    let _ = store.update(cx, |store, model, cx| store.reload(None, model, cx));
 
     cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
     store.read_with(cx, |store, _| {
@@ -392,7 +392,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     // Create new extension store, as if Zed were restarting.
     drop(store);
-    let store = cx.new_model(|cx| {
+    let store = cx.new_model(|model, cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
@@ -435,7 +435,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         assert_eq!(fs.metadata_call_count(), prev_fs_metadata_call_count + 2);
     });
 
-    store.update(cx, |store, cx| {
+    store.update(cx, |store, model, cx| {
         store.uninstall_extension("zed-ruby".into(), cx)
     });
 
@@ -573,7 +573,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let builder_client =
         Arc::new(ReqwestClient::user_agent(&user_agent).expect("Could not create HTTP client"));
 
-    let extension_store = cx.new_model(|cx| {
+    let extension_store = cx.new_model(|model, cx| {
         ExtensionStore::new(
             extensions_dir.clone(),
             Some(cache_dir),
@@ -598,7 +598,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         }
     });
 
-    extension_store.update(cx, |_, cx| {
+    extension_store.update(cx, |_, model, cx| {
         cx.subscribe(&extension_store, |_, _, event, _| {
             if matches!(event, Event::ExtensionFailedToLoad(_)) {
                 panic!("extension failed to load");
@@ -608,7 +608,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     });
 
     extension_store
-        .update(cx, |store, cx| {
+        .update(cx, |store, model, cx| {
             store.install_dev_extension(test_extension_dir.clone(), cx)
         })
         .await
@@ -624,7 +624,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_local_buffer(project_dir.join("test.gleam"), cx)
         })
         .await
@@ -695,7 +695,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     });
 
     let completion_labels = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.completions(&buffer, 0, DEFAULT_COMPLETION_CONTEXT, cx)
         })
         .await
@@ -719,7 +719,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     language_server_version.lock().http_request_count = 0;
 
     // Start a new instance of the language server.
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         project.restart_language_servers_for_buffers([buffer.clone()], cx)
     });
 
@@ -736,11 +736,13 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     // Reload the extension, clearing its cache.
     // Start a new instance of the language server.
     extension_store
-        .update(cx, |store, cx| store.reload(Some("gleam".into()), cx))
+        .update(cx, |store, model, cx| {
+            store.reload(Some("gleam".into()), cx)
+        })
         .await;
 
     cx.executor().run_until_parked();
-    project.update(cx, |project, cx| {
+    project.update(cx, |project, model, cx| {
         project.restart_language_servers_for_buffers([buffer.clone()], cx)
     });
 

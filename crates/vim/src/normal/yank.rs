@@ -215,15 +215,16 @@ impl Vim {
             |colors| colors.editor_document_highlight_read_background,
             cx,
         );
-        cx.spawn(|this, mut cx| async move {
-            cx.background_executor()
-                .timer(Duration::from_millis(highlight_duration))
-                .await;
-            this.update(&mut cx, |editor, cx| {
-                editor.clear_background_highlights::<HighlightOnYank>(cx)
+        model
+            .spawn(cx, |this, mut cx| async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(highlight_duration))
+                    .await;
+                this.update(&mut cx, |editor, cx| {
+                    editor.clear_background_highlights::<HighlightOnYank>(cx)
+                })
+                .ok();
             })
-            .ok();
-        })
-        .detach();
+            .detach();
     }
 }

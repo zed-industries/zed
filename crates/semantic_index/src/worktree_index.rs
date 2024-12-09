@@ -104,7 +104,7 @@ impl WorktreeIndex {
                 })
                 .await?;
 
-            cx.new_model(|cx| {
+            cx.new_model(|model, cx| {
                 Self::new(
                     worktree,
                     db_connection,
@@ -172,7 +172,7 @@ impl WorktreeIndex {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let is_auto_available = cx.update(|cx| cx.wait_for_flag::<AutoCommand>())?.await;
-        let index = this.update(&mut cx, |this, cx| {
+        let index = this.update(&mut cx, |this, model, cx| {
             futures::future::try_join(
                 this.embedding_index.index_entries_changed_on_disk(cx),
                 this.summary_index
@@ -186,7 +186,7 @@ impl WorktreeIndex {
                 .update(|cx| cx.has_flag::<AutoCommand>())
                 .unwrap_or(false);
 
-            let index = this.update(&mut cx, |this, cx| {
+            let index = this.update(&mut cx, |this, model, cx| {
                 futures::future::try_join(
                     this.embedding_index
                         .index_updated_entries(updated_entries.clone(), cx),

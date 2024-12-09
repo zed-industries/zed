@@ -17,7 +17,7 @@ use util::ResultExt;
 use workspace::ModalView;
 
 pub struct ExtensionVersionSelector {
-    picker: View<Picker<ExtensionVersionSelectorDelegate>>,
+    picker: Model<Picker<ExtensionVersionSelectorDelegate>>,
 }
 
 impl ModalView for ExtensionVersionSelector {}
@@ -31,21 +31,30 @@ impl FocusableView for ExtensionVersionSelector {
 }
 
 impl Render for ExtensionVersionSelector {
-    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        _window: &mut gpui::Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
 
 impl ExtensionVersionSelector {
-    pub fn new(delegate: ExtensionVersionSelectorDelegate, model: &Model<Self>, cx: &mut AppContext) -> Self {
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+    pub fn new(
+        delegate: ExtensionVersionSelectorDelegate,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Self {
+        let picker = cx.new_model(|model, cx| Picker::uniform_list(delegate, model, cx));
         Self { picker }
     }
 }
 
 pub struct ExtensionVersionSelectorDelegate {
     fs: Arc<dyn Fs>,
-    view: WeakView<ExtensionVersionSelector>,
+    view: WeakModel<ExtensionVersionSelector>,
     extension_versions: Vec<ExtensionMetadata>,
     selected_index: usize,
     matches: Vec<StringMatch>,
@@ -54,7 +63,7 @@ pub struct ExtensionVersionSelectorDelegate {
 impl ExtensionVersionSelectorDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
-        weak_view: WeakView<ExtensionVersionSelector>,
+        weak_view: WeakModel<ExtensionVersionSelector>,
         mut extension_versions: Vec<ExtensionMetadata>,
     ) -> Self {
         extension_versions.sort_unstable_by(|a, b| {
@@ -102,11 +111,16 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, model: &Model<>Picker, _cx: &mut AppContext) {
+    fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, _cx: &mut AppContext) {
         self.selected_index = ix;
     }
 
-    fn update_matches(&mut self, query: String, model: &Model<Picker>, cx: &mut AppContext) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
+    ) -> Task<()> {
         let background_executor = cx.background_executor().clone();
         let candidates = self
             .extension_versions
@@ -160,7 +174,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
 
     fn confirm(&mut self, _secondary: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if self.matches.is_empty() {
-            self.dismissed(cx);
+            self.dismissed(model, cx);
             return;
         }
 
@@ -172,7 +186,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         }
 
         let extension_store = ExtensionStore::global(cx);
-        extension_store.update(cx, |store, cx| {
+        extension_store.update(cx, |store, model, cx| {
             let extension_id = extension_version.id.clone();
             let version = extension_version.manifest.version.clone();
 
@@ -183,13 +197,13 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
                 }
             });
 
-            store.install_extension(extension_id, version, cx);
+            store.install_extension(extension_id, version, model, cx);
         });
     }
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.view
-            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
             .log_err();
     }
 
@@ -197,7 +211,8 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        model: &Model<Picker>, cx: &mut AppContext,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let version_match = &self.matches[ix];
         let extension_version = &self.extension_versions[version_match.candidate_id];

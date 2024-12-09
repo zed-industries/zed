@@ -30,12 +30,12 @@ trait StatusItemViewHandle: Send {
 pub struct StatusBar {
     left_items: Vec<Box<dyn StatusItemViewHandle>>,
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
-    active_pane: View<Pane>,
+    active_pane: Model<Pane>,
     _observe_active_pane: Subscription,
 }
 
 impl Render for StatusBar {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .w_full()
             .justify_between()
@@ -78,7 +78,7 @@ impl StatusBar {
 }
 
 impl StatusBar {
-    pub fn new(active_pane: &View<Pane>, model: &Model<Self>, cx: &mut AppContext) -> Self {
+    pub fn new(active_pane: &Model<Pane>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let mut this = Self {
             left_items: Default::default(),
             right_items: Default::default(),
@@ -90,7 +90,7 @@ impl StatusBar {
         this
     }
 
-    pub fn add_left_item<T>(&mut self, item: View<T>, model: &Model<Self>, cx: &mut AppContext)
+    pub fn add_left_item<T>(&mut self, item: Model<T>, model: &Model<Self>, cx: &mut AppContext)
     where
         T: 'static + StatusItemView,
     {
@@ -98,10 +98,10 @@ impl StatusBar {
         item.set_active_pane_item(active_pane_item.as_deref(), cx);
 
         self.left_items.push(Box::new(item));
-        cx.notify();
+        model.notify(cx);
     }
 
-    pub fn item_of_type<T: StatusItemView>(&self) -> Option<View<T>> {
+    pub fn item_of_type<T: StatusItemView>(&self) -> Option<Model<T>> {
         self.left_items
             .iter()
             .chain(self.right_items.iter())
@@ -128,7 +128,7 @@ impl StatusBar {
     pub fn insert_item_after<T>(
         &mut self,
         position: usize,
-        item: View<T>,
+        item: Model<T>,
         model: &Model<Self>,
         cx: &mut AppContext,
     ) where
@@ -143,7 +143,7 @@ impl StatusBar {
             self.right_items
                 .insert(position + 1 - self.left_items.len(), Box::new(item))
         }
-        cx.notify()
+        model.notify(cx)
     }
 
     pub fn remove_item_at(&mut self, position: usize, model: &Model<Self>, cx: &mut AppContext) {
@@ -152,10 +152,10 @@ impl StatusBar {
         } else {
             self.right_items.remove(position - self.left_items.len());
         }
-        cx.notify();
+        model.notify(cx);
     }
 
-    pub fn add_right_item<T>(&mut self, item: View<T>, model: &Model<Self>, cx: &mut AppContext)
+    pub fn add_right_item<T>(&mut self, item: Model<T>, model: &Model<Self>, cx: &mut AppContext)
     where
         T: 'static + StatusItemView,
     {
@@ -163,12 +163,12 @@ impl StatusBar {
         item.set_active_pane_item(active_pane_item.as_deref(), cx);
 
         self.right_items.push(Box::new(item));
-        cx.notify();
+        model.notify(cx);
     }
 
     pub fn set_active_pane(
         &mut self,
-        active_pane: &View<Pane>,
+        active_pane: &Model<Pane>,
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
@@ -186,7 +186,7 @@ impl StatusBar {
     }
 }
 
-impl<T: StatusItemView> StatusItemViewHandle for View<T> {
+impl<T: StatusItemView> StatusItemViewHandle for Model<T> {
     fn to_any(&self) -> AnyView {
         self.clone().into()
     }
@@ -197,7 +197,7 @@ impl<T: StatusItemView> StatusItemViewHandle for View<T> {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) {
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.set_active_pane_item(active_pane_item, cx)
         });
     }

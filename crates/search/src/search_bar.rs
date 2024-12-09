@@ -15,6 +15,6 @@ pub(super) fn render_nav_button(
     )
     .shape(IconButtonShape::Square)
     .on_click(|_, cx| cx.dispatch_action(action.boxed_clone()))
-    .tooltip(move |cx| Tooltip::for_action_in(tooltip, action, &focus_handle, cx))
+    .tooltip(move |window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, window, cx))
     .disabled(!active)
 }

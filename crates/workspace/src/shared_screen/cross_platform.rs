@@ -19,7 +19,7 @@ pub struct SharedScreen {
     pub peer_id: PeerId,
     user: Arc<User>,
     nav_history: Option<ItemNavHistory>,
-    view: View<RemoteVideoTrackView>,
+    view: Model<RemoteVideoTrackView>,
     focus: FocusHandle,
 }
 
@@ -31,9 +31,9 @@ impl SharedScreen {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
-        let view = cx.new_view(|cx| RemoteVideoTrackView::new(track.clone(), cx));
+        let view = cx.new_model(|model, cx| RemoteVideoTrackView::new(track.clone(), cx));
         cx.subscribe(&view, |_, _, ev, cx| match ev {
-            call::RemoteVideoTrackViewEvent::Close => cx.emit(Event::Close),
+            call::RemoteVideoTrackViewEvent::Close => model.emit(cx, Event::Close),
         })
         .detach();
         Self {
@@ -41,7 +41,7 @@ impl SharedScreen {
             peer_id,
             user,
             nav_history: Default::default(),
-            focus: cx.focus_handle(),
+            focus: window.focus_handle(),
         }
     }
 }
@@ -54,7 +54,12 @@ impl FocusableView for SharedScreen {
     }
 }
 impl Render for SharedScreen {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         div()
             .bg(cx.theme().colors().editor_background)
             .track_focus(&self.focus)
@@ -98,13 +103,13 @@ impl Item for SharedScreen {
         _workspace_id: Option<WorkspaceId>,
         model: &Model<Self>,
         cx: &mut AppContext,
-    ) -> Option<View<Self>> {
-        Some(cx.new_view(|cx| Self {
-            view: self.view.update(cx, |view, cx| view.clone(cx)),
+    ) -> Option<Model<Self>> {
+        Some(cx.new_model(|model, cx| Self {
+            view: self.view.update(cx, |view, model, cx| view.clone(cx)),
             peer_id: self.peer_id,
             user: self.user.clone(),
             nav_history: Default::default(),
-            focus: cx.focus_handle(),
+            focus: window.focus_handle(),
         }))
     }
 

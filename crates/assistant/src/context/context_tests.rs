@@ -51,7 +51,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
     assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
+    let context = cx.new_model(|model, cx| {
         Context::local(
             registry,
             None,
@@ -59,6 +59,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
+            model,
             cx,
         )
     });
@@ -70,7 +71,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         vec![(message_1.id, Role::User, 0..0)]
     );
 
-    let message_2 = context.update(cx, |context, cx| {
+    let message_2 = context.update(cx, |context, model, cx| {
         context
             .insert_message_after(message_1.id, Role::Assistant, MessageStatus::Done, cx)
             .unwrap()
@@ -83,8 +84,8 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         ]
     );
 
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "1"), (1..1, "2")], None, cx)
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(0..0, "1"), (1..1, "2")], None, model, cx)
     });
     assert_eq!(
         messages(&context, cx),
@@ -94,7 +95,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         ]
     );
 
-    let message_3 = context.update(cx, |context, cx| {
+    let message_3 = context.update(cx, |context, model, cx| {
         context
             .insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
             .unwrap()
@@ -108,7 +109,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         ]
     );
 
-    let message_4 = context.update(cx, |context, cx| {
+    let message_4 = context.update(cx, |context, model, cx| {
         context
             .insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
             .unwrap()
@@ -123,8 +124,8 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         ]
     );
 
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(4..4, "C"), (5..5, "D")], None, cx)
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(4..4, "C"), (5..5, "D")], None, model, cx)
     });
     assert_eq!(
         messages(&context, cx),
@@ -137,7 +138,9 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
     );
 
     // Deleting across message boundaries merges the messages.
-    buffer.update(cx, |buffer, cx| buffer.edit([(1..4, "")], None, cx));
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(1..4, "")], None, model, cx)
+    });
     assert_eq!(
         messages(&context, cx),
         vec![
@@ -147,7 +150,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
     );
 
     // Undoing the deletion should also undo the merge.
-    buffer.update(cx, |buffer, cx| buffer.undo(cx));
+    buffer.update(cx, |buffer, model, cx| buffer.undo(cx));
     assert_eq!(
         messages(&context, cx),
         vec![
@@ -159,7 +162,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
     );
 
     // Redoing the deletion should also redo the merge.
-    buffer.update(cx, |buffer, cx| buffer.redo(cx));
+    buffer.update(cx, |buffer, model, cx| buffer.redo(cx));
     assert_eq!(
         messages(&context, cx),
         vec![
@@ -169,7 +172,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
     );
 
     // Ensure we can still insert after a merged message.
-    let message_5 = context.update(cx, |context, cx| {
+    let message_5 = context.update(cx, |context, model, cx| {
         context
             .insert_message_after(message_1.id, Role::System, MessageStatus::Done, cx)
             .unwrap()
@@ -193,7 +196,7 @@ fn test_message_splitting(cx: &mut AppContext) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
+    let context = cx.new_model(|model, cx| {
         Context::local(
             registry.clone(),
             None,
@@ -201,6 +204,7 @@ fn test_message_splitting(cx: &mut AppContext) {
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
+            model,
             cx,
         )
     });
@@ -212,11 +216,11 @@ fn test_message_splitting(cx: &mut AppContext) {
         vec![(message_1.id, Role::User, 0..0)]
     );
 
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "aaa\nbbb\nccc\nddd\n")], None, cx)
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(0..0, "aaa\nbbb\nccc\nddd\n")], None, model, cx)
     });
 
-    let (_, message_2) = context.update(cx, |context, cx| context.split_message(3..3, cx));
+    let (_, message_2) = context.update(cx, |context, model, cx| context.split_message(3..3, cx));
     let message_2 = message_2.unwrap();
 
     // We recycle newlines in the middle of a split message
@@ -229,7 +233,7 @@ fn test_message_splitting(cx: &mut AppContext) {
         ]
     );
 
-    let (_, message_3) = context.update(cx, |context, cx| context.split_message(3..3, cx));
+    let (_, message_3) = context.update(cx, |context, model, cx| context.split_message(3..3, cx));
     let message_3 = message_3.unwrap();
 
     // We don't recycle newlines at the end of a split message
@@ -243,7 +247,7 @@ fn test_message_splitting(cx: &mut AppContext) {
         ]
     );
 
-    let (_, message_4) = context.update(cx, |context, cx| context.split_message(9..9, cx));
+    let (_, message_4) = context.update(cx, |context, model, cx| context.split_message(9..9, cx));
     let message_4 = message_4.unwrap();
     assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\nccc\nddd\n");
     assert_eq!(
@@ -256,7 +260,7 @@ fn test_message_splitting(cx: &mut AppContext) {
         ]
     );
 
-    let (_, message_5) = context.update(cx, |context, cx| context.split_message(9..9, cx));
+    let (_, message_5) = context.update(cx, |context, model, cx| context.split_message(9..9, cx));
     let message_5 = message_5.unwrap();
     assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\n\nccc\nddd\n");
     assert_eq!(
@@ -271,7 +275,7 @@ fn test_message_splitting(cx: &mut AppContext) {
     );
 
     let (message_6, message_7) =
-        context.update(cx, |context, cx| context.split_message(14..16, cx));
+        context.update(cx, |context, model, cx| context.split_message(14..16, cx));
     let message_6 = message_6.unwrap();
     let message_7 = message_7.unwrap();
     assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\n\nccc\ndd\nd\n");
@@ -297,7 +301,7 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
     assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
+    let context = cx.new_model(|model, cx| {
         Context::local(
             registry,
             None,
@@ -305,6 +309,7 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
+            model,
             cx,
         )
     });
@@ -316,20 +321,26 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
         vec![(message_1.id, Role::User, 0..0)]
     );
 
-    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "aaa")], None, cx));
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(0..0, "aaa")], None, model, cx)
+    });
     let message_2 = context
-        .update(cx, |context, cx| {
+        .update(cx, |context, model, cx| {
             context.insert_message_after(message_1.id, Role::User, MessageStatus::Done, cx)
         })
         .unwrap();
-    buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "bbb")], None, cx));
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(4..4, "bbb")], None, model, cx)
+    });
 
     let message_3 = context
-        .update(cx, |context, cx| {
+        .update(cx, |context, model, cx| {
             context.insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
         })
         .unwrap();
-    buffer.update(cx, |buffer, cx| buffer.edit([(8..8, "ccc")], None, cx));
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(8..8, "ccc")], None, model, cx)
+    });
 
     assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc");
     assert_eq!(
@@ -351,7 +362,7 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
     );
 
     let message_4 = context
-        .update(cx, |context, cx| {
+        .update(cx, |context, model, cx| {
             context.insert_message_after(message_3.id, Role::User, MessageStatus::Done, cx)
         })
         .unwrap();
@@ -412,7 +423,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
+    let context = cx.new_model(|model, cx| {
         Context::local(
             registry.clone(),
             None,
@@ -420,6 +431,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
+            model,
             cx,
         )
     });
@@ -432,7 +444,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     }
 
     let context_ranges = Rc::new(RefCell::new(ContextRanges::default()));
-    context.update(cx, |_, cx| {
+    context.update(cx, |_, model, cx| {
         cx.subscribe(&context, {
             let context_ranges = context_ranges.clone();
             move |context, _, event, _| {
@@ -446,7 +458,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
                     }
                     ContextEvent::ParsedSlashCommandsUpdated { removed, updated } => {
                         for range in removed {
-                            context_ranges.parsed_commands.remove(range);
+                            context_ranges.parsed_commands.remove(&range);
                         }
                         for command in updated {
                             context_ranges
@@ -467,7 +479,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     let buffer = context.read_with(cx, |context, _| context.buffer.clone());
 
     // Insert a slash command
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         buffer.edit([(0..0, "/file src/lib.rs")], None, cx);
     });
     assert_text_and_context_ranges(
@@ -480,7 +492,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     );
 
     // Edit the argument of the slash command.
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         let edit_offset = buffer.text().find("lib.rs").unwrap();
         buffer.edit([(edit_offset..edit_offset + "lib".len(), "main")], None, cx);
     });
@@ -494,7 +506,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     );
 
     // Edit the name of the slash command, using one that doesn't exist.
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         let edit_offset = buffer.text().find("/file").unwrap();
         buffer.edit(
             [(edit_offset..edit_offset + "/file".len(), "/unknown")],
@@ -512,7 +524,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     );
 
     // Undoing the insertion of an non-existent slash command resorts the previous one.
-    buffer.update(cx, |buffer, cx| buffer.undo(cx));
+    buffer.update(cx, |buffer, model, cx| buffer.undo(cx));
     assert_text_and_context_ranges(
         &buffer,
         &context_ranges,
@@ -523,7 +535,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     );
 
     let (command_output_tx, command_output_rx) = mpsc::unbounded();
-    context.update(cx, |context, cx| {
+    context.update(cx, |context, model, cx| {
         let command_source_range = context.parsed_slash_commands[0].source_range.clone();
         context.insert_command_output(
             command_source_range,
@@ -619,7 +631,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         cx: &mut TestAppContext,
     ) {
         let mut actual_marked_text = String::new();
-        buffer.update(cx, |buffer, _| {
+        buffer.update(cx, |buffer, model, _| {
             struct Endpoint {
                 offset: usize,
                 marker: char,
@@ -703,7 +715,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
     // Create a new context
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
+    let context = cx.new_model(|model, cx| {
         Context::local(
             registry.clone(),
             Some(project),
@@ -711,12 +723,13 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
+            model,
             cx,
         )
     });
 
     // Insert an assistant message to simulate a response.
-    let assistant_message_id = context.update(cx, |context, cx| {
+    let assistant_message_id = context.update(cx, |context, model, cx| {
         let user_message_id = context.messages(cx).next().unwrap().id;
         context
             .insert_message_after(user_message_id, Role::Assistant, MessageStatus::Done, cx)
@@ -903,7 +916,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     );
 
     // When setting the message role to User, the steps are cleared.
-    context.update(cx, |context, cx| {
+    context.update(cx, |context, model, cx| {
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
     });
@@ -932,7 +945,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     );
 
     // When setting the message role back to Assistant, the steps are reparsed.
-    context.update(cx, |context, cx| {
+    context.update(cx, |context, model, cx| {
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
     });
     expect_patches(
@@ -968,7 +981,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
     // Ensure steps are re-parsed when deserializing.
     let serialized_context = context.read_with(cx, |context, cx| context.serialize(cx));
-    let deserialized_context = cx.new_model(|cx| {
+    let deserialized_context = cx.new_model(|model, cx| {
         Context::deserialize(
             serialized_context,
             Default::default(),
@@ -978,6 +991,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             Arc::new(ToolWorkingSet::default()),
             None,
             None,
+            model,
             cx,
         )
     });
@@ -1013,9 +1027,14 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     );
 
     fn edit(context: &Model<Context>, new_text_marked_with_edits: &str, cx: &mut TestAppContext) {
-        context.update(cx, |context, cx| {
-            context.buffer.update(cx, |buffer, cx| {
-                buffer.edit_via_marked_text(&new_text_marked_with_edits.unindent(), None, cx);
+        context.update(cx, |context, model, cx| {
+            context.buffer.update(cx, |buffer, model, cx| {
+                buffer.edit_via_marked_text(
+                    &new_text_marked_with_edits.unindent(),
+                    None,
+                    model,
+                    cx,
+                );
             });
         });
         cx.executor().run_until_parked();
@@ -1031,7 +1050,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         let expected_marked_text = expected_marked_text.unindent();
         let (expected_text, _) = marked_text_ranges(&expected_marked_text, false);
 
-        let (buffer_text, ranges, patches) = context.update(cx, |context, cx| {
+        let (buffer_text, ranges, patches) = context.update(cx, |context, model, cx| {
             context.buffer.read_with(cx, |buffer, _| {
                 let ranges = context
                     .patches
@@ -1084,7 +1103,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
     cx.update(assistant_panel::init);
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
+    let context = cx.new_model(|model, cx| {
         Context::local(
             registry.clone(),
             None,
@@ -1092,31 +1111,32 @@ async fn test_serialization(cx: &mut TestAppContext) {
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
+            model,
             cx,
         )
     });
     let buffer = context.read_with(cx, |context, _| context.buffer.clone());
     let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
-    let message_1 = context.update(cx, |context, cx| {
+    let message_1 = context.update(cx, |context, model, cx| {
         context
             .insert_message_after(message_0, Role::Assistant, MessageStatus::Done, cx)
             .unwrap()
     });
-    let message_2 = context.update(cx, |context, cx| {
+    let message_2 = context.update(cx, |context, model, cx| {
         context
             .insert_message_after(message_1.id, Role::System, MessageStatus::Done, cx)
             .unwrap()
     });
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         buffer.edit([(0..0, "a"), (1..1, "b\nc")], None, cx);
         buffer.finalize_last_transaction();
     });
-    let _message_3 = context.update(cx, |context, cx| {
+    let _message_3 = context.update(cx, |context, model, cx| {
         context
             .insert_message_after(message_2.id, Role::System, MessageStatus::Done, cx)
             .unwrap()
     });
-    buffer.update(cx, |buffer, cx| buffer.undo(cx));
+    buffer.update(cx, |buffer, model, cx| buffer.undo(cx));
     assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), "a\nb\nc\n");
     assert_eq!(
         cx.read(|cx| messages(&context, cx)),
@@ -1128,7 +1148,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
     );
 
     let serialized_context = context.read_with(cx, |context, cx| context.serialize(cx));
-    let deserialized_context = cx.new_model(|cx| {
+    let deserialized_context = cx.new_model(|model, cx| {
         Context::deserialize(
             serialized_context,
             Default::default(),
@@ -1138,6 +1158,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
             Arc::new(ToolWorkingSet::default()),
             None,
             None,
+            model,
             cx,
         )
     });
@@ -1187,7 +1208,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let context_id = ContextId::new();
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     for i in 0..num_peers {
-        let context = cx.new_model(|cx| {
+        let context = cx.new_model(|model, cx| {
             Context::new(
                 context_id.clone(),
                 i as ReplicaId,
@@ -1198,6 +1219,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 Arc::new(ToolWorkingSet::default()),
                 None,
                 None,
+                model,
                 cx,
             )
         });
@@ -1232,15 +1254,15 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
         match rng.gen_range(0..100) {
             0..=29 if mutation_count > 0 => {
                 log::info!("Context {}: edit buffer", context_index);
-                context.update(cx, |context, cx| {
-                    context
-                        .buffer
-                        .update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
+                context.update(cx, |context, model, cx| {
+                    context.buffer.update(cx, |buffer, model, cx| {
+                        buffer.randomly_edit(&mut rng, 1, cx)
+                    });
                 });
                 mutation_count -= 1;
             }
             30..=44 if mutation_count > 0 => {
-                context.update(cx, |context, cx| {
+                context.update(cx, |context, model, cx| {
                     let range = context.buffer.read(cx).random_byte_range(0, &mut rng);
                     log::info!("Context {}: split message at {:?}", context_index, range);
                     context.split_message(range, cx);
@@ -1248,7 +1270,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 mutation_count -= 1;
             }
             45..=59 if mutation_count > 0 => {
-                context.update(cx, |context, cx| {
+                context.update(cx, |context, model, cx| {
                     if let Some(message) = context.messages(cx).choose(&mut rng) {
                         let role = *[Role::User, Role::Assistant, Role::System]
                             .choose(&mut rng)
@@ -1265,7 +1287,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 mutation_count -= 1;
             }
             60..=74 if mutation_count > 0 => {
-                context.update(cx, |context, cx| {
+                context.update(cx, |context, model, cx| {
                     let command_text = "/".to_string()
                         + slash_commands
                             .command_names()
@@ -1274,7 +1296,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             .clone()
                             .as_ref();
 
-                    let command_range = context.buffer.update(cx, |buffer, cx| {
+                    let command_range = context.buffer.update(cx, |buffer, model, cx| {
                         let offset = buffer.random_byte_range(0, &mut rng).start;
                         buffer.edit(
                             [(offset..offset, format!("\n{}\n", command_text))],
@@ -1342,7 +1364,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 mutation_count -= 1;
             }
             75..=84 if mutation_count > 0 => {
-                context.update(cx, |context, cx| {
+                context.update(cx, |context, model, cx| {
                     if let Some(message) = context.messages(cx).choose(&mut rng) {
                         let new_status = match rng.gen_range(0..3) {
                             0 => MessageStatus::Done,
@@ -1390,7 +1412,9 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                     );
 
                     network.lock().broadcast(replica_id, ops_to_send);
-                    context.update(cx, |context, cx| context.apply_ops(ops_to_receive, cx));
+                    context.update(cx, |context, model, cx| {
+                        context.apply_ops(ops_to_receive, cx)
+                    });
                 } else if rng.gen_bool(0.1) && replica_id != 0 {
                     log::info!("Context {}: disconnecting", context_index);
                     network.lock().disconnect_peer(replica_id);
@@ -1402,7 +1426,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         .map(ContextOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                         .unwrap();
-                    context.update(cx, |context, cx| context.apply_ops(ops, cx));
+                    context.update(cx, |context, model, cx| context.apply_ops(ops, cx));
                 }
             }
         }
@@ -1449,7 +1473,7 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
     assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
+    let context = cx.new_model(|model, cx| {
         Context::local(
             registry,
             None,
@@ -1457,6 +1481,7 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             Arc::new(ToolWorkingSet::default()),
+            model,
             cx,
         )
     });
@@ -1471,7 +1496,7 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
 
     let message_1 = context.read(cx).message_anchors[0].clone();
 
-    context.update(cx, |context, cx| {
+    context.update(cx, |context, model, cx| {
         context.mark_cache_anchors(cache_configuration, false, cx)
     });
 
@@ -1484,22 +1509,28 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
         "Empty messages should not have any cache anchors."
     );
 
-    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "aaa")], None, cx));
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(0..0, "aaa")], None, model, cx)
+    });
     let message_2 = context
-        .update(cx, |context, cx| {
+        .update(cx, |context, model, cx| {
             context.insert_message_after(message_1.id, Role::User, MessageStatus::Pending, cx)
         })
         .unwrap();
 
-    buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "bbbbbbb")], None, cx));
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(4..4, "bbbbbbb")], None, model, cx)
+    });
     let message_3 = context
-        .update(cx, |context, cx| {
+        .update(cx, |context, model, cx| {
             context.insert_message_after(message_2.id, Role::User, MessageStatus::Pending, cx)
         })
         .unwrap();
-    buffer.update(cx, |buffer, cx| buffer.edit([(12..12, "cccccc")], None, cx));
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(12..12, "cccccc")], None, model, cx)
+    });
 
-    context.update(cx, |context, cx| {
+    context.update(cx, |context, model, cx| {
         context.mark_cache_anchors(cache_configuration, false, cx)
     });
     assert_eq!(buffer.read(cx).text(), "aaa\nbbbbbbb\ncccccc");
@@ -1511,12 +1542,12 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
         0,
         "Messages should not be marked for cache before going over the token minimum."
     );
-    context.update(cx, |context, _| {
+    context.update(cx, |context, model, _| {
         context.token_count = Some(20);
     });
 
-    context.update(cx, |context, cx| {
-        context.mark_cache_anchors(cache_configuration, true, cx)
+    context.update(cx, |context, model, cx| {
+        context.mark_cache_anchors(cache_configuration, true, model, cx)
     });
     assert_eq!(
         messages_cache(&context, cx)
@@ -1528,12 +1559,12 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
     );
 
     context
-        .update(cx, |context, cx| {
+        .update(cx, |context, model, cx| {
             context.insert_message_after(message_3.id, Role::Assistant, MessageStatus::Pending, cx)
         })
         .unwrap();
 
-    context.update(cx, |context, cx| {
+    context.update(cx, |context, model, cx| {
         context.mark_cache_anchors(cache_configuration, false, cx)
     });
     assert_eq!(
@@ -1544,7 +1575,7 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
         vec![false, true, true, false],
         "Most recent message should also be cached if not a speculative request."
     );
-    context.update(cx, |context, cx| {
+    context.update(cx, |context, model, cx| {
         context.update_cache_status_for_completion(cx)
     });
     assert_eq!(
@@ -1563,8 +1594,10 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
         "All user messages prior to anchor should be marked as cached."
     );
 
-    buffer.update(cx, |buffer, cx| buffer.edit([(14..14, "d")], None, cx));
-    context.update(cx, |context, cx| {
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(14..14, "d")], None, model, cx)
+    });
+    context.update(cx, |context, model, cx| {
         context.mark_cache_anchors(cache_configuration, false, cx)
     });
     assert_eq!(
@@ -1582,8 +1615,10 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
         ],
         "Modifying a message should invalidate it's cache but leave previous messages."
     );
-    buffer.update(cx, |buffer, cx| buffer.edit([(2..2, "e")], None, cx));
-    context.update(cx, |context, cx| {
+    buffer.update(cx, |buffer, model, cx| {
+        buffer.edit([(2..2, "e")], None, model, cx)
+    });
+    context.update(cx, |context, model, cx| {
         context.mark_cache_anchors(cache_configuration, false, cx)
     });
     assert_eq!(
@@ -1642,7 +1677,7 @@ impl SlashCommand for FakeSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
+        _workspace: Option<WeakModel<Workspace>>,
         _window: &mut gpui::Window,
         _cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -1658,7 +1693,7 @@ impl SlashCommand for FakeSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _window: &mut gpui::Window,
         _cx: &mut gpui::AppContext,

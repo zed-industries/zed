@@ -44,7 +44,7 @@ async fn test_open_with_prev_tab_selected_and_cycle_on_toggle_action(
 
     // Starts with the previously opened item selected
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, model, _| {
         assert_eq!(tab_switcher.delegate.matches.len(), 4);
         assert_match_at_position(tab_switcher, 0, tab_4.boxed_clone());
         assert_match_selection(tab_switcher, 1, tab_3.boxed_clone());
@@ -54,7 +54,7 @@ async fn test_open_with_prev_tab_selected_and_cycle_on_toggle_action(
 
     cx.dispatch_action(Toggle { select_last: false });
     cx.dispatch_action(Toggle { select_last: false });
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, model, _| {
         assert_eq!(tab_switcher.delegate.matches.len(), 4);
         assert_match_at_position(tab_switcher, 0, tab_4.boxed_clone());
         assert_match_at_position(tab_switcher, 1, tab_3.boxed_clone());
@@ -63,7 +63,7 @@ async fn test_open_with_prev_tab_selected_and_cycle_on_toggle_action(
     });
 
     cx.dispatch_action(SelectPrev);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, model, _| {
         assert_eq!(tab_switcher.delegate.matches.len(), 4);
         assert_match_at_position(tab_switcher, 0, tab_4.boxed_clone());
         assert_match_at_position(tab_switcher, 1, tab_3.boxed_clone());
@@ -98,7 +98,7 @@ async fn test_open_with_last_tab_selected(cx: &mut gpui::TestAppContext) {
 
     // Starts with the last item selected
     let tab_switcher = open_tab_switcher(true, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, model, _| {
         assert_eq!(tab_switcher.delegate.matches.len(), 3);
         assert_match_at_position(tab_switcher, 0, tab_3);
         assert_match_at_position(tab_switcher, 1, tab_2);
@@ -130,7 +130,7 @@ async fn test_open_item_on_modifiers_release(cx: &mut gpui::TestAppContext) {
 
     cx.simulate_modifiers_change(Modifiers::control());
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, model, _| {
         assert_eq!(tab_switcher.delegate.matches.len(), 2);
         assert_match_at_position(tab_switcher, 0, tab_2.boxed_clone());
         assert_match_selection(tab_switcher, 1, tab_1.boxed_clone());
@@ -154,7 +154,7 @@ async fn test_open_on_empty_pane(cx: &mut gpui::TestAppContext) {
 
     cx.simulate_modifiers_change(Modifiers::control());
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, model, _| {
         assert!(tab_switcher.delegate.matches.is_empty());
     });
 
@@ -177,7 +177,7 @@ async fn test_open_with_single_item(cx: &mut gpui::TestAppContext) {
     let tab = open_buffer("1.txt", &workspace, cx).await;
 
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, model, _| {
         assert_eq!(tab_switcher.delegate.matches.len(), 1);
         assert_match_selection(tab_switcher, 0, tab);
     });
@@ -206,7 +206,7 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
 
     cx.simulate_modifiers_change(Modifiers::control());
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, model, _| {
         assert_eq!(tab_switcher.delegate.matches.len(), 2);
         assert_match_at_position(tab_switcher, 0, tab_2.boxed_clone());
         assert_match_selection(tab_switcher, 1, tab_1.boxed_clone());
@@ -214,7 +214,7 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
 
     cx.simulate_modifiers_change(Modifiers::control());
     cx.dispatch_action(CloseSelectedItem);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, model, _| {
         assert_eq!(tab_switcher.delegate.matches.len(), 1);
         assert_match_selection(tab_switcher, 0, tab_2);
     });
@@ -244,19 +244,19 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
 #[track_caller]
 fn open_tab_switcher(
     select_last: bool,
-    workspace: &View<Workspace>,
+    workspace: &Model<Workspace>,
     cx: &mut VisualTestContext,
-) -> View<Picker<TabSwitcherDelegate>> {
+) -> Model<Picker<TabSwitcherDelegate>> {
     cx.dispatch_action(Toggle { select_last });
     get_active_tab_switcher(workspace, cx)
 }
 
 #[track_caller]
 fn get_active_tab_switcher(
-    workspace: &View<Workspace>,
+    workspace: &Model<Workspace>,
     cx: &mut VisualTestContext,
-) -> View<Picker<TabSwitcherDelegate>> {
-    workspace.update(cx, |workspace, cx| {
+) -> Model<Picker<TabSwitcherDelegate>> {
+    workspace.update(cx, |workspace, model, cx| {
         workspace
             .active_modal::<TabSwitcher>(cx)
             .expect("tab switcher is not open")
@@ -268,11 +268,11 @@ fn get_active_tab_switcher(
 
 async fn open_buffer(
     file_path: &str,
-    workspace: &View<Workspace>,
+    workspace: &Model<Workspace>,
     cx: &mut gpui::VisualTestContext,
 ) -> Box<dyn ItemHandle> {
-    let project = workspace.update(cx, |workspace, _| workspace.project().clone());
-    let worktree_id = project.update(cx, |project, cx| {
+    let project = workspace.update(cx, |workspace, model, _| workspace.project().clone());
+    let worktree_id = project.update(cx, |project, model, cx| {
         let worktree = project.worktrees(cx).last().expect("worktree not found");
         worktree.read(cx).id()
     });
@@ -281,8 +281,8 @@ async fn open_buffer(
         path: Arc::from(Path::new(file_path)),
     };
     workspace
-        .update(cx, move |workspace, cx| {
-            workspace.open_path(project_path, None, true, cx)
+        .update(cx, move |workspace, model, cx| {
+            workspace.open_path(project_path, None, true, model, cx)
         })
         .await
         .unwrap()
@@ -317,8 +317,8 @@ fn assert_match_at_position(
 }
 
 #[track_caller]
-fn assert_tab_switcher_is_closed(workspace: View<Workspace>, cx: &mut VisualTestContext) {
-    workspace.update(cx, |workspace, cx| {
+fn assert_tab_switcher_is_closed(workspace: Model<Workspace>, cx: &mut VisualTestContext) {
+    workspace.update(cx, |workspace, model, cx| {
         assert!(
             workspace.active_modal::<TabSwitcher>(cx).is_none(),
             "tab switcher is still open"

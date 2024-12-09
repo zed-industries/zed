@@ -135,14 +135,14 @@ impl Replayer {
                 utf16_range_to_replace,
             } => {
                 cx.window_handle()
-                    .update(cx, |handle, cx| {
+                    .update(cx, |handle, model, cx| {
                         let Ok(workspace) = handle.downcast::<Workspace>() else {
                             return;
                         };
                         let Some(editor) = workspace.read(cx).active_item_as::<Editor>(cx) else {
                             return;
                         };
-                        editor.update(cx, |editor, cx| {
+                        editor.update(cx, |editor, model, cx| {
                             editor.replay_insert_event(&text, utf16_range_to_replace.clone(), cx)
                         })
                     })
@@ -262,6 +262,7 @@ impl Vim {
                         display_lines: false,
                     },
                     Some(rows as usize),
+                    model,
                     cx,
                 );
                 self.visual_motion(
@@ -269,6 +270,7 @@ impl Vim {
                         display_lines: false,
                     },
                     None,
+                    model,
                     cx,
                 );
                 if cols > 1 {
@@ -281,6 +283,7 @@ impl Vim {
                         display_lines: false,
                     },
                     Some(rows as usize),
+                    model,
                     cx,
                 );
                 if cols > 1 {
@@ -293,6 +296,7 @@ impl Vim {
                         display_lines: false,
                     },
                     Some(rows as usize),
+                    model,
                     cx,
                 );
             }

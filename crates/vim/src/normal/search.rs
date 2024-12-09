@@ -109,7 +109,7 @@ impl Vim {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.move_to_match_internal(self.search.direction, cx)
+        self.move_to_match_internal(self.search.direction, model, cx)
     }
 
     fn move_to_prev_match(
@@ -118,7 +118,7 @@ impl Vim {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.move_to_match_internal(self.search.direction.opposite(), cx)
+        self.move_to_match_internal(self.search.direction.opposite(), model, cx)
     }
 
     fn search(&mut self, action: &Search, model: &Model<Self>, cx: &mut AppContext) {
@@ -132,9 +132,9 @@ impl Vim {
         };
         let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(cx);
-        pane.update(cx, |pane, cx| {
+        pane.update(cx, |pane, model, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-                search_bar.update(cx, |search_bar, cx| {
+                search_bar.update(cx, |search_bar, model, cx| {
                     if !search_bar.show(cx) {
                         return;
                     }
@@ -182,9 +182,9 @@ impl Vim {
     pub fn search_submit(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.store_visual_marks(cx);
         let Some(pane) = self.pane(cx) else { return };
-        let result = pane.update(cx, |pane, cx| {
+        let result = pane.update(cx, |pane, model, cx| {
             let search_bar = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()?;
-            search_bar.update(cx, |search_bar, cx| {
+            search_bar.update(cx, |search_bar, model, cx| {
                 let mut count = self.search.count;
                 let direction = self.search.direction;
                 // in the case that the query has changed, the search bar
@@ -225,10 +225,10 @@ impl Vim {
         }
 
         if prior_mode != self.mode {
-            self.switch_mode(prior_mode, true, cx);
+            self.switch_mode(prior_mode, true, model, cx);
         }
         if let Some(operator) = prior_operator {
-            self.push_operator(operator, cx);
+            self.push_operator(operator, model, cx);
         };
         self.search_motion(
             Motion::ZedSearchResult {
@@ -249,11 +249,11 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(cx);
 
-        let success = pane.update(cx, |pane, cx| {
+        let success = pane.update(cx, |pane, model, cx| {
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return false;
             };
-            search_bar.update(cx, |search_bar, cx| {
+            search_bar.update(cx, |search_bar, model, cx| {
                 if !search_bar.has_active_match() || !search_bar.show(cx) {
                     return false;
                 }
@@ -289,12 +289,12 @@ impl Vim {
         let prior_selections = self.editor_selections(cx);
         let vim = cx.view().clone();
 
-        let searched = pane.update(cx, |pane, cx| {
+        let searched = pane.update(cx, |pane, model, cx| {
             self.search.direction = direction;
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return false;
             };
-            let search = search_bar.update(cx, |search_bar, cx| {
+            let search = search_bar.update(cx, |search_bar, model, cx| {
                 let mut options = SearchOptions::NONE;
                 if case_sensitive {
                     options |= SearchOptions::CASE_SENSITIVE;
@@ -324,7 +324,7 @@ impl Vim {
                 search_bar.update(&mut cx, |search_bar, cx| {
                     search_bar.select_match(direction, count, cx);
 
-                    vim.update(cx, |vim, cx| {
+                    vim.update(cx, |vim, model, cx| {
                         let new_selections = vim.editor_selections(cx);
                         vim.search_motion(
                             Motion::ZedSearchResult {
@@ -345,15 +345,15 @@ impl Vim {
         }
 
         if self.mode.is_visual() {
-            self.switch_mode(Mode::Normal, false, cx)
+            self.switch_mode(Mode::Normal, false, model, cx)
         }
     }
 
     fn find_command(&mut self, action: &FindCommand, model: &Model<Self>, cx: &mut AppContext) {
         let Some(pane) = self.pane(cx) else { return };
-        pane.update(cx, |pane, cx| {
+        pane.update(cx, |pane, model, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-                let search = search_bar.update(cx, |search_bar, cx| {
+                let search = search_bar.update(cx, |search_bar, model, cx| {
                     if !search_bar.show(cx) {
                         return None;
                     }
@@ -404,24 +404,24 @@ impl Vim {
             return;
         };
         if let Some(result) = self.update_editor(cx, |vim, editor, cx| {
-            let range = action.range.buffer_range(vim, editor, cx)?;
+            let range = action.range.buffer_range(vim, editor, model, cx)?;
             let snapshot = &editor.snapshot(cx).buffer_snapshot;
             let end_point = Point::new(range.end.0, snapshot.line_len(range.end));
             let range = snapshot.anchor_before(Point::new(range.start.0, 0))
                 ..snapshot.anchor_after(end_point);
-            editor.set_search_within_ranges(&[range], cx);
+            editor.set_search_within_ranges(&[range], model, cx);
             anyhow::Ok(())
         }) {
-            workspace.update(cx, |workspace, cx| {
-                result.notify_err(workspace, cx);
+            workspace.update(cx, |workspace, model, cx| {
+                result.notify_err(workspace, model, cx);
             })
         }
         let vim = cx.view().clone();
-        pane.update(cx, |pane, cx| {
+        pane.update(cx, |pane, model, cx| {
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return;
             };
-            let search = search_bar.update(cx, |search_bar, cx| {
+            let search = search_bar.update(cx, |search_bar, model, cx| {
                 if !search_bar.show(cx) {
                     return None;
                 }
@@ -461,7 +461,7 @@ impl Vim {
                                 .ok();
                         })
                         .detach();
-                        vim.update(cx, |vim, cx| {
+                        vim.update(cx, |vim, model, cx| {
                             vim.move_cursor(
                                 Motion::StartOfLine {
                                     display_lines: false,

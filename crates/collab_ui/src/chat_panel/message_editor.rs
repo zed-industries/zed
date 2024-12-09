@@ -37,7 +37,7 @@ static MENTIONS_SEARCH: LazyLock<SearchQuery> = LazyLock::new(|| {
 });
 
 pub struct MessageEditor {
-    pub editor: View<Editor>,
+    pub editor: Model<Editor>,
     user_store: Model<UserStore>,
     channel_chat: Option<Model<ChannelChat>>,
     mentions: Vec<UserId>,
@@ -46,7 +46,7 @@ pub struct MessageEditor {
     edit_message_id: Option<u64>,
 }
 
-struct MessageEditorCompletionProvider(WeakView<MessageEditor>);
+struct MessageEditorCompletionProvider(WeakModel<MessageEditor>);
 
 impl CompletionProvider for MessageEditorCompletionProvider {
     fn completions(
@@ -59,7 +59,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         let Some(handle) = self.0.upgrade() else {
             return Task::ready(Ok(Vec::new()));
         };
-        handle.update(cx, |message_editor, cx| {
+        handle.update(cx, |message_editor, model, cx| {
             message_editor.completions(buffer, buffer_position, cx)
         })
     }
@@ -101,11 +101,11 @@ impl MessageEditor {
         language_registry: Arc<LanguageRegistry>,
         user_store: Model<UserStore>,
         channel_chat: Option<Model<ChannelChat>>,
-        editor: View<Editor>,
+        editor: Model<Editor>,
         model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         let this = cx.view().downgrade();
-        editor.update(cx, |editor, cx| {
+        editor.update(cx, |editor, model, cx| {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_use_autoclose(false);
             editor.set_show_gutter(false, cx);
@@ -128,7 +128,7 @@ impl MessageEditor {
 
         cx.subscribe(&buffer, Self::on_buffer_event).detach();
         cx.observe_global::<settings::SettingsStore>(|view, cx| {
-            view.editor.update(cx, |editor, cx| {
+            view.editor.update(cx, |editor, model, cx| {
                 editor.set_auto_replace_emoji_shortcode(
                     MessageEditorSettings::get_global(cx)
                         .auto_replace_emoji_shortcode
@@ -189,7 +189,7 @@ impl MessageEditor {
             .read(cx)
             .channel_for_id(channel_id)
             .map(|channel| channel.name.clone());
-        self.editor.update(cx, |editor, cx| {
+        self.editor.update(cx, |editor, model, cx| {
             if let Some(channel_name) = channel_name {
                 editor.set_placeholder_text(format!("Message #{channel_name}"), cx);
             } else {
@@ -199,7 +199,7 @@ impl MessageEditor {
     }
 
     pub fn take_message(&mut self, model: &Model<Self>, cx: &mut AppContext) -> MessageParams {
-        self.editor.update(cx, |editor, cx| {
+        self.editor.update(cx, |editor, model, cx| {
             let highlights = editor.text_highlights::<Self>(cx);
             let text = editor.text(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -237,7 +237,7 @@ impl MessageEditor {
                 cx.background_executor()
                     .timer(MENTIONS_DEBOUNCE_INTERVAL)
                     .await;
-                Self::find_mentions(this, buffer, cx).await;
+                Self::find_mentions(this, buffer, model, cx).await;
             }));
         }
     }
@@ -249,7 +249,7 @@ impl MessageEditor {
         model: &Model<Self>, cx: &mut AppContext,
     ) -> Task<Result<Vec<Completion>>> {
         if let Some((start_anchor, query, candidates)) =
-            self.collect_mention_candidates(buffer, end_anchor, cx)
+            self.collect_mention_candidates(buffer, end_anchor, model, cx)
         {
             if !candidates.is_empty() {
                 return cx.spawn(|_, cx| async move {
@@ -266,7 +266,7 @@ impl MessageEditor {
         }
 
         if let Some((start_anchor, query, candidates)) =
-            self.collect_emoji_candidates(buffer, end_anchor, cx)
+            self.collect_emoji_candidates(buffer, end_anchor, model, cx)
         {
             if !candidates.is_empty() {
                 return cx.spawn(|_, cx| async move {
@@ -346,7 +346,7 @@ impl MessageEditor {
     ) -> Option<(Anchor, String, Vec<StringMatchCandidate>)> {
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
-        let query = buffer.update(cx, |buffer, _| {
+        let query = buffer.update(cx, |buffer, model, _| {
             let mut query = String::new();
             for ch in buffer.reversed_chars_at(end_offset).take(100) {
                 if ch == '@' {
@@ -412,7 +412,7 @@ impl MessageEditor {
 
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
-        let query = buffer.update(cx, |buffer, _| {
+        let query = buffer.update(cx, |buffer, model, _| {
             let mut query = String::new();
             for ch in buffer.reversed_chars_at(end_offset).take(100) {
                 if ch == ':' {
@@ -457,7 +457,7 @@ impl MessageEditor {
     }
 
     async fn find_mentions(
-        this: WeakView<MessageEditor>,
+        this: WeakModel<MessageEditor>,
         buffer: BufferSnapshot,
         mut window: AnyWindowHandle,
         cx: AsyncAppContext,
@@ -470,12 +470,12 @@ impl MessageEditor {
             })
             .await;
 
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, model, cx| {
             let mut anchor_ranges = Vec::new();
             let mut mentioned_user_ids = Vec::new();
             let mut text = String::new();
 
-            this.editor.update(cx, |editor, cx| {
+            this.editor.update(cx, |editor, model, cx| {
                 let multi_buffer = editor.buffer().read(cx).snapshot(cx);
                 for range in ranges {
                     text.clear();
@@ -518,7 +518,7 @@ impl MessageEditor {
 }
 
 impl Render for MessageEditor {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.editor.read(cx).read_only(cx) {

@@ -531,7 +531,7 @@ impl SshRemoteClient {
 
                 let client =
                     cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "client"))?;
-                let this = cx.new_model(|_| Self {
+                let this = cx.new_model(|_, _| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
                     connection_options: connection_options.clone(),
@@ -567,7 +567,7 @@ impl SshRemoteClient {
                 let heartbeat_task =
                     Self::heartbeat(this.downgrade(), connection_activity_rx, &mut cx);
 
-                this.update(&mut cx, |this, _| {
+                this.update(&mut cx, |this, _, _| {
                     *this.state.lock() = Some(State::Connected {
                         ssh_connection,
                         delegate,
@@ -681,18 +681,18 @@ impl SshRemoteClient {
                 MAX_RECONNECT_ATTEMPTS
             );
             drop(lock);
-            self.set_state(State::ReconnectExhausted, cx);
+            self.set_state(State::ReconnectExhausted, model, cx);
             return Ok(());
         }
         drop(lock);
 
-        self.set_state(State::Reconnecting, cx);
+        self.set_state(State::Reconnecting, model, cx);
 
         log::info!("Trying to reconnect to ssh server... Attempt {}", attempts);
 
         let unique_identifier = self.unique_identifier.clone();
         let client = self.client.clone();
-        let reconnect_task = cx.spawn(|this, mut cx| async move {
+        let reconnect_task = model.spawn(cx, |this, mut cx| async move {
             macro_rules! failed {
                 ($error:expr, $attempts:expr, $ssh_connection:expr, $delegate:expr) => {
                     return State::ReconnectFailed {
@@ -760,10 +760,10 @@ impl SshRemoteClient {
             }
         });
 
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             let new_state = reconnect_task.await;
-            this.update(&mut cx, |this, cx| {
-                this.try_set_state(cx, |old_state| {
+            this.update(&mut cx, |this, model, cx| {
+                this.try_set_state(model, cx, |old_state| {
                     if old_state.is_reconnecting() {
                         match &new_state {
                             State::Connecting
@@ -793,7 +793,7 @@ impl SshRemoteClient {
                 });
 
                 if this.state_is(State::is_reconnect_failed) {
-                    this.reconnect(cx)
+                    this.reconnect(model, cx)
                 } else if this.state_is(State::is_reconnect_exhausted) {
                     Ok(())
                 } else {
@@ -812,7 +812,7 @@ impl SshRemoteClient {
         mut connection_activity_rx: mpsc::Receiver<()>,
         cx: &mut AsyncAppContext,
     ) -> Task<Result<()>> {
-        let Ok(client) = this.update(cx, |this, _| this.client.clone()) else {
+        let Ok(client) = this.update(cx, |this, model, _| this.client.clone()) else {
             return Task::ready(Err(anyhow!("SshRemoteClient lost")));
         };
 
@@ -834,8 +834,8 @@ impl SshRemoteClient {
 
                             if missed_heartbeats != 0 {
                                 missed_heartbeats = 0;
-                                this.update(&mut cx, |this, mut cx| {
-                                    this.handle_heartbeat_result(missed_heartbeats, &mut cx)
+                                this.update(&mut cx, |this, model, mut cx| {
+                                    this.handle_heartbeat_result(missed_heartbeats, model, &mut cx)
                                 })?;
                             }
                         }
@@ -865,8 +865,8 @@ impl SshRemoteClient {
                                 continue;
                             }
 
-                            let result = this.update(&mut cx, |this, mut cx| {
-                                this.handle_heartbeat_result(missed_heartbeats, &mut cx)
+                            let result = this.update(&mut cx, |this, model, mut cx| {
+                                this.handle_heartbeat_result(missed_heartbeats, model, &mut cx)
                             })?;
                             if result.is_break() {
                                 return Ok(());
@@ -893,7 +893,7 @@ impl SshRemoteClient {
             state.heartbeat_recovered()
         };
 
-        self.set_state(next_state, cx);
+        self.set_state(next_state, model, cx);
 
         if missed_heartbeats >= MAX_MISSED_HEARTBEATS {
             log::error!(
@@ -901,7 +901,7 @@ impl SshRemoteClient {
                 missed_heartbeats
             );
 
-            self.reconnect(cx)
+            self.reconnect(model, cx)
                 .context("failed to start reconnect process after missing heartbeats")
                 .log_err();
             ControlFlow::Break(())
@@ -924,22 +924,22 @@ impl SshRemoteClient {
                         match error {
                             ProxyLaunchError::ServerNotRunning => {
                                 log::error!("failed to reconnect because server is not running");
-                                this.update(&mut cx, |this, cx| {
-                                    this.set_state(State::ServerNotRunning, cx);
+                                this.update(&mut cx, |this, model, cx| {
+                                    this.set_state(State::ServerNotRunning, model, cx);
                                 })?;
                             }
                         }
                     } else if exit_code > 0 {
                         log::error!("proxy process terminated unexpectedly");
-                        this.update(&mut cx, |this, cx| {
-                            this.reconnect(cx).ok();
+                        this.update(&mut cx, |this, model, cx| {
+                            this.reconnect(model, cx).ok();
                         })?;
                     }
                 }
                 Err(error) => {
                     log::warn!("ssh io task died with error: {:?}. reconnecting...", error);
-                    this.update(&mut cx, |this, cx| {
-                        this.reconnect(cx).ok();
+                    this.update(&mut cx, |this, model, cx| {
+                        this.reconnect(model, cx).ok();
                     })?;
                 }
             }
@@ -963,7 +963,7 @@ impl SshRemoteClient {
 
         if let Some(new_state) = new_state {
             lock.replace(new_state);
-            cx.notify();
+            model.notify(cx);
         }
     }
 
@@ -975,9 +975,9 @@ impl SshRemoteClient {
         self.state.lock().replace(state);
 
         if is_reconnect_exhausted || is_server_not_running {
-            cx.emit(SshRemoteEvent::Disconnected);
+            model.emit(cx, SshRemoteEvent::Disconnected);
         }
-        cx.notify();
+        model.notify(cx);
     }
 
     pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Model<E>) {

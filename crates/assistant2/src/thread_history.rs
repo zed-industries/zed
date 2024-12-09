@@ -10,19 +10,20 @@ use crate::AssistantPanel;
 
 pub struct ThreadHistory {
     focus_handle: FocusHandle,
-    assistant_panel: WeakView<AssistantPanel>,
+    assistant_panel: WeakModel<AssistantPanel>,
     thread_store: Model<ThreadStore>,
     scroll_handle: UniformListScrollHandle,
 }
 
 impl ThreadHistory {
     pub(crate) fn new(
-        assistant_panel: WeakView<AssistantPanel>,
+        assistant_panel: WeakModel<AssistantPanel>,
         thread_store: Model<ThreadStore>,
-        model: &Model<Self>, cx: &mut AppContext,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(),
             assistant_panel,
             thread_store,
             scroll_handle: UniformListScrollHandle::default(),
@@ -37,8 +38,15 @@ impl FocusableView for ThreadHistory {
 }
 
 impl Render for ThreadHistory {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
-        let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
+        let threads = self
+            .thread_store
+            .update(cx, |this, model, cx| this.threads(cx));
 
         v_flex()
             .id("thread-history-container")
@@ -85,11 +93,11 @@ impl Render for ThreadHistory {
 #[derive(IntoElement)]
 pub struct PastThread {
     thread: Model<Thread>,
-    assistant_panel: WeakView<AssistantPanel>,
+    assistant_panel: WeakModel<AssistantPanel>,
 }
 
 impl PastThread {
-    pub fn new(thread: Model<Thread>, assistant_panel: WeakView<AssistantPanel>) -> Self {
+    pub fn new(thread: Model<Thread>, assistant_panel: WeakModel<AssistantPanel>) -> Self {
         Self {
             thread,
             assistant_panel,
@@ -113,7 +121,7 @@ impl RenderOnce for PastThread {
                 .unwrap(),
             OffsetDateTime::now_utc(),
             self.assistant_panel
-                .update(cx, |this, _cx| this.local_timezone())
+                .update(cx, |this, model, _cx| this.local_timezone())
                 .unwrap_or(UtcOffset::UTC),
             time_format::TimestampFormat::EnhancedAbsolute,
         );
@@ -133,7 +141,7 @@ impl RenderOnce for PastThread {
                                 let id = id.clone();
                                 move |_event, cx| {
                                     assistant_panel
-                                        .update(cx, |this, cx| {
+                                        .update(cx, |this, model, cx| {
                                             this.delete_thread(&id, cx);
                                         })
                                         .ok();
@@ -146,7 +154,7 @@ impl RenderOnce for PastThread {
                 let id = id.clone();
                 move |_event, cx| {
                     assistant_panel
-                        .update(cx, |this, cx| {
+                        .update(cx, |this, model, cx| {
                             this.open_thread(&id, cx);
                         })
                         .ok();

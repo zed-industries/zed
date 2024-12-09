@@ -64,9 +64,13 @@ pub struct SettingsPage {
 }
 
 impl SettingsPage {
-    pub fn new(_workspace: &Workspace, model: &Model<Workspace>, cx: &mut AppContext) -> View<Self> {
-        cx.new_view(|cx| Self {
-            focus_handle: cx.focus_handle(),
+    pub fn new(
+        _workspace: &Workspace,
+        model: &Model<Workspace>,
+        cx: &mut AppContext,
+    ) -> Model<Self> {
+        cx.new_model(|model, cx| Self {
+            focus_handle: window.focus_handle(),
         })
     }
 }
@@ -100,7 +104,12 @@ impl Item for SettingsPage {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         v_flex()
             .p_4()
             .size_full()

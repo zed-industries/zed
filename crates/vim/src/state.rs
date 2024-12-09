@@ -175,7 +175,7 @@ pub struct VimGlobals {
     pub registers: HashMap<char, Register>,
     pub recordings: HashMap<char, Vec<ReplayableAction>>,
 
-    pub focused_vim: Option<WeakView<Vim>>,
+    pub focused_vim: Option<WeakModel<Vim>>,
 }
 impl Global for VimGlobals {}
 
@@ -396,7 +396,7 @@ impl VimGlobals {
         }
     }
 
-    pub fn focused_vim(&self) -> Option<View<Vim>> {
+    pub fn focused_vim(&self) -> Option<Model<Vim>> {
         self.focused_vim.as_ref().and_then(|vim| vim.upgrade())
     }
 }

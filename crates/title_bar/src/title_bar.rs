@@ -52,8 +52,8 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        let item = cx.new_view(|cx| TitleBar::new("title-bar", workspace, cx));
-        workspace.set_titlebar_item(item.into(), cx)
+        let item = cx.new_model(|model, cx| TitleBar::new("title-bar", workspace, model, cx));
+        workspace.set_titlebar_item(item.into(), model, cx)
     })
     .detach();
 }
@@ -65,14 +65,19 @@ pub struct TitleBar {
     project: Model<Project>,
     user_store: Model<UserStore>,
     client: Arc<Client>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     should_move: bool,
-    application_menu: Option<View<ApplicationMenu>>,
+    application_menu: Option<Model<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Render for TitleBar {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let close_action = Box::new(workspace::CloseWindow);
         let height = Self::height(cx);
         let supported_controls = cx.window_controls();
@@ -153,7 +158,7 @@ impl Render for TitleBar {
                                 if matches!(status, client::Status::Connected { .. }) {
                                     el.child(self.render_user_menu_button(cx))
                                 } else {
-                                    el.children(self.render_connection_status(status, cx))
+                                    el.children(self.render_connection_status(status, model, cx))
                                         .child(self.render_sign_in_button(cx))
                                         .child(self.render_user_menu_button(cx))
                                 }
@@ -171,24 +176,24 @@ impl Render for TitleBar {
                                     cx.show_window_menu(ev.position)
                                 })
                             })
-                            .on_mouse_move(cx.listener(move |this, _ev, cx| {
+                            .on_mouse_move(model.listener(move |this, _ev, cx| {
                                 if this.should_move {
                                     this.should_move = false;
                                     cx.start_window_move();
                                 }
                             }))
-                            .on_mouse_down_out(cx.listener(move |this, _ev, _cx| {
+                            .on_mouse_down_out(model.listener(move |this, _ev, _cx| {
                                 this.should_move = false;
                             }))
                             .on_mouse_up(
                                 gpui::MouseButton::Left,
-                                cx.listener(move |this, _ev, _cx| {
+                                model.listener(move |this, _ev, _cx| {
                                     this.should_move = false;
                                 }),
                             )
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
-                                cx.listener(move |this, _ev, _cx| {
+                                model.listener(move |this, _ev, _cx| {
                                     this.should_move = true;
                                 }),
                             )
@@ -219,20 +224,20 @@ impl TitleBar {
         let application_menu = match platform_style {
             PlatformStyle::Mac => None,
             PlatformStyle::Linux | PlatformStyle::Windows => {
-                Some(cx.new_view(ApplicationMenu::new))
+                Some(cx.new_model(ApplicationMenu::new))
             }
         };
 
         let mut subscriptions = Vec::new();
         subscriptions.push(
             cx.observe(&workspace.weak_handle().upgrade().unwrap(), |_, _, cx| {
-                cx.notify()
+                model.notify(cx)
             }),
         );
-        subscriptions.push(cx.observe(&project, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&project, |_, _, cx| model.notify(cx)));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(Self::window_activation_changed));
-        subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&user_store, |_, _, cx| model.notify(cx)));
 
         Self {
             platform_style,
@@ -324,8 +329,8 @@ impl TitleBar {
                         .text_ellipsis()
                         .child(Label::new(nickname.clone()).size(LabelSize::Small)),
                 )
-                .tooltip(move |cx| {
-                    Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), cx)
+                .tooltip(move |window, cx| {
+                    Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), model, cx)
                 })
                 .on_click(|_, cx| {
                     cx.dispatch_action(OpenRemote.boxed_clone());
@@ -366,7 +371,7 @@ impl TitleBar {
                 .color(Color::Player(participant_index.0))
                 .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
-                .tooltip(move |cx| {
+                .tooltip(move |window, cx| {
                     Tooltip::text(
                         format!(
                             "{} is sharing this project. Click to follow.",
@@ -377,9 +382,9 @@ impl TitleBar {
                 })
                 .on_click({
                     let host_peer_id = host.peer_id;
-                    cx.listener(move |this, _, cx| {
+                    model.listener(move |this, _, cx| {
                         this.workspace
-                            .update(cx, |workspace, cx| {
+                            .update(cx, |workspace, model, cx| {
                                 workspace.follow(host_peer_id, cx);
                             })
                             .log_err();
@@ -413,16 +418,17 @@ impl TitleBar {
             .when(!is_project_selected, |b| b.color(Color::Muted))
             .style(ButtonStyle::Subtle)
             .label_size(LabelSize::Small)
-            .tooltip(move |cx| {
+            .tooltip(move |window, cx| {
                 Tooltip::for_action(
                     "Recent Projects",
                     &zed_actions::OpenRecent {
                         create_new_window: false,
                     },
+                    model,
                     cx,
                 )
             })
-            .on_click(cx.listener(move |_, _, cx| {
+            .on_click(model.listener(move |_, _, model, window, cx| {
                 cx.dispatch_action(
                     OpenRecent {
                         create_new_window: false,
@@ -456,16 +462,17 @@ impl TitleBar {
                 .color(Color::Muted)
                 .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
-                .tooltip(move |cx| {
+                .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
                         Some(&zed_actions::branches::OpenRecent),
                         "Local branches only",
+                        model,
                         cx,
                     )
                 })
                 .on_click(move |_, cx| {
-                    let _ = workspace.update(cx, |_this, cx| {
+                    let _ = workspace.update(cx, |_this, model, cx| {
                         cx.dispatch_action(zed_actions::branches::OpenRecent.boxed_clone());
                     });
                 }),
@@ -475,29 +482,31 @@ impl TitleBar {
     fn window_activation_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if cx.is_window_active() {
             ActiveCall::global(cx)
-                .update(cx, |call, cx| call.set_location(Some(&self.project), cx))
+                .update(cx, |call, model, cx| {
+                    call.set_location(Some(&self.project), model, cx)
+                })
                 .detach_and_log_err(cx);
         } else if cx.active_window().is_none() {
             ActiveCall::global(cx)
-                .update(cx, |call, cx| call.set_location(None, cx))
+                .update(cx, |call, model, cx| call.set_location(None, model, cx))
                 .detach_and_log_err(cx);
         }
         self.workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.update_active_view_for_followers(cx);
             })
             .ok();
     }
 
     fn active_call_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        cx.notify();
+        model.notify(cx);
     }
 
     fn share_project(&mut self, _: &ShareProject, model: &Model<Self>, cx: &mut AppContext) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
-            .update(cx, |call, cx| call.share_project(project, cx))
+            .update(cx, |call, model, cx| call.share_project(project, model, cx))
             .detach_and_log_err(cx);
     }
 
@@ -505,7 +514,9 @@ impl TitleBar {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
-            .update(cx, |call, cx| call.unshare_project(project, cx))
+            .update(cx, |call, model, cx| {
+                call.unshare_project(project, model, cx)
+            })
             .log_err();
     }
 
@@ -524,7 +535,7 @@ impl TitleBar {
                 div()
                     .id("disconnected")
                     .child(Icon::new(IconName::Disconnected).size(IconSize::Small))
-                    .tooltip(|cx| Tooltip::text("Disconnected", cx))
+                    .tooltip(|window, cx| Tooltip::text("Disconnected", cx))
                     .into_any_element(),
             ),
             client::Status::UpgradeRequired => {
@@ -549,7 +560,7 @@ impl TitleBar {
                                     return;
                                 }
                             }
-                            auto_update::check(&Default::default(), cx);
+                            auto_update::check(&Default::default(), model, cx);
                         })
                         .into_any_element(),
                 )
@@ -584,7 +595,7 @@ impl TitleBar {
             let plan = user_store.current_plan();
             PopoverMenu::new("user-menu")
                 .menu(move |cx| {
-                    ContextMenu::build(cx, |menu, cx| {
+                    ContextMenu::build(cx, window, |menu, model, window, cx| {
                         menu.when(cx.has_flag::<ZedPro>(), |menu| {
                             menu.action(
                                 format!(
@@ -635,13 +646,13 @@ impl TitleBar {
                                 ),
                         )
                         .style(ButtonStyle::Subtle)
-                        .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                        .tooltip(move |window, cx| Tooltip::text("Toggle User Menu", cx)),
                 )
                 .anchor(gpui::AnchorCorner::TopRight)
         } else {
             PopoverMenu::new("user-menu")
                 .menu(|cx| {
-                    ContextMenu::build(cx, |menu, _| {
+                    ContextMenu::build(cx, window, |menu, model, window, cx| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
                             .action(
@@ -670,7 +681,7 @@ impl TitleBar {
                             ),
                         )
                         .style(ButtonStyle::Subtle)
-                        .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                        .tooltip(move |window, cx| Tooltip::text("Toggle User Menu", cx)),
                 )
         }
     }

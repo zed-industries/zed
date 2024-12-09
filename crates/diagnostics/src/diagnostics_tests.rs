@@ -61,12 +61,12 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     let language_server_id = LanguageServerId(0);
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), model, cx));
+    let cx = &mut VisualTestContext::from_window(*window, model, cx);
     let workspace = window.root(cx).unwrap();
 
     // Create some diagnostics
-    lsp_store.update(cx, |lsp_store, cx| {
+    lsp_store.update(cx, |lsp_store, model, cx| {
         lsp_store
             .update_diagnostic_entries(
                 language_server_id,
@@ -159,7 +159,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let editor = view.update(cx, |view, _| view.editor.clone());
+    let editor = view.update(cx, |view, model, _| view.editor.clone());
 
     view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
@@ -174,7 +174,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         ]
     );
     assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
+        editor.update(cx, |editor, model, cx| editor.display_text(cx)),
         concat!(
             //
             // main.rs
@@ -215,7 +215,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     );
 
     // Cursor is at the first diagnostic
-    editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, model, cx| {
         assert_eq!(
             editor.selections.display_ranges(cx),
             [DisplayPoint::new(DisplayRow(12), 6)..DisplayPoint::new(DisplayRow(12), 6)]
@@ -223,7 +223,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     // Diagnostics are added for another earlier path.
-    lsp_store.update(cx, |lsp_store, cx| {
+    lsp_store.update(cx, |lsp_store, model, cx| {
         lsp_store.disk_based_diagnostics_started(language_server_id, cx);
         lsp_store
             .update_diagnostic_entries(
@@ -263,7 +263,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     );
 
     assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
+        editor.update(cx, |editor, model, cx| editor.display_text(cx)),
         concat!(
             //
             // consts.rs
@@ -315,7 +315,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     );
 
     // Cursor keeps its position.
-    editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, model, cx| {
         assert_eq!(
             editor.selections.display_ranges(cx),
             [DisplayPoint::new(DisplayRow(19), 6)..DisplayPoint::new(DisplayRow(19), 6)]
@@ -323,7 +323,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     // Diagnostics are added to the first path
-    lsp_store.update(cx, |lsp_store, cx| {
+    lsp_store.update(cx, |lsp_store, model, cx| {
         lsp_store.disk_based_diagnostics_started(language_server_id, cx);
         lsp_store
             .update_diagnostic_entries(
@@ -378,7 +378,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     );
 
     assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
+        editor.update(cx, |editor, model, cx| editor.display_text(cx)),
         concat!(
             //
             // consts.rs
@@ -460,8 +460,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let server_id_2 = LanguageServerId(101);
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), model, cx));
+    let cx = &mut VisualTestContext::from_window(*window, model, cx);
     let workspace = window.root(cx).unwrap();
 
     let view = window.build_view(cx, |cx| {
@@ -473,10 +473,10 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let editor = view.update(cx, |view, _| view.editor.clone());
+    let editor = view.update(cx, |view, model, _| view.editor.clone());
 
     // Two language servers start updating diagnostics
-    lsp_store.update(cx, |lsp_store, cx| {
+    lsp_store.update(cx, |lsp_store, model, cx| {
         lsp_store.disk_based_diagnostics_started(server_id_1, cx);
         lsp_store.disk_based_diagnostics_started(server_id_2, cx);
         lsp_store
@@ -501,7 +501,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     });
 
     // The first language server finishes
-    lsp_store.update(cx, |lsp_store, cx| {
+    lsp_store.update(cx, |lsp_store, model, cx| {
         lsp_store.disk_based_diagnostics_finished(server_id_1, cx);
     });
 
@@ -517,7 +517,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         ]
     );
     assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
+        editor.update(cx, |editor, model, cx| editor.display_text(cx)),
         concat!(
             "\n", // filename
             "\n", // padding
@@ -530,7 +530,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     );
 
     // The second language server finishes
-    lsp_store.update(cx, |lsp_store, cx| {
+    lsp_store.update(cx, |lsp_store, model, cx| {
         lsp_store
             .update_diagnostic_entries(
                 server_id_2,
@@ -567,7 +567,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         ]
     );
     assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
+        editor.update(cx, |editor, model, cx| editor.display_text(cx)),
         concat!(
             "\n", // filename
             "\n", // padding
@@ -587,7 +587,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     );
 
     // Both language servers start updating diagnostics, and the first server finishes.
-    lsp_store.update(cx, |lsp_store, cx| {
+    lsp_store.update(cx, |lsp_store, model, cx| {
         lsp_store.disk_based_diagnostics_started(server_id_1, cx);
         lsp_store.disk_based_diagnostics_started(server_id_2, cx);
         lsp_store
@@ -635,7 +635,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         ]
     );
     assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
+        editor.update(cx, |editor, model, cx| editor.display_text(cx)),
         concat!(
             "\n", // filename
             "\n", // padding
@@ -656,7 +656,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     );
 
     // The second language server finishes.
-    lsp_store.update(cx, |lsp_store, cx| {
+    lsp_store.update(cx, |lsp_store, model, cx| {
         lsp_store
             .update_diagnostic_entries(
                 server_id_2,
@@ -693,7 +693,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         ]
     );
     assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
+        editor.update(cx, |editor, model, cx| editor.display_text(cx)),
         concat!(
             "\n", // filename
             "\n", // padding
@@ -727,8 +727,8 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), model, cx));
+    let cx = &mut VisualTestContext::from_window(*window, model, cx);
     let workspace = window.root(cx).unwrap();
 
     let mutated_view = window.build_view(cx, |cx| {
@@ -741,11 +741,11 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         )
     });
 
-    workspace.update(cx, |workspace, cx| {
+    workspace.update(cx, |workspace, model, cx| {
         workspace.add_item_to_center(Box::new(mutated_view.clone()), cx);
     });
-    mutated_view.update(cx, |view, cx| {
-        assert!(view.focus_handle.is_focused(cx));
+    mutated_view.update(cx, |view, model, cx| {
+        assert!(view.focus_handle.is_focused(window));
     });
 
     let mut next_group_id = 0;
@@ -763,7 +763,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
             0..=20 if !updated_language_servers.is_empty() => {
                 let server_id = *updated_language_servers.iter().choose(&mut rng).unwrap();
                 log::info!("finishing diagnostic check for language server {server_id}");
-                lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store.update(cx, |lsp_store, model, cx| {
                     lsp_store.disk_based_diagnostics_finished(server_id, cx)
                 });
 
@@ -809,7 +809,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
                 updated_language_servers.insert(server_id);
 
-                project.update(cx, |project, cx| {
+                project.update(cx, |project, model, cx| {
                     log::info!("updating diagnostics. language server {server_id} path {path:?}");
                     randomly_update_diagnostics_for_path(
                         &fs,
@@ -819,7 +819,14 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                         &mut rng,
                     );
                     project
-                        .update_diagnostic_entries(server_id, path, None, diagnostics.clone(), cx)
+                        .update_diagnostic_entries(
+                            server_id,
+                            path,
+                            None,
+                            diagnostics.clone(),
+                            model,
+                            cx,
+                        )
                         .unwrap()
                 });
 
@@ -829,7 +836,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 
     log::info!("updating mutated diagnostics view");
-    mutated_view.update(cx, |view, cx| view.update_stale_excerpts(cx));
+    mutated_view.update(cx, |view, model, cx| view.update_stale_excerpts(cx));
     cx.run_until_parked();
 
     log::info!("constructing reference diagnostics view");
@@ -873,13 +880,13 @@ struct ExcerptInfo {
 }
 
 fn get_diagnostics_excerpts(
-    view: &View<ProjectDiagnosticsEditor>,
+    view: &Model<ProjectDiagnosticsEditor>,
     cx: &mut VisualTestContext,
 ) -> Vec<ExcerptInfo> {
-    view.update(cx, |view, cx| {
+    view.update(cx, |view, model, cx| {
         let mut result = vec![];
         let mut excerpt_indices_by_id = HashMap::default();
-        view.excerpts.update(cx, |multibuffer, cx| {
+        view.excerpts.update(cx, |multibuffer, model, cx| {
             let snapshot = multibuffer.snapshot(cx);
             for (id, buffer, range) in snapshot.excerpts() {
                 excerpt_indices_by_id.insert(id, result.len());
@@ -999,13 +1006,13 @@ const FILE_HEADER: &str = "file header";
 const EXCERPT_HEADER: &str = "excerpt header";
 
 fn editor_blocks(
-    editor: &View<Editor>,
+    editor: &Model<Editor>,
     cx: &mut VisualTestContext,
 ) -> Vec<(DisplayRow, SharedString)> {
     let mut blocks = Vec::new();
     cx.draw(gpui::Point::default(), AvailableSpace::min_size(), |cx| {
-        editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        editor.update(cx, |editor, model, cx| {
+            let snapshot = editor.snapshot(model, cx);
             blocks.extend(
                 snapshot
                     .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())

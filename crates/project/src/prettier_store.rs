@@ -94,9 +94,10 @@ impl PrettierStore {
                 if let Some(prettier_server_id) = prettier_server_id {
                     prettier_store
                         .update(&mut cx, |_, cx| {
-                            cx.emit(PrettierStoreEvent::LanguageServerRemoved(
-                                prettier_server_id,
-                            ));
+                            model.emit(
+                                cx,
+                                PrettierStoreEvent::LanguageServerRemoved(prettier_server_id),
+                            );
                         })
                         .ok();
                 }
@@ -313,6 +314,7 @@ impl PrettierStore {
                                     node,
                                     default_prettier_dir().clone(),
                                     worktree_id,
+                                    model,
                                     cx,
                                 );
                                 prettier_store.default_prettier.prettier =
@@ -345,7 +347,7 @@ impl PrettierStore {
         }
         if let Some(prettier_server) = prettier.server() {
             prettier_store
-                .update(cx, |prettier_store, cx| {
+                .update(cx, |prettier_store, model, cx| {
                     let name = if is_default {
                         LanguageServerName("prettier (default)".to_string().into())
                     } else {
@@ -356,7 +358,9 @@ impl PrettierStore {
                                     .read(cx)
                                     .worktree_for_id(id, cx)
                             })
-                            .map(|worktree| worktree.update(cx, |worktree, _| worktree.abs_path()));
+                            .map(|worktree| {
+                                worktree.update(cx, |worktree, model, _| worktree.abs_path())
+                            });
                         let name = match worktree_path {
                             Some(worktree_path) => {
                                 if prettier_dir == worktree_path.as_ref() {
@@ -377,11 +381,14 @@ impl PrettierStore {
                         };
                         LanguageServerName(name.into())
                     };
-                    cx.emit(PrettierStoreEvent::LanguageServerAdded {
-                        new_server_id,
-                        name,
-                        prettier_server: prettier_server.clone(),
-                    });
+                    model.emit(
+                        cx,
+                        PrettierStoreEvent::LanguageServerAdded {
+                            new_server_id,
+                            name,
+                            prettier_server: prettier_server.clone(),
+                        },
+                    );
                 })
                 .ok();
         }
@@ -660,7 +667,7 @@ pub(super) async fn format_with_prettier(
     cx: &mut AsyncAppContext,
 ) -> Option<Result<crate::lsp_store::FormatOperation>> {
     let prettier_instance = prettier_store
-        .update(cx, |prettier_store, cx| {
+        .update(cx, |prettier_store, model, cx| {
             prettier_store.prettier_instance_for_buffer(buffer, cx)
         })
         .ok()?
@@ -676,7 +683,7 @@ pub(super) async fn format_with_prettier(
     match prettier_task.await {
         Ok(prettier) => {
             let buffer_path = buffer
-                .update(cx, |buffer, cx| {
+                .update(cx, |buffer, model, cx| {
                     File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
                 })
                 .ok()
@@ -692,7 +699,7 @@ pub(super) async fn format_with_prettier(
         }
         Err(error) => {
             prettier_store
-                .update(cx, |project, _| {
+                .update(cx, |project, model, _| {
                     let instance_to_update = match prettier_path {
                         Some(prettier_path) => project.prettier_instances.get_mut(&prettier_path),
                         None => match &mut project.default_prettier.prettier {
@@ -805,6 +812,7 @@ impl PrettierInstance {
                         node.clone(),
                         prettier_dir.to_path_buf(),
                         worktree_id,
+                        model,
                         cx,
                     );
                     self.attempt += 1;

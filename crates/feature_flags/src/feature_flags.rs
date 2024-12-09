@@ -1,5 +1,5 @@
 use futures::{channel::oneshot, FutureExt as _};
-use gpui::{AppContext, Global, Subscription};
+use gpui::{AppContext, Global, Model, Subscription};
 use std::{
     future::Future,
     pin::Pin,

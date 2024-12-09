@@ -39,7 +39,7 @@ impl ProjectIndexDebugView {
             list_scroll_handle: UniformListScrollHandle::new(),
             selected_path: None,
             hovered_row_ix: None,
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(),
             _subscription: cx.subscribe(&index, |this, _, _, cx| this.update_rows(cx)),
             index,
         };
@@ -49,41 +49,43 @@ impl ProjectIndexDebugView {
 
     fn update_rows(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let worktree_indices = self.index.read(cx).worktree_indices(cx);
-        cx.spawn(|this, mut cx| async move {
-            let mut rows = Vec::new();
+        model
+            .spawn(cx, |this, mut cx| async move {
+                let mut rows = Vec::new();
 
-            for index in worktree_indices {
-                let (root_path, worktree_id, worktree_paths) =
-                    index.read_with(&cx, |index, cx| {
-                        let worktree = index.worktree().read(cx);
-                        (
-                            worktree.abs_path(),
-                            worktree.id(),
-                            index.embedding_index().paths(cx),
-                        )
-                    })?;
-                rows.push(Row::Worktree(root_path));
-                rows.extend(
-                    worktree_paths
-                        .await?
-                        .into_iter()
-                        .map(|path| Row::Entry(worktree_id, path)),
-                );
-            }
+                for index in worktree_indices {
+                    let (root_path, worktree_id, worktree_paths) =
+                        index.read_with(&cx, |index, cx| {
+                            let worktree = index.worktree().read(cx);
+                            (
+                                worktree.abs_path(),
+                                worktree.id(),
+                                index.embedding_index().paths(cx),
+                            )
+                        })?;
+                    rows.push(Row::Worktree(root_path));
+                    rows.extend(
+                        worktree_paths
+                            .await?
+                            .into_iter()
+                            .map(|path| Row::Entry(worktree_id, path)),
+                    );
+                }
 
-            this.update(&mut cx, |this, cx| {
-                this.rows = rows;
-                cx.notify();
+                this.update(&mut cx, |this, model, cx| {
+                    this.rows = rows;
+                    model.notify(cx);
+                })
             })
-        })
-        .detach();
+            .detach();
     }
 
     fn handle_path_click(
         &mut self,
         worktree_id: WorktreeId,
         file_path: Arc<Path>,
-        model: &Model<Self>, cx: &mut AppContext,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<()> {
         let project_index = self.index.read(cx);
         let fs = project_index.fs().clone();
@@ -93,46 +95,47 @@ impl ProjectIndexDebugView {
             .embedding_index()
             .chunks_for_path(file_path.clone(), cx);
 
-        cx.spawn(|this, mut cx| async move {
-            let chunks = chunks.await?;
-            let content = fs.load(&root_path.join(&file_path)).await?;
-            let chunks = chunks
-                .into_iter()
-                .map(|chunk| {
-                    let mut start = chunk.chunk.range.start.min(content.len());
-                    let mut end = chunk.chunk.range.end.min(content.len());
-                    while !content.is_char_boundary(start) {
-                        start += 1;
-                    }
-                    while !content.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    content[start..end].to_string().into()
-                })
-                .collect::<Vec<_>>();
+        model
+            .spawn(cx, |this, mut cx| async move {
+                let chunks = chunks.await?;
+                let content = fs.load(&root_path.join(&file_path)).await?;
+                let chunks = chunks
+                    .into_iter()
+                    .map(|chunk| {
+                        let mut start = chunk.chunk.range.start.min(content.len());
+                        let mut end = chunk.chunk.range.end.min(content.len());
+                        while !content.is_char_boundary(start) {
+                            start += 1;
+                        }
+                        while !content.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        content[start..end].to_string().into()
+                    })
+                    .collect::<Vec<_>>();
 
-            this.update(&mut cx, |this, cx| {
-                let view = cx.view().downgrade();
-                this.selected_path = Some(PathState {
-                    path: file_path,
-                    list_state: ListState::new(
-                        chunks.len(),
-                        gpui::ListAlignment::Top,
-                        px(100.),
-                        move |ix, cx| {
-                            if let Some(view) = view.upgrade() {
-                                view.update(cx, |view, cx| view.render_chunk(ix, cx))
-                            } else {
-                                div().into_any()
-                            }
-                        },
-                    ),
-                    chunks,
-                });
-                cx.notify();
+                this.update(&mut cx, |this, model, cx| {
+                    let view = cx.view().downgrade();
+                    this.selected_path = Some(PathState {
+                        path: file_path,
+                        list_state: ListState::new(
+                            chunks.len(),
+                            gpui::ListAlignment::Top,
+                            px(100.),
+                            move |ix, cx| {
+                                if let Some(view) = view.upgrade() {
+                                    view.update(cx, |view, model, cx| view.render_chunk(ix, cx))
+                                } else {
+                                    div().into_any()
+                                }
+                            },
+                        ),
+                        chunks,
+                    });
+                    model.notify(cx);
+                })
             })
-        })
-        .detach();
+            .detach();
         None
     }
 
@@ -163,7 +166,7 @@ impl ProjectIndexDebugView {
                             .child(
                                 Button::new(("prev", ix), "prev")
                                     .disabled(ix == 0)
-                                    .on_click(cx.listener(move |this, _, _| {
+                                    .on_click(model.listener(move |this, _, _| {
                                         this.scroll_to_chunk(ix.saturating_sub(1))
                                     })),
                             )
@@ -171,7 +174,9 @@ impl ProjectIndexDebugView {
                                 Button::new(("next", ix), "next")
                                     .disabled(ix + 1 == state.chunks.len())
                                     .on_click(
-                                        cx.listener(move |this, _, _| this.scroll_to_chunk(ix + 1)),
+                                        model.listener(move |this, _, _| {
+                                            this.scroll_to_chunk(ix + 1)
+                                        }),
                                     ),
                             ),
                     ),
@@ -196,7 +201,12 @@ impl ProjectIndexDebugView {
 }
 
 impl Render for ProjectIndexDebugView {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         if let Some(selected_path) = self.selected_path.as_ref() {
             v_flex()
                 .child(
@@ -211,9 +221,9 @@ impl Render for ProjectIndexDebugView {
                         .border_b_1()
                         .border_color(cx.theme().colors().border)
                         .cursor(CursorStyle::PointingHand)
-                        .on_click(cx.listener(|this, _, cx| {
+                        .on_click(model.listener(|this, model, _, cx| {
                             this.selected_path.take();
-                            cx.notify();
+                            model.notify(cx);
                         })),
                 )
                 .child(list(selected_path.list_state.clone()).size_full())
@@ -236,12 +246,14 @@ impl Render for ProjectIndexDebugView {
                                 .id(ix)
                                 .pl_8()
                                 .child(Label::new(file_path.to_string_lossy().to_string()))
-                                .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, cx| {
-                                    if this.hovered_row_ix != Some(ix) {
-                                        this.hovered_row_ix = Some(ix);
-                                        cx.notify();
-                                    }
-                                }))
+                                .on_mouse_move(model.listener(
+                                    move |this, _: &MouseMoveEvent, cx| {
+                                        if this.hovered_row_ix != Some(ix) {
+                                            this.hovered_row_ix = Some(ix);
+                                            model.notify(cx);
+                                        }
+                                    },
+                                ))
                                 .cursor(CursorStyle::PointingHand)
                                 .on_click(cx.listener({
                                     let worktree_id = *worktree_id;
@@ -261,7 +273,7 @@ impl Render for ProjectIndexDebugView {
 
             canvas(
                 move |bounds, cx| {
-                    list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
+                    list.prepaint_as_root(bounds.origin, bounds.size.into(), model, cx);
                     list
                 },
                 |_, mut list, cx| {
@@ -286,12 +298,13 @@ impl Item for ProjectIndexDebugView {
     fn clone_on_split(
         &self,
         _: Option<workspace::WorkspaceId>,
-        model: &Model<Self>, cx: &mut AppContext,
-    ) -> Option<View<Self>>
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<Model<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_view(|cx| Self::new(self.index.clone(), cx)))
+        Some(cx.new_model(|model, cx| Self::new(self.index.clone(), model, cx)))
     }
 }
 

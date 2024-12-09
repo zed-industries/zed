@@ -132,7 +132,7 @@ impl RemoteRunningKernel {
     pub fn new(
         kernelspec: RemoteKernelSpecification,
         working_directory: std::path::PathBuf,
-        session: View<Session>,
+        session: Model<Session>,
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Task<Result<Box<dyn RunningKernel>>> {

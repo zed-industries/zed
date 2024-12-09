@@ -26,7 +26,7 @@ pub fn init(
 ) {
     crate::settings::init(fs, cx);
     let registry = LanguageModelRegistry::global(cx);
-    registry.update(cx, |registry, cx| {
+    registry.update(cx, |registry, model, cx| {
         register_language_model_providers(registry, user_store, client, cx);
     });
 }
@@ -63,15 +63,17 @@ fn register_language_model_providers(
     cx.observe_flag::<feature_flags::LanguageModels, _>(move |enabled, cx| {
         let user_store = user_store.clone();
         let client = client.clone();
-        LanguageModelRegistry::global(cx).update(cx, move |registry, cx| {
+        LanguageModelRegistry::global(cx).update(cx, move |registry, model, cx| {
             if enabled {
                 registry.register_provider(
                     CloudLanguageModelProvider::new(user_store.clone(), client.clone(), cx),
+                    model,
                     cx,
                 );
             } else {
                 registry.unregister_provider(
                     LanguageModelProviderId::from(ZED_CLOUD_PROVIDER_ID.to_string()),
+                    model,
                     cx,
                 );
             }

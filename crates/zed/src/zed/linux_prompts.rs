@@ -1,7 +1,7 @@
 use gpui::{
-    div, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
-    IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Refineable, Render,
-    RenderablePromptHandle, Styled, TextStyleRefinement, View, AppContext, VisualContext,
+    div, AppContext, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight,
+    InteractiveElement, IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse,
+    Refineable, Render, RenderablePromptHandle, Styled, TextStyleRefinement, View, VisualContext,
 };
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
@@ -26,15 +26,15 @@ pub fn fallback_prompt_renderer(
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
 ) -> RenderablePromptHandle {
-    let renderer = cx.new_view({
+    let renderer = cx.new_model({
         |cx| FallbackPromptRenderer {
             _level: level,
             message: message.to_string(),
             actions: actions.iter().map(ToString::to_string).collect(),
-            focus: cx.focus_handle(),
+            focus: window.focus_handle(),
             active_action_id: 0,
             detail: detail.filter(|text| !text.is_empty()).map(|text| {
-                cx.new_view(|cx| {
+                cx.new_model(|model, cx| {
                     let settings = ThemeSettings::get_global(cx);
                     let mut base_text_style = cx.text_style();
                     base_text_style.refine(&TextStyleRefinement {
@@ -64,28 +64,28 @@ pub struct FallbackPromptRenderer {
     actions: Vec<String>,
     focus: FocusHandle,
     active_action_id: usize,
-    detail: Option<View<Markdown>>,
+    detail: Option<Model<Markdown>>,
 }
 
 impl FallbackPromptRenderer {
     fn confirm(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
-        cx.emit(PromptResponse(self.active_action_id));
+        model.emit(cx, PromptResponse(self.active_action_id));
     }
 
     fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(ix) = self.actions.iter().position(|a| a == "Cancel") {
-            cx.emit(PromptResponse(ix));
+            model.emit(cx, PromptResponse(ix));
         }
     }
 
     fn select_first(&mut self, _: &menu::SelectFirst, model: &Model<Self>, cx: &mut AppContext) {
         self.active_action_id = self.actions.len().saturating_sub(1);
-        cx.notify();
+        model.notify(cx);
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, model: &Model<Self>, cx: &mut AppContext) {
         self.active_action_id = 0;
-        cx.notify();
+        model.notify(cx);
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, model: &Model<Self>, cx: &mut AppContext) {
@@ -94,17 +94,22 @@ impl FallbackPromptRenderer {
         } else {
             self.active_action_id = self.actions.len().saturating_sub(1);
         }
-        cx.notify();
+        model.notify(cx);
     }
 
     fn select_prev(&mut self, _: &menu::SelectPrev, model: &Model<Self>, cx: &mut AppContext) {
         self.active_action_id = (self.active_action_id + 1) % self.actions.len();
-        cx.notify();
+        model.notify(cx);
     }
 }
 
 impl Render for FallbackPromptRenderer {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let font_family = settings.ui_font.family.clone();
         let prompt = v_flex()
@@ -144,8 +149,8 @@ impl Render for FallbackPromptRenderer {
                             el.style(ButtonStyle::Tinted(TintColor::Accent))
                         })
                         .layer(ElevationIndex::ModalSurface)
-                        .on_click(cx.listener(move |_, _, cx| {
-                            cx.emit(PromptResponse(ix));
+                        .on_click(model.listener(move |_, _, model, window, cx| {
+                            model.emit(cx, PromptResponse(ix));
                         }))
                 }),
             ));

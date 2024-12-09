@@ -137,7 +137,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     let user_id = 5;
     let channel_id = 5;
     let channel_store = cx.update(init_test);
-    let client = channel_store.update(cx, |s, _| s.client());
+    let client = channel_store.update(cx, |s, model, _| s.client());
     let server = FakeServer::for_client(user_id, &client, cx).await;
 
     // Get the available channels.
@@ -169,7 +169,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     );
 
     // Join a channel and populate its existing messages.
-    let channel = channel_store.update(cx, |store, cx| {
+    let channel = channel_store.update(cx, |store, model, cx| {
         let channel_id = store.ordered_channels().next().unwrap().1.id;
         store.open_channel_chat(channel_id, cx)
     });
@@ -221,7 +221,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     );
 
     let channel = channel.await.unwrap();
-    channel.update(cx, |channel, _| {
+    channel.update(cx, |channel, model, _| {
         assert_eq!(
             channel
                 .messages_in_range(0..2)
@@ -270,7 +270,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
             new_count: 1,
         }
     );
-    channel.update(cx, |channel, _| {
+    channel.update(cx, |channel, model, _| {
         assert_eq!(
             channel
                 .messages_in_range(2..3)
@@ -281,7 +281,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     });
 
     // Scroll up to view older messages.
-    channel.update(cx, |channel, cx| {
+    channel.update(cx, |channel, model, cx| {
         channel.load_more_messages(cx).unwrap().detach();
     });
     let get_messages = server.receive::<proto::GetChannelMessages>().await.unwrap();
@@ -323,7 +323,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
             new_count: 2,
         }
     );
-    channel.update(cx, |channel, _| {
+    channel.update(cx, |channel, model, _| {
         assert_eq!(
             channel
                 .messages_in_range(0..2)
@@ -346,7 +346,7 @@ fn init_test(cx: &mut AppContext) -> Model<ChannelStore> {
     let clock = Arc::new(FakeSystemClock::new());
     let http = FakeHttpClient::with_404_response();
     let client = Client::new(clock, http.clone(), cx);
-    let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+    let user_store = cx.new_model(|model, cx| UserStore::new(client.clone(), cx));
 
     client::init(&client, cx);
     crate::init(&client, user_store, cx);
@@ -359,7 +359,7 @@ fn update_channels(
     message: proto::UpdateChannels,
     cx: &mut AppContext,
 ) {
-    let task = channel_store.update(cx, |store, cx| store.update_channels(message, cx));
+    let task = channel_store.update(cx, |store, model, cx| store.update_channels(message, cx));
     assert!(task.is_none());
 }
 
@@ -369,7 +369,7 @@ fn assert_channels(
     expected_channels: &[(usize, String)],
     cx: &mut AppContext,
 ) {
-    let actual = channel_store.update(cx, |store, _| {
+    let actual = channel_store.update(cx, |store, model, _| {
         store
             .ordered_channels()
             .map(|(depth, channel)| (depth, channel.name.to_string()))

@@ -50,7 +50,7 @@ impl QuickActionBar {
         }
 
         let has_nonempty_selection = {
-            editor.update(cx, |this, cx| {
+            editor.update(cx, |this, model, cx| {
                 this.selections
                     .count()
                     .ne(&0)
@@ -85,8 +85,8 @@ impl QuickActionBar {
             .menu(move |cx| {
                 let editor = editor.clone();
                 let session = session.clone();
-                ContextMenu::build(cx, move |menu, cx| {
-                    let menu_state = session_state(session, cx);
+                ContextMenu::build(window, cx, move |menu, model, window, cx| {
+                    let menu_state = session_state(session, window, cx);
                     let status = menu_state.status;
                     let editor = editor.clone();
 
@@ -216,7 +216,7 @@ impl QuickActionBar {
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .tooltip(move |cx| Tooltip::text("REPL Menu", cx))
+                    .tooltip(move |window, cx| Tooltip::text("REPL Menu", cx))
                     .width(rems(1.).into())
                     .disabled(menu_state.popover_disabled),
             );
@@ -241,7 +241,7 @@ impl QuickActionBar {
             })
             .size(ButtonSize::Compact)
             .style(ButtonStyle::Subtle)
-            .tooltip(move |cx| Tooltip::text(menu_state.tooltip.clone(), cx))
+            .tooltip(move |window, cx| Tooltip::text(menu_state.tooltip.clone(), cx))
             .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
             .into_any_element();
 
@@ -270,7 +270,7 @@ impl QuickActionBar {
                         .size(ButtonSize::Compact)
                         .icon_color(Color::Muted)
                         .style(ButtonStyle::Subtle)
-                        .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+                        .tooltip(move |window, cx| Tooltip::text(tooltip.clone(), cx))
                         .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {}))),
                 )
                 .into_any_element(),
@@ -288,11 +288,11 @@ impl QuickActionBar {
             return div().into_any_element();
         };
 
-        let Some(worktree_id) = worktree_id_for_editor(editor.downgrade(), cx) else {
+        let Some(worktree_id) = worktree_id_for_editor(editor.downgrade(), model, cx) else {
             return div().into_any_element();
         };
 
-        let session = repl::session(editor.downgrade(), cx);
+        let session = repl::session(editor.downgrade(), model, cx);
 
         let current_kernelspec = match session {
             SessionSupport::ActiveSession(view) => Some(view.read(cx).kernel_specification.clone()),
@@ -308,7 +308,7 @@ impl QuickActionBar {
         KernelSelector::new(
             {
                 Box::new(move |kernelspec, cx| {
-                    repl::assign_kernelspec(kernelspec, editor.downgrade(), cx).ok();
+                    repl::assign_kernelspec(kernelspec, editor.downgrade(), model, cx).ok();
                 })
             },
             worktree_id,
@@ -344,7 +344,7 @@ impl QuickActionBar {
                                 .size(IconSize::XSmall),
                         ),
                 )
-                .tooltip(move |cx| Tooltip::text("Select Kernel", cx)),
+                .tooltip(move |window, cx| Tooltip::text("Select Kernel", cx)),
         )
         .with_handle(menu_handle.clone())
         .into_any_element()
@@ -365,7 +365,7 @@ impl QuickActionBar {
                         .size(ButtonSize::Compact)
                         .icon_color(Color::Muted)
                         .style(ButtonStyle::Subtle)
-                        .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+                        .tooltip(move |window, cx| Tooltip::text(tooltip.clone(), cx))
                         .on_click(|_, cx| {
                             cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION))
                         }),
@@ -375,7 +375,7 @@ impl QuickActionBar {
     }
 }
 
-fn session_state(session: View<Session>, window: &Window, cx: &AppContext) -> ReplMenuState {
+fn session_state(session: Model<Session>, window: &Window, cx: &AppContext) -> ReplMenuState {
     let session = session.read(cx);
 
     let kernel_name = session.kernel_specification.name();

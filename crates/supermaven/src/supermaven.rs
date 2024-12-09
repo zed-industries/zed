@@ -28,12 +28,14 @@ use util::ResultExt;
 actions!(supermaven, [SignOut]);
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
-    let supermaven = cx.new_model(|_| Supermaven::Starting);
+    let supermaven = cx.new_model(|_, _| Supermaven::Starting);
     Supermaven::set_global(supermaven.clone(), cx);
 
     let mut provider = all_language_settings(None, cx).inline_completions.provider;
     if provider == language::language_settings::InlineCompletionProvider::Supermaven {
-        supermaven.update(cx, |supermaven, cx| supermaven.start(client.clone(), cx));
+        supermaven.update(cx, |supermaven, model, cx| {
+            supermaven.start(client.clone(), model, cx)
+        });
     }
 
     cx.observe_global::<SettingsStore>(move |cx| {
@@ -41,9 +43,11 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         if new_provider != provider {
             provider = new_provider;
             if provider == language::language_settings::InlineCompletionProvider::Supermaven {
-                supermaven.update(cx, |supermaven, cx| supermaven.start(client.clone(), cx));
+                supermaven.update(cx, |supermaven, model, cx| {
+                    supermaven.start(client.clone(), model, cx)
+                });
             } else {
-                supermaven.update(cx, |supermaven, _cx| supermaven.stop());
+                supermaven.update(cx, |supermaven, model, _cx| supermaven.stop());
             }
         }
     })
@@ -51,7 +55,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 
     cx.on_action(|_: &SignOut, cx| {
         if let Some(supermaven) = Supermaven::global(cx) {
-            supermaven.update(cx, |supermaven, _cx| supermaven.sign_out());
+            supermaven.update(cx, |supermaven, model, _cx| supermaven.sign_out());
         }
     });
 }
@@ -87,19 +91,24 @@ impl Supermaven {
 
     pub fn start(&mut self, client: Arc<Client>, model: &Model<Self>, cx: &mut AppContext) {
         if let Self::Starting = self {
-            cx.spawn(|this, mut cx| async move {
-                let binary_path =
-                    supermaven_api::get_supermaven_agent_path(client.http_client()).await?;
+            model
+                .spawn(cx, |this, mut cx| async move {
+                    let binary_path =
+                        supermaven_api::get_supermaven_agent_path(client.http_client()).await?;
 
-                this.update(&mut cx, |this, cx| {
-                    if let Self::Starting = this {
-                        *this =
-                            Self::Spawned(SupermavenAgent::new(binary_path, client.clone(), cx)?);
-                    }
-                    anyhow::Ok(())
+                    this.update(&mut cx, |this, model, cx| {
+                        if let Self::Starting = this {
+                            *this = Self::Spawned(SupermavenAgent::new(
+                                binary_path,
+                                client.clone(),
+                                model,
+                                cx,
+                            )?);
+                        }
+                        anyhow::Ok(())
+                    })
                 })
-            })
-            .detach_and_log_err(cx)
+                .detach_and_log_err(cx)
         }
     }
 
@@ -299,10 +308,10 @@ impl SupermavenAgent {
                         outgoing_tx
                             .unbounded_send(OutboundMessage::SetApiKey(SetApiKey { api_key }))
                             .ok();
-                        this.update(&mut cx, |this, cx| {
+                        this.update(&mut cx, |this, model, cx| {
                             if let Supermaven::Spawned(this) = this {
                                 this.account_status = AccountStatus::Ready;
-                                cx.notify();
+                                model.notify(cx);
                             }
                         })?;
                         break;

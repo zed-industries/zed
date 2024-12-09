@@ -1,4 +1,4 @@
-use gpui::{div, Element, Render, Subscription, View, AppContext, WeakView};
+use gpui::{div, AppContext, Element, Render, Subscription, View, WeakView};
 use itertools::Itertools;
 use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
@@ -6,7 +6,7 @@ use crate::{Vim, VimEvent, VimGlobals};
 
 /// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
-    vim: Option<WeakView<Vim>>,
+    vim: Option<WeakModel<Vim>>,
     pending_keys: Option<String>,
     vim_subscription: Option<Subscription>,
 }
@@ -16,7 +16,7 @@ impl ModeIndicator {
     pub fn new(model: &Model<Self>, cx: &mut AppContext) -> Self {
         cx.observe_pending_input(|this, cx| {
             this.update_pending_keys(cx);
-            cx.notify();
+            model.notify(cx);
         })
         .detach();
 
@@ -27,11 +27,11 @@ impl ModeIndicator {
                 return;
             }
             let vim = cx.view().clone();
-            handle.update(cx, |_, cx| {
+            handle.update(cx, |_, model, cx| {
                 cx.subscribe(&vim, |mode_indicator, vim, event, cx| match event {
                     VimEvent::Focused => {
                         mode_indicator.vim_subscription =
-                            Some(cx.observe(&vim, |_, _, cx| cx.notify()));
+                            Some(cx.observe(&vim, |_, _, cx| model.notify(cx)));
                         mode_indicator.vim = Some(vim.downgrade());
                     }
                 })
@@ -56,11 +56,16 @@ impl ModeIndicator {
         });
     }
 
-    fn vim(&self) -> Option<View<Vim>> {
+    fn vim(&self) -> Option<Model<Vim>> {
         self.vim.as_ref().and_then(|vim| vim.upgrade())
     }
 
-    fn current_operators_description(&self, vim: View<Vim>, model: &Model<Self>, cx: &mut AppContext) -> String {
+    fn current_operators_description(
+        &self,
+        vim: Model<Vim>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> String {
         let recording = Vim::globals(cx)
             .recording_register
             .map(|reg| format!("recording @{reg} "))
@@ -90,7 +95,7 @@ impl ModeIndicator {
 }
 
 impl Render for ModeIndicator {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         let vim = self.vim();
         let Some(vim) = vim else {
             return div().into_any();
@@ -103,7 +108,8 @@ impl Render for ModeIndicator {
             vim_readable.mode.to_string()
         };
 
-        let current_operators_description = self.current_operators_description(vim.clone(), cx);
+        let current_operators_description =
+            self.current_operators_description(vim.clone(), model, cx);
         let pending = self
             .pending_keys
             .as_ref()
@@ -119,7 +125,8 @@ impl StatusItemView for ModeIndicator {
     fn set_active_pane_item(
         &mut self,
         _active_pane_item: Option<&dyn ItemHandle>,
-        model: &Model<>Self, _cx: &mut AppContext,
+        model: &Model<Self>,
+        _cx: &mut AppContext,
     ) {
     }
 }

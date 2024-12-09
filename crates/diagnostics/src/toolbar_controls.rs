@@ -5,11 +5,16 @@ use ui::{IconButton, IconButtonShape, IconName, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
 pub struct ToolbarControls {
-    editor: Option<WeakView<ProjectDiagnosticsEditor>>,
+    editor: Option<WeakModel<ProjectDiagnosticsEditor>>,
 }
 
 impl Render for ToolbarControls {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let mut include_warnings = false;
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
@@ -47,10 +52,10 @@ impl Render for ToolbarControls {
                         .icon_color(Color::Info)
                         .shape(IconButtonShape::Square)
                         .disabled(is_updating)
-                        .tooltip(move |cx| Tooltip::text("Update excerpts", cx))
-                        .on_click(cx.listener(|this, _, cx| {
+                        .tooltip(move |window, cx| Tooltip::text("Update excerpts", cx))
+                        .on_click(model.listener(|this, model, _, cx| {
                             if let Some(diagnostics) = this.diagnostics() {
-                                diagnostics.update(cx, |diagnostics, cx| {
+                                diagnostics.update(cx, |diagnostics, model, cx| {
                                     diagnostics.update_all_excerpts(cx);
                                 });
                             }
@@ -61,10 +66,10 @@ impl Render for ToolbarControls {
                 IconButton::new("toggle-warnings", IconName::Warning)
                     .icon_color(warning_color)
                     .shape(IconButtonShape::Square)
-                    .tooltip(move |cx| Tooltip::text(tooltip, cx))
-                    .on_click(cx.listener(|this, _, cx| {
+                    .tooltip(move |window, cx| Tooltip::text(tooltip, cx))
+                    .on_click(model.listener(|this, model, _, cx| {
                         if let Some(editor) = this.diagnostics() {
-                            editor.update(cx, |editor, cx| {
+                            editor.update(cx, |editor, model, cx| {
                                 editor.toggle_warnings(&Default::default(), cx);
                             });
                         }
@@ -106,7 +111,7 @@ impl ToolbarControls {
         ToolbarControls { editor: None }
     }
 
-    fn diagnostics(&self) -> Option<View<ProjectDiagnosticsEditor>> {
+    fn diagnostics(&self) -> Option<Model<ProjectDiagnosticsEditor>> {
         self.editor.as_ref()?.upgrade()
     }
 }

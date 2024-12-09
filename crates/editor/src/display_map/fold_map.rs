@@ -1398,7 +1398,7 @@ mod tests {
     fn test_basic_folds(cx: &mut gpui::AppContext) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
-        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let subscription = buffer.update(cx, |buffer, model, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let mut map = FoldMap::new(inlay_snapshot.clone()).0;
@@ -1423,13 +1423,14 @@ mod tests {
             ]
         );
 
-        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+        let buffer_snapshot = buffer.update(cx, |buffer, model, cx| {
             buffer.edit(
                 vec![
                     (Point::new(0, 0)..Point::new(0, 1), "123"),
                     (Point::new(2, 3)..Point::new(2, 3), "123"),
                 ],
                 None,
+                model,
                 cx,
             );
             buffer.snapshot(cx)
@@ -1453,8 +1454,13 @@ mod tests {
             ]
         );
 
-        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 6)..Point::new(4, 3), "456")], None, cx);
+        let buffer_snapshot = buffer.update(cx, |buffer, model, cx| {
+            buffer.edit(
+                [(Point::new(2, 6)..Point::new(4, 3), "456")],
+                None,
+                model,
+                cx,
+            );
             buffer.snapshot(cx)
         });
         let (inlay_snapshot, inlay_edits) =
@@ -1477,7 +1483,7 @@ mod tests {
     fn test_adjacent_folds(cx: &mut gpui::AppContext) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
-        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let subscription = buffer.update(cx, |buffer, model, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
 
@@ -1521,8 +1527,8 @@ mod tests {
             assert_eq!(snapshot.text(), "⋯fghijkl");
 
             // Edit within one of the folds.
-            let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-                buffer.edit([(0..1, "12345")], None, cx);
+            let buffer_snapshot = buffer.update(cx, |buffer, model, cx| {
+                buffer.edit([(0..1, "12345")], None, model, cx);
                 buffer.snapshot(cx)
             });
             let (inlay_snapshot, inlay_edits) =
@@ -1553,7 +1559,7 @@ mod tests {
     fn test_merging_folds_via_edit(cx: &mut gpui::AppContext) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
-        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let subscription = buffer.update(cx, |buffer, model, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let mut map = FoldMap::new(inlay_snapshot.clone()).0;
@@ -1566,8 +1572,8 @@ mod tests {
         let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
         assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee");
 
-        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 2)..Point::new(3, 1), "")], None, cx);
+        let buffer_snapshot = buffer.update(cx, |buffer, model, cx| {
+            buffer.edit([(Point::new(2, 2)..Point::new(3, 1), "")], None, model, cx);
             buffer.snapshot(cx)
         });
         let (inlay_snapshot, inlay_edits) =
@@ -1641,10 +1647,10 @@ mod tests {
                     let (_, edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
                     inlay_edits = edits;
                 }
-                _ => buffer.update(cx, |buffer, cx| {
+                _ => buffer.update(cx, |buffer, model, cx| {
                     let subscription = buffer.subscribe();
                     let edit_count = rng.gen_range(1..=5);
-                    buffer.randomly_mutate(&mut rng, edit_count, cx);
+                    buffer.randomly_mutate(&mut rng, edit_count, model, cx);
                     buffer_snapshot = buffer.snapshot(cx);
                     let edits = subscription.consume().into_inner();
                     log::info!("editing {:?}", edits);

@@ -35,14 +35,14 @@ impl Editor {
             .or_else(|| Some(!EditorSettings::get_global(cx).auto_signature_help));
         match self.auto_signature_help {
             Some(auto_signature_help) if auto_signature_help => {
-                self.show_signature_help(&ShowSignatureHelp, cx);
+                self.show_signature_help(&ShowSignatureHelp, model, cx);
             }
             Some(_) => {
                 self.hide_signature_help(cx, SignatureHelpHiddenBy::AutoClose);
             }
             None => {}
         }
-        cx.notify();
+        model.notify(cx);
     }
 
     pub(super) fn hide_signature_help(
@@ -54,7 +54,7 @@ impl Editor {
         if self.signature_help_state.is_shown() {
             self.signature_help_state.kill_task();
             self.signature_help_state.hide(signature_help_hidden_by);
-            cx.notify();
+            model.notify(cx);
             true
         } else {
             false
@@ -175,7 +175,7 @@ impl Editor {
                         let language = editor.language_at(position, cx);
                         let project = editor.project.clone()?;
                         let (markdown, language_registry) = {
-                            project.update(cx, |project, cx| {
+                            project.update(cx, |project, model, cx| {
                                 let language_registry = project.languages().clone();
                                 (
                                     project.signature_help(&buffer, buffer_position, cx),
@@ -224,7 +224,7 @@ impl Editor {
                                     .signature_help_state
                                     .hide(SignatureHelpHiddenBy::AutoClose);
                             }
-                            cx.notify();
+                            model.notify(cx);
                         }
                     })
                     .ok();

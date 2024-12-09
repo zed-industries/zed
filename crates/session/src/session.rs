@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AnyWindowHandle, Subscription, Task, WindowId};
+use gpui::{AnyWindowHandle, AppContext, Model, Subscription, Task, WindowId};
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -64,10 +64,10 @@ pub struct AppSession {
 }
 
 impl AppSession {
-    pub fn new(session: Session, model: &Model<Self>, cx: &AppContext) -> Self {
-        let _subscriptions = vec![cx.on_app_quit(Self::app_will_quit)];
+    pub fn new(session: Session, model: &Model<Self>, cx: &mut AppContext) -> Self {
+        let _subscriptions = vec![model.on_app_quit(cx, Self::app_will_quit)];
 
-        let _serialization_task = Some(cx.spawn(|_, cx| async move {
+        let _serialization_task = Some(model.spawn(cx, |_, cx| async move {
             loop {
                 if let Some(windows) = cx.update(|cx| cx.window_stack()).ok().flatten() {
                     store_window_stack(windows).await;

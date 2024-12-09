@@ -23,9 +23,9 @@ use settings::SettingsStore;
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::{
-    div, h_flex, v_flex, Button, ButtonCommon, Clickable, Color, Context, FixedWidth, Icon,
-    IconName, IconPosition, IconSize, IntoElement, Label, LabelCommon, ParentElement, Styled,
-    AppContext, VisualContext, 
+    div, h_flex, v_flex, AppContext, Button, ButtonCommon, Clickable, Color, Context, FixedWidth,
+    Icon, IconName, IconPosition, IconSize, IntoElement, Label, LabelCommon, ParentElement, Styled,
+    VisualContext,
 };
 
 use super::anthropic::count_anthropic_tokens;
@@ -56,13 +56,13 @@ impl State {
 
 impl CopilotChatLanguageModelProvider {
     pub fn new(cx: &mut AppContext) -> Self {
-        let state = cx.new_model(|cx| {
+        let state = cx.new_model(|model, cx| {
             let _copilot_chat_subscription = CopilotChat::global(cx)
-                .map(|copilot_chat| cx.observe(&copilot_chat, |_, _, cx| cx.notify()));
+                .map(|copilot_chat| cx.observe(&copilot_chat, |_, _, cx| model.notify(cx)));
             State {
                 _copilot_chat_subscription,
                 _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
-                    cx.notify();
+                    model.notify(cx);
                 }),
             }
         });
@@ -131,7 +131,8 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
 
     fn configuration_view(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> AnyView {
         let state = self.state.clone();
-        cx.new_view(|cx| ConfigurationView::new(state, cx)).into()
+        cx.new_model(|model, cx| ConfigurationView::new(state, model, cx))
+            .into()
     }
 
     fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
@@ -312,7 +313,7 @@ impl ConfigurationView {
             _subscription: copilot.as_ref().map(|copilot| {
                 cx.observe(copilot, |this, model, cx| {
                     this.copilot_status = Some(model.read(cx).status());
-                    cx.notify();
+                    model.notify(cx);
                 })
             }),
         }
@@ -320,7 +321,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         if self.state.read(cx).is_authenticated(cx) {
             const LABEL: &str = "Authorized.";
             h_flex()

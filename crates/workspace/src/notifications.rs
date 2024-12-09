@@ -48,7 +48,7 @@ pub trait NotificationHandle: Send {
     fn to_any(&self) -> AnyView;
 }
 
-impl<T: Notification> NotificationHandle for View<T> {
+impl<T: Notification> NotificationHandle for Model<T> {
     fn id(&self) -> EntityId {
         self.entity_id()
     }
@@ -96,7 +96,7 @@ impl Workspace {
     pub fn has_shown_notification_once<V: Notification>(
         &self,
         id: &NotificationId,
-        window: &Model<Self>,
+        model: &Model<Self>,
         cx: &AppContext,
     ) -> bool {
         cx.global::<NotificationTracker>()
@@ -110,7 +110,7 @@ impl Workspace {
         id: NotificationId,
         model: &Model<Self>,
         cx: &mut AppContext,
-        build_notification: impl FnOnce(&Model<Self>, &mut AppContext) -> View<V>,
+        build_notification: impl FnOnce(&Model<Self>, &mut AppContext) -> Model<V>,
     ) {
         if !self.has_shown_notification_once::<V>(&id, cx) {
             let tracker = cx.global_mut::<NotificationTracker>();
@@ -134,11 +134,11 @@ impl Workspace {
         id: NotificationId,
         model: &Model<Self>,
         cx: &mut AppContext,
-        build_notification: impl FnOnce(&Model<Self>, &mut AppContext) -> View<V>,
+        build_notification: impl FnOnce(&Model<Self>, &mut AppContext) -> Model<V>,
     ) {
         self.dismiss_notification_internal(&id, cx);
 
-        let notification = build_notification(cx);
+        let notification = build_notification(model, cx);
         cx.subscribe(&notification, {
             let id = id.clone();
             move |this, _, _: &DismissEvent, cx| {
@@ -147,7 +147,7 @@ impl Workspace {
         })
         .detach();
         self.notifications.push((id, Box::new(notification)));
-        cx.notify();
+        model.notify(cx);
     }
 
     pub fn show_error<E>(&mut self, err: &E, model: &Model<Self>, cx: &mut AppContext)
@@ -159,7 +159,7 @@ impl Workspace {
         self.show_notification(
             NotificationId::unique::<WorkspaceErrorNotification>(),
             cx,
-            |cx| cx.new_view(|_cx| ErrorMessagePrompt::new(format!("Error: {err:#}"))),
+            |cx| cx.new_model(|_model, _cx| ErrorMessagePrompt::new(format!("Error: {err:#}"))),
         );
     }
 
@@ -167,7 +167,7 @@ impl Workspace {
         struct PortalError;
 
         self.show_notification(NotificationId::unique::<PortalError>(), cx, |cx| {
-            cx.new_view(|_cx| {
+            cx.new_model(|_model, _cx| {
                 ErrorMessagePrompt::new(err.to_string()).with_link_button(
                     "See docs",
                     "https://zed.dev/docs/linux#i-cant-open-any-files",
@@ -188,7 +188,7 @@ impl Workspace {
     pub fn show_toast(&mut self, toast: Toast, model: &Model<Self>, cx: &mut AppContext) {
         self.dismiss_notification(&toast.id, cx);
         self.show_notification(toast.id.clone(), cx, |cx| {
-            cx.new_view(|_cx| match toast.on_click.as_ref() {
+            cx.new_model(|_model, _cx| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
                     let on_click = on_click.clone();
                     simple_message_notification::MessageNotification::new(toast.msg.clone())
@@ -219,7 +219,7 @@ impl Workspace {
 
     pub fn clear_all_notifications(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.notifications.clear();
-        cx.notify();
+        model.notify(cx);
     }
 
     fn dismiss_notification_internal(
@@ -230,7 +230,7 @@ impl Workspace {
     ) {
         self.notifications.retain(|(existing_id, _)| {
             if existing_id == id {
-                cx.notify();
+                model.notify(cx);
                 false
             } else {
                 true
@@ -252,9 +252,9 @@ impl LanguageServerPrompt {
         }
     }
 
-    async fn select_option(this: View<Self>, ix: usize, mut cx: AsyncAppContext) {
+    async fn select_option(this: Model<Self>, ix: usize, mut cx: AsyncAppContext) {
         util::maybe!(async move {
-            let potential_future = this.update(&mut cx, |this, _| {
+            let potential_future = this.update(&mut cx, |this, _, _| {
                 this.request.take().map(|request| request.respond(ix))
             });
 
@@ -263,7 +263,7 @@ impl LanguageServerPrompt {
                 .await
                 .ok_or_else(|| anyhow::anyhow!("Stream already closed"))?;
 
-            this.update(&mut cx, |_, cx| cx.emit(DismissEvent))?;
+            this.update(&mut cx, |_, cx| model.emit(cx, DismissEvent))?;
 
             anyhow::Ok(())
         })
@@ -273,7 +273,12 @@ impl LanguageServerPrompt {
 }
 
 impl Render for LanguageServerPrompt {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let Some(request) = &self.request else {
             return div().id("language_server_prompt_notification");
         };
@@ -334,10 +339,9 @@ impl Render for LanguageServerPrompt {
                                             .size(LabelSize::Default),
                                     ),
                             )
-                            .child(
-                                ui::IconButton::new("close", ui::IconName::Close)
-                                    .on_click(cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent))),
-                            ),
+                            .child(ui::IconButton::new("close", ui::IconName::Close).on_click(
+                                cx.listener(|_, _, cx| model.emit(cx, gpui::DismissEvent)),
+                            )),
                     )
                     .child(
                         v_flex()
@@ -352,7 +356,7 @@ impl Render for LanguageServerPrompt {
                                                 ))
                                             }
                                         })
-                                        .tooltip(|cx| Tooltip::text("Copy", cx))
+                                        .tooltip(|window, cx| Tooltip::text("Copy", cx))
                                         .visible_on_hover(""),
                                 ),
                             )
@@ -402,7 +406,12 @@ impl ErrorMessagePrompt {
 }
 
 impl Render for ErrorMessagePrompt {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         h_flex()
             .id("error_message_prompt_notification")
             .occlude()
@@ -430,10 +439,9 @@ impl Render for ErrorMessagePrompt {
                                             .text_color(Color::Error.color(cx))
                                     }),
                             )
-                            .child(
-                                ui::IconButton::new("close", ui::IconName::Close)
-                                    .on_click(cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent))),
-                            ),
+                            .child(ui::IconButton::new("close", ui::IconName::Close).on_click(
+                                cx.listener(|_, _, cx| model.emit(cx, gpui::DismissEvent)),
+                            )),
                     )
                     .child(
                         div()
@@ -520,12 +528,17 @@ pub mod simple_message_notification {
         }
 
         pub fn dismiss(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-            cx.emit(DismissEvent);
+            model.emit(cx, DismissEvent);
         }
     }
 
     impl Render for MessageNotification {
-        fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+        fn render(
+            &mut self,
+            model: &Model<Self>,
+            window: &mut gpui::Window,
+            cx: &mut AppContext,
+        ) -> impl IntoElement {
             v_flex()
                 .elevation_3(cx)
                 .p_4()
@@ -538,7 +551,7 @@ pub mod simple_message_notification {
                                 .id("cancel")
                                 .child(Icon::new(IconName::Close))
                                 .cursor_pointer()
-                                .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
+                                .on_click(model.listener(|this, model, _, cx| this.dismiss(cx))),
                         ),
                 )
                 .child(
@@ -557,7 +570,7 @@ pub mod simple_message_notification {
                         .children(self.secondary_click_message.iter().map(|message| {
                             Button::new(message.clone(), message.clone())
                                 .style(ButtonStyle::Filled)
-                                .on_click(cx.listener(|this, _, cx| {
+                                .on_click(model.listener(|this, model, _, cx| {
                                     if let Some(on_click) = this.secondary_on_click.as_ref() {
                                         (on_click)(cx)
                                     };
@@ -619,7 +632,7 @@ where
                 log::error!("{err:?}");
                 cx.update_root(|view, cx| {
                     if let Ok(workspace) = view.downcast::<Workspace>() {
-                        workspace.update(cx, |workspace, cx| workspace.show_error(&err, cx))
+                        workspace.update(cx, |workspace, model, cx| workspace.show_error(&err, cx))
                     }
                 })
                 .ok();

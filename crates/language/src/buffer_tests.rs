@@ -45,7 +45,7 @@ fn init_logger() {
 fn test_line_endings(cx: &mut gpui::AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer =
             Buffer::local("one\r\ntwo\rthree", cx).with_language(Arc::new(rust_lang()), cx);
         assert_eq!(buffer.text(), "one\ntwo\nthree");
@@ -261,8 +261,8 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     let buffer_1_events = Arc::new(Mutex::new(Vec::new()));
     let buffer_2_events = Arc::new(Mutex::new(Vec::new()));
 
-    let buffer1 = cx.new_model(|cx| Buffer::local("abcdef", cx));
-    let buffer2 = cx.new_model(|cx| {
+    let buffer1 = cx.new_model(|model, cx| Buffer::local("abcdef", cx));
+    let buffer2 = cx.new_model(|model, cx| {
         Buffer::remote(
             BufferId::from(cx.entity_id().as_non_zero_u64()),
             1,
@@ -314,7 +314,7 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
 
     // Incorporating a set of remote ops emits a single edited event,
     // followed by a dirty changed event.
-    buffer2.update(cx, |buffer, cx| {
+    buffer2.update(cx, |buffer, model, cx| {
         buffer.apply_ops(buffer1_ops.lock().drain(..), cx);
     });
     assert_eq!(
@@ -331,14 +331,14 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
         vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
     );
 
-    buffer1.update(cx, |buffer, cx| {
+    buffer1.update(cx, |buffer, model, cx| {
         // Undoing the first transaction emits edited event, followed by a
         // dirty changed event, since the buffer is again in a clean state.
-        buffer.undo(cx);
+        buffer.undo(model, cx);
     });
     // Incorporating the remote ops again emits a single edited event,
     // followed by a dirty changed event.
-    buffer2.update(cx, |buffer, cx| {
+    buffer2.update(cx, |buffer, model, cx| {
         buffer.apply_ops(buffer1_ops.lock().drain(..), cx);
     });
     assert_eq!(
@@ -354,20 +354,26 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
 #[gpui::test]
 async fn test_apply_diff(cx: &mut TestAppContext) {
     let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
-    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
-    let anchor = buffer.update(cx, |buffer, _| buffer.anchor_before(Point::new(3, 3)));
+    let buffer = cx.new_model(|model, cx| Buffer::local(text, cx));
+    let anchor = buffer.update(cx, |buffer, model, _| {
+        buffer.anchor_before(Point::new(3, 3))
+    });
 
     let text = "a\nccc\ndddd\nffffff\n";
-    let diff = buffer.update(cx, |b, cx| b.diff(text.into(), cx)).await;
-    buffer.update(cx, |buffer, cx| {
+    let diff = buffer
+        .update(cx, |b, model, cx| b.diff(text.into(), cx))
+        .await;
+    buffer.update(cx, |buffer, model, cx| {
         buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
         assert_eq!(anchor.to_point(buffer), Point::new(2, 3));
     });
 
     let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
-    let diff = buffer.update(cx, |b, cx| b.diff(text.into(), cx)).await;
-    buffer.update(cx, |buffer, cx| {
+    let diff = buffer
+        .update(cx, |b, model, cx| b.diff(text.into(), cx))
+        .await;
+    buffer.update(cx, |buffer, model, cx| {
         buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
         assert_eq!(anchor.to_point(buffer), Point::new(4, 4));
@@ -386,16 +392,18 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     ]
     .join("\n");
 
-    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+    let buffer = cx.new_model(|model, cx| Buffer::local(text, cx));
 
     // Spawn a task to format the buffer's whitespace.
     // Pause so that the formatting task starts running.
-    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
+    let format = buffer.update(cx, |buffer, model, cx| {
+        buffer.remove_trailing_whitespace(cx)
+    });
     smol::future::yield_now().await;
 
     // Edit the buffer while the normalization task is running.
-    let version_before_edit = buffer.update(cx, |buffer, _| buffer.version());
-    buffer.update(cx, |buffer, cx| {
+    let version_before_edit = buffer.update(cx, |buffer, model, _| buffer.version());
+    buffer.update(cx, |buffer, model, cx| {
         buffer.edit(
             [
                 (Point::new(0, 1)..Point::new(0, 1), "EE"),
@@ -407,7 +415,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     });
 
     let format_diff = format.await;
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         let version_before_format = format_diff.base_version.clone();
         buffer.apply_diff(format_diff, cx);
 
@@ -451,11 +459,11 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
 async fn test_reparse(cx: &mut gpui::TestAppContext) {
     let text = "fn a() {}";
     let buffer =
-        cx.new_model(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        cx.new_model(|model, cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
 
     // Wait for the initial text to parse
     cx.executor().run_until_parked();
-    assert!(!buffer.update(cx, |buffer, _| buffer.is_parsing()));
+    assert!(!buffer.update(cx, |buffer, model, _| buffer.is_parsing()));
     assert_eq!(
         get_tree_sexp(&buffer, cx),
         concat!(
@@ -465,13 +473,13 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         )
     );
 
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         buffer.set_sync_parse_timeout(Duration::ZERO)
     });
 
     // Perform some edits (add parameter and variable reference)
     // Parsing doesn't begin until the transaction is complete
-    buffer.update(cx, |buf, cx| {
+    buffer.update(cx, |buf, model, cx| {
         buf.start_transaction();
 
         let offset = buf.text().find(')').unwrap();
@@ -482,12 +490,12 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         buf.edit([(offset..offset, " d; ")], None, cx);
         assert!(!buf.is_parsing());
 
-        buf.end_transaction(cx);
+        buf.end_transaction(model, cx);
         assert_eq!(buf.text(), "fn a(b: C) { d; }");
         assert!(buf.is_parsing());
     });
     cx.executor().run_until_parked();
-    assert!(!buffer.update(cx, |buffer, _| buffer.is_parsing()));
+    assert!(!buffer.update(cx, |buffer, model, _| buffer.is_parsing()));
     assert_eq!(
         get_tree_sexp(&buffer, cx),
         concat!(
@@ -501,19 +509,19 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
     // * turn identifier into a field expression
     // * turn field expression into a method call
     // * add a turbofish to the method call
-    buffer.update(cx, |buf, cx| {
+    buffer.update(cx, |buf, model, cx| {
         let offset = buf.text().find(';').unwrap();
         buf.edit([(offset..offset, ".e")], None, cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
         assert!(buf.is_parsing());
     });
-    buffer.update(cx, |buf, cx| {
+    buffer.update(cx, |buf, model, cx| {
         let offset = buf.text().find(';').unwrap();
         buf.edit([(offset..offset, "(f)")], None, cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
         assert!(buf.is_parsing());
     });
-    buffer.update(cx, |buf, cx| {
+    buffer.update(cx, |buf, model, cx| {
         let offset = buf.text().find("(f)").unwrap();
         buf.edit([(offset..offset, "::<G>")], None, cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
@@ -533,11 +541,11 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         )
     );
 
-    buffer.update(cx, |buf, cx| {
-        buf.undo(cx);
-        buf.undo(cx);
-        buf.undo(cx);
-        buf.undo(cx);
+    buffer.update(cx, |buf, model, cx| {
+        buf.undo(model, cx);
+        buf.undo(model, cx);
+        buf.undo(model, cx);
+        buf.undo(model, cx);
         assert_eq!(buf.text(), "fn a() {}");
         assert!(buf.is_parsing());
     });
@@ -552,11 +560,11 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         )
     );
 
-    buffer.update(cx, |buf, cx| {
-        buf.redo(cx);
-        buf.redo(cx);
-        buf.redo(cx);
-        buf.redo(cx);
+    buffer.update(cx, |buf, model, cx| {
+        buf.redo(model, cx);
+        buf.redo(model, cx);
+        buf.redo(model, cx);
+        buf.redo(model, cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
         assert!(buf.is_parsing());
     });
@@ -577,7 +585,7 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
-    let buffer = cx.new_model(|cx| {
+    let buffer = cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("{}", cx).with_language(Arc::new(rust_lang()), cx);
         buffer.set_sync_parse_timeout(Duration::ZERO);
         buffer
@@ -590,7 +598,7 @@ async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
         "(source_file (expression_statement (block)))"
     );
 
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         buffer.set_language(Some(Arc::new(json_lang())), cx)
     });
     cx.executor().run_until_parked();
@@ -627,9 +635,9 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     .unindent();
 
     let buffer =
-        cx.new_model(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        cx.new_model(|model, cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
     let outline = buffer
-        .update(cx, |buffer, _| buffer.snapshot().outline(None))
+        .update(cx, |buffer, model, _| buffer.snapshot().outline(None))
         .unwrap();
 
     assert_eq!(
@@ -712,9 +720,9 @@ async fn test_outline_nodes_with_newlines(cx: &mut gpui::TestAppContext) {
     .unindent();
 
     let buffer =
-        cx.new_model(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        cx.new_model(|model, cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
     let outline = buffer
-        .update(cx, |buffer, _| buffer.snapshot().outline(None))
+        .update(cx, |buffer, model, _| buffer.snapshot().outline(None))
         .unwrap();
 
     assert_eq!(
@@ -748,8 +756,9 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(Arc::new(language), cx));
-    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let buffer =
+        cx.new_model(|model, cx| Buffer::local(text, cx).with_language(Arc::new(language), cx));
+    let snapshot = buffer.update(cx, |buffer, model, _| buffer.snapshot());
 
     // extra context nodes are included in the outline.
     let outline = snapshot.outline(None).unwrap();
@@ -795,9 +804,9 @@ fn test_outline_annotations(cx: &mut AppContext) {
     .unindent();
 
     let buffer =
-        cx.new_model(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        cx.new_model(|model, cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
     let outline = buffer
-        .update(cx, |buffer, _| buffer.snapshot().outline(None))
+        .update(cx, |buffer, model, _| buffer.snapshot().outline(None))
         .unwrap();
 
     assert_eq!(
@@ -846,8 +855,8 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
     .unindent();
 
     let buffer =
-        cx.new_model(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+        cx.new_model(|model, cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+    let snapshot = buffer.update(cx, |buffer, model, _| buffer.snapshot());
 
     // point is at the start of an item
     assert_eq!(
@@ -926,9 +935,10 @@ fn test_text_objects(cx: &mut AppContext) {
         false,
     );
 
-    let buffer =
-        cx.new_model(|cx| Buffer::local(text.clone(), cx).with_language(Arc::new(rust_lang()), cx));
-    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let buffer = cx.new_model(|model, cx| {
+        Buffer::local(text.clone(), cx).with_language(Arc::new(rust_lang()), cx)
+    });
+    let snapshot = buffer.update(cx, |buffer, model, _| buffer.snapshot());
 
     let matches = snapshot
         .text_object_ranges(ranges[0].clone(), TreeSitterOptions::default())
@@ -1098,7 +1108,7 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &
 
 #[gpui::test]
 fn test_range_for_syntax_ancestor(cx: &mut AppContext) {
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let text = "fn a() { b(|c| {}) }";
         let buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
         let snapshot = buffer.snapshot();
@@ -1138,7 +1148,7 @@ fn test_range_for_syntax_ancestor(cx: &mut AppContext) {
 fn test_autoindent_with_soft_tabs(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let text = "fn a() {}";
         let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
@@ -1180,7 +1190,7 @@ fn test_autoindent_with_hard_tabs(cx: &mut AppContext) {
         settings.defaults.hard_tabs = Some(true);
     });
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let text = "fn a() {}";
         let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
@@ -1220,7 +1230,7 @@ fn test_autoindent_with_hard_tabs(cx: &mut AppContext) {
 fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local(
             "
             fn a() {
@@ -1359,7 +1369,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
         buffer
     });
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         eprintln!("second buffer: {:?}", cx.entity_id());
 
         let mut buffer = Buffer::local(
@@ -1425,7 +1435,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
 fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local(
             "
             fn a() {
@@ -1486,7 +1496,7 @@ fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut Ap
 fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local(
             "
             fn a() {}
@@ -1542,7 +1552,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut AppContext) {
 fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let text = "a\nb";
         let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
         buffer.edit(
@@ -1559,7 +1569,7 @@ fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut AppContext) {
 fn test_autoindent_multi_line_insertion(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let text = "
             const a: usize = 1;
             fn b() {
@@ -1600,7 +1610,7 @@ fn test_autoindent_multi_line_insertion(cx: &mut AppContext) {
 fn test_autoindent_block_mode(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let text = r#"
             fn a() {
                 b();
@@ -1648,8 +1658,8 @@ fn test_autoindent_block_mode(cx: &mut AppContext) {
         );
 
         // Grouping is disabled in tests, so we need 2 undos
-        buffer.undo(cx); // Undo the auto-indent
-        buffer.undo(cx); // Undo the original edit
+        buffer.undo(model, cx); // Undo the auto-indent
+        buffer.undo(model, cx); // Undo the original edit
 
         // Insert the block at a deeper indent level. The entire block is outdented.
         buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "        ")], None, cx);
@@ -1683,7 +1693,7 @@ fn test_autoindent_block_mode(cx: &mut AppContext) {
 fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let text = r#"
             fn a() {
                 if b() {
@@ -1724,8 +1734,8 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContex
         );
 
         // Grouping is disabled in tests, so we need 2 undos
-        buffer.undo(cx); // Undo the auto-indent
-        buffer.undo(cx); // Undo the original edit
+        buffer.undo(model, cx); // Undo the auto-indent
+        buffer.undo(model, cx); // Undo the original edit
 
         // Insert the block at a deeper indent level. The entire block is outdented.
         buffer.edit(
@@ -1762,7 +1772,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContex
 fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let (text, ranges_to_replace) = marked_text_ranges(
             &"
             mod numbers {
@@ -1825,7 +1835,7 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut AppContext) {
 fn test_autoindent_language_without_indents_query(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let text = "
             * one
                 - a
@@ -1894,7 +1904,7 @@ fn test_autoindent_with_injected_languages(cx: &mut AppContext) {
     language_registry.add(html_language.clone());
     language_registry.add(javascript_language.clone());
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let (text, ranges) = marked_text_ranges(
             &"
                 <div>ˇ
@@ -1945,7 +1955,7 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut AppContext) {
         settings.defaults.tab_size = Some(2.try_into().unwrap());
     });
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("", cx).with_language(Arc::new(ruby_lang()), cx);
 
         let text = r#"
@@ -1989,7 +1999,7 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
 
     // First we insert some newlines to request an auto-indent (asynchronously).
     // Then we request that a preview tab be preserved for the new version, even though it's edited.
-    let buffer = cx.new_model(|cx| {
+    let buffer = cx.new_model(|model, cx| {
         let text = "fn a() {}";
         let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
@@ -2009,7 +2019,7 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 
     // The auto-indent applied, but didn't dismiss our preview
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
         assert!(buffer.preserve_preview());
 
@@ -2034,7 +2044,7 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 
     // The autoindent applies, but it shouldn't restore the preview status because we had an edit in the meantime.
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         assert_eq!(buffer.text(), "fn a() {\n    x\n    \n}");
         assert!(!buffer.preserve_preview());
     });
@@ -2045,7 +2055,7 @@ fn test_insert_empty_line(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
     // Insert empty line at the beginning, requesting an empty line above
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("abc\ndef\nghi", cx);
         let point = buffer.insert_empty_line(Point::new(0, 0), true, false, cx);
         assert_eq!(buffer.text(), "\nabc\ndef\nghi");
@@ -2054,7 +2064,7 @@ fn test_insert_empty_line(cx: &mut AppContext) {
     });
 
     // Insert empty line at the beginning, requesting an empty line above and below
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("abc\ndef\nghi", cx);
         let point = buffer.insert_empty_line(Point::new(0, 0), true, true, cx);
         assert_eq!(buffer.text(), "\n\nabc\ndef\nghi");
@@ -2063,7 +2073,7 @@ fn test_insert_empty_line(cx: &mut AppContext) {
     });
 
     // Insert empty line at the start of a line, requesting empty lines above and below
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("abc\ndef\nghi", cx);
         let point = buffer.insert_empty_line(Point::new(2, 0), true, true, cx);
         assert_eq!(buffer.text(), "abc\ndef\n\n\n\nghi");
@@ -2072,7 +2082,7 @@ fn test_insert_empty_line(cx: &mut AppContext) {
     });
 
     // Insert empty line in the middle of a line, requesting empty lines above and below
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("abc\ndefghi\njkl", cx);
         let point = buffer.insert_empty_line(Point::new(1, 3), true, true, cx);
         assert_eq!(buffer.text(), "abc\ndef\n\n\n\nghi\njkl");
@@ -2081,7 +2091,7 @@ fn test_insert_empty_line(cx: &mut AppContext) {
     });
 
     // Insert empty line in the middle of a line, requesting empty line above only
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("abc\ndefghi\njkl", cx);
         let point = buffer.insert_empty_line(Point::new(1, 3), true, false, cx);
         assert_eq!(buffer.text(), "abc\ndef\n\n\nghi\njkl");
@@ -2090,7 +2100,7 @@ fn test_insert_empty_line(cx: &mut AppContext) {
     });
 
     // Insert empty line in the middle of a line, requesting empty line below only
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("abc\ndefghi\njkl", cx);
         let point = buffer.insert_empty_line(Point::new(1, 3), false, true, cx);
         assert_eq!(buffer.text(), "abc\ndef\n\n\nghi\njkl");
@@ -2099,7 +2109,7 @@ fn test_insert_empty_line(cx: &mut AppContext) {
     });
 
     // Insert empty line at the end, requesting empty lines above and below
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("abc\ndef\nghi", cx);
         let point = buffer.insert_empty_line(Point::new(2, 3), true, true, cx);
         assert_eq!(buffer.text(), "abc\ndef\nghi\n\n\n");
@@ -2108,7 +2118,7 @@ fn test_insert_empty_line(cx: &mut AppContext) {
     });
 
     // Insert empty line at the end, requesting empty line above only
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("abc\ndef\nghi", cx);
         let point = buffer.insert_empty_line(Point::new(2, 3), true, false, cx);
         assert_eq!(buffer.text(), "abc\ndef\nghi\n\n");
@@ -2117,7 +2127,7 @@ fn test_insert_empty_line(cx: &mut AppContext) {
     });
 
     // Insert empty line at the end, requesting empty line below only
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("abc\ndef\nghi", cx);
         let point = buffer.insert_empty_line(Point::new(2, 3), false, true, cx);
         assert_eq!(buffer.text(), "abc\ndef\nghi\n\n");
@@ -2130,7 +2140,7 @@ fn test_insert_empty_line(cx: &mut AppContext) {
 fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let language = Language::new(
             LanguageConfig {
                 name: "JavaScript".into(),
@@ -2272,7 +2282,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
 fn test_language_scope_at_with_rust(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
@@ -2341,7 +2351,7 @@ fn test_language_scope_at_with_rust(cx: &mut AppContext) {
 fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let text = r#"
             <ol>
             <% people.each do |person| %>
@@ -2389,7 +2399,7 @@ fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
 fn test_language_at_with_hidden_languages(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.new_model(|cx| {
+    cx.new_model(|model, cx| {
         let text = r#"
             this is an *emphasized* word.
         "#
@@ -2428,7 +2438,7 @@ fn test_language_at_with_hidden_languages(cx: &mut AppContext) {
 fn test_serialization(cx: &mut gpui::AppContext) {
     let mut now = Instant::now();
 
-    let buffer1 = cx.new_model(|cx| {
+    let buffer1 = cx.new_model(|model, cx| {
         let mut buffer = Buffer::local("abc", cx);
         buffer.edit([(3..3, "D")], None, cx);
 
@@ -2438,7 +2448,7 @@ fn test_serialization(cx: &mut gpui::AppContext) {
         buffer.end_transaction_at(now, cx);
         assert_eq!(buffer.text(), "abcDE");
 
-        buffer.undo(cx);
+        buffer.undo(model, cx);
         assert_eq!(buffer.text(), "abcD");
 
         buffer.edit([(4..4, "F")], None, cx);
@@ -2451,7 +2461,7 @@ fn test_serialization(cx: &mut gpui::AppContext) {
     let ops = cx
         .background_executor()
         .block(buffer1.read(cx).serialize_ops(None, cx));
-    let buffer2 = cx.new_model(|cx| {
+    let buffer2 = cx.new_model(|model, cx| {
         let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
         buffer.apply_ops(
             ops.into_iter()
@@ -2472,7 +2482,7 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
         buffer_row: u32,
         cx: &mut TestAppContext,
     ) -> Option<(Range<u32>, LineIndent)> {
-        let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+        let buffer = cx.new_model(|model, cx| Buffer::local(text, cx));
         let snapshot = cx.read(|cx| buffer.read(cx).snapshot());
         snapshot.enclosing_indent(buffer_row).await
     }
@@ -2553,13 +2563,13 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
 fn test_branch_and_merge(cx: &mut TestAppContext) {
     cx.update(|cx| init_settings(cx, |_| {}));
 
-    let base = cx.new_model(|cx| Buffer::local("one\ntwo\nthree\n", cx));
+    let base = cx.new_model(|model, cx| Buffer::local("one\ntwo\nthree\n", cx));
 
     // Create a remote replica of the base buffer.
-    let base_replica = cx.new_model(|cx| {
+    let base_replica = cx.new_model(|model, cx| {
         Buffer::from_proto(1, Capability::ReadWrite, base.read(cx).to_proto(cx), None).unwrap()
     });
-    base.update(cx, |_buffer, cx| {
+    base.update(cx, |_buffer, model, cx| {
         cx.subscribe(&base_replica, |this, _, event, cx| {
             if let BufferEvent::Operation {
                 operation,
@@ -2573,13 +2583,13 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
     });
 
     // Create a branch, which initially has the same state as the base buffer.
-    let branch = base.update(cx, |buffer, cx| buffer.branch(cx));
+    let branch = base.update(cx, |buffer, model, cx| buffer.branch(cx));
     branch.read_with(cx, |buffer, _| {
         assert_eq!(buffer.text(), "one\ntwo\nthree\n");
     });
 
     // Edits to the branch are not applied to the base.
-    branch.update(cx, |buffer, cx| {
+    branch.update(cx, |buffer, model, cx| {
         buffer.edit(
             [
                 (Point::new(1, 0)..Point::new(1, 0), "1.5\n"),
@@ -2608,7 +2618,7 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
     });
 
     // Edits to the base are applied to the branch.
-    base.update(cx, |buffer, cx| {
+    base.update(cx, |buffer, model, cx| {
         buffer.edit([(Point::new(0, 0)..Point::new(0, 0), "ZERO\n")], None, cx)
     });
     branch.read_with(cx, |buffer, cx| {
@@ -2617,7 +2627,7 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
     });
 
     // Edits to any replica of the base are applied to the branch.
-    base_replica.update(cx, |buffer, cx| {
+    base_replica.update(cx, |buffer, model, cx| {
         buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "2.5\n")], None, cx)
     });
     branch.read_with(cx, |buffer, cx| {
@@ -2626,11 +2636,11 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
     });
 
     // Merging the branch applies all of its changes to the base.
-    branch.update(cx, |buffer, cx| {
+    branch.update(cx, |buffer, model, cx| {
         buffer.merge_into_base(Vec::new(), cx);
     });
 
-    branch.update(cx, |buffer, cx| {
+    branch.update(cx, |buffer, model, cx| {
         assert_eq!(base.read(cx).text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
         assert_eq!(buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
     });
@@ -2640,11 +2650,11 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
 fn test_merge_into_base(cx: &mut TestAppContext) {
     cx.update(|cx| init_settings(cx, |_| {}));
 
-    let base = cx.new_model(|cx| Buffer::local("abcdefghijk", cx));
-    let branch = base.update(cx, |buffer, cx| buffer.branch(cx));
+    let base = cx.new_model(|model, cx| Buffer::local("abcdefghijk", cx));
+    let branch = base.update(cx, |buffer, model, cx| buffer.branch(cx));
 
     // Make 3 edits, merge one into the base.
-    branch.update(cx, |branch, cx| {
+    branch.update(cx, |branch, model, cx| {
         branch.edit([(0..3, "ABC"), (7..9, "HI"), (11..11, "LMN")], None, cx);
         branch.merge_into_base(vec![5..8], cx);
     });
@@ -2653,14 +2663,14 @@ fn test_merge_into_base(cx: &mut TestAppContext) {
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
 
     // Undo the one already-merged edit. Merge that into the base.
-    branch.update(cx, |branch, cx| {
+    branch.update(cx, |branch, model, cx| {
         branch.edit([(7..9, "hi")], None, cx);
         branch.merge_into_base(vec![5..8], cx);
     });
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
 
     // Merge an insertion into the base.
-    branch.update(cx, |branch, cx| {
+    branch.update(cx, |branch, model, cx| {
         branch.merge_into_base(vec![11..11], cx);
     });
 
@@ -2668,7 +2678,7 @@ fn test_merge_into_base(cx: &mut TestAppContext) {
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijkLMN"));
 
     // Deleted the inserted text and merge that into the base.
-    branch.update(cx, |branch, cx| {
+    branch.update(cx, |branch, model, cx| {
         branch.edit([(11..14, "")], None, cx);
         branch.merge_into_base(vec![10..11], cx);
     });
@@ -2680,11 +2690,11 @@ fn test_merge_into_base(cx: &mut TestAppContext) {
 fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
     cx.update(|cx| init_settings(cx, |_| {}));
 
-    let base = cx.new_model(|cx| Buffer::local("abcdefghijk", cx));
-    let branch = base.update(cx, |buffer, cx| buffer.branch(cx));
+    let base = cx.new_model(|model, cx| Buffer::local("abcdefghijk", cx));
+    let branch = base.update(cx, |buffer, model, cx| buffer.branch(cx));
 
     // Make 2 edits, merge one into the base.
-    branch.update(cx, |branch, cx| {
+    branch.update(cx, |branch, model, cx| {
         branch.edit([(0..3, "ABC"), (7..9, "HI")], None, cx);
         branch.merge_into_base(vec![7..7], cx);
     });
@@ -2692,14 +2702,14 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
     branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
 
     // Undo the merge in the base buffer.
-    base.update(cx, |base, cx| {
-        base.undo(cx);
+    base.update(cx, |base, model, cx| {
+        base.undo(model, cx);
     });
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
     branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
 
     // Merge that operation into the base again.
-    branch.update(cx, |branch, cx| {
+    branch.update(cx, |branch, model, cx| {
         branch.merge_into_base(vec![7..7], cx);
     });
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
@@ -2725,10 +2735,10 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
     let mut replica_ids = Vec::new();
     let mut buffers = Vec::new();
     let network = Arc::new(Mutex::new(Network::new(rng.clone())));
-    let base_buffer = cx.new_model(|cx| Buffer::local(base_text.as_str(), cx));
+    let base_buffer = cx.new_model(|model, cx| Buffer::local(base_text.as_str(), cx));
 
     for i in 0..rng.gen_range(min_peers..=max_peers) {
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new_model(|model, cx| {
             let state = base_buffer.read(cx).to_proto(cx);
             let ops = cx
                 .background_executor()
@@ -2777,7 +2787,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
         let mut new_buffer = None;
         match rng.gen_range(0..100) {
             0..=29 if mutation_count != 0 => {
-                buffer.update(cx, |buffer, cx| {
+                buffer.update(cx, |buffer, model, cx| {
                     buffer.start_transaction_at(now);
                     buffer.randomly_edit(&mut rng, 5, cx);
                     buffer.end_transaction_at(now, cx);
@@ -2786,11 +2796,11 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                 mutation_count -= 1;
             }
             30..=39 if mutation_count != 0 => {
-                buffer.update(cx, |buffer, cx| {
+                buffer.update(cx, |buffer, model, cx| {
                     if rng.gen_bool(0.2) {
                         log::info!("peer {} clearing active selections", replica_id);
                         active_selections.remove(&replica_id);
-                        buffer.remove_active_selections(cx);
+                        buffer.remove_active_selections(model, cx);
                     } else {
                         let mut selections = Vec::new();
                         for id in 0..rng.gen_range(1..=5) {
@@ -2817,7 +2827,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
             }
             40..=49 if mutation_count != 0 && replica_id == 0 => {
                 let entry_count = rng.gen_range(1..=5);
-                buffer.update(cx, |buffer, cx| {
+                buffer.update(cx, |buffer, model, cx| {
                     let diagnostics = DiagnosticSet::new(
                         (0..entry_count).map(|_| {
                             let range = buffer.random_byte_range(0, &mut rng);
@@ -2852,7 +2862,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                     new_replica_id,
                     replica_id
                 );
-                new_buffer = Some(cx.new_model(|cx| {
+                new_buffer = Some(cx.new_model(|model, cx| {
                     let mut new_buffer = Buffer::from_proto(
                         new_replica_id,
                         Capability::ReadWrite,
@@ -2908,7 +2918,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                                 ops.len(),
                                 ops
                             );
-                            new_buffer.update(cx, |new_buffer, cx| {
+                            new_buffer.update(cx, |new_buffer, model, cx| {
                                 new_buffer.apply_ops(ops, cx);
                             });
                         }
@@ -2917,7 +2927,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                 }
             }
             60..=69 if mutation_count != 0 => {
-                buffer.update(cx, |buffer, cx| {
+                buffer.update(cx, |buffer, model, cx| {
                     buffer.randomly_undo_redo(&mut rng, cx);
                     log::info!("buffer {} text: {:?}", buffer.replica_id(), buffer.text());
                 });
@@ -2937,7 +2947,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                         ops.len(),
                         ops
                     );
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx));
+                    buffer.update(cx, |buffer, model, cx| buffer.apply_ops(ops, cx));
                 }
             }
             _ => {}
@@ -3290,7 +3300,7 @@ pub fn markdown_inline_lang() -> Language {
 }
 
 fn get_tree_sexp(buffer: &Model<Buffer>, cx: &mut gpui::TestAppContext) -> String {
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         let snapshot = buffer.snapshot();
         let layers = snapshot.syntax.layers(buffer.as_text_snapshot());
         layers[0].node().to_sexp()
@@ -3305,10 +3315,10 @@ fn assert_bracket_pairs(
     cx: &mut AppContext,
 ) {
     let (expected_text, selection_ranges) = marked_text_ranges(selection_text, false);
-    let buffer = cx.new_model(|cx| {
+    let buffer = cx.new_model(|model, cx| {
         Buffer::local(expected_text.clone(), cx).with_language(Arc::new(language), cx)
     });
-    let buffer = buffer.update(cx, |buffer, _cx| buffer.snapshot());
+    let buffer = buffer.update(cx, |buffer, model, _cx| buffer.snapshot());
 
     let selection_range = selection_ranges[0].clone();
 

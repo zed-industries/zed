@@ -35,7 +35,7 @@ impl PaneGroup {
         Self { root }
     }
 
-    pub fn new(pane: View<Pane>) -> Self {
+    pub fn new(pane: Model<Pane>) -> Self {
         Self {
             root: Member::Pane(pane),
         }
@@ -43,8 +43,8 @@ impl PaneGroup {
 
     pub fn split(
         &mut self,
-        old_pane: &View<Pane>,
-        new_pane: &View<Pane>,
+        old_pane: &Model<Pane>,
+        new_pane: &Model<Pane>,
         direction: SplitDirection,
     ) -> Result<()> {
         match &mut self.root {
@@ -60,14 +60,14 @@ impl PaneGroup {
         }
     }
 
-    pub fn bounding_box_for_pane(&self, pane: &View<Pane>) -> Option<Bounds<Pixels>> {
+    pub fn bounding_box_for_pane(&self, pane: &Model<Pane>) -> Option<Bounds<Pixels>> {
         match &self.root {
             Member::Pane(_) => None,
             Member::Axis(axis) => axis.bounding_box_for_pane(pane),
         }
     }
 
-    pub fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&View<Pane>> {
+    pub fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Model<Pane>> {
         match &self.root {
             Member::Pane(pane) => Some(pane),
             Member::Axis(axis) => axis.pane_at_pixel_position(coordinate),
@@ -78,7 +78,7 @@ impl PaneGroup {
     /// - Ok(true) if it found and removed a pane
     /// - Ok(false) if it found but did not remove the pane
     /// - Err(_) if it did not find the pane
-    pub fn remove(&mut self, pane: &View<Pane>) -> Result<bool> {
+    pub fn remove(&mut self, pane: &Model<Pane>) -> Result<bool> {
         match &mut self.root {
             Member::Pane(_) => Ok(false),
             Member::Axis(axis) => {
@@ -92,7 +92,7 @@ impl PaneGroup {
 
     pub fn resize(
         &mut self,
-        pane: &View<Pane>,
+        pane: &Model<Pane>,
         direction: Axis,
         amount: Pixels,
         bounds: &Bounds<Pixels>,
@@ -114,7 +114,7 @@ impl PaneGroup {
         };
     }
 
-    pub fn swap(&mut self, from: &View<Pane>, to: &View<Pane>) {
+    pub fn swap(&mut self, from: &Model<Pane>, to: &Model<Pane>) {
         match &mut self.root {
             Member::Pane(_) => {}
             Member::Axis(axis) => axis.swap(from, to),
@@ -127,7 +127,7 @@ impl PaneGroup {
         project: &Model<Project>,
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
-        active_pane: &View<Pane>,
+        active_pane: &Model<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         model: &Model<Workspace>, cx: &mut AppContext,
@@ -140,27 +140,28 @@ impl PaneGroup {
             active_pane,
             zoomed,
             app_state,
+            model,
             cx,
         )
     }
 
-    pub fn panes(&self) -> Vec<&View<Pane>> {
+    pub fn panes(&self) -> Vec<&Model<Pane>> {
         let mut panes = Vec::new();
         self.root.collect_panes(&mut panes);
         panes
     }
 
-    pub fn first_pane(&self) -> View<Pane> {
+    pub fn first_pane(&self) -> Model<Pane> {
         self.root.first_pane()
     }
 
     pub fn find_pane_in_direction(
         &mut self,
-        active_pane: &View<Pane>,
+        active_pane: &Model<Pane>,
         direction: SplitDirection,
         window: &Window,
         cx: &AppContext,
-    ) -> Option<&View<Pane>> {
+    ) -> Option<&Model<Pane>> {
         let bounding_box = self.bounding_box_for_pane(active_pane)?;
         let cursor = active_pane.read(cx).pixel_position_of_cursor(cx);
         let center = match cursor {
@@ -191,11 +192,11 @@ impl PaneGroup {
 #[derive(Debug, Clone)]
 pub enum Member {
     Axis(PaneAxis),
-    Pane(View<Pane>),
+    Pane(Model<Pane>),
 }
 
 impl Member {
-    fn new_axis(old_pane: View<Pane>, new_pane: View<Pane>, direction: SplitDirection) -> Self {
+    fn new_axis(old_pane: Model<Pane>, new_pane: Model<Pane>, direction: SplitDirection) -> Self {
         use Axis::*;
         use SplitDirection::*;
 
@@ -212,14 +213,14 @@ impl Member {
         Member::Axis(PaneAxis::new(axis, members))
     }
 
-    fn contains(&self, needle: &View<Pane>) -> bool {
+    fn contains(&self, needle: &Model<Pane>) -> bool {
         match self {
             Member::Axis(axis) => axis.members.iter().any(|member| member.contains(needle)),
             Member::Pane(pane) => pane == needle,
         }
     }
 
-    fn first_pane(&self) -> View<Pane> {
+    fn first_pane(&self) -> Model<Pane> {
         match self {
             Member::Axis(axis) => axis.members[0].first_pane(),
             Member::Pane(pane) => pane.clone(),
@@ -233,7 +234,7 @@ impl Member {
         basis: usize,
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
-        active_pane: &View<Pane>,
+        active_pane: &Model<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         model: &Model<Workspace>, cx: &mut AppContext,
@@ -349,7 +350,7 @@ impl Member {
                                     |this, (leader_project_id, leader_user_id)| {
                                         this.cursor_pointer().on_mouse_down(
                                             MouseButton::Left,
-                                            cx.listener(move |this, _, cx| {
+                                            model.listener(move |this, _, cx| {
                                                 crate::join_in_room_project(
                                                     leader_project_id,
                                                     leader_user_id,
@@ -374,13 +375,14 @@ impl Member {
                     active_pane,
                     zoomed,
                     app_state,
+                    model,
                     cx,
                 )
                 .into_any(),
         }
     }
 
-    fn collect_panes<'a>(&'a self, panes: &mut Vec<&'a View<Pane>>) {
+    fn collect_panes<'a>(&'a self, panes: &mut Vec<&'a Model<Pane>>) {
         match self {
             Member::Axis(axis) => {
                 for member in &axis.members {
@@ -428,8 +430,8 @@ impl PaneAxis {
 
     fn split(
         &mut self,
-        old_pane: &View<Pane>,
-        new_pane: &View<Pane>,
+        old_pane: &Model<Pane>,
+        new_pane: &Model<Pane>,
         direction: SplitDirection,
     ) -> Result<()> {
         for (mut idx, member) in self.members.iter_mut().enumerate() {
@@ -460,7 +462,7 @@ impl PaneAxis {
         Err(anyhow!("Pane not found"))
     }
 
-    fn remove(&mut self, pane_to_remove: &View<Pane>) -> Result<Option<Member>> {
+    fn remove(&mut self, pane_to_remove: &Model<Pane>) -> Result<Option<Member>> {
         let mut found_pane = false;
         let mut remove_member = None;
         for (idx, member) in self.members.iter_mut().enumerate() {
@@ -513,7 +515,7 @@ impl PaneAxis {
 
     fn resize(
         &mut self,
-        pane: &View<Pane>,
+        pane: &Model<Pane>,
         axis: Axis,
         amount: Pixels,
         bounds: &Bounds<Pixels>,
@@ -621,7 +623,7 @@ impl PaneAxis {
         Some(true)
     }
 
-    fn swap(&mut self, from: &View<Pane>, to: &View<Pane>) {
+    fn swap(&mut self, from: &Model<Pane>, to: &Model<Pane>) {
         for member in self.members.iter_mut() {
             match member {
                 Member::Axis(axis) => axis.swap(from, to),
@@ -636,7 +638,7 @@ impl PaneAxis {
         }
     }
 
-    fn bounding_box_for_pane(&self, pane: &View<Pane>) -> Option<Bounds<Pixels>> {
+    fn bounding_box_for_pane(&self, pane: &Model<Pane>) -> Option<Bounds<Pixels>> {
         debug_assert!(self.members.len() == self.bounding_boxes.lock().len());
 
         for (idx, member) in self.members.iter().enumerate() {
@@ -656,7 +658,7 @@ impl PaneAxis {
         None
     }
 
-    fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&View<Pane>> {
+    fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Model<Pane>> {
         debug_assert!(self.members.len() == self.bounding_boxes.lock().len());
 
         let bounding_boxes = self.bounding_boxes.lock();
@@ -681,7 +683,7 @@ impl PaneAxis {
         basis: usize,
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
-        active_pane: &View<Pane>,
+        active_pane: &Model<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         model: &Model<Workspace>, cx: &mut AppContext,
@@ -709,6 +711,7 @@ impl PaneAxis {
                     active_pane,
                     zoomed,
                     app_state,
+                    model,
                     cx,
                 )
                 .into_any_element()
@@ -838,7 +841,7 @@ mod element {
         basis: usize,
         flexes: Arc<Mutex<Vec<f32>>>,
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
     ) -> PaneAxisElement {
         PaneAxisElement {
             axis,
@@ -858,7 +861,7 @@ mod element {
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
     }
 
     pub struct PaneAxisLayout {
@@ -891,7 +894,7 @@ mod element {
             axis: Axis,
             child_start: Point<Pixels>,
             container_size: Size<Pixels>,
-            workspace: WeakView<Workspace>,
+            workspace: WeakModel<Workspace>,
             window: &mut gpui::Window,
             cx: &mut gpui::AppContext,
         ) {
@@ -967,7 +970,7 @@ mod element {
             }
 
             workspace
-                .update(cx, |this, cx| this.serialize_workspace(cx))
+                .update(cx, |this, model, cx| this.serialize_workspace(cx))
                 .log_err();
             cx.stop_propagation();
             cx.refresh();
@@ -1200,7 +1203,7 @@ mod element {
                                     let mut borrow = flexes.lock();
                                     *borrow = vec![1.; borrow.len()];
                                     workspace
-                                        .update(cx, |this, cx| this.serialize_workspace(cx))
+                                        .update(cx, |this, model, cx| this.serialize_workspace(cx))
                                         .log_err();
 
                                     cx.refresh();

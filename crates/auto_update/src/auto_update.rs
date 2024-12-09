@@ -130,7 +130,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     AutoUpdateSetting::register(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
-        workspace.register_action(|_, action: &Check, cx| check(action, cx));
+        workspace.register_action(|_, action: &Check, cx| check(action, model, cx));
 
         workspace.register_action(|_, action, cx| {
             view_release_notes(action, cx);
@@ -139,7 +139,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     .detach();
 
     let version = release_channel::AppVersion::global(cx);
-    let auto_updater = cx.new_model(|cx| {
+    let auto_updater = cx.new_model(|model, cx| {
         let updater = AutoUpdater::new(version, http_client);
 
         let poll_for_updates = ReleaseChannel::try_global(cx)
@@ -152,7 +152,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
         {
             let mut update_subscription = AutoUpdateSetting::get_global(cx)
                 .0
-                .then(|| updater.start_polling(cx));
+                .then(|| updater.start_polling(model, cx));
 
             cx.observe_global::<SettingsStore>(move |updater, cx| {
                 if AutoUpdateSetting::get_global(cx).0 {
@@ -200,7 +200,7 @@ pub fn check(_: &Check, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
     }
 
     if let Some(updater) = AutoUpdater::get(cx) {
-        updater.update(cx, |updater, cx| updater.poll(cx));
+        updater.update(cx, |updater, model, cx| updater.poll(model, cx));
     } else {
         drop(cx.prompt(
             gpui::PromptLevel::Info,
@@ -249,9 +249,9 @@ impl AutoUpdater {
     }
 
     pub fn start_polling(&self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             loop {
-                this.update(&mut cx, |this, cx| this.poll(cx))?;
+                this.update(&mut cx, |this, model, cx| this.poll(model, cx))?;
                 cx.background_executor().timer(POLL_INTERVAL).await;
             }
         })
@@ -262,16 +262,16 @@ impl AutoUpdater {
             return;
         }
 
-        cx.notify();
+        model.notify(cx);
 
-        self.pending_poll = Some(cx.spawn(|this, mut cx| async move {
+        self.pending_poll = Some(model.spawn(cx, |this, mut cx| async move {
             let result = Self::update(this.upgrade()?, cx.clone()).await;
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.pending_poll = None;
                 if let Err(error) = result {
                     log::error!("auto-update failed: error:{:?}", error);
                     this.status = AutoUpdateStatus::Errored;
-                    cx.notify();
+                    model.notify(cx);
                 }
             })
             .ok()
@@ -288,7 +288,7 @@ impl AutoUpdater {
 
     pub fn dismiss_error(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.status = AutoUpdateStatus::Idle;
-        cx.notify();
+        model.notify(cx);
     }
 
     // If you are packaging Zed and need to override the place it downloads SSH remotes from,
@@ -431,15 +431,16 @@ impl AutoUpdater {
     }
 
     async fn update(this: Model<Self>, mut cx: AsyncAppContext) -> Result<()> {
-        let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Checking;
-            cx.notify();
-            (
-                this.http_client.clone(),
-                this.current_version,
-                ReleaseChannel::try_global(cx),
-            )
-        })?;
+        let (client, current_version, release_channel) =
+            this.update(&mut cx, |this, model, cx| {
+                this.status = AutoUpdateStatus::Checking;
+                model.notify(cx);
+                (
+                    this.http_client.clone(),
+                    this.current_version,
+                    ReleaseChannel::try_global(cx),
+                )
+            })?;
 
         let release =
             Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
@@ -454,16 +455,16 @@ impl AutoUpdater {
         };
 
         if !should_download {
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.status = AutoUpdateStatus::Idle;
-                cx.notify();
+                model.notify(cx);
             })?;
             return Ok(());
         }
 
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, model, cx| {
             this.status = AutoUpdateStatus::Downloading;
-            cx.notify();
+            model.notify(cx);
         })?;
 
         let temp_dir = tempfile::Builder::new()
@@ -484,9 +485,9 @@ impl AutoUpdater {
         let downloaded_asset = temp_dir.path().join(filename);
         download_release(&downloaded_asset, release, client, &cx).await?;
 
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, model, cx| {
             this.status = AutoUpdateStatus::Installing;
-            cx.notify();
+            model.notify(cx);
         })?;
 
         let binary_path = match OS {
@@ -495,11 +496,11 @@ impl AutoUpdater {
             _ => Err(anyhow!("not supported: {:?}", OS)),
         }?;
 
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, model, cx| {
             this.set_should_show_update_notification(true, cx)
                 .detach_and_log_err(cx);
             this.status = AutoUpdateStatus::Updated { binary_path };
-            cx.notify();
+            model.notify(cx);
         })?;
 
         Ok(())

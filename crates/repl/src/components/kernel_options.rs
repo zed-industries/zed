@@ -86,7 +86,7 @@ impl PickerDelegate for KernelPickerDelegate {
 
     fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         self.selected_kernelspec = self.filtered_kernels.get(ix).cloned();
-        cx.notify();
+        model.notify(cx);
     }
 
     fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
@@ -116,7 +116,7 @@ impl PickerDelegate for KernelPickerDelegate {
     fn confirm(&mut self, _secondary: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if let Some(kernelspec) = &self.selected_kernelspec {
             (self.on_select)(kernelspec.clone(), cx.window_context());
-            cx.emit(DismissEvent);
+            model.emit(cx, DismissEvent);
         }
     }
 
@@ -243,8 +243,8 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
             selected_kernelspec,
         };
 
-        let picker_view = cx.new_view(|cx| {
-            let picker = Picker::uniform_list(delegate, cx)
+        let picker_view = cx.new_model(|model, cx| {
+            let picker = Picker::uniform_list(delegate, model, cx)
                 .width(rems(30.))
                 .max_height(Some(rems(20.).into()));
             picker

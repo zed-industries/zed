@@ -214,7 +214,7 @@ impl Editor {
         if let Some(hovered_link_state) = self.hovered_link_state.take() {
             self.hide_hovered_link(cx);
             if !hovered_link_state.links.is_empty() {
-                if !self.focus_handle.is_focused(cx) {
+                if !self.focus_handle.is_focused(window) {
                     cx.focus(&self.focus_handle);
                 }
 
@@ -358,6 +358,7 @@ pub fn update_inlay_link_and_hover_points(
                                                     ..hovered_hint.text.len() + extra_shift_right,
                                             },
                                         },
+                                        model,
                                         cx,
                                     );
                                     hover_updated = true;
@@ -402,6 +403,7 @@ pub fn update_inlay_link_and_hover_points(
                                                 },
                                                 range: highlight.clone(),
                                             },
+                                            model,
                                             cx,
                                         );
                                         hover_updated = true;
@@ -440,7 +442,7 @@ pub fn update_inlay_link_and_hover_points(
         editor.hide_hovered_link(cx)
     }
     if !hover_updated {
-        hover_popover::hover_at(editor, None, cx);
+        hover_popover::hover_at(editor, None, model, cx);
     }
 }
 
@@ -519,7 +521,7 @@ pub fn show_link_definition(
     let provider = editor.semantics_provider.clone();
 
     let snapshot = snapshot.buffer_snapshot.clone();
-    hovered_link_state.task = Some(cx.spawn(|this, mut cx| {
+    hovered_link_state.task = Some(model.spawn(cx, |this, mut cx| {
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
@@ -713,7 +715,9 @@ pub(crate) async fn find_file(
     cx: &mut AsyncAppContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
     let project = project?;
-    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
+    let snapshot = buffer
+        .update(cx, |buffer, model, _| buffer.snapshot())
+        .ok()?;
     let scope = snapshot.language_scope_at(position);
     let (range, candidate_file_path) = surrounding_filename(snapshot, position)?;
 
@@ -725,7 +729,7 @@ pub(crate) async fn find_file(
         cx: &mut AsyncAppContext,
     ) -> Option<ResolvedPath> {
         project
-            .update(cx, |project, cx| {
+            .update(cx, |project, model, cx| {
                 project.resolve_path_in_buffer(&candidate_file_path, buffer, cx)
             })
             .ok()?
@@ -1276,7 +1280,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             let expected_layers = vec![hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor));
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_layers, visible_hint_labels(editor, model, cx));
         });
 
         let inlay_range = cx
@@ -1313,7 +1317,9 @@ mod tests {
                 .flat_map(|highlights| highlights.values().map(|(_, highlight)| highlight))
                 .collect::<Vec<_>>();
 
-            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let buffer_snapshot = editor
+                .buffer()
+                .update(cx, |buffer, model, cx| buffer.snapshot(cx));
             let expected_highlight = InlayHighlight {
                 inlay: InlayId::Hint(0),
                 inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),

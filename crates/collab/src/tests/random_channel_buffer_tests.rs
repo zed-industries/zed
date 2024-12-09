@@ -133,7 +133,7 @@ impl RandomizedTest for RandomChannelBufferTest {
     ) -> Result<(), TestError> {
         match operation {
             ChannelBufferOperation::JoinChannelNotes { channel_name } => {
-                let buffer = client.channel_store().update(cx, |store, cx| {
+                let buffer = client.channel_store().update(cx, |store, model, cx| {
                     let channel_id = store
                         .ordered_channels()
                         .find(|(_, c)| c.name == channel_name)
@@ -198,9 +198,9 @@ impl RandomizedTest for RandomChannelBufferTest {
                     edits
                 );
 
-                channel_buffer.update(cx, |buffer, cx| {
+                channel_buffer.update(cx, |buffer, model, cx| {
                     let buffer = buffer.buffer();
-                    buffer.update(cx, |buffer, cx| {
+                    buffer.update(cx, |buffer, model, cx| {
                         let snapshot = buffer.snapshot();
                         buffer.edit(
                             edits.into_iter().map(|(range, text)| {

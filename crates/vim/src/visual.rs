@@ -601,10 +601,10 @@ impl Vim {
             editor.set_collapse_matches(false);
         });
         if vim_is_normal {
-            pane.update(cx, |pane, cx| {
+            pane.update(cx, |pane, model, cx| {
                 if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
                 {
-                    search_bar.update(cx, |search_bar, cx| {
+                    search_bar.update(cx, |search_bar, model, cx| {
                         if !search_bar.has_active_match() || !search_bar.show(cx) {
                             return;
                         }
@@ -622,9 +622,9 @@ impl Vim {
         });
 
         let mut match_exists = false;
-        pane.update(cx, |pane, cx| {
+        pane.update(cx, |pane, model, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-                search_bar.update(cx, |search_bar, cx| {
+                search_bar.update(cx, |search_bar, model, cx| {
                     search_bar.update_match_index(cx);
                     search_bar.select_match(direction, count, cx);
                     match_exists = search_bar.match_exists(cx);

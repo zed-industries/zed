@@ -98,7 +98,7 @@ fn main() {
             move |cx| {
                 theme::setup_ui_font(cx);
 
-                cx.new_view(|cx| StoryWrapper::new(selector.story(cx)))
+                cx.new_model(|model, cx| StoryWrapper::new(selector.story(cx)))
             },
         );
 

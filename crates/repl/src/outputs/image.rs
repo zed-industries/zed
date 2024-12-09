@@ -74,7 +74,7 @@ impl ImageView {
 }
 
 impl Render for ImageView {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         let line_height = cx.line_height();
 
         let (height, width) = if self.height as f32 / line_height.0 == u8::MAX as f32 {

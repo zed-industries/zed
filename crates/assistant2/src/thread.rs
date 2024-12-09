@@ -115,7 +115,7 @@ impl Thread {
         cx: &mut AppContext,
     ) {
         self.summary = Some(summary.into());
-        cx.emit(ThreadEvent::SummaryChanged);
+        model.emit(cx, ThreadEvent::SummaryChanged);
     }
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
@@ -140,7 +140,7 @@ impl Thread {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.insert_message(Role::User, text, cx)
+        self.insert_message(Role::User, text, model, cx)
     }
 
     pub fn insert_message(
@@ -157,7 +157,7 @@ impl Thread {
             text: text.into(),
         });
         self.touch_updated_at();
-        cx.emit(ThreadEvent::MessageAdded(id));
+        model.emit(cx, ThreadEvent::MessageAdded(id));
     }
 
     pub fn to_completion_request(
@@ -237,10 +237,13 @@ impl Thread {
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
                                         last_message.text.push_str(&chunk);
-                                        cx.emit(ThreadEvent::StreamedAssistantText(
-                                            last_message.id,
-                                            chunk,
-                                        ));
+                                        model.emit(
+                                            cx,
+                                            ThreadEvent::StreamedAssistantText(
+                                                last_message.id,
+                                                chunk,
+                                            ),
+                                        );
                                     }
                                 }
                             }
@@ -271,8 +274,8 @@ impl Thread {
                         }
 
                         thread.touch_updated_at();
-                        cx.emit(ThreadEvent::StreamedCompletion);
-                        cx.notify();
+                        model.emit(cx, ThreadEvent::StreamedCompletion);
+                        model.notify(cx);
                     })?;
 
                     smol::future::yield_now().await;
@@ -297,25 +300,31 @@ impl Thread {
                 .update(&mut cx, |_thread, cx| match result.as_ref() {
                     Ok(stop_reason) => match stop_reason {
                         StopReason::ToolUse => {
-                            cx.emit(ThreadEvent::UsePendingTools);
+                            model.emit(cx, ThreadEvent::UsePendingTools);
                         }
                         StopReason::EndTurn => {}
                         StopReason::MaxTokens => {}
                     },
                     Err(error) => {
                         if error.is::<PaymentRequiredError>() {
-                            cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
+                            model.emit(cx, ThreadEvent::ShowError(ThreadError::PaymentRequired));
                         } else if error.is::<MaxMonthlySpendReachedError>() {
-                            cx.emit(ThreadEvent::ShowError(ThreadError::MaxMonthlySpendReached));
+                            model.emit(
+                                cx,
+                                ThreadEvent::ShowError(ThreadError::MaxMonthlySpendReached),
+                            );
                         } else {
                             let error_message = error
                                 .chain()
                                 .map(|err| err.to_string())
                                 .collect::<Vec<_>>()
                                 .join("\n");
-                            cx.emit(ThreadEvent::ShowError(ThreadError::Message(
-                                SharedString::from(error_message.clone()),
-                            )));
+                            model.emit(
+                                cx,
+                                ThreadEvent::ShowError(ThreadError::Message(SharedString::from(
+                                    error_message.clone(),
+                                ))),
+                            );
                         }
                     }
                 })
@@ -350,7 +359,7 @@ impl Thread {
             cache: false,
         });
 
-        self.pending_summary = cx.spawn(|this, mut cx| {
+        self.pending_summary = model.spawn(cx, |this, mut cx| {
             async move {
                 let stream = model.stream_completion_text(request, &cx);
                 let mut messages = stream.await?;
@@ -367,12 +376,12 @@ impl Thread {
                     }
                 }
 
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     if !new_summary.is_empty() {
                         this.summary = Some(new_summary.into());
                     }
 
-                    cx.emit(ThreadEvent::SummaryChanged);
+                    model.emit(cx, ThreadEvent::SummaryChanged);
                 })?;
 
                 anyhow::Ok(())
@@ -413,7 +422,7 @@ impl Thread {
                                     is_error: false,
                                 });
 
-                                cx.emit(ThreadEvent::ToolFinished { tool_use_id });
+                                model.emit(cx, ThreadEvent::ToolFinished { tool_use_id });
                             }
                             Err(err) => {
                                 tool_results.push(LanguageModelToolResult {

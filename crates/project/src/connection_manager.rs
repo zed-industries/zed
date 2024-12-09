@@ -21,7 +21,7 @@ pub struct Manager {
 }
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
-    let manager = cx.new_model(|_| Manager {
+    let manager = cx.new_model(|_, _| Manager {
         client,
         maintain_connection: None,
         projects: HashSet::default(),
@@ -41,11 +41,11 @@ impl Manager {
         cx: &mut AppContext,
     ) {
         let manager = cx.weak_model();
-        project.update(cx, |_, cx| {
+        project.update(cx, |_, model, cx| {
             let manager = manager.clone();
             cx.on_release(move |project, cx| {
                 manager
-                    .update(cx, |manager, cx| {
+                    .update(cx, |manager, model, cx| {
                         manager.projects.retain(|p| {
                             if let Some(p) = p.upgrade() {
                                 p.read(cx).remote_id() != project.remote_id()
@@ -103,14 +103,14 @@ impl Manager {
                 .collect(),
         });
 
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             let response = request.await?;
             let message_id = response.message_id;
 
             this.update(&mut cx, |_, cx| {
                 for rejoined_project in response.payload.rejoined_projects {
                     if let Some(project) = projects.get(&rejoined_project.id) {
-                        project.update(cx, |project, cx| {
+                        project.update(cx, |project, model, cx| {
                             project.rejoined(rejoined_project, message_id, cx).log_err();
                         });
                     }
@@ -122,7 +122,7 @@ impl Manager {
     fn connection_lost(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         for project in self.projects.drain() {
             if let Some(project) = project.upgrade() {
-                project.update(cx, |project, cx| {
+                project.update(cx, |project, model, cx| {
                     project.disconnected_from_host(cx);
                     project.close(cx);
                 });
@@ -156,7 +156,7 @@ impl Manager {
                                 log::info!("client reconnected, attempting to rejoin projects");
 
                                 let Some(this) = this.upgrade() else { break };
-                                match this.update(&mut cx, |this, cx| this.reconnected(cx)) {
+                                match this.update(&mut cx, |this, model, cx| this.reconnected(cx)) {
                                     Ok(task) => {
                                         if task.await.log_err().is_some() {
                                             return true;
@@ -205,7 +205,7 @@ impl Manager {
         // we leave the room and return an error.
         if let Some(this) = this.upgrade() {
             log::info!("reconnection failed, disconnecting projects");
-            this.update(&mut cx, |this, cx| this.connection_lost(cx))?;
+            this.update(&mut cx, |this, model, cx| this.connection_lost(cx))?;
         }
 
         Ok(())

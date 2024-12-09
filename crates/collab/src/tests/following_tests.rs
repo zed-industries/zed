@@ -273,12 +273,12 @@ async fn test_basic_following(
 
     // When client A opens a multibuffer, client B does so as well.
     let multibuffer_a = cx_a.new_model(|cx| {
-        let buffer_a1 = project_a.update(cx, |project, cx| {
+        let buffer_a1 = project_a.update(cx, |project, model, cx| {
             project
                 .get_open_buffer(&(worktree_id, "1.txt").into(), cx)
                 .unwrap()
         });
-        let buffer_a2 = project_a.update(cx, |project, cx| {
+        let buffer_a2 = project_a.update(cx, |project, model, cx| {
             project
                 .get_open_buffer(&(worktree_id, "2.txt").into(), cx)
                 .unwrap()
@@ -290,6 +290,8 @@ async fn test_basic_following(
                 context: 0..3,
                 primary: None,
             }],
+            model,
+            model,
             cx,
         );
         result.push_excerpts(
@@ -303,10 +305,10 @@ async fn test_basic_following(
         result
     });
     let multibuffer_editor_a = workspace_a.update(cx_a, |workspace, cx| {
-        let editor = cx.new_view(|cx| {
-            Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), true, cx)
+        let editor = cx.new_model(|model, cx| {
+            Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), true, model, cx)
         });
-        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, model, cx);
         editor
     });
     executor.run_until_parked();
@@ -444,7 +446,7 @@ async fn test_basic_following(
             .update(cx_b, |call, cx| {
                 call.room()
                     .unwrap()
-                    .update(cx, |room, cx| room.share_screen(cx))
+                    .update(cx, |room, model, cx| room.share_screen(cx))
             })
             .await
             .unwrap(); // This is what breaks
@@ -513,7 +515,7 @@ async fn test_basic_following(
         // so the previously-opened screen-sharing item gets activated.
         let unfollowable_item = cx_b.new_view(TestItem::new);
         workspace_b.update(cx_b, |workspace, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane().update(cx, |pane, model, cx| {
                 pane.add_item(Box::new(unfollowable_item), true, true, None, cx)
             })
         });
@@ -605,8 +607,8 @@ async fn test_following_tab_order(
         .await
         .unwrap();
 
-    let pane_paths = |pane: &View<workspace::Pane>, cx: &mut VisualTestContext| {
-        pane.update(cx, |pane, cx| {
+    let pane_paths = |pane: &Model<workspace::Pane>, cx: &mut VisualTestContext| {
+        pane.update(cx, |pane, model, cx| {
             pane.items()
                 .map(|item| {
                     item.project_path(cx)
@@ -924,7 +926,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // Client B focuses a file that they previously followed A to, breaking
     // the follow.
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane().update(cx, |pane, model, cx| {
             pane.activate_prev_item(true, cx);
         });
     });
@@ -975,7 +977,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // Client B closes tabs, some of which were originally opened by client A,
     // and some of which were originally opened by client B.
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane().update(cx, |pane, model, cx| {
             pane.close_inactive_items(&Default::default(), cx)
                 .unwrap()
                 .detach();
@@ -1028,7 +1030,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     executor.run_until_parked();
     // Client A cycles through some tabs.
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane().update(cx, |pane, model, cx| {
             pane.activate_prev_item(true, cx);
         });
     });
@@ -1072,7 +1074,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     );
 
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane().update(cx, |pane, model, cx| {
             pane.activate_prev_item(true, cx);
         });
     });
@@ -1119,7 +1121,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     );
 
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane().update(cx, |pane, model, cx| {
             pane.activate_prev_item(true, cx);
         });
     });
@@ -1620,8 +1622,8 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
     // a unshares the project
     cx_a.update(|cx| {
         let project = workspace_a.read(cx).project().clone();
-        ActiveCall::global(cx).update(cx, |call, cx| {
-            call.unshare_project(project, cx).unwrap();
+        ActiveCall::global(cx).update(cx, |call, model, cx| {
+            call.unshare_project(project, model, cx).unwrap();
         })
     });
     cx_a.run_until_parked();
@@ -1776,11 +1778,11 @@ async fn test_following_into_excluded_file(
 
 fn visible_push_notifications(
     cx: &mut TestAppContext,
-) -> Vec<gpui::View<ProjectSharedNotification>> {
+) -> Vec<gpui::Model<ProjectSharedNotification>> {
     let mut ret = Vec::new();
     for window in cx.windows() {
         window
-            .update(cx, |window, _| {
+            .update(cx, |window, model, _| {
                 if let Ok(handle) = window.downcast::<ProjectSharedNotification>() {
                     ret.push(handle)
                 }
@@ -1821,8 +1823,8 @@ fn followers_by_leader(project_id: u64, cx: &TestAppContext) -> Vec<(PeerId, Vec
     })
 }
 
-fn pane_summaries(workspace: &View<Workspace>, cx: &mut VisualTestContext) -> Vec<PaneSummary> {
-    workspace.update(cx, |workspace, cx| {
+fn pane_summaries(workspace: &Model<Workspace>, cx: &mut VisualTestContext) -> Vec<PaneSummary> {
+    workspace.update(cx, |workspace, model, cx| {
         let active_pane = workspace.active_pane();
         workspace
             .panes()
@@ -1924,12 +1926,12 @@ async fn test_following_to_channel_notes_without_a_shared_project(
 
     // Client A opens the notes for channel 1.
     let channel_notes_1_a = cx_a
-        .update(|cx| ChannelView::open(channel_1_id, None, workspace_a.clone(), cx))
+        .update(|cx| ChannelView::open(channel_1_id, None, workspace_a.clone(), model, cx))
         .await
         .unwrap();
     channel_notes_1_a.update(cx_a, |notes, cx| {
         assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
-        notes.editor.update(cx, |editor, cx| {
+        notes.editor.update(cx, |editor, model, cx| {
             editor.insert("Hello from A.", cx);
             editor.change_selections(None, cx, |selections| {
                 selections.select_ranges(vec![3..4]);
@@ -1963,7 +1965,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     });
     channel_notes_1_b.update(cx_b, |notes, cx| {
         assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
-        notes.editor.update(cx, |editor, cx| {
+        notes.editor.update(cx, |editor, model, cx| {
             assert_eq!(editor.text(cx), "Hello from A.");
             assert_eq!(editor.selections.ranges::<usize>(cx), &[3..4]);
         })
@@ -1971,7 +1973,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
 
     //  Client A opens the notes for channel 2.
     let channel_notes_2_a = cx_a
-        .update(|cx| ChannelView::open(channel_2_id, None, workspace_a.clone(), cx))
+        .update(|cx| ChannelView::open(channel_2_id, None, workspace_a.clone(), model, cx))
         .await
         .unwrap();
     channel_notes_2_a.update(cx_a, |notes, cx| {
@@ -2027,12 +2029,12 @@ pub(crate) async fn join_channel(
 }
 
 async fn share_workspace(
-    workspace: &View<Workspace>,
+    workspace: &Model<Workspace>,
     cx: &mut VisualTestContext,
 ) -> anyhow::Result<u64> {
-    let project = workspace.update(cx, |workspace, _| workspace.project().clone());
+    let project = workspace.update(cx, |workspace, model, _| workspace.project().clone());
     cx.read(ActiveCall::global)
-        .update(cx, |call, cx| call.share_project(project, cx))
+        .update(cx, |call, model, cx| call.share_project(project, model, cx))
         .await
 }
 
@@ -2071,7 +2073,7 @@ async fn test_following_to_channel_notes_other_workspace(
     let (workspace_a2, cx_a2) = client_a.build_test_workspace(&mut cx_a2).await;
     cx_a2.update(|cx| cx.activate_window());
     cx_a2
-        .update(|cx| ChannelView::open(channel, None, workspace_a2, cx))
+        .update(|cx| ChannelView::open(channel, None, workspace_a2, model, cx))
         .await
         .unwrap();
     cx_a2.run_until_parked();

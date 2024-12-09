@@ -50,7 +50,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -59,7 +59,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     // The client sees the worktree's contents.
     cx.executor().run_until_parked();
     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
-    worktree.update(cx, |worktree, _cx| {
+    worktree.update(cx, |worktree, model, _cx| {
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
@@ -73,26 +73,26 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     // The user opens a buffer in the remote worktree. The buffer's
     // contents are loaded from the remote filesystem.
     let buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
         .unwrap();
     let change_set = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_unstaged_changes(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
-    change_set.update(cx, |change_set, cx| {
+    change_set.update(cx, |change_set, model, cx| {
         assert_eq!(
             change_set.base_text_string(cx).unwrap(),
             "fn one() -> usize { 0 }"
         );
     });
 
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
         let ix = buffer.text().find('1').unwrap();
         buffer.edit([(ix..ix + 1, "100")], None, cx);
@@ -101,7 +101,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     // The user saves the buffer. The new contents are written to the
     // remote filesystem.
     project
-        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .update(cx, |project, model, cx| project.save_buffer(buffer.clone(), cx))
         .await
         .unwrap();
     assert_eq!(
@@ -119,7 +119,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     .await
     .unwrap();
     cx.executor().run_until_parked();
-    worktree.update(cx, |worktree, _cx| {
+    worktree.update(cx, |worktree, model, _cx| {
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
@@ -140,7 +140,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     .await
     .unwrap();
     cx.executor().run_until_parked();
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         assert_eq!(&**buffer.file().unwrap().path(), Path::new("src/lib2.rs"));
     });
 
@@ -149,7 +149,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         &[(Path::new("src/lib2.rs"), "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
-    change_set.update(cx, |change_set, cx| {
+    change_set.update(cx, |change_set, model, cx| {
         assert_eq!(
             change_set.base_text_string(cx).unwrap(),
             "fn one() -> usize { 100 }"
@@ -177,7 +177,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
     let (project, headless) = init_test(&fs, cx, server_cx).await;
 
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -314,7 +314,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     .await;
 
     let worktree_id = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -323,7 +323,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
         .read_with(cx, |worktree, _| worktree.id());
 
     let buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
@@ -429,7 +429,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     cx.run_until_parked();
 
     let worktree_id = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -441,7 +441,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     cx.run_until_parked();
 
     let buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
@@ -488,7 +488,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     });
 
     let result = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.completions(
                 &buffer,
                 0,
@@ -525,14 +525,14 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     });
 
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.perform_rename(buffer.clone(), 3, "two".to_string(), cx)
         })
         .await
         .unwrap();
 
     cx.run_until_parked();
-    buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, model, _| {
         assert_eq!(buffer.text(), "fn two() -> usize { 1 }")
     })
 }
@@ -606,7 +606,7 @@ async fn test_remote_cancel_language_server_work(
     cx.run_until_parked();
 
     let worktree_id = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -617,7 +617,7 @@ async fn test_remote_cancel_language_server_work(
     cx.run_until_parked();
 
     let buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
@@ -653,7 +653,7 @@ async fn test_remote_cancel_language_server_work(
 
         cx.executor().run_until_parked();
 
-        project.update(cx, |project, cx| {
+        project.update(cx, |project, model, cx| {
             project.cancel_language_server_work_for_buffers([buffer.clone()], cx)
         });
 
@@ -686,7 +686,7 @@ async fn test_remote_cancel_language_server_work(
 
         cx.executor().run_until_parked();
 
-        project.update(cx, |project, cx| {
+        project.update(cx, |project, model, cx| {
             project.cancel_language_server_work(server_id, Some(progress_token.into()), cx)
         });
 
@@ -722,7 +722,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -731,7 +731,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
     let worktree_id = cx.update(|cx| worktree.read(cx).id());
 
     let buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
@@ -747,7 +747,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
 
     cx.run_until_parked();
 
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         assert_eq!(buffer.text(), "bangles");
         buffer.edit([(0..0, "a")], None, cx);
     });
@@ -766,7 +766,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
     });
 
     project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.reload_buffers([buffer.clone()].into_iter().collect(), false, cx)
         })
         .await
@@ -800,7 +800,7 @@ async fn test_remote_resolve_path_in_buffer(
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -809,14 +809,14 @@ async fn test_remote_resolve_path_in_buffer(
     let worktree_id = cx.update(|cx| worktree.read(cx).id());
 
     let buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
         .unwrap();
 
     let path = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.resolve_path_in_buffer("/code/project1/README.md", &buffer, cx)
         })
         .await
@@ -828,7 +828,7 @@ async fn test_remote_resolve_path_in_buffer(
     );
 
     let path = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.resolve_path_in_buffer("../README.md", &buffer, cx)
         })
         .await
@@ -840,7 +840,7 @@ async fn test_remote_resolve_path_in_buffer(
     );
 
     let path = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.resolve_path_in_buffer("../src", &buffer, cx)
         })
         .await
@@ -872,7 +872,7 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
 
     let path = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.resolve_abs_path("/code/project1/README.md", cx)
         })
         .await
@@ -885,7 +885,7 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
     );
 
     let path = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.resolve_abs_path("/code/project1/src", cx)
         })
         .await
@@ -898,7 +898,7 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
     );
 
     let path = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.resolve_abs_path("/code/project1/DOESNOTEXIST", cx)
         })
         .await;
@@ -924,7 +924,7 @@ async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut 
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -932,14 +932,14 @@ async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut 
     let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
 
     // Open a buffer on the client but cancel after a random amount of time.
-    let buffer = project.update(cx, |p, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx));
+    let buffer = project.update(cx, |p, model, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx));
     cx.executor().simulate_random_delay().await;
     drop(buffer);
 
     // Try opening the same buffer again as the client, and ensure we can
     // still do it despite the cancellation above.
     let buffer = project
-        .update(cx, |p, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx))
+        .update(cx, |p, model, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx))
         .await
         .unwrap();
 
@@ -973,31 +973,31 @@ async fn test_adding_then_removing_then_adding_worktrees(
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (_worktree, _) = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
         .unwrap();
 
     let (worktree_2, _) = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project2", true, cx)
         })
         .await
         .unwrap();
     let worktree_id_2 = worktree_2.read_with(cx, |tree, _| tree.id());
 
-    project.update(cx, |project, cx| project.remove_worktree(worktree_id_2, cx));
+    project.update(cx, |project, model, cx| project.remove_worktree(worktree_id_2, cx));
 
     let (worktree_2, _) = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project2", true, cx)
         })
         .await
         .unwrap();
 
     cx.run_until_parked();
-    worktree_2.update(cx, |worktree, _cx| {
+    worktree_2.update(cx, |worktree, model, _cx| {
         assert!(worktree.is_visible());
         let entries = worktree.entries(true, 0).collect::<Vec<_>>();
         assert_eq!(entries.len(), 2);
@@ -1026,7 +1026,7 @@ async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut Test
     .await;
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
-    let buffer = project.update(cx, |project, cx| project.open_server_settings(cx));
+    let buffer = project.update(cx, |project, model, cx| project.open_server_settings(cx));
     cx.executor().run_until_parked();
 
     let buffer = buffer.await.unwrap();
@@ -1059,7 +1059,7 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
 
     let (worktree, _) = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -1067,13 +1067,13 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
 
     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
     let buffer = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
         .unwrap();
 
-    buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, model, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
         let ix = buffer.text().find('1').unwrap();
         buffer.edit([(ix..ix + 1, "100")], None, cx);
@@ -1081,11 +1081,11 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
 
     let client = cx.read(|cx| project.read(cx).ssh_client().unwrap());
     client
-        .update(cx, |client, cx| client.simulate_disconnect(cx))
+        .update(cx, |client, model, cx| client.simulate_disconnect(cx))
         .detach();
 
     project
-        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .update(cx, |project, model, cx| project.save_buffer(buffer.clone(), cx))
         .await
         .unwrap();
 
@@ -1112,7 +1112,7 @@ async fn test_remote_root_rename(cx: &mut TestAppContext, server_cx: &mut TestAp
     let (project, _) = init_test(&fs, cx, server_cx).await;
 
     let (worktree, _) = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -1129,7 +1129,7 @@ async fn test_remote_root_rename(cx: &mut TestAppContext, server_cx: &mut TestAp
     .unwrap();
 
     cx.run_until_parked();
-    worktree.update(cx, |worktree, _| {
+    worktree.update(cx, |worktree, model, _| {
         assert_eq!(worktree.root_name(), "project2")
     })
 }
@@ -1153,7 +1153,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     fs.insert_branches(Path::new("/code/project1/.git"), &branches);
 
     let (worktree, _) = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -1165,7 +1165,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     cx.run_until_parked();
 
     let remote_branches = project
-        .update(cx, |project, cx| project.branches(root_path.clone(), cx))
+        .update(cx, |project, model, cx| project.branches(root_path.clone(), cx))
         .await
         .unwrap();
 
@@ -1179,7 +1179,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     assert_eq!(&remote_branches, &branches);
 
     cx.update(|cx| {
-        project.update(cx, |project, cx| {
+        project.update(cx, |project, model, cx| {
             project.update_or_create_branch(root_path.clone(), new_branch.to_string(), cx)
         })
     })
@@ -1189,10 +1189,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     cx.run_until_parked();
 
     let server_branch = server_cx.update(|cx| {
-        headless_project.update(cx, |headless_project, cx| {
+        headless_project.update(cx, |headless_project, model, cx| {
             headless_project
                 .worktree_store
-                .update(cx, |worktree_store, cx| {
+                .update(cx, |worktree_store, model, cx| {
                     worktree_store
                         .current_branch(root_path.clone(), cx)
                         .unwrap()
@@ -1204,7 +1204,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     // Also try creating a new branch
     cx.update(|cx| {
-        project.update(cx, |project, cx| {
+        project.update(cx, |project, model, cx| {
             project.update_or_create_branch(root_path.clone(), "totally-new-branch".to_string(), cx)
         })
     })
@@ -1214,10 +1214,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     cx.run_until_parked();
 
     let server_branch = server_cx.update(|cx| {
-        headless_project.update(cx, |headless_project, cx| {
+        headless_project.update(cx, |headless_project, model, cx| {
             headless_project
                 .worktree_store
-                .update(cx, |worktree_store, cx| {
+                .update(cx, |worktree_store, model, cx| {
                     worktree_store.current_branch(root_path, cx).unwrap()
                 })
         })
@@ -1246,7 +1246,7 @@ pub async fn init_test(
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
-    let headless = server_cx.new_model(|cx| {
+    let headless = server_cx.new_model(|model, cx| {
         client::init_settings(cx);
 
         HeadlessProject::new(
@@ -1296,7 +1296,7 @@ fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<
     });
 
     let node = NodeRuntime::unavailable();
-    let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+    let user_store = cx.new_model(|model, cx| UserStore::new(client.clone(), cx));
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
     let fs = FakeFs::new(cx.executor());
 

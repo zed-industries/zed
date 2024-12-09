@@ -1299,7 +1299,7 @@ mod tests {
     #[gpui::test]
     fn test_basic_inlays(cx: &mut AppContext) {
         let buffer = MultiBuffer::build_simple("abcdefghi", cx);
-        let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let buffer_edits = buffer.update(cx, |buffer, model, _| buffer.subscribe());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
         assert_eq!(inlay_snapshot.text(), "abcdefghi");
         let mut next_inlay_id = 0;
@@ -1363,7 +1363,7 @@ mod tests {
         );
 
         // Edits before or after the inlay should not affect it.
-        buffer.update(cx, |buffer, cx| {
+        buffer.update(cx, |buffer, model, cx| {
             buffer.edit([(2..3, "x"), (3..3, "y"), (4..4, "z")], None, cx)
         });
         let (inlay_snapshot, _) = inlay_map.sync(
@@ -1373,7 +1373,7 @@ mod tests {
         assert_eq!(inlay_snapshot.text(), "abxy|123|dzefghi");
 
         // An edit surrounding the inlay should invalidate it.
-        buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "D")], None, cx));
+        buffer.update(cx, |buffer, model, cx| buffer.edit([(4..5, "D")], None, cx));
         let (inlay_snapshot, _) = inlay_map.sync(
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
@@ -1398,7 +1398,9 @@ mod tests {
         assert_eq!(inlay_snapshot.text(), "abx|123||456|yDzefghi");
 
         // Edits ending where the inlay starts should not move it if it has a left bias.
-        buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "JKL")], None, cx));
+        buffer.update(cx, |buffer, model, cx| {
+            buffer.edit([(3..3, "JKL")], None, cx)
+        });
         let (inlay_snapshot, _) = inlay_map.sync(
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
@@ -1650,7 +1652,7 @@ mod tests {
                     log::info!("mutated text: {:?}", snapshot.text());
                     inlay_edits = Patch::new(edits);
                 }
-                _ => buffer.update(cx, |buffer, cx| {
+                _ => buffer.update(cx, |buffer, model, cx| {
                     let subscription = buffer.subscribe();
                     let edit_count = rng.gen_range(1..=5);
                     buffer.randomly_mutate(&mut rng, edit_count, cx);

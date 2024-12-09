@@ -18,10 +18,10 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, relative, tooltip_container, v_flex, Checkbox, Clickable, Color, FluentBuilder,
-    IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview,
-    Selection, StatefulInteractiveElement, StyledExt, StyledImage, AppContext, VisibleOnHover,
-    VisualContext as _,
+    h_flex, relative, tooltip_container, v_flex, AppContext, Checkbox, Clickable, Color,
+    FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon,
+    LabelSize, LinkPreview, Selection, StatefulInteractiveElement, StyledExt, StyledImage,
+    VisibleOnHover, VisualContext as _,
 };
 use workspace::Workspace;
 
@@ -30,7 +30,7 @@ type CheckboxClickedCallback =
 
 #[derive(Clone)]
 pub struct RenderContext {
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakModel<Workspace>>,
     next_id: usize,
     buffer_font_family: SharedString,
     buffer_text_style: TextStyle,
@@ -47,7 +47,7 @@ pub struct RenderContext {
 
 impl RenderContext {
     pub fn new(
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         window: &Window,
         cx: &AppContext,
     ) -> RenderContext {
@@ -113,7 +113,7 @@ impl RenderContext {
 
 pub fn render_parsed_markdown(
     parsed: &ParsedMarkdown,
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakModel<Workspace>>,
     window: &Window,
     cx: &AppContext,
 ) -> Vec<AnyElement> {
@@ -212,7 +212,7 @@ fn render_markdown_list_item(
                 ),
             )
             .hover(|s| s.cursor_pointer())
-            .tooltip(|cx| {
+            .tooltip(|window, cx| {
                 InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", cx).into()
             })
             .into_any_element(),
@@ -539,7 +539,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                     Link::Web { url } => cx.open_url(url),
                                     Link::Path { path, .. } => {
                                         if let Some(workspace) = &workspace {
-                                            _ = workspace.update(cx, |workspace, cx| {
+                                            _ = workspace.update(cx, |workspace, model, cx| {
                                                 workspace
                                                     .open_abs_path(path.clone(), false, cx)
                                                     .detach();
@@ -575,10 +575,10 @@ impl InteractiveMarkdownElementTooltip {
         action_text: &str,
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
-    ) -> View<Self> {
+    ) -> Model<Self> {
         let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
 
-        cx.new_view(|_| Self {
+        cx.new_model(|_, _| Self {
             tooltip_text,
             action_text: action_text.to_string(),
         })
@@ -586,7 +586,12 @@ impl InteractiveMarkdownElementTooltip {
 }
 
 impl Render for InteractiveMarkdownElementTooltip {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         tooltip_container(cx, |el, _| {
             let secondary_modifier = Keystroke {
                 modifiers: Modifiers::secondary_key(),

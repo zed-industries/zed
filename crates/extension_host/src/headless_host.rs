@@ -42,7 +42,7 @@ impl HeadlessExtensionStore {
         node_runtime: NodeRuntime,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        cx.new_model(|cx| Self {
+        cx.new_model(|model, cx| Self {
             fs: fs.clone(),
             wasm_host: WasmHost::new(
                 fs.clone(),
@@ -86,12 +86,12 @@ impl HeadlessExtensionStore {
             })
             .collect();
 
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             let mut missing = Vec::new();
 
             for extension_id in to_remove {
                 log::info!("removing extension: {}", extension_id);
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     this.uninstall_extension(&extension_id, cx)
                 })?
                 .await?;
@@ -116,7 +116,7 @@ impl HeadlessExtensionStore {
         extension: ExtensionVersion,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let (fs, wasm_host, extension_dir) = this.update(cx, |this, _cx| {
+        let (fs, wasm_host, extension_dir) = this.update(cx, |this, model, _cx| {
             this.loaded_extensions.insert(
                 extension.id.clone().into(),
                 extension.version.clone().into(),
@@ -145,7 +145,7 @@ impl HeadlessExtensionStore {
             let config = fs.load(&language_path.join("config.toml")).await?;
             let mut config = ::toml::from_str::<LanguageConfig>(&config)?;
 
-            this.update(cx, |this, _cx| {
+            this.update(cx, |this, model, _cx| {
                 this.loaded_languages
                     .entry(manifest.id.clone())
                     .or_default()
@@ -179,7 +179,7 @@ impl HeadlessExtensionStore {
 
         for (language_server_id, language_server_config) in &manifest.language_servers {
             for language in language_server_config.languages() {
-                this.update(cx, |this, _cx| {
+                this.update(cx, |this, model, _cx| {
                     this.loaded_language_servers
                         .entry(manifest.id.clone())
                         .or_default()
@@ -243,9 +243,9 @@ impl HeadlessExtensionStore {
         let path = self.extension_dir.join(&extension.id);
         let fs = self.fs.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             if fs.is_dir(&path).await {
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     this.uninstall_extension(&extension.id.clone().into(), cx)
                 })?
                 .await?;

@@ -1,8 +1,8 @@
 use editor::{scroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    rems, AppContext, DismissEvent, FontWeight, Model, ParentElement, StyledText, Task, View,
-    AppContext, WeakView,
+    rems, AppContext, AppContext, DismissEvent, FontWeight, Model, ParentElement, StyledText, Task,
+    View, WeakView,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -31,10 +31,10 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-pub type ProjectSymbols = View<Picker<ProjectSymbolsDelegate>>;
+pub type ProjectSymbols = Model<Picker<ProjectSymbolsDelegate>>;
 
 pub struct ProjectSymbolsDelegate {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     project: Model<Project>,
     selected_match_index: usize,
     symbols: Vec<Symbol>,
@@ -45,7 +45,7 @@ pub struct ProjectSymbolsDelegate {
 }
 
 impl ProjectSymbolsDelegate {
-    fn new(workspace: WeakView<Workspace>, project: Model<Project>) -> Self {
+    fn new(workspace: WeakModel<Workspace>, project: Model<Project>) -> Self {
         Self {
             workspace,
             project,
@@ -114,7 +114,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             .get(self.selected_match_index)
             .map(|mat| self.symbols[mat.candidate_id].clone())
         {
-            let buffer = self.project.update(cx, |project, cx| {
+            let buffer = self.project.update(cx, |project, model, cx| {
                 project.open_buffer_for_symbol(&symbol, cx)
             });
             let symbol = symbol.clone();
@@ -134,7 +134,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     let editor =
                         workspace.open_project_item::<Editor>(pane, buffer, true, true, cx);
 
-                    editor.update(cx, |editor, cx| {
+                    editor.update(cx, |editor, model, cx| {
                         editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                             s.select_ranges([position..position])
                         });
@@ -143,11 +143,11 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                 Ok::<_, anyhow::Error>(())
             })
             .detach_and_log_err(cx);
-            cx.emit(DismissEvent);
+            model.emit(cx, DismissEvent);
         }
     }
 
-    fn dismissed(&mut self, model: &Model<>Picker, _cx: &mut AppContext) {}
+    fn dismissed(&mut self, model: &Model<Picker>, _cx: &mut AppContext) {}
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -157,20 +157,25 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         self.selected_match_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, model: &Model<>Picker, _cx: &mut AppContext) {
+    fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, _cx: &mut AppContext) {
         self.selected_match_index = ix;
     }
 
-    fn update_matches(&mut self, query: String, model: &Model<Picker>, cx: &mut AppContext) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
+    ) -> Task<()> {
         self.filter(&query, cx);
         self.show_worktree_root_name = self.project.read(cx).visible_worktrees(cx).count() > 1;
         let symbols = self
             .project
-            .update(cx, |project, cx| project.symbols(&query, cx));
-        cx.spawn(|this, mut cx| async move {
+            .update(cx, |project, model, cx| project.symbols(&query, cx));
+        model.spawn(cx, |this, mut cx| async move {
             let symbols = symbols.await.log_err();
             if let Some(symbols) = symbols {
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     let delegate = &mut this.delegate;
                     let project = delegate.project.read(cx);
                     let (visible_match_candidates, external_match_candidates) = symbols
@@ -202,7 +207,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         &self,
         ix: usize,
         selected: bool,
-        model: &Model<Picker>, cx: &mut AppContext,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let string_match = &self.matches[ix];
         let symbol = &self.symbols[string_match.candidate_id];
@@ -291,7 +297,7 @@ mod tests {
             language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
         let _buffer = project
-            .update(cx, |project, cx| {
+            .update(cx, |project, model, cx| {
                 project.open_local_buffer("/dir/test.rs", cx)
             })
             .await
@@ -342,7 +348,7 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
         // Create the project symbols view.
-        let symbols = cx.new_view(|cx| {
+        let symbols = cx.new_model(|model, cx| {
             Picker::uniform_list(
                 ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
                 cx,
@@ -352,25 +358,25 @@ mod tests {
         // Spawn multiples updates before the first update completes,
         // such that in the end, there are no matches. Testing for regression:
         // https://github.com/zed-industries/zed/issues/861
-        symbols.update(cx, |p, cx| {
+        symbols.update(cx, |p, model, cx| {
             p.update_matches("o".to_string(), cx);
             p.update_matches("on".to_string(), cx);
             p.update_matches("onex".to_string(), cx);
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.update(cx, |symbols, model, _| {
             assert_eq!(symbols.delegate.matches.len(), 0);
         });
 
         // Spawn more updates such that in the end, there are matches.
-        symbols.update(cx, |p, cx| {
+        symbols.update(cx, |p, model, cx| {
             p.update_matches("one".to_string(), cx);
             p.update_matches("on".to_string(), cx);
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.update(cx, |symbols, model, _| {
             let delegate = &symbols.delegate;
             assert_eq!(delegate.matches.len(), 2);
             assert_eq!(delegate.matches[0].string, "ton");
@@ -378,13 +384,13 @@ mod tests {
         });
 
         // Spawn more updates such that in the end, there are again no matches.
-        symbols.update(cx, |p, cx| {
+        symbols.update(cx, |p, model, cx| {
             p.update_matches("o".to_string(), cx);
             p.update_matches("".to_string(), cx);
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.update(cx, |symbols, model, _| {
             assert_eq!(symbols.delegate.matches.len(), 0);
         });
     }

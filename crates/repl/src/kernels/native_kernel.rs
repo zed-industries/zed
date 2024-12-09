@@ -114,7 +114,7 @@ impl NativeRunningKernel {
         working_directory: PathBuf,
         fs: Arc<dyn Fs>,
         // todo: convert to weak view
-        session: View<Session>,
+        session: Model<Session>,
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
@@ -302,7 +302,7 @@ impl NativeRunningKernel {
                     .update(&mut cx, |session, cx| {
                         session.kernel_errored(error_message, cx);
 
-                        cx.notify();
+                        model.notify(cx);
                     })
                     .ok();
             });

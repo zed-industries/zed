@@ -82,8 +82,15 @@ async fn test_host_disconnect(
 
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
 
-    let workspace_b = cx_b
-        .add_window(|cx| Workspace::new(None, project_b.clone(), client_b.app_state.clone(), cx));
+    let workspace_b = cx_b.add_window(|cx| {
+        Workspace::new(
+            None,
+            project_b.clone(),
+            client_b.app_state.clone(),
+            model,
+            cx,
+        )
+    });
     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
     let workspace_b_view = workspace_b.root_view(cx_b).unwrap();
 
@@ -98,7 +105,7 @@ async fn test_host_disconnect(
         .unwrap();
 
     //TODO: focus
-    assert!(cx_b.update_view(&editor_b, |editor, cx| editor.is_focused(cx)));
+    assert!(cx_b.update_view(&editor_b, |editor, cx| editor.is_focused(window)));
     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
 
     cx_b.update(|cx| {
@@ -201,7 +208,7 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
         .await
         .unwrap();
     let cx_a = cx_a.add_empty_window();
-    let editor_a = cx_a.new_view(|cx| Editor::for_buffer(buffer_a, Some(project_a), cx));
+    let editor_a = cx_a.new_view(|cx| Editor::for_buffer(buffer_a, Some(project_a), model, cx));
 
     let mut editor_cx_a = EditorTestContext {
         cx: cx_a.clone(),
@@ -216,7 +223,7 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
-    let editor_b = cx_b.new_view(|cx| Editor::for_buffer(buffer_b, Some(project_b), cx));
+    let editor_b = cx_b.new_view(|cx| Editor::for_buffer(buffer_b, Some(project_b), model, cx));
 
     let mut editor_cx_b = EditorTestContext {
         cx: cx_b.clone(),
@@ -317,8 +324,8 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .await
         .unwrap();
     let cx_b = cx_b.add_empty_window();
-    let editor_b =
-        cx_b.new_view(|cx| Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx));
+    let editor_b = cx_b
+        .new_view(|cx| Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), model, cx));
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     cx_a.background_executor.run_until_parked();
@@ -675,7 +682,7 @@ async fn test_collaborating_with_code_actions(
     // Confirming the code action will trigger a resolve request.
     let confirm_action = editor_b
         .update(cx_b, |editor, cx| {
-            Editor::confirm_code_action(editor, &ConfirmCodeAction { item_ix: Some(0) }, cx)
+            Editor::confirm_code_action(editor, &ConfirmCodeAction { item_ix: Some(0) }, model, cx)
         })
         .unwrap();
     fake_language_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
@@ -821,14 +828,14 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
             rename.range.start.to_offset(&buffer)..rename.range.end.to_offset(&buffer),
             6..9
         );
-        rename.editor.update(cx, |rename_editor, cx| {
+        rename.editor.update(cx, |rename_editor, model, cx| {
             let rename_selection = rename_editor.selections.newest::<usize>(cx);
             assert_eq!(
                 rename_selection.range(),
                 0..3,
                 "Rename that was triggered from zero selection caret, should propose the whole word."
             );
-            rename_editor.buffer().update(cx, |rename_buffer, cx| {
+            rename_editor.buffer().update(cx, |rename_buffer, model, cx| {
                 rename_buffer.edit([(0..3, "THREE")], None, cx);
             });
         });
@@ -863,21 +870,21 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         let lsp_rename_start = rename.range.start.to_offset(&buffer);
         let lsp_rename_end = rename.range.end.to_offset(&buffer);
         assert_eq!(lsp_rename_start..lsp_rename_end, 6..9);
-        rename.editor.update(cx, |rename_editor, cx| {
+        rename.editor.update(cx, |rename_editor, model, cx| {
             let rename_selection = rename_editor.selections.newest::<usize>(cx);
             assert_eq!(
                 rename_selection.range(),
                 1..2,
                 "Rename that was triggered from a selection, should have the same selection range in the rename proposal"
             );
-            rename_editor.buffer().update(cx, |rename_buffer, cx| {
+            rename_editor.buffer().update(cx, |rename_buffer, model, cx| {
                 rename_buffer.edit([(0..lsp_rename_end - lsp_rename_start, "THREE")], None, cx);
             });
         });
     });
 
     let confirm_rename = editor_b.update(cx_b, |editor, cx| {
-        Editor::confirm_rename(editor, &ConfirmRename, cx).unwrap()
+        Editor::confirm_rename(editor, &ConfirmRename, model, cx).unwrap()
     });
     fake_language_server
         .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {
@@ -1191,7 +1198,7 @@ async fn test_share_project(
         .await
         .unwrap();
 
-    let editor_b = cx_b.new_view(|cx| Editor::for_buffer(buffer_b, None, cx));
+    let editor_b = cx_b.new_view(|cx| Editor::for_buffer(buffer_b, None, model, cx));
 
     // Client A sees client B's selection
     executor.run_until_parked();
@@ -1296,7 +1303,8 @@ async fn test_on_input_format_from_host_to_guest(
         .await
         .unwrap();
     let cx_a = cx_a.add_empty_window();
-    let editor_a = cx_a.new_view(|cx| Editor::for_buffer(buffer_a, Some(project_a.clone()), cx));
+    let editor_a =
+        cx_a.new_view(|cx| Editor::for_buffer(buffer_a, Some(project_a.clone()), model, cx));
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();
@@ -1416,7 +1424,8 @@ async fn test_on_input_format_from_guest_to_host(
         .await
         .unwrap();
     let cx_b = cx_b.add_empty_window();
-    let editor_b = cx_b.new_view(|cx| Editor::for_buffer(buffer_b, Some(project_b.clone()), cx));
+    let editor_b =
+        cx_b.new_view(|cx| Editor::for_buffer(buffer_b, Some(project_b.clone()), model, cx));
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();
@@ -2070,7 +2079,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
 
     editor_b.update(cx_b, |editor_b, cx| {
         let blame = editor_b.blame().expect("editor_b should have blame now");
-        let entries = blame.update(cx, |blame, cx| {
+        let entries = blame.update(cx, |blame, model, cx| {
             blame
                 .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
@@ -2086,7 +2095,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             ]
         );
 
-        blame.update(cx, |blame, _| {
+        blame.update(cx, |blame, model, _| {
             for (idx, entry) in entries.iter().flatten().enumerate() {
                 let details = blame.details_for_entry(entry).unwrap();
                 assert_eq!(details.message, format!("message for idx-{}", idx));
@@ -2109,7 +2118,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
 
     editor_b.update(cx_b, |editor_b, cx| {
         let blame = editor_b.blame().expect("editor_b should have blame now");
-        let entries = blame.update(cx, |blame, cx| {
+        let entries = blame.update(cx, |blame, model, cx| {
             blame
                 .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
@@ -2136,7 +2145,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
 
     editor_b.update(cx_b, |editor_b, cx| {
         let blame = editor_b.blame().expect("editor_b should have blame now");
-        let entries = blame.update(cx, |blame, cx| {
+        let entries = blame.update(cx, |blame, model, cx| {
             blame
                 .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
@@ -2206,9 +2215,9 @@ async fn test_collaborating_with_editorconfig(
         .unwrap();
     let cx_a = cx_a.add_empty_window();
     let main_editor_a =
-        cx_a.new_view(|cx| Editor::for_buffer(main_buffer_a, Some(project_a.clone()), cx));
+        cx_a.new_view(|cx| Editor::for_buffer(main_buffer_a, Some(project_a.clone()), model, cx));
     let other_editor_a =
-        cx_a.new_view(|cx| Editor::for_buffer(other_buffer_a, Some(project_a), cx));
+        cx_a.new_view(|cx| Editor::for_buffer(other_buffer_a, Some(project_a), model, cx));
     let mut main_editor_cx_a = EditorTestContext {
         cx: cx_a.clone(),
         window: cx_a.handle(),
@@ -2238,9 +2247,9 @@ async fn test_collaborating_with_editorconfig(
         .unwrap();
     let cx_b = cx_b.add_empty_window();
     let main_editor_b =
-        cx_b.new_view(|cx| Editor::for_buffer(main_buffer_b, Some(project_b.clone()), cx));
+        cx_b.new_view(|cx| Editor::for_buffer(main_buffer_b, Some(project_b.clone()), model, cx));
     let other_editor_b =
-        cx_b.new_view(|cx| Editor::for_buffer(other_buffer_b, Some(project_b.clone()), cx));
+        cx_b.new_view(|cx| Editor::for_buffer(other_buffer_b, Some(project_b.clone()), model, cx));
     let mut main_editor_cx_b = EditorTestContext {
         cx: cx_b.clone(),
         window: cx_b.handle(),

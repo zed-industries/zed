@@ -403,9 +403,11 @@ impl LspCommand for PerformRename {
         _: &clock::Global,
         cx: &mut AppContext,
     ) -> proto::PerformRenameResponse {
-        let transaction = lsp_store.buffer_store().update(cx, |buffer_store, cx| {
-            buffer_store.serialize_project_transaction_for_peer(response, peer_id, cx)
-        });
+        let transaction = lsp_store
+            .buffer_store()
+            .update(cx, |buffer_store, model, cx| {
+                buffer_store.serialize_project_transaction_for_peer(response, peer_id, cx)
+            });
         proto::PerformRenameResponse {
             transaction: Some(transaction),
         }
@@ -423,9 +425,15 @@ impl LspCommand for PerformRename {
             .ok_or_else(|| anyhow!("missing transaction"))?;
         lsp_store
             .update(&mut cx, |lsp_store, cx| {
-                lsp_store.buffer_store().update(cx, |buffer_store, cx| {
-                    buffer_store.deserialize_project_transaction(message, self.push_to_history, cx)
-                })
+                lsp_store
+                    .buffer_store()
+                    .update(cx, |buffer_store, model, cx| {
+                        buffer_store.deserialize_project_transaction(
+                            message,
+                            self.push_to_history,
+                            cx,
+                        )
+                    })
             })?
             .await
     }
@@ -835,7 +843,7 @@ fn language_server_for_buffer(
     cx: &mut AsyncAppContext,
 ) -> Result<(Arc<CachedLspAdapter>, Arc<LanguageServer>)> {
     lsp_store
-        .update(cx, |lsp_store, cx| {
+        .update(cx, |lsp_store, model, cx| {
             lsp_store
                 .language_server_for_buffer(buffer.read(cx), server_id, cx)
                 .map(|(adapter, server)| (adapter.clone(), server.clone()))
@@ -945,7 +953,7 @@ async fn location_links_from_lsp(
     let mut definitions = Vec::new();
     for (origin_range, target_uri, target_range) in unresolved_links {
         let target_buffer_handle = lsp_store
-            .update(&mut cx, |this, cx| {
+            .update(&mut cx, |this, model, cx| {
                 this.open_local_buffer_via_lsp(
                     target_uri,
                     language_server.server_id(),
@@ -1001,7 +1009,7 @@ fn location_links_to_proto(
             let origin = definition.origin.map(|origin| {
                 lsp_store
                     .buffer_store()
-                    .update(cx, |buffer_store, cx| {
+                    .update(cx, |buffer_store, model, cx| {
                         buffer_store.create_buffer_for_peer(&origin.buffer, peer_id, cx)
                     })
                     .detach_and_log_err(cx);
@@ -1016,7 +1024,7 @@ fn location_links_to_proto(
 
             lsp_store
                 .buffer_store()
-                .update(cx, |buffer_store, cx| {
+                .update(cx, |buffer_store, model, cx| {
                     buffer_store.create_buffer_for_peer(&definition.target.buffer, peer_id, cx)
                 })
                 .detach_and_log_err(cx);
@@ -1163,7 +1171,7 @@ impl LspCommand for GetReferences {
             .map(|definition| {
                 lsp_store
                     .buffer_store()
-                    .update(cx, |buffer_store, cx| {
+                    .update(cx, |buffer_store, model, cx| {
                         buffer_store.create_buffer_for_peer(&definition.buffer, peer_id, cx)
                     })
                     .detach_and_log_err(cx);
@@ -1189,7 +1197,7 @@ impl LspCommand for GetReferences {
         for location in message.locations {
             let buffer_id = BufferId::new(location.buffer_id)?;
             let target_buffer = project
-                .update(&mut cx, |this, cx| {
+                .update(&mut cx, |this, model, cx| {
                     this.wait_for_remote_buffer(buffer_id, cx)
                 })?
                 .await?;
@@ -2409,7 +2417,7 @@ impl InlayHints {
             _ => None,
         });
 
-        let position = buffer_handle.update(cx, |buffer, _| {
+        let position = buffer_handle.update(cx, |buffer, model, _| {
             let position = buffer.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
             if kind == Some(InlayHintKind::Parameter) {
                 buffer.anchor_before(position)

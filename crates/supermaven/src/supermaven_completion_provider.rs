@@ -131,19 +131,19 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         debounce: bool,
         model: &Model<Self>, cx: &mut AppContext,
     ) {
-        let Some(mut completion) = self.supermaven.update(cx, |supermaven, cx| {
+        let Some(mut completion) = self.supermaven.update(cx, |supermaven, model, cx| {
             supermaven.complete(&buffer_handle, cursor_position, cx)
         }) else {
             return;
         };
 
-        self.pending_refresh = cx.spawn(|this, mut cx| async move {
+        self.pending_refresh = model.spawn(cx, |this, mut cx| async move {
             if debounce {
                 cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
             }
 
             while let Some(()) = completion.updates.next().await {
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     this.completion_id = Some(completion.id);
                     this.buffer_id = Some(buffer_handle.entity_id());
                     this.file_extension = buffer_handle.read(cx).file().and_then(|file| {
@@ -154,7 +154,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
                                 .to_string(),
                         )
                     });
-                    cx.notify();
+                    model.notify(cx);
                 })?;
             }
             Ok(())

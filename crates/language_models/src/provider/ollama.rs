@@ -69,7 +69,7 @@ impl State {
         let api_url = settings.api_url.clone();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             let models = get_models(http_client.as_ref(), &api_url, None).await?;
 
             let mut models: Vec<ollama::Model> = models
@@ -83,9 +83,9 @@ impl State {
 
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.available_models = models;
-                cx.notify();
+                model.notify(cx);
             })
         })
     }
@@ -108,7 +108,7 @@ impl OllamaLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let this = Self {
             http_client: http_client.clone(),
-            state: cx.new_model(|cx| {
+            state: cx.new_model(|model, cx| {
                 let subscription = cx.observe_global::<SettingsStore>({
                     let mut settings = AllLanguageModelSettings::get_global(cx).ollama.clone();
                     move |this: &mut State, cx| {
@@ -116,7 +116,7 @@ impl OllamaLanguageModelProvider {
                         if &settings != new_settings {
                             settings = new_settings.clone();
                             this.restart_fetch_models_task(cx);
-                            cx.notify();
+                            model.notify(cx);
                         }
                     }
                 });
@@ -130,7 +130,7 @@ impl OllamaLanguageModelProvider {
             }),
         };
         this.state
-            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+            .update(cx, |state, model, cx| state.restart_fetch_models_task(cx));
         this
     }
 }
@@ -208,16 +208,19 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.authenticate(cx))
+        self.state
+            .update(cx, |state, model, cx| state.authenticate(cx))
     }
 
     fn configuration_view(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> AnyView {
         let state = self.state.clone();
-        cx.new_view(|cx| ConfigurationView::new(state, cx)).into()
+        cx.new_model(|model, cx| ConfigurationView::new(state, model, cx))
+            .into()
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.fetch_models(cx))
+        self.state
+            .update(cx, |state, model, cx| state.fetch_models(cx))
     }
 }
 
@@ -422,9 +425,9 @@ impl ConfigurationView {
                 {
                     task.await.log_err();
                 }
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     this.loading_models_task = None;
-                    cx.notify();
+                    model.notify(cx);
                 })
                 .log_err();
             }
@@ -438,13 +441,18 @@ impl ConfigurationView {
 
     fn retry_connection(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         self.state
-            .update(cx, |state, cx| state.fetch_models(cx))
+            .update(cx, |state, model, cx| state.fetch_models(cx))
             .detach_and_log_err(cx);
     }
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let ollama_intro = "Get up and running with Llama 3.2, Mistral, Gemma 2, and other large language models with Ollama.";
@@ -544,7 +552,10 @@ impl Render for ConfigurationView {
                             Button::new("retry_ollama_models", "Connect")
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::ArrowCircle)
-                                .on_click(cx.listener(move |this, _, cx| this.retry_connection(cx)))
+                                .on_click(
+                                    model
+                                        .listener(cx, move |this, _, cx| this.retry_connection(cx)),
+                                )
                                 .into_any_element()
                         }),
                 )

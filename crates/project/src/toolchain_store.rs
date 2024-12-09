@@ -35,21 +35,21 @@ impl ToolchainStore {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
-        let model = cx.new_model(|_| LocalToolchainStore {
+        let model = cx.new_model(|_, _| LocalToolchainStore {
             languages,
             worktree_store,
             project_environment,
             active_toolchains: Default::default(),
         });
         let subscription = cx.subscribe(&model, |_, _, e: &ToolchainStoreEvent, cx| {
-            cx.emit(e.clone())
+            model.emit(cx, e.clone())
         });
         Self(ToolchainStoreInner::Local(model, subscription))
     }
     pub(super) fn remote(project_id: u64, client: AnyProtoClient, cx: &mut AppContext) -> Self {
-        Self(ToolchainStoreInner::Remote(
-            cx.new_model(|_| RemoteToolchainStore { client, project_id }),
-        ))
+        Self(ToolchainStoreInner::Remote(cx.new_model(|_, _| {
+            RemoteToolchainStore { client, project_id }
+        })))
     }
     pub(crate) fn activate_toolchain(
         &self,
@@ -58,7 +58,7 @@ impl ToolchainStore {
         cx: &mut AppContext,
     ) -> Task<Option<()>> {
         match &self.0 {
-            ToolchainStoreInner::Local(local, _) => local.update(cx, |this, cx| {
+            ToolchainStoreInner::Local(local, _) => local.update(cx, |this, model, cx| {
                 this.activate_toolchain(worktree_id, toolchain, cx)
             }),
             ToolchainStoreInner::Remote(remote) => {
@@ -111,7 +111,7 @@ impl ToolchainStore {
         envelope: TypedEnvelope<proto::ActivateToolchain>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, model, cx| {
             let language_name = LanguageName::from_proto(envelope.payload.language_name);
             let Some(toolchain) = envelope.payload.toolchain else {
                 bail!("Missing `toolchain` in payload");
@@ -134,7 +134,7 @@ impl ToolchainStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ActiveToolchainResponse> {
         let toolchain = this
-            .update(&mut cx, |this, cx| {
+            .update(&mut cx, |this, model, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
                 let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
                 this.active_toolchain(worktree_id, language_name, cx)
@@ -156,7 +156,7 @@ impl ToolchainStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ListToolchainsResponse> {
         let toolchains = this
-            .update(&mut cx, |this, cx| {
+            .update(&mut cx, |this, model, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
                 let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
                 this.list_toolchains(worktree_id, language_name, cx)
@@ -221,7 +221,7 @@ impl language::LanguageToolchainStore for LocalStore {
         cx: &mut AsyncAppContext,
     ) -> Option<Toolchain> {
         self.0
-            .update(cx, |this, cx| {
+            .update(cx, |this, model, cx| {
                 this.active_toolchain(worktree_id, language_name, cx)
             })
             .ok()?
@@ -238,7 +238,7 @@ impl language::LanguageToolchainStore for RemoteStore {
         cx: &mut AsyncAppContext,
     ) -> Option<Toolchain> {
         self.0
-            .update(cx, |this, cx| {
+            .update(cx, |this, model, cx| {
                 this.active_toolchain(worktree_id, language_name, cx)
             })
             .ok()?
@@ -277,12 +277,12 @@ impl LocalToolchainStore {
         cx: &mut AppContext,
     ) -> Task<Option<()>> {
         cx.spawn(move |this, mut cx| async move {
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.active_toolchains.insert(
                     (worktree_id, toolchain.language_name.clone()),
                     toolchain.clone(),
                 );
-                cx.emit(ToolchainStoreEvent::ToolchainActivated);
+                model.emit(cx, ToolchainStoreEvent::ToolchainActivated);
             })
             .ok();
             Some(())

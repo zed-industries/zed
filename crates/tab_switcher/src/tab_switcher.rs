@@ -33,7 +33,7 @@ impl_actions!(tab_switcher, [Toggle]);
 actions!(tab_switcher, [CloseSelectedItem]);
 
 pub struct TabSwitcher {
-    picker: View<Picker<TabSwitcherDelegate>>,
+    picker: Model<Picker<TabSwitcherDelegate>>,
     init_modifiers: Option<Modifiers>,
 }
 
@@ -51,10 +51,10 @@ impl TabSwitcher {
                 return;
             };
 
-            tab_switcher.update(cx, |tab_switcher, cx| {
+            tab_switcher.update(cx, |tab_switcher, model, cx| {
                 tab_switcher
                     .picker
-                    .update(cx, |picker, cx| picker.cycle_selection(cx))
+                    .update(cx, |picker, model, cx| picker.cycle_selection(cx))
             });
         });
     }
@@ -71,7 +71,7 @@ impl TabSwitcher {
             workspace.bottom_dock(),
             workspace.right_dock(),
         ] {
-            dock.update(cx, |this, cx| {
+            dock.update(cx, |this, model, cx| {
                 let Some(panel) = this
                     .active_panel()
                     .filter(|panel| panel.focus_handle(cx).contains_focused(cx))
@@ -86,15 +86,22 @@ impl TabSwitcher {
 
         let project = workspace.project().clone();
         workspace.toggle_modal(cx, |cx| {
-            let delegate =
-                TabSwitcherDelegate::new(project, action, cx.view().downgrade(), weak_pane, cx);
-            TabSwitcher::new(delegate, cx)
+            let delegate = TabSwitcherDelegate::new(
+                project,
+                action,
+                cx.view().downgrade(),
+                weak_pane,
+                model,
+                cx,
+            );
+            TabSwitcher::new(delegate, model, cx)
         });
     }
 
     fn new(delegate: TabSwitcherDelegate, model: &Model<Self>, cx: &mut AppContext) -> Self {
         Self {
-            picker: cx.new_view(|cx| Picker::nonsearchable_uniform_list(delegate, cx)),
+            picker: cx
+                .new_model(|model, cx| Picker::nonsearchable_uniform_list(delegate, model, cx)),
             init_modifiers: cx.modifiers().modified().then_some(cx.modifiers()),
         }
     }
@@ -111,7 +118,7 @@ impl TabSwitcher {
         if !event.modified() || !init_modifiers.is_subset_of(event) {
             self.init_modifiers = None;
             if self.picker.read(cx).delegate.matches.is_empty() {
-                cx.emit(DismissEvent)
+                model.emit(cx, DismissEvent)
             } else {
                 cx.dispatch_action(menu::Confirm.boxed_clone());
             }
@@ -124,7 +131,7 @@ impl TabSwitcher {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.picker.update(cx, |picker, cx| {
+        self.picker.update(cx, |picker, model, cx| {
             picker
                 .delegate
                 .close_item_at(picker.delegate.selected_index(), cx)
@@ -141,7 +148,12 @@ impl FocusableView for TabSwitcher {
 }
 
 impl Render for TabSwitcher {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         v_flex()
             .key_context("TabSwitcher")
             .w(rems(PANEL_WIDTH_REMS))
@@ -160,9 +172,9 @@ struct TabMatch {
 
 pub struct TabSwitcherDelegate {
     select_last: bool,
-    tab_switcher: WeakView<TabSwitcher>,
+    tab_switcher: WeakModel<TabSwitcher>,
     selected_index: usize,
-    pane: WeakView<Pane>,
+    pane: WeakModel<Pane>,
     project: Model<Project>,
     matches: Vec<TabMatch>,
 }
@@ -171,12 +183,12 @@ impl TabSwitcherDelegate {
     fn new(
         project: Model<Project>,
         action: &Toggle,
-        tab_switcher: WeakView<TabSwitcher>,
-        pane: WeakView<Pane>,
+        tab_switcher: WeakModel<TabSwitcher>,
+        pane: WeakModel<Pane>,
         model: &Model<TabSwitcher>,
         cx: &mut AppContext,
     ) -> Self {
-        Self::subscribe_to_updates(&pane, cx);
+        Self::subscribe_to_updates(&pane, model, cx);
         Self {
             select_last: action.select_last,
             tab_switcher,
@@ -188,7 +200,7 @@ impl TabSwitcherDelegate {
     }
 
     fn subscribe_to_updates(
-        pane: &WeakView<Pane>,
+        pane: &WeakModel<Pane>,
         model: &Model<TabSwitcher>,
         cx: &mut AppContext,
     ) {
@@ -199,14 +211,16 @@ impl TabSwitcherDelegate {
             match event {
                 PaneEvent::AddItem { .. }
                 | PaneEvent::RemovedItem { .. }
-                | PaneEvent::Remove { .. } => tab_switcher.picker.update(cx, |picker, cx| {
-                    let selected_item_id = picker.delegate.selected_item_id();
-                    picker.delegate.update_matches(cx);
-                    if let Some(item_id) = selected_item_id {
-                        picker.delegate.select_item(item_id, cx);
-                    }
-                    cx.notify();
-                }),
+                | PaneEvent::Remove { .. } => {
+                    tab_switcher.picker.update(cx, |picker, model, cx| {
+                        let selected_item_id = picker.delegate.selected_item_id();
+                        picker.delegate.update_matches(cx);
+                        if let Some(item_id) = selected_item_id {
+                            picker.delegate.select_item(item_id, cx);
+                        }
+                        model.notify(cx);
+                    })
+                }
                 _ => {}
             };
         })
@@ -272,7 +286,7 @@ impl TabSwitcherDelegate {
             .iter()
             .position(|tab_match| tab_match.item.item_id() == item_id)
             .unwrap_or(0);
-        self.set_selected_index(selected_idx, cx);
+        self.set_selected_index(selected_idx, model, cx);
     }
 
     fn close_item_at(&mut self, ix: usize, model: &Model<_>, cx: &mut AppContext) {
@@ -282,7 +296,7 @@ impl TabSwitcherDelegate {
         let Some(pane) = self.pane.upgrade() else {
             return;
         };
-        pane.update(cx, |pane, cx| {
+        pane.update(cx, |pane, model, cx| {
             pane.close_item_by_id(tab_match.item.item_id(), SaveIntent::Close, cx)
                 .detach_and_log_err(cx);
         });
@@ -314,7 +328,7 @@ impl PickerDelegate for TabSwitcherDelegate {
 
     fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         self.selected_index = ix;
-        cx.notify();
+        model.notify(cx);
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {
@@ -327,7 +341,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         model: &Model<Picker>,
         cx: &mut AppContext,
     ) -> Task<()> {
-        self.update_matches(cx);
+        self.update_matches(model, cx);
         Task::ready(())
     }
 
@@ -338,14 +352,14 @@ impl PickerDelegate for TabSwitcherDelegate {
         let Some(selected_match) = self.matches.get(self.selected_index()) else {
             return;
         };
-        pane.update(cx, |pane, cx| {
+        pane.update(cx, |pane, model, cx| {
             pane.activate_item(selected_match.item_index, true, true, cx);
         });
     }
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.tab_switcher
-            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
             .log_err();
     }
 
@@ -366,9 +380,9 @@ impl PickerDelegate for TabSwitcherDelegate {
             selected: true,
             preview: tab_match.preview,
         };
-        let label = tab_match.item.tab_content(params, cx);
+        let label = tab_match.item.tab_content(params, model, cx);
 
-        let icon = tab_match.item.tab_icon(cx).map(|icon| {
+        let icon = tab_match.item.tab_icon(model, cx).map(|icon| {
             let git_status_color = ItemSettings::get_global(cx)
                 .git_status
                 .then(|| {
@@ -390,7 +404,7 @@ impl PickerDelegate for TabSwitcherDelegate {
             icon.color(git_status_color.unwrap_or_default())
         });
 
-        let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
+        let indicator = render_item_indicator(tab_match.item.boxed_clone(), model, cx);
         let indicator_color = if let Some(ref indicator) = indicator {
             indicator.color
         } else {
@@ -408,7 +422,7 @@ impl PickerDelegate for TabSwitcherDelegate {
             // See the same handler in Picker for more details.
             .on_mouse_up(
                 MouseButton::Right,
-                cx.listener(move |picker, _: &MouseUpEvent, cx| {
+                model.listener(move |picker, _: &MouseUpEvent, cx| {
                     cx.stop_propagation();
                     picker.delegate.close_item_at(ix, cx);
                 }),
@@ -417,7 +431,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 IconButton::new("close_tab", IconName::Close)
                     .icon_size(IconSize::Small)
                     .icon_color(indicator_color)
-                    .tooltip(|cx| Tooltip::text("Close", cx)),
+                    .tooltip(|window, cx| Tooltip::text("Close", cx)),
             )
             .into_any_element();
 

@@ -16,7 +16,7 @@ actions!(debug, [OpenThemePreview]);
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, _: &OpenThemePreview, cx| {
-            let theme_preview = cx.new_view(ThemePreview::new);
+            let theme_preview = cx.new_model(ThemePreview::new);
             workspace.add_item_to_active_pane(Box::new(theme_preview), None, true, cx)
         });
     })
@@ -49,7 +49,7 @@ impl ThemePreview {
     pub fn new(model: &Model<Self>, cx: &mut AppContext) -> Self {
         Self {
             current_page: ThemePreviewPage::Overview,
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(),
         }
     }
 
@@ -95,11 +95,11 @@ impl Item for ThemePreview {
         _workspace_id: Option<crate::WorkspaceId>,
         model: &Model<Self>,
         cx: &mut AppContext,
-    ) -> Option<gpui::View<Self>>
+    ) -> Option<gpui::Model<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_view(Self::new))
+        Some(cx.new_model(Self::new))
     }
 }
 
@@ -110,7 +110,7 @@ impl ThemePreview {
         cx.theme().colors().editor_background
     }
 
-    fn render_avatars(&self, window: &Model<Self>, cx: &AppContext) -> impl IntoElement {
+    fn render_avatars(&self, model: &Model<Self>, cx: &AppContext) -> impl IntoElement {
         v_flex()
             .gap_1()
             .child(
@@ -177,7 +177,7 @@ impl ThemePreview {
     fn render_buttons(
         &self,
         layer: ElevationIndex,
-        window: &Model<Self>,
+        model: &Model<Self>,
         cx: &AppContext,
     ) -> impl IntoElement {
         v_flex()
@@ -259,10 +259,10 @@ impl ThemePreview {
     fn render_text(
         &self,
         layer: ElevationIndex,
-        window: &Model<Self>,
+        model: &Model<Self>,
         cx: &AppContext,
     ) -> impl IntoElement {
-        let bg = layer.bg(cx);
+        let bg = layer.bg(model, cx);
 
         let label_with_contrast = |label: &str, fg: Hsla| {
             let contrast = calculate_contrast_ratio(fg, bg);
@@ -425,11 +425,11 @@ impl ThemePreview {
     fn render_colors(
         &self,
         layer: ElevationIndex,
-        window: &Model<Self>,
+        model: &Model<Self>,
         cx: &AppContext,
     ) -> impl IntoElement {
-        let bg = layer.bg(cx);
-        let all_colors = all_theme_colors(cx);
+        let bg = layer.bg(model, cx);
+        let all_colors = all_theme_colors(model, cx);
 
         v_flex()
             .gap_1()
@@ -457,7 +457,7 @@ impl ThemePreview {
                                 )
                                 .size(ButtonSize::None)
                                 .style(ButtonStyle::Transparent)
-                                .tooltip(move |cx| {
+                                .tooltip(move |window, cx| {
                                     let name = name.clone();
                                     Tooltip::with_meta(name, None, format!("{:?}", color), cx)
                                 }),
@@ -469,7 +469,7 @@ impl ThemePreview {
     fn render_theme_layer(
         &self,
         layer: ElevationIndex,
-        window: &Model<Self>,
+        model: &Model<Self>,
         cx: &AppContext,
     ) -> impl IntoElement {
         v_flex()
@@ -482,7 +482,7 @@ impl ThemePreview {
             .child(self.render_colors(layer, cx))
     }
 
-    fn render_overview_page(&self, window: &Model<Self>, cx: &AppContext) -> impl IntoElement {
+    fn render_overview_page(&self, model: &Model<Self>, cx: &AppContext) -> impl IntoElement {
         v_flex()
             .id("theme-preview-overview")
             .overflow_scroll()
@@ -498,7 +498,7 @@ impl ThemePreview {
             .child(self.render_theme_layer(ElevationIndex::ElevatedSurface, cx))
     }
 
-    fn render_typography_page(&self, window: &Model<Self>, cx: &AppContext) -> impl IntoElement {
+    fn render_typography_page(&self, model: &Model<Self>, cx: &AppContext) -> impl IntoElement {
         v_flex()
             .id("theme-preview-typography")
             .overflow_scroll()
@@ -520,7 +520,7 @@ impl ThemePreview {
             )
     }
 
-    fn render_components_page(&self, window: &Model<Self>, cx: &AppContext) -> impl IntoElement {
+    fn render_components_page(&self, model: &Model<Self>, cx: &AppContext) -> impl IntoElement {
         let layer = ElevationIndex::Surface;
 
         v_flex()
@@ -542,7 +542,7 @@ impl ThemePreview {
             .child(self.render_buttons(layer, cx))
     }
 
-    fn render_page_nav(&self, window: &Model<Self>, cx: &AppContext) -> impl IntoElement {
+    fn render_page_nav(&self, model: &Model<Self>, cx: &AppContext) -> impl IntoElement {
         h_flex()
             .id("theme-preview-nav")
             .items_center()
@@ -551,9 +551,9 @@ impl ThemePreview {
             .bg(Self::preview_bg(cx))
             .children(ThemePreviewPage::iter().map(|p| {
                 Button::new(ElementId::Name(p.name().into()), p.name())
-                    .on_click(cx.listener(move |this, _, cx| {
+                    .on_click(model.listener(move |this, _, cx| {
                         this.current_page = p;
-                        cx.notify();
+                        model.notify(cx);
                     }))
                     .selected(p == self.current_page)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
@@ -562,7 +562,12 @@ impl ThemePreview {
 }
 
 impl Render for ThemePreview {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl ui::IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl ui::IntoElement {
         v_flex()
             .id("theme-preview")
             .key_context("ThemePreview")

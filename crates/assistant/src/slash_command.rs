@@ -41,8 +41,8 @@ pub mod terminal_command;
 pub(crate) struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,
     slash_commands: Arc<SlashCommandWorkingSet>,
-    editor: Option<WeakView<ContextEditor>>,
-    workspace: Option<WeakView<Workspace>>,
+    editor: Option<WeakModel<ContextEditor>>,
+    workspace: Option<WeakModel<Workspace>>,
 }
 
 pub(crate) struct SlashCommandLine {
@@ -55,8 +55,8 @@ pub(crate) struct SlashCommandLine {
 impl SlashCommandCompletionProvider {
     pub fn new(
         slash_commands: Arc<SlashCommandWorkingSet>,
-        editor: Option<WeakView<ContextEditor>>,
-        workspace: Option<WeakView<Workspace>>,
+        editor: Option<WeakModel<ContextEditor>>,
+        workspace: Option<WeakModel<Workspace>>,
     ) -> Self {
         Self {
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
@@ -126,7 +126,7 @@ impl SlashCommandCompletionProvider {
                                                 && (!accepts_arguments || intent.is_complete())
                                             {
                                                 editor
-                                                    .update(cx, |editor, cx| {
+                                                    .update(cx, |editor, model, cx| {
                                                         editor.run_command(
                                                             command_range.clone(),
                                                             &command_name,
@@ -210,7 +210,7 @@ impl SlashCommandCompletionProvider {
                                                 || intent.is_complete()
                                             {
                                                 editor
-                                                    .update(cx, |editor, cx| {
+                                                    .update(cx, |editor, model, cx| {
                                                         editor.run_command(
                                                             command_range.clone(),
                                                             &command_name,
@@ -266,7 +266,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         cx: &mut AppContext,
     ) -> Task<Result<Vec<project::Completion>>> {
         let Some((name, arguments, command_range, last_argument_range)) =
-            buffer.update(cx, |buffer, _cx| {
+            buffer.update(cx, |buffer, model, _cx| {
                 let position = buffer_position.to_point(buffer);
                 let line_start = Point::new(position.row, 0);
                 let mut lines = buffer.text_for_range(line_start..position).lines();
@@ -321,7 +321,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
                 cx,
             )
         } else {
-            self.complete_command_name(&name, command_range, last_argument_range, cx)
+            self.complete_command_name(&name, command_range, last_argument_range, model, cx)
         }
     }
 

@@ -10,7 +10,7 @@ use util::{ResultExt as _, TryFutureExt};
 use workspace::ModalView;
 
 pub struct ContactFinder {
-    picker: View<Picker<ContactFinderDelegate>>,
+    picker: Model<Picker<ContactFinderDelegate>>,
 }
 
 impl ContactFinder {
@@ -21,20 +21,21 @@ impl ContactFinder {
             potential_contacts: Arc::from([]),
             selected_index: 0,
         };
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx).modal(false));
+        let picker =
+            cx.new_model(|model, cx| Picker::uniform_list(delegate, model, cx).modal(false));
 
         Self { picker }
     }
 
     pub fn set_query(&mut self, query: String, model: &Model<Self>, cx: &mut AppContext) {
-        self.picker.update(cx, |picker, cx| {
+        self.picker.update(cx, |picker, model, cx| {
             picker.set_query(query, cx);
         });
     }
 }
 
 impl Render for ContactFinder {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .elevation_3(cx)
             .child(
@@ -53,7 +54,7 @@ impl Render for ContactFinder {
 }
 
 pub struct ContactFinderDelegate {
-    parent: WeakView<ContactFinder>,
+    parent: WeakModel<ContactFinder>,
     potential_contacts: Arc<[Arc<User>]>,
     user_store: Model<UserStore>,
     selected_index: usize,
@@ -93,16 +94,16 @@ impl PickerDelegate for ContactFinderDelegate {
         model: &Model<Picker>,
         cx: &mut AppContext,
     ) -> Task<()> {
-        let search_users = self
-            .user_store
-            .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
+        let search_users = self.user_store.update(cx, |store, model, cx| {
+            store.fuzzy_search_users(query, model, cx)
+        });
 
         cx.spawn(|picker, mut cx| async move {
             async {
                 let potential_contacts = search_users.await?;
                 picker.update(&mut cx, |picker, cx| {
                     picker.delegate.potential_contacts = potential_contacts.into();
-                    cx.notify();
+                    model.notify(cx);
                 })?;
                 anyhow::Ok(())
             }
@@ -117,12 +118,16 @@ impl PickerDelegate for ContactFinderDelegate {
             match user_store.contact_request_status(user) {
                 ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
                     self.user_store
-                        .update(cx, |store, cx| store.request_contact(user.id, cx))
+                        .update(cx, |store, model, cx| {
+                            store.request_contact(user.id, model, cx)
+                        })
                         .detach();
                 }
                 ContactRequestStatus::RequestSent => {
                     self.user_store
-                        .update(cx, |store, cx| store.remove_contact(user.id, cx))
+                        .update(cx, |store, model, cx| {
+                            store.remove_contact(user.id, model, cx)
+                        })
                         .detach();
                 }
                 _ => {}
@@ -132,7 +137,7 @@ impl PickerDelegate for ContactFinderDelegate {
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.parent
-            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
             .log_err();
     }
 

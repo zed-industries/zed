@@ -9,7 +9,12 @@ use crate::{Indicator, Tab};
 pub struct TabStory;
 
 impl Render for TabStory {
-    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        _window: &mut gpui::Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<Tab>())
             .child(Story::label("Default"))

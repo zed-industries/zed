@@ -19,18 +19,24 @@ fn is_rust_language(language: &Language) -> bool {
 }
 
 pub fn apply_related_actions(
-    editor: &View<Editor>,
+    editor: &Model<Editor>,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
 ) {
     if editor
-        .update(cx, |e, cx| {
-            find_specific_language_server_in_selection(e, cx, is_rust_language, RUST_ANALYZER_NAME)
+        .update(cx, |e, model, cx| {
+            find_specific_language_server_in_selection(
+                e,
+                window,
+                cx,
+                is_rust_language,
+                RUST_ANALYZER_NAME,
+            )
         })
         .is_some()
     {
-        register_action(editor, cx, expand_macro_recursively);
-        register_action(editor, cx, open_docs);
+        register_action(editor, window, cx, expand_macro_recursively);
+        register_action(editor, window, cx, open_docs);
     }
 }
 
@@ -64,11 +70,12 @@ pub fn expand_macro_recursively(
     let project = project.clone();
     let buffer_snapshot = buffer.read(cx).snapshot();
     let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
-    let expand_macro_task = project.update(cx, |project, cx| {
+    let expand_macro_task = project.update(cx, |project, model, cx| {
         project.request_lsp(
             buffer,
             project::LanguageServerToQuery::Other(server_to_query),
             ExpandMacro { position },
+            model,
             cx,
         )
     });
@@ -83,17 +90,17 @@ pub fn expand_macro_recursively(
             .update(&mut cx, |project, cx| project.create_buffer(cx))?
             .await?;
         workspace.update(&mut cx, |workspace, cx| {
-            buffer.update(cx, |buffer, cx| {
+            buffer.update(cx, |buffer, model, cx| {
                 buffer.edit([(0..0, macro_expansion.expansion)], None, cx);
                 buffer.set_language(Some(rust_language), cx)
             });
-            let multibuffer = cx.new_model(|cx| {
-                MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name)
+            let multibuffer = cx.new_model(|model, cx| {
+                MultiBuffer::singleton(buffer, model, cx).with_title(macro_expansion.name)
             });
             workspace.add_item_to_active_pane(
-                Box::new(
-                    cx.new_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), true, cx)),
-                ),
+                Box::new(cx.new_model(|model, cx| {
+                    Editor::for_multibuffer(multibuffer, Some(project), true, model, cx)
+                })),
                 None,
                 true,
                 cx,
@@ -128,11 +135,12 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, model: &Model<Editor>, cx: &
     let project = project.clone();
     let buffer_snapshot = buffer.read(cx).snapshot();
     let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
-    let open_docs_task = project.update(cx, |project, cx| {
+    let open_docs_task = project.update(cx, |project, model, cx| {
         project.request_lsp(
             buffer,
             project::LanguageServerToQuery::Other(server_to_query),
             project::lsp_ext_command::OpenDocs { position },
+            model,
             cx,
         )
     });

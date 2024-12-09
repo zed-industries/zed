@@ -75,14 +75,19 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
     fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         self.selected_index = ix.min(self.filtered_models.len().saturating_sub(1));
-        cx.notify();
+        model.notify(cx);
     }
 
     fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Select a model...".into()
     }
 
-    fn update_matches(&mut self, query: String, model: &Model<Picker>, cx: &mut AppContext) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
+    ) -> Task<()> {
         let all_models = self.all_models.clone();
 
         let llm_registry = LanguageModelRegistry::global(cx);
@@ -95,7 +100,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             .map(|provider| provider.id())
             .collect();
 
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             let filtered_models = cx
                 .background_executor()
                 .spawn(async move {
@@ -128,10 +133,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 })
                 .await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.delegate.filtered_models = filtered_models;
                 this.delegate.set_selected_index(0, cx);
-                cx.notify();
+                model.notify(cx);
             })
             .ok();
         })
@@ -154,11 +159,11 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     && model.model.provider_id() == selected_provider_id;
             }
 
-            cx.emit(DismissEvent);
+            model.emit(cx, DismissEvent);
         }
     }
 
-    fn dismissed(&mut self, model: &Model<>Picker, _cx: &mut AppContext) {}
+    fn dismissed(&mut self, model: &Model<Picker>, _cx: &mut AppContext) {}
 
     fn render_header(&self, model: &Model<Picker>, cx: &mut AppContext) -> Option<AnyElement> {
         let configured_models_count = LanguageModelRegistry::global(cx)
@@ -187,7 +192,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        model: &Model<Picker>, cx: &mut AppContext,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         use feature_flags::FeatureFlagAppExt;
         let show_badges = cx.has_flag::<ZedPro>();
@@ -245,7 +251,11 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         )
     }
 
-    fn render_footer(&self, model: &Model<Picker>, cx: &mut AppContext) -> Option<gpui::AnyElement> {
+    fn render_footer(
+        &self,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
+    ) -> Option<gpui::AnyElement> {
         use feature_flags::FeatureFlagAppExt;
 
         let plan = proto::Plan::ZedPro;
@@ -339,7 +349,7 @@ impl<T: PopoverTrigger> RenderOnce for LanguageModelSelector<T> {
             selected_index: 0,
         };
 
-        let picker_view = cx.new_view(|cx| {
+        let picker_view = cx.new_model(|model, cx| {
             let picker = Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into()));
             picker
         });

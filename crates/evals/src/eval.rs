@@ -416,13 +416,13 @@ async fn run_eval_project(
     let mut semantic_index = SemanticDb::new(repo_db_path, embedding_provider, cx).await?;
 
     let (worktree, _) = project
-        .update(cx, |project, cx| {
+        .update(cx, |project, model, cx| {
             project.find_or_create_worktree(repo_dir, true, cx)
         })?
         .await?;
 
     worktree
-        .update(cx, |worktree, _| {
+        .update(cx, |worktree, model, _| {
             worktree.as_local().unwrap().scan_complete()
         })?
         .await;
@@ -538,7 +538,7 @@ async fn run_eval_project(
         println!("{}", serde_json::to_string(&query_results)?);
     }
 
-    user_store.update(cx, |_, _| {
+    user_store.update(cx, |_, model, _| {
         drop(semantic_index);
         drop(project);
         drop(worktree);

@@ -50,7 +50,7 @@ impl OpenPathPrompt {
     pub(crate) fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
         workspace.set_prompt_for_open_path(Box::new(|workspace, lister, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_open_path(workspace, lister, tx, cx);
+            Self::prompt_for_open_path(workspace, lister, tx, model, cx);
             rx
         }));
     }
@@ -65,9 +65,9 @@ impl OpenPathPrompt {
         workspace.toggle_modal(cx, |cx| {
             let delegate = OpenPathDelegate::new(tx, lister.clone());
 
-            let picker = Picker::uniform_list(delegate, cx).width(rems(34.));
+            let picker = Picker::uniform_list(delegate, model, cx).width(rems(34.));
             let query = lister.default_query(cx);
-            picker.set_query(query, cx);
+            picker.set_query(query, model, cx);
             picker
         });
     }
@@ -86,7 +86,7 @@ impl PickerDelegate for OpenPathDelegate {
 
     fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         self.selected_index = ix;
-        cx.notify();
+        model.notify(cx);
     }
 
     fn update_matches(
@@ -118,14 +118,14 @@ impl PickerDelegate for OpenPathDelegate {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             if let Some(query) = query {
                 let paths = query.await;
                 if cancel_flag.load(atomic::Ordering::Relaxed) {
                     return;
                 }
 
-                this.update(&mut cx, |this, _| {
+                this.update(&mut cx, |this, _, _| {
                     this.delegate.directory_state = Some(match paths {
                         Ok(mut paths) => {
                             paths.sort_by(|a, b| compare_paths((a, true), (b, true)));
@@ -154,12 +154,12 @@ impl PickerDelegate for OpenPathDelegate {
             }
 
             let match_candidates = this
-                .update(&mut cx, |this, cx| {
+                .update(&mut cx, |this, model, cx| {
                     let directory_state = this.delegate.directory_state.as_ref()?;
                     if directory_state.error.is_some() {
                         this.delegate.matches.clear();
                         this.delegate.selected_index = 0;
-                        cx.notify();
+                        model.notify(cx);
                         return None;
                     }
 
@@ -176,13 +176,13 @@ impl PickerDelegate for OpenPathDelegate {
             }
 
             if suffix == "" {
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     this.delegate.matches.clear();
                     this.delegate
                         .matches
                         .extend(match_candidates.iter().map(|m| m.id));
 
-                    cx.notify();
+                    model.notify(cx);
                 })
                 .ok();
                 return;
@@ -201,7 +201,7 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.delegate.matches.clear();
                 this.delegate
                     .matches
@@ -216,7 +216,7 @@ impl PickerDelegate for OpenPathDelegate {
                         *m,
                     )
                 });
-                cx.notify();
+                model.notify(cx);
             })
             .ok();
         })
@@ -258,7 +258,7 @@ impl PickerDelegate for OpenPathDelegate {
         if let Some(tx) = self.tx.take() {
             tx.send(Some(vec![result])).ok();
         }
-        cx.emit(gpui::DismissEvent);
+        model.emit(cx, gpui::DismissEvent);
     }
 
     fn should_dismiss(&self) -> bool {
@@ -269,7 +269,7 @@ impl PickerDelegate for OpenPathDelegate {
         if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
         }
-        cx.emit(gpui::DismissEvent)
+        model.emit(cx, gpui::DismissEvent)
     }
 
     fn render_match(

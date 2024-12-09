@@ -27,7 +27,7 @@ pub fn initiate_sign_in(window: &mut gpui::Window, cx: &mut gpui::AppContext) {
                 return;
             };
 
-            let Ok(workspace) = workspace.update(cx, |workspace, cx| {
+            let Ok(workspace) = workspace.update(cx, |workspace, model, cx| {
                 workspace.show_toast(
                     Toast::new(
                         NotificationId::unique::<CopilotStartingToast>(),
@@ -58,7 +58,7 @@ pub fn initiate_sign_in(window: &mut gpui::Window, cx: &mut gpui::AppContext) {
                                     cx,
                                 );
                                 copilot
-                                    .update(cx, |copilot, cx| copilot.sign_in(cx))
+                                    .update(cx, |copilot, model, cx| copilot.sign_in(cx))
                                     .detach_and_log_err(cx);
                             }
                         })
@@ -68,10 +68,12 @@ pub fn initiate_sign_in(window: &mut gpui::Window, cx: &mut gpui::AppContext) {
             .detach();
         }
         _ => {
-            copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
+            copilot
+                .update(cx, |this, model, cx| this.sign_in(cx))
+                .detach();
             workspace
-                .update(cx, |this, cx| {
-                    this.toggle_modal(cx, |cx| CopilotCodeVerification::new(&copilot, cx));
+                .update(cx, |this, model, cx| {
+                    this.toggle_modal(cx, |cx| CopilotCodeVerification::new(&copilot, model, cx));
                 })
                 .ok();
         }
@@ -100,14 +102,14 @@ impl CopilotCodeVerification {
         Self {
             status,
             connect_clicked: false,
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(),
             _subscription: cx.observe(copilot, |this, copilot, cx| {
                 let status = copilot.read(cx).status();
                 match status {
                     Status::Authorized | Status::Unauthorized | Status::SigningIn { .. } => {
                         this.set_status(status, cx)
                     }
-                    _ => cx.emit(DismissEvent),
+                    _ => model.emit(cx, DismissEvent),
                 }
             }),
         }
@@ -115,7 +117,7 @@ impl CopilotCodeVerification {
 
     pub fn set_status(&mut self, status: Status, model: &Model<Self>, cx: &mut AppContext) {
         self.status = status;
-        cx.notify();
+        model.notify(cx);
     }
 
     fn render_device_code(
@@ -170,7 +172,7 @@ impl CopilotCodeVerification {
                 Label::new("Using Copilot requires an active subscription on GitHub.")
                     .color(Color::Muted),
             )
-            .child(Self::render_device_code(data, cx))
+            .child(Self::render_device_code(data, model, cx))
             .child(
                 Label::new("Paste this code into GitHub after clicking the button below.")
                     .size(ui::LabelSize::Small),
@@ -179,7 +181,7 @@ impl CopilotCodeVerification {
                 Button::new("connect-button", connect_button_label)
                     .on_click({
                         let verification_uri = data.verification_uri.clone();
-                        cx.listener(move |this, _, cx| {
+                        model.listener(move |this, _, cx| {
                             cx.open_url(&verification_uri);
                             this.connect_clicked = true;
                         })
@@ -190,7 +192,7 @@ impl CopilotCodeVerification {
             .child(
                 Button::new("copilot-enable-cancel-button", "Cancel")
                     .full_width()
-                    .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
+                    .on_click(cx.listener(|_, _, cx| model.emit(cx, DismissEvent))),
             )
     }
     fn render_enabled_modal(model: &Model<Self>, cx: &mut AppContext) -> impl Element {
@@ -203,7 +205,7 @@ impl CopilotCodeVerification {
             .child(
                 Button::new("copilot-enabled-done-button", "Done")
                     .full_width()
-                    .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
+                    .on_click(cx.listener(|_, _, cx| model.emit(cx, DismissEvent))),
             )
     }
 
@@ -222,7 +224,7 @@ impl CopilotCodeVerification {
             .child(
                 Button::new("copilot-subscribe-cancel-button", "Cancel")
                     .full_width()
-                    .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
+                    .on_click(cx.listener(|_, _, cx| model.emit(cx, DismissEvent))),
             )
     }
 
@@ -234,18 +236,24 @@ impl CopilotCodeVerification {
 }
 
 impl Render for CopilotCodeVerification {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let prompt = match &self.status {
             Status::SigningIn {
                 prompt: Some(prompt),
-            } => Self::render_prompting_modal(self.connect_clicked, prompt, cx).into_any_element(),
+            } => Self::render_prompting_modal(self.connect_clicked, prompt, model, cx)
+                .into_any_element(),
             Status::Unauthorized => {
                 self.connect_clicked = false;
-                Self::render_unauthorized_modal(cx).into_any_element()
+                Self::render_unauthorized_modal(model, cx).into_any_element()
             }
             Status::Authorized => {
                 self.connect_clicked = false;
-                Self::render_enabled_modal(cx).into_any_element()
+                Self::render_enabled_modal(model, cx).into_any_element()
             }
             Status::Disabled => {
                 self.connect_clicked = false;
@@ -263,7 +271,7 @@ impl Render for CopilotCodeVerification {
             .p_4()
             .gap_2()
             .on_action(cx.listener(|_, _: &menu::Cancel, cx| {
-                cx.emit(DismissEvent);
+                model.emit(cx, DismissEvent);
             }))
             .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, cx| {
                 cx.focus(&this.focus_handle);

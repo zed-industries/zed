@@ -110,7 +110,7 @@ impl EventEmitter<RefreshLlmTokenEvent> for RefreshLlmTokenListener {}
 
 impl RefreshLlmTokenListener {
     pub fn register(client: Arc<Client>, cx: &mut AppContext) {
-        let listener = cx.new_model(|cx| RefreshLlmTokenListener::new(client, cx));
+        let listener = cx.new_model(|model, cx| RefreshLlmTokenListener::new(client, model, cx));
         cx.set_global(GlobalRefreshLlmTokenListener(listener));
     }
 
@@ -130,7 +130,9 @@ impl RefreshLlmTokenListener {
         _: TypedEnvelope<proto::RefreshLlmToken>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |_this, cx| cx.emit(RefreshLlmTokenEvent))
+        this.update(&mut cx, |_this, model, cx| {
+            model.emit(cx, RefreshLlmTokenEvent)
+        })
     }
 }
 
@@ -167,7 +169,7 @@ impl State {
             status,
             accept_terms: None,
             _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
-                cx.notify();
+                model.notify(cx);
             }),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -192,7 +194,7 @@ impl State {
         let client = self.client.clone();
         cx.spawn(move |this, mut cx| async move {
             client.authenticate_and_connect(true, &cx).await?;
-            this.update(&mut cx, |_, cx| cx.notify())
+            this.update(&mut cx, |_, cx| model.notify(cx))
         })
     }
 
@@ -209,9 +211,9 @@ impl State {
             let _ = user_store
                 .update(&mut cx, |store, cx| store.accept_terms_of_service(cx))?
                 .await;
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.accept_terms = None;
-                cx.notify()
+                model.notify(cx)
             })
         }));
     }
@@ -222,16 +224,18 @@ impl CloudLanguageModelProvider {
         let mut status_rx = client.status();
         let status = *status_rx.borrow();
 
-        let state = cx.new_model(|cx| State::new(client.clone(), user_store.clone(), status, cx));
+        let state = cx.new_model(|model, cx| {
+            State::new(client.clone(), user_store.clone(), status, model, cx)
+        });
 
         let state_ref = state.downgrade();
         let maintain_client_status = cx.spawn(|mut cx| async move {
             while let Some(status) = status_rx.next().await {
                 if let Some(this) = state_ref.upgrade() {
-                    _ = this.update(&mut cx, |this, cx| {
+                    _ = this.update(&mut cx, |this, model, cx| {
                         if this.status != status {
                             this.status = status;
-                            cx.notify();
+                            model.notify(cx);
                         }
                     });
                 } else {
@@ -365,7 +369,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn configuration_view(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> AnyView {
-        cx.new_view(|_cx| ConfigurationView {
+        cx.new_model(|_model, _cx| ConfigurationView {
             state: self.state.clone(),
         })
         .into()
@@ -422,7 +426,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                                     let state = self.state.downgrade();
                                     move |_, cx| {
                                         state
-                                            .update(cx, |state, cx| {
+                                            .update(cx, |state, model, cx| {
                                                 state.accept_terms_of_service(cx)
                                             })
                                             .ok();
@@ -848,13 +852,17 @@ struct ConfigurationView {
 
 impl ConfigurationView {
     fn authenticate(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        self.state.update(cx, |state, cx| {
+        self.state.update(cx, |state, model, cx| {
             state.authenticate(cx).detach_and_log_err(cx);
         });
-        cx.notify();
+        model.notify(cx);
     }
 
-    fn render_accept_terms(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Option<AnyElement> {
+    fn render_accept_terms(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<AnyElement> {
         if self.state.read(cx).has_accepted_terms_of_service(cx) {
             return None;
         }
@@ -884,7 +892,9 @@ impl ConfigurationView {
                             let state = self.state.downgrade();
                             move |_, cx| {
                                 state
-                                    .update(cx, |state, cx| state.accept_terms_of_service(cx))
+                                    .update(cx, |state, model, cx| {
+                                        state.accept_terms_of_service(cx)
+                                    })
                                     .ok();
                             }
                         }),
@@ -896,7 +906,12 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         const ZED_AI_URL: &str = "https://zed.dev/ai";
 
         let is_connected = !self.state.read(cx).is_signed_out();
@@ -957,7 +972,7 @@ impl Render for ConfigurationView {
                         .icon_color(Color::Muted)
                         .icon(IconName::Github)
                         .icon_position(IconPosition::Start)
-                        .on_click(cx.listener(move |this, _, cx| this.authenticate(cx))),
+                        .on_click(model.listener(move |this, _, cx| this.authenticate(cx))),
                 )
         }
     }

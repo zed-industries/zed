@@ -64,9 +64,9 @@ pub fn init(
 
     let copilot = cx.new_model({
         let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
+        move |cx| Copilot::start(new_server_id, http, node_runtime, model, cx)
     });
-    Copilot::set_global(copilot.clone(), cx);
+    Copilot::set_global(copilot.clone(), model, cx);
     cx.observe(&copilot, |handle, cx| {
         let copilot_action_types = [
             TypeId::of::<Suggest>(),
@@ -105,21 +105,21 @@ pub fn init(
     cx.on_action(|_: &SignIn, cx| {
         if let Some(copilot) = Copilot::global(cx) {
             copilot
-                .update(cx, |copilot, cx| copilot.sign_in(cx))
+                .update(cx, |copilot, model, cx| copilot.sign_in(cx))
                 .detach_and_log_err(cx);
         }
     });
     cx.on_action(|_: &SignOut, cx| {
         if let Some(copilot) = Copilot::global(cx) {
             copilot
-                .update(cx, |copilot, cx| copilot.sign_out(cx))
+                .update(cx, |copilot, model, cx| copilot.sign_out(cx))
                 .detach_and_log_err(cx);
         }
     });
     cx.on_action(|_: &Reinstall, cx| {
         if let Some(copilot) = Copilot::global(cx) {
             copilot
-                .update(cx, |copilot, cx| copilot.reinstall(cx))
+                .update(cx, |copilot, model, cx| copilot.reinstall(cx))
                 .detach();
         }
     });
@@ -384,11 +384,11 @@ impl Copilot {
                     })
                     .shared();
                 self.server = CopilotServer::Starting { task: start_task };
-                cx.notify();
+                model.notify(cx);
             }
         } else {
             self.server = CopilotServer::Disabled;
-            cx.notify();
+            model.notify(cx);
         }
     }
 
@@ -410,7 +410,7 @@ impl Copilot {
         );
         let http = http_client::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = NodeRuntime::unavailable();
-        let this = cx.new_model(|cx| Self {
+        let this = cx.new_model(|model, cx| Self {
             server_id: LanguageServerId(0),
             http: http.clone(),
             node_runtime,
@@ -488,8 +488,8 @@ impl Copilot {
         };
 
         let server = start_language_server.await;
-        this.update(&mut cx, |this, cx| {
-            cx.notify();
+        this.update(&mut cx, |this, model, cx| {
+            model.notify(cx);
             match server {
                 Ok((server, status)) => {
                     this.server = CopilotServer::Running(RunningCopilotServer {
@@ -497,12 +497,12 @@ impl Copilot {
                         sign_in_status: SignInStatus::SignedOut,
                         registered_buffers: Default::default(),
                     });
-                    cx.emit(Event::CopilotLanguageServerStarted);
+                    model.emit(cx, Event::CopilotLanguageServerStarted);
                     this.update_sign_in_status(status, cx);
                 }
                 Err(error) => {
                     this.server = CopilotServer::Error(error.to_string().into());
-                    cx.notify()
+                    model.notify(cx)
                 }
             }
         })
@@ -514,7 +514,7 @@ impl Copilot {
             let task = match &server.sign_in_status {
                 SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
                 SignInStatus::SigningIn { task, .. } => {
-                    cx.notify();
+                    model.notify(cx);
                     task.clone()
                 }
                 SignInStatus::SignedOut | SignInStatus::Unauthorized { .. } => {
@@ -532,7 +532,7 @@ impl Copilot {
                                         Ok(request::SignInStatus::Ok { user: Some(user) })
                                     }
                                     request::SignInInitiateResult::PromptUserDeviceFlow(flow) => {
-                                        this.update(&mut cx, |this, cx| {
+                                        this.update(&mut cx, |this, model, cx| {
                                             if let CopilotServer::Running(RunningCopilotServer {
                                                 sign_in_status: status,
                                                 ..
@@ -544,7 +544,7 @@ impl Copilot {
                                                 } = status
                                                 {
                                                     *prompt_flow = Some(flow.clone());
-                                                    cx.notify();
+                                                    model.notify(cx);
                                                 }
                                             }
                                         })?;
@@ -561,7 +561,7 @@ impl Copilot {
                             };
 
                             let sign_in = sign_in.await;
-                            this.update(&mut cx, |this, cx| match sign_in {
+                            this.update(&mut cx, |this, model, cx| match sign_in {
                                 Ok(status) => {
                                     this.update_sign_in_status(status, cx);
                                     Ok(())
@@ -580,7 +580,7 @@ impl Copilot {
                         prompt: None,
                         task: task.clone(),
                     };
-                    cx.notify();
+                    model.notify(cx);
                     task
                 }
             };
@@ -595,7 +595,7 @@ impl Copilot {
     }
 
     pub fn sign_out(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
-        self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
+        self.update_sign_in_status(request::SignInStatus::NotSignedIn, model, cx);
         if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
             let server = server.clone();
             cx.background_executor().spawn(async move {
@@ -626,7 +626,7 @@ impl Copilot {
             task: start_task.clone(),
         };
 
-        cx.notify();
+        model.notify(cx);
 
         cx.background_executor().spawn(start_task)
     }
@@ -710,7 +710,7 @@ impl Copilot {
             {
                 match event {
                     language::BufferEvent::Edited => {
-                        drop(registered_buffer.report_changes(&buffer, cx));
+                        drop(registered_buffer.report_changes(&buffer, model, cx));
                     }
                     language::BufferEvent::Saved => {
                         server
@@ -787,7 +787,7 @@ impl Copilot {
     where
         T: ToPointUtf16,
     {
-        self.request_completions::<request::GetCompletions, _>(buffer, position, cx)
+        self.request_completions::<request::GetCompletions, _>(buffer, position, model, cx)
     }
 
     pub fn completions_cycling<T>(
@@ -800,7 +800,7 @@ impl Copilot {
     where
         T: ToPointUtf16,
     {
-        self.request_completions::<request::GetCompletionsCycling, _>(buffer, position, cx)
+        self.request_completions::<request::GetCompletionsCycling, _>(buffer, position, model, cx)
     }
 
     pub fn accept_completion(
@@ -865,7 +865,7 @@ impl Copilot {
             >,
         T: ToPointUtf16,
     {
-        self.register_buffer(buffer, cx);
+        self.register_buffer(buffer, model, cx);
 
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
@@ -876,7 +876,7 @@ impl Copilot {
             .registered_buffers
             .get_mut(&buffer.entity_id())
             .unwrap();
-        let snapshot = registered_buffer.report_changes(buffer, cx);
+        let snapshot = registered_buffer.report_changes(buffer, model, cx);
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
         let position = position.to_point_utf16(buffer);
@@ -958,10 +958,10 @@ impl Copilot {
                 | request::SignInStatus::MaybeOk { .. }
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
-                    cx.emit(Event::CopilotAuthSignedIn);
+                    model.emit(cx, Event::CopilotAuthSignedIn);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         if let Some(buffer) = buffer.upgrade() {
-                            self.register_buffer(&buffer, cx);
+                            self.register_buffer(&buffer, model, cx);
                         }
                     }
                 }
@@ -973,14 +973,14 @@ impl Copilot {
                 }
                 request::SignInStatus::Ok { user: None } | request::SignInStatus::NotSignedIn => {
                     server.sign_in_status = SignInStatus::SignedOut;
-                    cx.emit(Event::CopilotAuthSignedOut);
+                    model.emit(cx, Event::CopilotAuthSignedOut);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }
                 }
             }
 
-            cx.notify();
+            model.notify(cx);
         }
     }
 }
@@ -1081,11 +1081,13 @@ mod tests {
     async fn test_buffer_management(cx: &mut TestAppContext) {
         let (copilot, mut lsp) = Copilot::fake(cx);
 
-        let buffer_1 = cx.new_model(|cx| Buffer::local("Hello", cx));
+        let buffer_1 = cx.new_model(|model, cx| Buffer::local("Hello", model, cx));
         let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())
             .parse()
             .unwrap();
-        copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_1, cx));
+        copilot.update(cx, |copilot, model, cx| {
+            copilot.register_buffer(&buffer_1, model, cx)
+        });
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,
@@ -1099,11 +1101,13 @@ mod tests {
             }
         );
 
-        let buffer_2 = cx.new_model(|cx| Buffer::local("Goodbye", cx));
+        let buffer_2 = cx.new_model(|model, cx| Buffer::local("Goodbye", model, cx));
         let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.entity_id().as_u64())
             .parse()
             .unwrap();
-        copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_2, cx));
+        copilot.update(cx, |copilot, model, cx| {
+            copilot.register_buffer(&buffer_2, model, cx)
+        });
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,
@@ -1117,7 +1121,9 @@ mod tests {
             }
         );
 
-        buffer_1.update(cx, |buffer, cx| buffer.edit([(5..5, " world")], None, cx));
+        buffer_1.update(cx, |buffer, model, cx| {
+            buffer.edit([(5..5, " world")], None, model, cx)
+        });
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidChangeTextDocument>()
                 .await,
@@ -1135,7 +1141,7 @@ mod tests {
         );
 
         // Ensure updates to the file are reflected in the LSP.
-        buffer_1.update(cx, |buffer, cx| {
+        buffer_1.update(cx, |buffer, model, cx| {
             buffer.file_updated(
                 Arc::new(File {
                     abs_path: "/root/child/buffer-1".into(),
@@ -1170,7 +1176,7 @@ mod tests {
             Ok(request::SignOutResult {})
         });
         copilot
-            .update(cx, |copilot, cx| copilot.sign_out(cx))
+            .update(cx, |copilot, model, cx| copilot.sign_out(cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1195,7 +1201,7 @@ mod tests {
             })
         });
         copilot
-            .update(cx, |copilot, cx| copilot.sign_in(cx))
+            .update(cx, |copilot, model, cx| copilot.sign_in(cx))
             .await
             .unwrap();
 

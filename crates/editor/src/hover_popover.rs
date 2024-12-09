@@ -33,7 +33,7 @@ pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, model: &Model<Editor>, cx: &mut AppContext) {
     let head = editor.selections.newest_anchor().head();
-    show_hover(editor, head, true, cx);
+    show_hover(editor, head, true, model, cx);
 }
 
 /// The internal hover action dispatches between `show_hover` or `hide_hover`
@@ -45,13 +45,13 @@ pub fn hover_at(
     cx: &mut AppContext,
 ) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
-        if show_keyboard_hover(editor, cx) {
+        if show_keyboard_hover(editor, model, cx) {
             return;
         }
         if let Some(anchor) = anchor {
-            show_hover(editor, anchor, false, cx);
+            show_hover(editor, anchor, false, model, cx);
         } else {
-            hide_hover(editor, cx);
+            hide_hover(editor, model, cx);
         }
     }
 }
@@ -66,7 +66,7 @@ pub fn show_keyboard_hover(
         let keyboard_grace = p.keyboard_grace.borrow();
         if *keyboard_grace {
             if let Some(anchor) = p.anchor {
-                show_hover(editor, anchor, false, cx);
+                show_hover(editor, anchor, false, model, cx);
                 return true;
             }
         }
@@ -77,7 +77,7 @@ pub fn show_keyboard_hover(
         let keyboard_grace = d.keyboard_grace.borrow();
         if *keyboard_grace {
             if let Some(anchor) = d.anchor {
-                show_hover(editor, anchor, false, cx);
+                show_hover(editor, anchor, false, model, cx);
                 return true;
             }
         }
@@ -142,15 +142,15 @@ pub fn hover_at_inlay(
                 false
             })
         {
-            hide_hover(editor, cx);
+            hide_hover(editor, model, cx);
         }
 
-        let task = cx.spawn(|this, mut cx| {
+        let task = model.spawn(cx, |this, mut cx| {
             async move {
                 cx.background_executor()
                     .timer(Duration::from_millis(HOVER_DELAY_MILLIS))
                     .await;
-                this.update(&mut cx, |this, _| {
+                this.update(&mut cx, |this, _, _| {
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
@@ -168,10 +168,10 @@ pub fn hover_at_inlay(
                     anchor: None,
                 };
 
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     // TODO: no background highlights happen for inlays currently
                     this.hover_state.info_popovers = vec![hover_popover];
-                    cx.notify();
+                    model.notify(cx);
                 })?;
 
                 anyhow::Ok(())
@@ -194,10 +194,10 @@ pub fn hide_hover(editor: &mut Editor, model: &Model<Editor>, cx: &mut AppContex
     editor.hover_state.info_task = None;
     editor.hover_state.triggered_from = None;
 
-    editor.clear_background_highlights::<HoverState>(cx);
+    editor.clear_background_highlights::<HoverState>(model, cx);
 
     if did_hide {
-        cx.notify();
+        model.notify(cx);
     }
 
     did_hide
@@ -217,7 +217,7 @@ fn show_hover(
         return None;
     }
 
-    let snapshot = editor.snapshot(cx);
+    let snapshot = editor.snapshot(model, cx);
 
     let (buffer, buffer_position) = editor
         .buffer
@@ -237,7 +237,7 @@ fn show_hover(
             // Hover triggered from same location as last time. Don't show again.
             return None;
         } else {
-            hide_hover(editor, cx);
+            hide_hover(editor, model, cx);
         }
     }
 
@@ -251,7 +251,7 @@ fn show_hover(
         }
     }
 
-    let task = cx.spawn(|this, mut cx| {
+    let task = model.spawn(cx, |this, mut cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
             let delay = if ignore_timeout {
@@ -393,7 +393,7 @@ fn show_hover(
                             },
                             ..Default::default()
                         };
-                        Markdown::new_text(text, markdown_style.clone(), None, None, cx)
+                        Markdown::new_text(text, markdown_style.clone(), None, None, model, cx)
                     })
                     .ok();
 
@@ -410,7 +410,7 @@ fn show_hover(
                 None
             };
 
-            this.update(&mut cx, |this, _| {
+            this.update(&mut cx, |this, _, _| {
                 this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
@@ -419,7 +419,7 @@ fn show_hover(
             } else {
                 Vec::new()
             };
-            let snapshot = this.update(&mut cx, |this, cx| this.snapshot(cx))?;
+            let snapshot = this.update(&mut cx, |this, model, cx| this.snapshot(cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(hovers_response.len());
             let mut info_popover_tasks = Vec::with_capacity(hovers_response.len());
@@ -451,7 +451,7 @@ fn show_hover(
                 let blocks = hover_result.contents;
                 let language = hover_result.language;
                 let parsed_content =
-                    parse_blocks(&blocks, &language_registry, language, &mut cx).await;
+                    parse_blocks(&blocks, &language_registry, language, model, &mut cx).await;
                 let scroll_handle = ScrollHandle::new();
                 info_popover_tasks.push((
                     range.clone(),
@@ -483,7 +483,7 @@ fn show_hover(
                 }
 
                 editor.hover_state.info_popovers = info_popovers;
-                cx.notify();
+                model.notify(cx);
                 cx.refresh();
             })?;
 
@@ -539,7 +539,7 @@ async fn parse_blocks(
     language: Option<Arc<Language>>,
     window_handle: AnyWindowHandle,
     cx: &mut AsyncAppContext,
-) -> Option<View<Markdown>> {
+) -> Option<Model<Markdown>> {
     let fallback_language_name = if let Some(ref l) = language {
         let l = Arc::clone(l);
         Some(l.lsp_id().clone())
@@ -610,6 +610,7 @@ async fn parse_blocks(
                 markdown_style.clone(),
                 Some(language_registry.clone()),
                 fallback_language_name,
+                model,
                 cx,
             )
         })
@@ -671,10 +672,10 @@ impl HoverState {
         let mut elements = Vec::new();
 
         if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
-            elements.push(diagnostic_popover.render(max_size, cx));
+            elements.push(diagnostic_popover.render(max_size, model, cx));
         }
         for info_popover in &mut self.info_popovers {
-            elements.push(info_popover.render(max_size, cx));
+            elements.push(info_popover.render(max_size, model, cx));
         }
 
         Some((point, elements))
@@ -684,14 +685,14 @@ impl HoverState {
         let mut hover_popover_is_focused = false;
         for info_popover in &self.info_popovers {
             if let Some(markdown_view) = &info_popover.parsed_content {
-                if markdown_view.focus_handle(cx).is_focused(cx) {
+                if markdown_view.focus_handle(cx).is_focused(window) {
                     hover_popover_is_focused = true;
                 }
             }
         }
         if let Some(diagnostic_popover) = &self.diagnostic_popover {
             if let Some(markdown_view) = &diagnostic_popover.parsed_content {
-                if markdown_view.focus_handle(cx).is_focused(cx) {
+                if markdown_view.focus_handle(cx).is_focused(window) {
                     hover_popover_is_focused = true;
                 }
             }
@@ -703,7 +704,7 @@ impl HoverState {
 #[derive(Debug, Clone)]
 pub(crate) struct InfoPopover {
     pub(crate) symbol_range: RangeInEditor,
-    pub(crate) parsed_content: Option<View<Markdown>>,
+    pub(crate) parsed_content: Option<Model<Markdown>>,
     pub(crate) scroll_handle: ScrollHandle,
     pub(crate) scrollbar_state: ScrollbarState,
     pub(crate) keyboard_grace: Rc<RefCell<bool>>,
@@ -753,7 +754,7 @@ impl InfoPopover {
             cx.line_height(),
             self.scroll_handle.bounds().size.height - px(16.),
         ) / 2.0;
-        cx.notify();
+        model.notify(cx);
         self.scroll_handle.set_offset(current);
     }
     fn render_vertical_scrollbar(
@@ -765,7 +766,7 @@ impl InfoPopover {
             .occlude()
             .id("info-popover-vertical-scroll")
             .on_mouse_move(cx.listener(|_, _, cx| {
-                cx.notify();
+                model.notify(cx);
                 cx.stop_propagation()
             }))
             .on_hover(|_, cx| {
@@ -781,7 +782,7 @@ impl InfoPopover {
                 }),
             )
             .on_scroll_wheel(cx.listener(|_, _, cx| {
-                cx.notify();
+                model.notify(cx);
             }))
             .h_full()
             .absolute()
@@ -798,7 +799,7 @@ impl InfoPopover {
 pub struct DiagnosticPopover {
     local_diagnostic: DiagnosticEntry<Anchor>,
     primary_diagnostic: Option<DiagnosticEntry<Anchor>>,
-    parsed_content: Option<View<Markdown>>,
+    parsed_content: Option<Model<Markdown>>,
     border_color: Option<Hsla>,
     background_color: Option<Hsla>,
     pub keyboard_grace: Rc<RefCell<bool>>,
@@ -963,7 +964,7 @@ mod tests {
             let anchor = snapshot
                 .buffer_snapshot
                 .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
-            hover_at(editor, Some(anchor), cx)
+            hover_at(editor, Some(anchor), model, cx)
         });
         assert!(!cx.editor(|editor, _| editor.hover_state.visible()));
 
@@ -1061,7 +1062,7 @@ mod tests {
             let anchor = snapshot
                 .buffer_snapshot
                 .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
-            hover_at(editor, Some(anchor), cx)
+            hover_at(editor, Some(anchor), model, cx)
         });
         cx.background_executor
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
@@ -1099,7 +1100,7 @@ mod tests {
             let anchor = snapshot
                 .buffer_snapshot
                 .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
-            hover_at(editor, Some(anchor), cx)
+            hover_at(editor, Some(anchor), model, cx)
         });
         assert!(!cx.editor(|editor, _| editor.hover_state.visible()));
 
@@ -1151,7 +1152,7 @@ mod tests {
             let anchor = snapshot
                 .buffer_snapshot
                 .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
-            hover_at(editor, Some(anchor), cx)
+            hover_at(editor, Some(anchor), model, cx)
         });
         cx.background_executor
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
@@ -1178,7 +1179,7 @@ mod tests {
         cx.set_state(indoc! {"
             fˇn test() { println!(); }
         "});
-        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        cx.update_editor(|editor, cx| hover(editor, &Hover, model, cx));
         let symbol_range = cx.lsp_range(indoc! {"
             «fn» test() { println!(); }
         "});
@@ -1245,7 +1246,7 @@ mod tests {
         cx.set_state(indoc! {"
             fˇn test() { println!(); }
         "});
-        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        cx.update_editor(|editor, cx| hover(editor, &Hover, model, cx));
         let symbol_range = cx.lsp_range(indoc! {"
             «fn» test() { println!(); }
         "});
@@ -1306,7 +1307,7 @@ mod tests {
         cx.set_state(indoc! {"
             fˇn test() { println!(); }
         "});
-        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        cx.update_editor(|editor, cx| hover(editor, &Hover, model, cx));
         let symbol_range = cx.lsp_range(indoc! {"
             «fn» test() { println!(); }
         "});
@@ -1393,7 +1394,7 @@ mod tests {
         });
 
         // Hover pops diagnostic immediately
-        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        cx.update_editor(|editor, cx| hover(editor, &Hover, model, cx));
         cx.background_executor.run_until_parked();
 
         cx.editor(|Editor { hover_state, .. }, _| {
@@ -1468,7 +1469,7 @@ mod tests {
                 }))
             }
         });
-        cx.update_editor(|editor, cx| hover(editor, &Default::default(), cx));
+        cx.update_editor(|editor, cx| hover(editor, &Default::default(), model, cx));
         cx.run_until_parked();
 
         cx.update_editor(|editor, cx| {
@@ -1586,7 +1587,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             let expected_layers = vec![entire_hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor));
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_layers, visible_hint_labels(editor, model, cx));
         });
 
         let inlay_range = cx
@@ -1712,7 +1713,9 @@ mod tests {
                 hover_state.diagnostic_popover.is_none() && hover_state.info_popovers.len() == 1
             );
             let popover = hover_state.info_popovers.first().cloned().unwrap();
-            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let buffer_snapshot = editor
+                .buffer()
+                .update(cx, |buffer, model, cx| buffer.snapshot(cx));
             assert_eq!(
                 popover.symbol_range,
                 RangeInEditor::Inlay(InlayHighlight {
@@ -1766,7 +1769,9 @@ mod tests {
                 hover_state.diagnostic_popover.is_none() && hover_state.info_popovers.len() == 1
             );
             let popover = hover_state.info_popovers.first().cloned().unwrap();
-            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let buffer_snapshot = editor
+                .buffer()
+                .update(cx, |buffer, model, cx| buffer.snapshot(cx));
             assert_eq!(
                 popover.symbol_range,
                 RangeInEditor::Inlay(InlayHighlight {

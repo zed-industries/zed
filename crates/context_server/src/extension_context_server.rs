@@ -34,7 +34,7 @@ impl ExtensionContextServerProxy for ContextServerFactoryRegistryProxy {
         cx: &mut AppContext,
     ) {
         self.context_server_factory_registry
-            .update(cx, |registry, _| {
+            .update(cx, |registry, model, _| {
                 registry.register_server_factory(
                     id.clone(),
                     Arc::new({

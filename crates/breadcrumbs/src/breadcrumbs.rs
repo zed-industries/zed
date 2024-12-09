@@ -37,7 +37,12 @@ impl Breadcrumbs {
 impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         const MAX_SEGMENTS: usize = 12;
         let element = h_flex().text_ui(cx);
         let Some(active_item) = self.active_item.as_ref() else {
@@ -94,23 +99,25 @@ impl Render for Breadcrumbs {
                         let editor = editor.clone();
                         move |_, cx| {
                             if let Some(editor) = editor.upgrade() {
-                                outline::toggle(editor, &editor::actions::ToggleOutline, cx)
+                                outline::toggle(editor, &editor::actions::ToggleOutline, model, cx)
                             }
                         }
                     })
-                    .tooltip(move |cx| {
+                    .tooltip(move |window, cx| {
                         if let Some(editor) = editor.upgrade() {
                             let focus_handle = editor.read(cx).focus_handle(cx);
                             Tooltip::for_action_in(
                                 "Show symbol outline",
                                 &editor::actions::ToggleOutline,
                                 &focus_handle,
+                                window,
                                 cx,
                             )
                         } else {
                             Tooltip::for_action(
                                 "Show symbol outline",
                                 &editor::actions::ToggleOutline,
+                                window,
                                 cx,
                             )
                         }
@@ -131,7 +138,7 @@ impl ToolbarItemView for Breadcrumbs {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> ToolbarItemLocation {
-        cx.notify();
+        model.notify(cx);
         self.active_item = None;
 
         let Some(item) = active_pane_item else {
@@ -143,12 +150,15 @@ impl ToolbarItemView for Breadcrumbs {
             cx,
             Box::new(move |event, cx| {
                 if let ItemEvent::UpdateBreadcrumbs = event {
-                    this.update(cx, |this, cx| {
-                        cx.notify();
+                    this.update(cx, |this, model, cx| {
+                        model.notify(cx);
                         if let Some(active_item) = this.active_item.as_ref() {
-                            cx.emit(ToolbarItemEvent::ChangeLocation(
-                                active_item.breadcrumb_location(cx),
-                            ))
+                            model.emit(
+                                cx,
+                                ToolbarItemEvent::ChangeLocation(
+                                    active_item.breadcrumb_location(cx),
+                                ),
+                            )
                         }
                     })
                     .ok();

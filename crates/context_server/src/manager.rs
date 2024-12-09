@@ -148,14 +148,14 @@ impl ContextServerManager {
         if self.update_servers_task.is_some() {
             self.needs_server_update = true;
         } else {
-            self.update_servers_task = Some(cx.spawn(|this, mut cx| async move {
-                this.update(&mut cx, |this, _| {
+            self.update_servers_task = Some(model.spawn(cx, |this, mut cx| async move {
+                this.update(&mut cx, |this, _, _| {
                     this.needs_server_update = false;
                 })?;
 
                 Self::maintain_servers(this.clone(), cx.clone()).await?;
 
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     let has_any_context_servers = !this.servers().is_empty();
                     if has_any_context_servers {
                         CommandPaletteFilter::update_global(cx, |filter, _cx| {
@@ -188,20 +188,26 @@ impl ContextServerManager {
         cx: &mut AppContext,
     ) -> Task<anyhow::Result<()>> {
         let id = id.clone();
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             if let Some(server) = this.update(&mut cx, |this, _cx| this.servers.remove(&id))? {
                 server.stop()?;
                 let config = server.config();
                 let new_server = Arc::new(ContextServer::new(id.clone(), config));
                 new_server.clone().start(&cx).await?;
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     this.servers.insert(id.clone(), new_server);
-                    cx.emit(Event::ServerStopped {
-                        server_id: id.clone(),
-                    });
-                    cx.emit(Event::ServerStarted {
-                        server_id: id.clone(),
-                    });
+                    model.emit(
+                        cx,
+                        Event::ServerStopped {
+                            server_id: id.clone(),
+                        },
+                    );
+                    model.emit(
+                        cx,
+                        Event::ServerStarted {
+                            server_id: id.clone(),
+                        },
+                    );
                 })?;
             }
             Ok(())
@@ -219,7 +225,7 @@ impl ContextServerManager {
     async fn maintain_servers(this: WeakModel<Self>, mut cx: AsyncAppContext) -> Result<()> {
         let mut desired_servers = HashMap::default();
 
-        let (registry, project) = this.update(&mut cx, |this, cx| {
+        let (registry, project) = this.update(&mut cx, |this, model, cx| {
             let location = this.project.read(cx).worktrees(cx).next().map(|worktree| {
                 settings::SettingsLocation {
                     worktree_id: worktree.read(cx).id(),
@@ -273,14 +279,14 @@ impl ContextServerManager {
         for (id, server) in servers_to_stop {
             server.stop().log_err();
             this.update(&mut cx, |_, cx| {
-                cx.emit(Event::ServerStopped { server_id: id })
+                model.emit(cx, Event::ServerStopped { server_id: id })
             })?;
         }
 
         for (id, server) in servers_to_start {
             if server.start(&cx).await.log_err().is_some() {
                 this.update(&mut cx, |_, cx| {
-                    cx.emit(Event::ServerStarted { server_id: id })
+                    model.emit(cx, Event::ServerStarted { server_id: id })
                 })?;
             }
         }

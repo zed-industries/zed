@@ -43,7 +43,7 @@ pub fn init(cx: &mut AppContext) {
                             if let Some(use_new_terminal) = action.use_new_terminal {
                                 original_task.use_new_terminal = use_new_terminal;
                             }
-                            let context_task = task_context(workspace, cx);
+                            let context_task = task_context(workspace, model, cx);
                             cx.spawn(|workspace, mut cx| async move {
                                 let task_context = context_task.await;
                                 workspace
@@ -54,6 +54,7 @@ pub fn init(cx: &mut AppContext) {
                                             &original_task,
                                             &task_context,
                                             false,
+                                            model,
                                             cx,
                                         )
                                     })
@@ -79,7 +80,7 @@ pub fn init(cx: &mut AppContext) {
                             );
                         }
                     } else {
-                        toggle_modal(workspace, cx).detach();
+                        toggle_modal(workspace, model, cx).detach();
                     };
                 });
         },
@@ -94,25 +95,31 @@ fn spawn_task_or_modal(
     cx: &mut AppContext,
 ) {
     match &action.task_name {
-        Some(name) => spawn_task_with_name(name.clone(), cx).detach_and_log_err(cx),
-        None => toggle_modal(workspace, cx).detach(),
+        Some(name) => spawn_task_with_name(name.clone(), model, cx).detach_and_log_err(cx),
+        None => toggle_modal(workspace, model, cx).detach(),
     }
 }
 
 fn toggle_modal(workspace: &mut Workspace, model: &Model<_>, cx: &mut AppContext) -> AsyncTask<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
-    let can_open_modal = workspace.project().update(cx, |project, cx| {
+    let can_open_modal = workspace.project().update(cx, |project, model, cx| {
         project.is_local() || project.ssh_connection_string(cx).is_some() || project.is_via_ssh()
     });
     if can_open_modal {
-        let context_task = task_context(workspace, cx);
+        let context_task = task_context(workspace, model, cx);
         cx.spawn(|workspace, mut cx| async move {
             let task_context = context_task.await;
             workspace
                 .update(&mut cx, |workspace, cx| {
                     workspace.toggle_modal(cx, |cx| {
-                        TasksModal::new(task_store.clone(), task_context, workspace_handle, cx)
+                        TasksModal::new(
+                            task_store.clone(),
+                            task_context,
+                            workspace_handle,
+                            model,
+                            cx,
+                        )
                     })
                 })
                 .ok();
@@ -129,7 +136,7 @@ fn spawn_task_with_name(
 ) -> AsyncTask<anyhow::Result<()>> {
     cx.spawn(|workspace, mut cx| async move {
         let context_task =
-            workspace.update(&mut cx, |workspace, cx| task_context(workspace, cx))?;
+            workspace.update(&mut cx, |workspace, cx| task_context(workspace, model, cx))?;
         let task_context = context_task.await;
         let tasks = workspace.update(&mut cx, |workspace, cx| {
             let Some(task_inventory) = workspace
@@ -142,7 +149,7 @@ fn spawn_task_with_name(
             else {
                 return Vec::new();
             };
-            let (worktree, location) = active_item_selection_properties(workspace, cx);
+            let (worktree, location) = active_item_selection_properties(workspace, model, cx);
             let (file, language) = location
                 .map(|location| {
                     let buffer = location.buffer.read(cx);
@@ -167,6 +174,7 @@ fn spawn_task_with_name(
                     &target_task,
                     &task_context,
                     false,
+                    model,
                     cx,
                 );
                 Some(())
@@ -175,7 +183,7 @@ fn spawn_task_with_name(
         if !did_spawn {
             workspace
                 .update(&mut cx, |workspace, cx| {
-                    spawn_task_or_modal(workspace, &Spawn::default(), cx);
+                    spawn_task_or_modal(workspace, &Spawn::default(), model, cx);
                 })
                 .ok();
         }
@@ -197,7 +205,7 @@ fn active_item_selection_properties(
     let location = active_item
         .and_then(|active_item| active_item.act_as::<Editor>(cx))
         .and_then(|editor| {
-            editor.update(cx, |editor, cx| {
+            editor.update(cx, |editor, model, cx| {
                 let selection = editor.selections.newest_anchor();
                 let multi_buffer = editor.buffer().clone();
                 let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
@@ -259,7 +267,8 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let worktree_store = project.update(cx, |project, _| project.worktree_store().clone());
+        let worktree_store =
+            project.update(cx, |project, model, _| project.worktree_store().clone());
         let rust_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
@@ -296,42 +305,48 @@ mod tests {
             )))),
         );
 
-        let worktree_id = project.update(cx, |project, cx| {
+        let worktree_id = project.update(cx, |project, model, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let (workspace, model, cx) =
+            cx.add_window_view(|cx| Workspace::test_new(project.clone(), model, cx));
 
         let buffer1 = workspace
-            .update(cx, |this, cx| {
-                this.project()
-                    .update(cx, |this, cx| this.open_buffer((worktree_id, "a.ts"), cx))
+            .update(cx, |this, model, cx| {
+                this.project().update(cx, |this, model, cx| {
+                    this.open_buffer((worktree_id, "a.ts"), cx)
+                })
             })
             .await
             .unwrap();
-        buffer1.update(cx, |this, cx| {
+        buffer1.update(cx, |this, model, cx| {
             this.set_language(Some(typescript_language), cx)
         });
-        let editor1 = cx.new_view(|cx| Editor::for_buffer(buffer1, Some(project.clone()), cx));
+        let editor1 =
+            cx.new_model(|model, cx| Editor::for_buffer(buffer1, Some(project.clone()), model, cx));
         let buffer2 = workspace
-            .update(cx, |this, cx| {
-                this.project().update(cx, |this, cx| {
+            .update(cx, |this, model, cx| {
+                this.project().update(cx, |this, model, cx| {
                     this.open_buffer((worktree_id, "rust/b.rs"), cx)
                 })
             })
             .await
             .unwrap();
-        buffer2.update(cx, |this, cx| this.set_language(Some(rust_language), cx));
-        let editor2 = cx.new_view(|cx| Editor::for_buffer(buffer2, Some(project), cx));
+        buffer2.update(cx, |this, model, cx| {
+            this.set_language(Some(rust_language), model, cx)
+        });
+        let editor2 =
+            cx.new_model(|model, cx| Editor::for_buffer(buffer2, Some(project), model, cx));
 
         let first_context = workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.add_item_to_center(Box::new(editor1.clone()), cx);
                 workspace.add_item_to_center(Box::new(editor2.clone()), cx);
                 assert_eq!(
                     workspace.active_item(cx).unwrap().item_id(),
                     editor2.entity_id()
                 );
-                task_context(workspace, cx)
+                task_context(workspace, model, cx)
             })
             .await;
         assert_eq!(
@@ -353,13 +368,15 @@ mod tests {
         );
 
         // And now, let's select an identifier.
-        editor2.update(cx, |editor, cx| {
+        editor2.update(cx, |editor, model, cx| {
             editor.change_selections(None, cx, |selections| selections.select_ranges([14..18]))
         });
 
         assert_eq!(
             workspace
-                .update(cx, |workspace, cx| { task_context(workspace, cx) })
+                .update(cx, |workspace, model, cx| {
+                    task_context(workspace, model, cx)
+                })
                 .await,
             TaskContext {
                 cwd: Some("/dir".into()),
@@ -381,10 +398,10 @@ mod tests {
 
         assert_eq!(
             workspace
-                .update(cx, |workspace, cx| {
+                .update(cx, |workspace, model, cx| {
                     // Now, let's switch the active item to .ts file.
-                    workspace.activate_item(&editor1, true, true, cx);
-                    task_context(workspace, cx)
+                    workspace.activate_item(&editor1, true, true, model, cx);
+                    task_context(workspace, model, cx)
                 })
                 .await,
             TaskContext {

@@ -820,7 +820,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(input_text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
 
-        let display_map = cx.new_model(|cx| {
+        let display_map = cx.new_model(|model, cx| {
             DisplayMap::new(
                 buffer,
                 font,
@@ -831,6 +831,7 @@ mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                model,
                 cx,
             )
         });
@@ -863,7 +864,7 @@ mod tests {
                 ]
             })
             .collect();
-        let snapshot = display_map.update(cx, |map, cx| {
+        let snapshot = display_map.update(cx, |map, model, cx| {
             map.splice_inlays(Vec::new(), inlays, cx);
             map.snapshot(cx)
         });
@@ -1015,12 +1016,12 @@ mod tests {
         let window = cx.window;
         _ = cx.update_window(window, |_, cx| {
             let text_layout_details =
-                editor.update(cx, |editor, cx| editor.text_layout_details(cx));
+                editor.update(cx, |editor, model, cx| editor.text_layout_details(cx));
 
             let font = font("Helvetica");
 
-            let buffer = cx.new_model(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
-            let multibuffer = cx.new_model(|cx| {
+            let buffer = cx.new_model(|model, cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
+            let multibuffer = cx.new_model(|model, cx| {
                 let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
                 multibuffer.push_excerpts(
                     buffer.clone(),
@@ -1038,7 +1039,7 @@ mod tests {
                 );
                 multibuffer
             });
-            let display_map = cx.new_model(|cx| {
+            let display_map = cx.new_model(|model, cx| {
                 DisplayMap::new(
                     multibuffer,
                     font,
@@ -1049,10 +1050,11 @@ mod tests {
                     2,
                     0,
                     FoldPlaceholder::test(),
+                    model,
                     cx,
                 )
             });
-            let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+            let snapshot = display_map.update(cx, |map, model, cx| map.snapshot(cx));
 
             assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
 

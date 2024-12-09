@@ -27,7 +27,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub fn toggle(
-    editor: View<Editor>,
+    editor: Model<Editor>,
     _: &ToggleOutline,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
@@ -40,14 +40,14 @@ pub fn toggle(
         .outline(Some(cx.theme().syntax()));
 
     if let Some((workspace, outline)) = editor.read(cx).workspace().zip(outline) {
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_modal(cx, |cx| OutlineView::new(outline, editor, cx));
+        workspace.update(cx, |workspace, model, cx| {
+            workspace.toggle_modal(cx, |cx| OutlineView::new(outline, editor, model, cx));
         })
     }
 }
 
 pub struct OutlineView {
-    picker: View<Picker<OutlineViewDelegate>>,
+    picker: Model<Picker<OutlineViewDelegate>>,
 }
 
 impl FocusableView for OutlineView {
@@ -60,7 +60,7 @@ impl EventEmitter<DismissEvent> for OutlineView {}
 impl ModalView for OutlineView {
     fn on_before_dismiss(&mut self, model: &Model<Self>, cx: &mut AppContext) -> DismissDecision {
         self.picker
-            .update(cx, |picker, cx| picker.delegate.restore_active_editor(cx));
+            .update(cx, |picker, model, cx| picker.delegate.restore_active_editor(cx));
         DismissDecision::Dismiss(true)
     }
 }
@@ -87,19 +87,19 @@ impl OutlineView {
 
     fn new(
         outline: Outline<Anchor>,
-        editor: View<Editor>,
+        editor: Model<Editor>,
         model: &Model<Self>, cx: &mut AppContext,
     ) -> OutlineView {
-        let delegate = OutlineViewDelegate::new(cx.view().downgrade(), outline, editor, cx);
+        let delegate = OutlineViewDelegate::new(cx.view().downgrade(), outline, editor, model, cx);
         let picker =
-            cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(vh(0.75, cx))));
+            cx.new_model(|model, cx| Picker::uniform_list(delegate, cx).max_height(Some(vh(0.75, cx))));
         OutlineView { picker }
     }
 }
 
 struct OutlineViewDelegate {
-    outline_view: WeakView<OutlineView>,
-    active_editor: View<Editor>,
+    outline_view: WeakModel<OutlineView>,
+    active_editor: Model<Editor>,
     outline: Outline<Anchor>,
     selected_match_index: usize,
     prev_scroll_position: Option<Point<f32>>,
@@ -111,9 +111,9 @@ enum OutlineRowHighlights {}
 
 impl OutlineViewDelegate {
     fn new(
-        outline_view: WeakView<OutlineView>,
+        outline_view: WeakModel<OutlineView>,
         outline: Outline<Anchor>,
-        editor: View<Editor>,
+        editor: Model<Editor>,
         model: &Model<OutlineView>, cx: &mut AppContext,
     ) -> Self {
         Self {
@@ -121,14 +121,14 @@ impl OutlineViewDelegate {
             last_query: Default::default(),
             matches: Default::default(),
             selected_match_index: 0,
-            prev_scroll_position: Some(editor.update(cx, |editor, cx| editor.scroll_position(cx))),
+            prev_scroll_position: Some(editor.update(cx, |editor, model, cx| editor.scroll_position(cx))),
             active_editor: editor,
             outline,
         }
     }
 
     fn restore_active_editor(&mut self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
-        self.active_editor.update(cx, |editor, cx| {
+        self.active_editor.update(cx, |editor, model, cx| {
             editor.clear_row_highlights::<OutlineRowHighlights>();
             if let Some(scroll_position) = self.prev_scroll_position {
                 editor.set_scroll_position(scroll_position, cx);
@@ -148,7 +148,7 @@ impl OutlineViewDelegate {
             let selected_match = &self.matches[self.selected_match_index];
             let outline_item = &self.outline.items[selected_match.candidate_id];
 
-            self.active_editor.update(cx, |active_editor, cx| {
+            self.active_editor.update(cx, |active_editor, model, cx| {
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 active_editor.highlight_rows::<OutlineRowHighlights>(
                     outline_item.range.start..outline_item.range.end,
@@ -178,7 +178,7 @@ impl PickerDelegate for OutlineViewDelegate {
     }
 
     fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
-        self.set_selected_index(ix, true, cx);
+        self.set_selected_index(ix, true, model, cx);
     }
 
     fn update_matches(
@@ -202,7 +202,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 })
                 .collect();
 
-            let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
+            let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, model, cx| {
                 let buffer = editor.buffer().read(cx).snapshot(cx);
                 let cursor_offset = editor.selections.newest::<usize>(cx).head();
                 (buffer, cursor_offset)
@@ -249,7 +249,7 @@ impl PickerDelegate for OutlineViewDelegate {
     fn confirm(&mut self, _: bool, model: &Model<Picker>, cx: &mut AppContext) {
         self.prev_scroll_position.take();
 
-        self.active_editor.update(cx, |active_editor, cx| {
+        self.active_editor.update(cx, |active_editor, model, cx| {
             let highlight = active_editor
                 .highlighted_rows::<OutlineRowHighlights>()
                 .next();
@@ -267,7 +267,7 @@ impl PickerDelegate for OutlineViewDelegate {
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.outline_view
-            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
             .log_err();
         self.restore_active_editor(cx);
     }
@@ -365,17 +365,17 @@ mod tests {
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
 
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
-        let worktree_id = workspace.update(cx, |workspace, cx| {
-            workspace.project().update(cx, |project, cx| {
+        let worktree_id = workspace.update(cx, |workspace, model, cx| {
+            workspace.project().update(cx, |project, model, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
             })
         });
         let _buffer = project
-            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .update(cx, |project, model, cx| project.open_local_buffer("/dir/a.rs", cx))
             .await
             .unwrap();
         let editor = workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace.open_path((worktree_id, "a.rs"), None, true, cx)
             })
             .await
@@ -383,7 +383,7 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
         let ensure_outline_view_contents =
-            |outline_view: &View<Picker<OutlineViewDelegate>>, cx: &mut VisualTestContext| {
+            |outline_view: &Model<Picker<OutlineViewDelegate>>, cx: &mut VisualTestContext| {
                 assert_eq!(query(outline_view, cx), "");
                 assert_eq!(
                     outline_names(outline_view, cx),
@@ -461,11 +461,11 @@ mod tests {
     }
 
     fn open_outline_view(
-        workspace: &View<Workspace>,
+        workspace: &Model<Workspace>,
         cx: &mut VisualTestContext,
-    ) -> View<Picker<OutlineViewDelegate>> {
+    ) -> Model<Picker<OutlineViewDelegate>> {
         cx.dispatch_action(ToggleOutline);
-        workspace.update(cx, |workspace, cx| {
+        workspace.update(cx, |workspace, model, cx| {
             workspace
                 .active_modal::<OutlineView>(cx)
                 .unwrap()
@@ -476,17 +476,17 @@ mod tests {
     }
 
     fn query(
-        outline_view: &View<Picker<OutlineViewDelegate>>,
+        outline_view: &Model<Picker<OutlineViewDelegate>>,
         cx: &mut VisualTestContext,
     ) -> String {
-        outline_view.update(cx, |outline_view, cx| outline_view.query(cx))
+        outline_view.update(cx, |outline_view, model, cx| outline_view.query(cx))
     }
 
     fn outline_names(
-        outline_view: &View<Picker<OutlineViewDelegate>>,
+        outline_view: &Model<Picker<OutlineViewDelegate>>,
         cx: &mut VisualTestContext,
     ) -> Vec<String> {
-        outline_view.update(cx, |outline_view, _| {
+        outline_view.update(cx, |outline_view, model, _| {
             let items = &outline_view.delegate.outline.items;
             outline_view
                 .delegate
@@ -497,8 +497,8 @@ mod tests {
         })
     }
 
-    fn highlighted_display_rows(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
-        editor.update(cx, |editor, cx| {
+    fn highlighted_display_rows(editor: &Model<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
+        editor.update(cx, |editor, model, cx| {
             editor
                 .highlighted_display_rows(cx)
                 .into_keys()
@@ -604,11 +604,11 @@ mod tests {
 
     #[track_caller]
     fn assert_single_caret_at_row(
-        editor: &View<Editor>,
+        editor: &Model<Editor>,
         buffer_row: u32,
         cx: &mut VisualTestContext,
     ) {
-        let selections = editor.update(cx, |editor, cx| {
+        let selections = editor.update(cx, |editor, model, cx| {
             editor
                 .selections
                 .all::<rope::Point>(cx)

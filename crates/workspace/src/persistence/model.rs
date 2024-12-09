@@ -332,10 +332,10 @@ impl SerializedPaneGroup {
         self,
         project: &Model<Project>,
         workspace_id: WorkspaceId,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window_handle: AnyWindowHandle,
         cx: &mut AsyncAppContext,
-    ) -> Option<(Member, Option<View<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
+    ) -> Option<(Member, Option<Model<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
         match self {
             SerializedPaneGroup::Group {
                 axis,
@@ -372,7 +372,9 @@ impl SerializedPaneGroup {
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace
-                    .update(cx, |workspace, cx| workspace.add_pane(cx).downgrade())
+                    .update(cx, |workspace, model, cx| {
+                        workspace.add_pane(cx).downgrade()
+                    })
                     .log_err()?;
                 let active = serialized_pane.active;
                 let new_items = serialized_pane
@@ -380,7 +382,10 @@ impl SerializedPaneGroup {
                     .await
                     .log_err()?;
 
-                if pane.update(cx, |pane, _| pane.items_len() != 0).log_err()? {
+                if pane
+                    .update(cx, |pane, model, _| pane.items_len() != 0)
+                    .log_err()?
+                {
                     let pane = pane.upgrade()?;
                     Some((
                         Member::Pane(pane.clone()),
@@ -390,7 +395,7 @@ impl SerializedPaneGroup {
                 } else {
                     let pane = pane.upgrade()?;
                     workspace
-                        .update(cx, |workspace, cx| {
+                        .update(cx, |workspace, model, cx| {
                             workspace.force_remove_pane(&pane, &None, cx)
                         })
                         .log_err()?;
@@ -420,9 +425,9 @@ impl SerializedPane {
     pub async fn deserialize_to(
         &self,
         project: &Model<Project>,
-        pane: &WeakView<Pane>,
+        pane: &WeakModel<Pane>,
         workspace_id: WorkspaceId,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window_handle: AnyWindowHandle,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
@@ -431,13 +436,14 @@ impl SerializedPane {
         let mut preview_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
-            item_tasks.push(pane.update(cx, |_, cx| {
+            item_tasks.push(pane.update(cx, |_, model, cx| {
                 SerializableItemRegistry::deserialize(
                     &item.kind,
                     project,
                     workspace.clone(),
                     workspace_id,
                     item.item_id,
+                    model,
                     cx,
                 )
             })?);
@@ -455,26 +461,26 @@ impl SerializedPane {
             items.push(item_handle.clone());
 
             if let Some(item_handle) = item_handle {
-                pane.update(cx, |pane, cx| {
+                pane.update(cx, |pane, model, cx| {
                     pane.add_item(item_handle.clone(), true, true, None, cx);
                 })?;
             }
         }
 
         if let Some(active_item_index) = active_item_index {
-            pane.update(cx, |pane, cx| {
+            pane.update(cx, |pane, model, cx| {
                 pane.activate_item(active_item_index, false, false, cx);
             })?;
         }
 
         if let Some(preview_item_index) = preview_item_index {
-            pane.update(cx, |pane, cx| {
+            pane.update(cx, |pane, model, cx| {
                 if let Some(item) = pane.item_for_index(preview_item_index) {
                     pane.set_preview_item_id(Some(item.item_id()), cx);
                 }
             })?;
         }
-        pane.update(cx, |pane, _| {
+        pane.update(cx, |pane, model, _| {
             pane.set_pinned_count(self.pinned_count.min(items.len()));
         })?;
 

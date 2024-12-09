@@ -11,7 +11,8 @@ use time::OffsetDateTime;
 use util::ResultExt;
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
-    let notification_store = cx.new_model(|cx| NotificationStore::new(client, user_store, cx));
+    let notification_store =
+        cx.new_model(|model, cx| NotificationStore::new(client, user_store, model, cx));
     cx.set_global(GlobalNotificationStore(notification_store));
 }
 
@@ -81,20 +82,20 @@ impl NotificationStore {
         cx: &mut AppContext,
     ) -> Self {
         let mut connection_status = client.status();
-        let watch_connection_status = cx.spawn(|this, mut cx| async move {
+        let watch_connection_status = model.spawn(cx, |this, mut cx| async move {
             while let Some(status) = connection_status.next().await {
                 let this = this.upgrade()?;
                 match status {
                     client::Status::Connected { .. } => {
                         if let Some(task) = this
-                            .update(&mut cx, |this, cx| this.handle_connect(cx))
+                            .update(&mut cx, |this, model, cx| this.handle_connect(cx))
                             .log_err()?
                         {
                             task.await.log_err()?;
                         }
                     }
                     _ => this
-                        .update(&mut cx, |this, cx| this.handle_disconnect(cx))
+                        .update(&mut cx, |this, model, cx| this.handle_disconnect(cx))
                         .log_err()?,
                 }
             }
@@ -167,13 +168,13 @@ impl NotificationStore {
             self.notifications.first().map(|entry| entry.id)
         };
         let request = self.client.request(proto::GetNotifications { before_id });
-        Some(cx.spawn(|this, mut cx| async move {
+        Some(model.spawn(cx, |this, mut cx| async move {
             let this = this
                 .upgrade()
                 .context("Notification store was dropped while loading notifications")?;
 
             let response = request.await?;
-            this.update(&mut cx, |this, _| {
+            this.update(&mut cx, |this, _, _| {
                 this.loaded_all_notifications = response.done
             })?;
             Self::add_notifications(
@@ -198,12 +199,12 @@ impl NotificationStore {
     ) -> Option<Task<Result<()>>> {
         self.notifications = Default::default();
         self.channel_messages = Default::default();
-        cx.notify();
-        self.load_more_notifications(true, cx)
+        model.notify(cx);
+        self.load_more_notifications(true, model, cx)
     }
 
     fn handle_disconnect(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        cx.notify()
+        model.notify(cx)
     }
 
     async fn handle_new_notification(
@@ -229,8 +230,8 @@ impl NotificationStore {
         envelope: TypedEnvelope<proto::DeleteNotification>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            this.splice_notifications([(envelope.payload.notification_id, None)], false, cx);
+        this.update(&mut cx, |this, model, cx| {
+            this.splice_notifications([(envelope.payload.notification_id, None)], false, model, cx);
             Ok(())
         })?
     }
@@ -240,25 +241,26 @@ impl NotificationStore {
         envelope: TypedEnvelope<proto::UpdateNotification>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, model, cx| {
             if let Some(notification) = envelope.payload.notification {
                 if let Some(rpc::Notification::ChannelMessageMention { message_id, .. }) =
                     Notification::from_proto(&notification)
                 {
-                    let fetch_message_task = this.channel_store.update(cx, |this, cx| {
+                    let fetch_message_task = this.channel_store.update(cx, |this, model, cx| {
                         this.fetch_channel_messages(vec![message_id], cx)
                     });
 
-                    cx.spawn(|this, mut cx| async move {
-                        let messages = fetch_message_task.await?;
-                        this.update(&mut cx, move |this, cx| {
-                            for message in messages {
-                                this.channel_messages.insert(message_id, message);
-                            }
-                            cx.notify();
+                    model
+                        .spawn(cx, |this, mut cx| async move {
+                            let messages = fetch_message_task.await?;
+                            this.update(&mut cx, move |this, cx| {
+                                for message in messages {
+                                    this.channel_messages.insert(message_id, message);
+                                }
+                                model.notify(cx);
+                            })
                         })
-                    })
-                    .detach_and_log_err(cx)
+                        .detach_and_log_err(cx)
                 }
             }
             Ok(())
@@ -329,12 +331,15 @@ impl NotificationStore {
                 store.fetch_channel_messages(message_ids, cx)
             })?
             .await?;
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, model, cx| {
             if options.clear_old {
-                cx.emit(NotificationEvent::NotificationsUpdated {
-                    old_range: 0..this.notifications.summary().count,
-                    new_count: 0,
-                });
+                model.emit(
+                    cx,
+                    NotificationEvent::NotificationsUpdated {
+                        old_range: 0..this.notifications.summary().count,
+                        new_count: 0,
+                    },
+                );
                 this.notifications = SumTree::default();
                 this.channel_messages.clear();
                 this.loaded_all_notifications = false;
@@ -391,21 +396,30 @@ impl NotificationStore {
 
                     if let Some(new_notification) = &new_notification {
                         if new_notification.is_read {
-                            cx.emit(NotificationEvent::NotificationRead {
-                                entry: new_notification.clone(),
-                            });
+                            model.emit(
+                                cx,
+                                NotificationEvent::NotificationRead {
+                                    entry: new_notification.clone(),
+                                },
+                            );
                         }
                     } else {
-                        cx.emit(NotificationEvent::NotificationRemoved {
-                            entry: old_notification.clone(),
-                        });
+                        model.emit(
+                            cx,
+                            NotificationEvent::NotificationRemoved {
+                                entry: old_notification.clone(),
+                            },
+                        );
                     }
                 }
             } else if let Some(new_notification) = &new_notification {
                 if is_new {
-                    cx.emit(NotificationEvent::NewNotification {
-                        entry: new_notification.clone(),
-                    });
+                    model.emit(
+                        cx,
+                        NotificationEvent::NewNotification {
+                            entry: new_notification.clone(),
+                        },
+                    );
                 }
             }
 
@@ -420,10 +434,13 @@ impl NotificationStore {
         drop(cursor);
 
         self.notifications = new_notifications;
-        cx.emit(NotificationEvent::NotificationsUpdated {
-            old_range,
-            new_count,
-        });
+        model.emit(
+            cx,
+            NotificationEvent::NotificationsUpdated {
+                old_range,
+                new_count,
+            },
+        );
     }
 
     pub fn respond_to_notification(
@@ -436,15 +453,15 @@ impl NotificationStore {
         match notification {
             Notification::ContactRequest { sender_id } => {
                 self.user_store
-                    .update(cx, |store, cx| {
-                        store.respond_to_contact_request(sender_id, response, cx)
+                    .update(cx, |store, model, cx| {
+                        store.respond_to_contact_request(sender_id, response, model, cx)
                     })
                     .detach();
             }
             Notification::ChannelInvitation { channel_id, .. } => {
                 self.channel_store
-                    .update(cx, |store, cx| {
-                        store.respond_to_channel_invite(ChannelId(channel_id), response, cx)
+                    .update(cx, |store, model, cx| {
+                        store.respond_to_channel_invite(ChannelId(channel_id), response, model, cx)
                     })
                     .detach();
             }

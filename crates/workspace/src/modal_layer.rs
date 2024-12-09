@@ -26,13 +26,13 @@ trait ModalViewHandle {
     fn fade_out_background(&self, window: &Window, cx: &AppContext) -> bool;
 }
 
-impl<V: ModalView> ModalViewHandle for View<V> {
+impl<V: ModalView> ModalViewHandle for Model<V> {
     fn on_before_dismiss(
         &mut self,
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> DismissDecision {
-        self.update(cx, |this, cx| this.on_before_dismiss(cx))
+        self.update(cx, |this, model, cx| this.on_before_dismiss(cx))
     }
 
     fn view(&self) -> AnyView {
@@ -82,15 +82,15 @@ impl ModalLayer {
                 return;
             }
         }
-        let new_modal = cx.new_view(build_view);
+        let new_modal = cx.new_model(build_view);
         self.show_modal(new_modal, cx);
     }
 
-    fn show_modal<V>(&mut self, new_modal: View<V>, model: &Model<Self>, cx: &mut AppContext)
+    fn show_modal<V>(&mut self, new_modal: Model<V>, model: &Model<Self>, cx: &mut AppContext)
     where
         V: ModalView,
     {
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle();
         self.active_modal = Some(ActiveModal {
             modal: Box::new(new_modal.clone()),
             _subscriptions: [
@@ -109,7 +109,7 @@ impl ModalLayer {
         cx.defer(move |_, cx| {
             cx.focus_view(&new_modal);
         });
-        cx.notify();
+        model.notify(cx);
     }
 
     fn hide_modal(&mut self, model: &Model<Self>, cx: &mut AppContext) -> bool {
@@ -137,12 +137,12 @@ impl ModalLayer {
                     previous_focus.focus(cx);
                 }
             }
-            cx.notify();
+            model.notify(cx);
         }
         true
     }
 
-    pub fn active_modal<V>(&self) -> Option<View<V>>
+    pub fn active_modal<V>(&self) -> Option<Model<V>>
     where
         V: 'static,
     {
@@ -156,7 +156,12 @@ impl ModalLayer {
 }
 
 impl Render for ModalLayer {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let Some(active_modal) = &self.active_modal else {
             return div();
         };
@@ -171,7 +176,7 @@ impl Render for ModalLayer {
                 background.fade_out(0.2);
                 el.bg(background)
                     .occlude()
-                    .on_mouse_down_out(cx.listener(|this, _, cx| {
+                    .on_mouse_down_out(model.listener(|this, model, _, cx| {
                         this.hide_modal(cx);
                     }))
             })

@@ -5,18 +5,18 @@ use gpui::{
 };
 
 pub struct AutoHeightEditorStory {
-    editor: View<Editor>,
+    editor: Model<Editor>,
 }
 
 impl AutoHeightEditorStory {
-    pub fn new(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> View<Self> {
+    pub fn new(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Model<Self> {
         cx.bind_keys([KeyBinding::new(
             "enter",
             editor::actions::Newline,
             Some("Editor"),
         )]);
-        cx.new_view(|cx| Self {
-            editor: cx.new_view(|cx| {
+        cx.new_model(|model, cx| Self {
+            editor: cx.new_model(|model, cx| {
                 let mut editor = Editor::auto_height(3, cx);
                 editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
                 editor

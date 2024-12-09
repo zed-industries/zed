@@ -222,12 +222,13 @@ impl WorktreeStore {
                             upstream_client.clone(),
                             abs_path.clone(),
                             visible,
+                            model,
                             cx,
                         )
                     }
                 }
-                WorktreeStoreState::Local { fs } => {
-                    self.create_local_worktree(fs.clone(), abs_path.clone(), visible, cx)
+                WorktreeStoreState::Local { fs model, } => {
+                    self.create_local_worktree(fsmodel, .clone(), abs_path.clone(), visible, cx)
                 }
             };
 
@@ -235,9 +236,9 @@ impl WorktreeStore {
                 .insert(abs_path.clone(), task.shared());
         }
         let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             let result = task.await;
-            this.update(&mut cx, |this, _| this.loading_worktrees.remove(&abs_path))
+            this.update(&mut cx, |this, _, _| this.loading_worktrees.remove(&abs_path))
                 .ok();
             match result {
                 Ok(worktree) => Ok(worktree),
@@ -265,7 +266,7 @@ impl WorktreeStore {
         if abs_path.is_empty() || abs_path == "/" {
             abs_path = "~/".to_string();
         }
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             let this = this.upgrade().context("Dropped worktree store")?;
 
             let response = client
@@ -302,7 +303,7 @@ impl WorktreeStore {
                 )
             })?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.add(&worktree, cx);
             })?;
             Ok(worktree)
@@ -324,7 +325,7 @@ impl WorktreeStore {
             let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx).await;
 
             let worktree = worktree?;
-            this.update(&mut cx, |this, cx| this.add(&worktree, cx))?;
+            this.update(&mut cx, |this, model, cx| this.add(&worktree, cx))?;
 
             if visible {
                 cx.update(|cx| {
@@ -360,16 +361,16 @@ impl WorktreeStore {
             self.worktrees.insert(i, handle);
         }
 
-        cx.emit(WorktreeStoreEvent::WorktreeAdded(worktree.clone()));
-        self.send_project_updates(cx);
+        model.emit(cx, WorktreeStoreEvent::WorktreeAdded(worktree.clone()));
+        self.send_project_updates(model, cx);
 
         let handle_id = worktree.entity_id();
         cx.observe_release(worktree, move |this, worktree, cx| {
-            cx.emit(WorktreeStoreEvent::WorktreeReleased(
+            model.emit(cx, WorktreeStoreEvent::WorktreeReleased(
                 handle_id,
                 worktree.id(),
             ));
-            cx.emit(WorktreeStoreEvent::WorktreeRemoved(
+            model.emit(cx, WorktreeStoreEvent::WorktreeRemoved(
                 handle_id,
                 worktree.id(),
             ));
@@ -387,7 +388,7 @@ impl WorktreeStore {
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade() {
                 if worktree.read(cx).id() == id_to_remove {
-                    cx.emit(WorktreeStoreEvent::WorktreeRemoved(
+                    model.emit(cx, WorktreeStoreEvent::WorktreeRemoved(
                         worktree.entity_id(),
                         id_to_remove,
                     ));
@@ -453,6 +454,7 @@ impl WorktreeStore {
             } else {
                 self.add(
                     &Worktree::remote(project_id, replica_id, worktree, client.clone(), cx),
+                    model,
                     cx,
                 );
             }
@@ -504,15 +506,15 @@ impl WorktreeStore {
         let worktree_to_move = self.worktrees.remove(source_index);
         self.worktrees.insert(destination_index, worktree_to_move);
         self.worktrees_reordered = true;
-        cx.emit(WorktreeStoreEvent::WorktreeOrderChanged);
-        cx.notify();
+        model.emit(cx, WorktreeStoreEvent::WorktreeOrderChanged);
+        model.notify(cx);
         Ok(())
     }
 
     pub fn disconnected_from_host(&mut self, cx: &mut AppContext) {
         for worktree in &self.worktrees {
             if let Some(worktree) = worktree.upgrade() {
-                worktree.update(cx, |worktree, _| {
+                worktree.update(cx, |worktree, model, _| {
                     if let Some(worktree) = worktree.as_remote_mut() {
                         worktree.disconnected_from_host();
                     }
@@ -538,16 +540,16 @@ impl WorktreeStore {
             downstream_client.send(update).log_err();
             None
         };
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             if let Some(update_project) = update_project {
                 update_project.await?;
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 let worktrees = this.worktrees().collect::<Vec<_>>();
 
                 for worktree in worktrees {
-                    worktree.update(cx, |worktree, cx| {
+                    worktree.update(cx, |worktree, model, cx| {
                         let client = downstream_client.clone();
                         worktree.observe_updates(project_id, cx, {
                             move |update| {
@@ -566,7 +568,7 @@ impl WorktreeStore {
                         });
                     });
 
-                    cx.emit(WorktreeStoreEvent::WorktreeUpdateSent(worktree.clone()))
+                    model.emit(cx, WorktreeStoreEvent::WorktreeUpdateSent(worktree.clone()))
                 }
 
                 anyhow::Ok(())
@@ -620,7 +622,7 @@ impl WorktreeStore {
         // When not shared, only retain the visible worktrees
         for worktree_handle in self.worktrees.iter_mut() {
             if let WorktreeHandle::Strong(worktree) = worktree_handle {
-                let is_visible = worktree.update(cx, |worktree, _| {
+                let is_visible = worktree.update(cx, |worktree, model, _| {
                     worktree.stop_observing_updates();
                     worktree.is_visible()
                 });
@@ -1018,7 +1020,7 @@ impl WorktreeStore {
         envelope: TypedEnvelope<proto::CreateProjectEntry>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
-        let worktree = this.update(&mut cx, |this, cx| {
+        let worktree = this.update(&mut cx, |this, model, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             this.worktree_for_id(worktree_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
@@ -1033,7 +1035,7 @@ impl WorktreeStore {
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let (worktree_id, worktree, old_path, is_dir) = this
-            .update(&mut cx, |this, cx| {
+            .update(&mut cx, |this, model, cx| {
                 this.worktree_store
                     .read(cx)
                     .worktree_and_entry_for_id(entry_id, cx)
@@ -1067,7 +1069,7 @@ impl WorktreeStore {
         )
         .await;
         let response = Worktree::handle_rename_entry(worktree, envelope.payload, cx.clone()).await;
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |this, model, cx| {
             this.lsp_store().read(cx).did_rename_entry(
                 worktree_id,
                 &old_abs_path,
@@ -1085,7 +1087,7 @@ impl WorktreeStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let worktree = this.update(&mut cx, |this, cx| {
+        let worktree = this.update(&mut cx, |this, model, cx| {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
@@ -1098,7 +1100,7 @@ impl WorktreeStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let worktree = this.update(&mut cx, |this, cx| {
+        let worktree = this.update(&mut cx, |this, model, cx| {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
@@ -1112,7 +1114,7 @@ impl WorktreeStore {
     ) -> Result<proto::ExpandProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this
-            .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
+            .update(&mut cx, |this, model, cx| this.worktree_for_entry(entry_id, cx))?
             .ok_or_else(|| anyhow!("invalid request"))?;
         Worktree::handle_expand_entry(worktree, envelope.payload, cx).await
     }

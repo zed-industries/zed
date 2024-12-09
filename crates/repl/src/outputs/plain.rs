@@ -195,7 +195,7 @@ impl TerminalOutput {
 
         // This will keep the buffer up to date, though with some terminal codes it won't be perfect
         if let Some(buffer) = self.full_buffer.as_ref() {
-            buffer.update(cx, |buffer, cx| {
+            buffer.update(cx, |buffer, model, cx| {
                 buffer.edit([(buffer.len()..buffer.len(), text)], None, cx);
             });
         }
@@ -246,7 +246,7 @@ impl Render for TerminalOutput {
     /// Converts the current terminal state into a renderable GPUI element. It handles
     /// the layout of the terminal grid, calculates the dimensions of the output, and
     /// creates a canvas element that paints the terminal cells and background rectangles.
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         let text_style = text_style(cx);
         let text_system = cx.text_system();
 
@@ -286,6 +286,7 @@ impl Render for TerminalOutput {
                             line_height: text_line_height,
                             size: bounds.size,
                         },
+                        model,
                         cx,
                     );
                 }
@@ -299,6 +300,7 @@ impl Render for TerminalOutput {
                             size: bounds.size,
                         },
                         bounds,
+                        model,
                         cx,
                     );
                 }
@@ -331,7 +333,7 @@ impl OutputContent for TerminalOutput {
             return self.full_buffer.clone();
         }
 
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new_model(|model, cx| {
             let mut buffer =
                 Buffer::local(self.full_text(), cx).with_language(language::PLAIN_TEXT.clone(), cx);
             buffer.set_capability(language::Capability::ReadOnly, cx);

@@ -31,7 +31,7 @@ impl ContextServerFactoryRegistry {
     /// Inserts a default [`ContextServerFactoryRegistry`] if one does not yet exist.
     pub fn default_global(cx: &mut AppContext) -> Model<Self> {
         if !cx.has_global::<GlobalContextServerFactoryRegistry>() {
-            let registry = cx.new_model(|_| Self::new());
+            let registry = cx.new_model(|_, _| Self::new());
             cx.set_global(GlobalContextServerFactoryRegistry(registry));
         }
         cx.global::<GlobalContextServerFactoryRegistry>().0.clone()

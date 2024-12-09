@@ -92,7 +92,7 @@ impl WrapMap {
         wrap_width: Option<Pixels>,
         cx: &mut AppContext,
     ) -> (Model<Self>, WrapSnapshot) {
-        let handle = cx.new_model(|cx| {
+        let handle = cx.new_model(|model, cx| {
             let mut this = Self {
                 font_with_size: (font, font_size),
                 wrap_width: None,
@@ -102,7 +102,7 @@ impl WrapMap {
                 snapshot: WrapSnapshot::new(tab_snapshot),
                 background_task: None,
             };
-            this.set_wrap_width(wrap_width, cx);
+            this.set_wrap_width(wrap_width, model, cx);
             mem::take(&mut this.edits_since_sync);
             this
         });
@@ -205,9 +205,9 @@ impl WrapMap {
                     self.edits_since_sync = self.edits_since_sync.compose(&edits);
                 }
                 Err(wrap_task) => {
-                    self.background_task = Some(cx.spawn(|this, mut cx| async move {
+                    self.background_task = Some(model.spawn(cx, |this, mut cx| async move {
                         let (snapshot, edits) = wrap_task.await;
-                        this.update(&mut cx, |this, cx| {
+                        this.update(&mut cx, |this, model, cx| {
                             this.snapshot = snapshot;
                             this.edits_since_sync = this
                                 .edits_since_sync
@@ -215,7 +215,7 @@ impl WrapMap {
                                 .compose(&edits);
                             this.background_task = None;
                             this.flush_edits(cx);
-                            cx.notify();
+                            model.notify(cx);
                         })
                         .ok();
                     }));
@@ -283,9 +283,9 @@ impl WrapMap {
                         self.edits_since_sync = self.edits_since_sync.compose(&output_edits);
                     }
                     Err(update_task) => {
-                        self.background_task = Some(cx.spawn(|this, mut cx| async move {
+                        self.background_task = Some(model.spawn(cx, |this, mut cx| async move {
                             let (snapshot, edits) = update_task.await;
-                            this.update(&mut cx, |this, cx| {
+                            this.update(&mut cx, |this, model, cx| {
                                 this.snapshot = snapshot;
                                 this.edits_since_sync = this
                                     .edits_since_sync
@@ -293,7 +293,7 @@ impl WrapMap {
                                     .compose(&edits);
                                 this.background_task = None;
                                 this.flush_edits(cx);
-                                cx.notify();
+                                model.notify(cx);
                             })
                             .ok();
                         }));
@@ -1232,9 +1232,9 @@ mod tests {
             notifications.next().await.unwrap();
         }
 
-        let (initial_snapshot, _) = wrap_map.update(cx, |map, cx| {
+        let (initial_snapshot, _) = wrap_map.update(cx, |map, model, cx| {
             assert!(!map.is_rewrapping());
-            map.sync(tabs_snapshot.clone(), Vec::new(), cx)
+            map.sync(tabs_snapshot.clone(), Vec::new(), model, cx)
         });
 
         let actual_text = initial_snapshot.text();
@@ -1259,14 +1259,17 @@ mod tests {
                         Some(px(rng.gen_range(0.0..=1000.0)))
                     };
                     log::info!("Setting wrap width to {:?}", wrap_width);
-                    wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                    wrap_map.update(cx, |map, model, cx| {
+                        map.set_wrap_width(wrap_width, model, cx)
+                    });
                 }
                 20..=39 => {
                     for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
                         let (tabs_snapshot, tab_edits) =
                             tab_map.sync(fold_snapshot, fold_edits, tab_size);
-                        let (mut snapshot, wrap_edits) =
-                            wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
+                        let (mut snapshot, wrap_edits) = wrap_map.update(cx, |map, model, cx| {
+                            map.sync(tabs_snapshot, tab_edits, model, cx)
+                        });
                         snapshot.check_invariants();
                         snapshot.verify_chunks(&mut rng);
                         edits.push((snapshot, wrap_edits));
@@ -1278,17 +1281,18 @@ mod tests {
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tabs_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
-                    let (mut snapshot, wrap_edits) =
-                        wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
+                    let (mut snapshot, wrap_edits) = wrap_map.update(cx, |map, model, cx| {
+                        map.sync(tabs_snapshot, tab_edits, model, cx)
+                    });
                     snapshot.check_invariants();
                     snapshot.verify_chunks(&mut rng);
                     edits.push((snapshot, wrap_edits));
                 }
                 _ => {
-                    buffer.update(cx, |buffer, cx| {
+                    buffer.update(cx, |buffer, model, cx| {
                         let subscription = buffer.subscribe();
                         let edit_count = rng.gen_range(1..=5);
-                        buffer.randomly_mutate(&mut rng, edit_count, cx);
+                        buffer.randomly_mutate(&mut rng, edit_count, model, cx);
                         buffer_snapshot = buffer.snapshot(cx);
                         buffer_edits.extend(subscription.consume());
                     });
@@ -1306,8 +1310,9 @@ mod tests {
 
             let unwrapped_text = tabs_snapshot.text();
             let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
-            let (mut snapshot, wrap_edits) =
-                wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot.clone(), tab_edits, cx));
+            let (mut snapshot, wrap_edits) = wrap_map.update(cx, |map, model, cx| {
+                map.sync(tabs_snapshot.clone(), tab_edits, model, cx)
+            });
             snapshot.check_invariants();
             snapshot.verify_chunks(&mut rng);
             edits.push((snapshot, wrap_edits));
@@ -1321,8 +1326,9 @@ mod tests {
             }
 
             if !wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
-                let (mut wrapped_snapshot, wrap_edits) =
-                    wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
+                let (mut wrapped_snapshot, wrap_edits) = wrap_map.update(cx, |map, model, cx| {
+                    map.sync(tabs_snapshot, Vec::new(), model, cx)
+                });
                 let actual_text = wrapped_snapshot.text();
                 let actual_longest_row = wrapped_snapshot.longest_row();
                 log::info!("Wrapping finished: {:?}", actual_text);

@@ -134,7 +134,7 @@ impl Project {
 
         cx.spawn(move |this, mut cx| async move {
             let python_venv_directory = if let Some(path) = path.clone() {
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, model, cx| {
                     this.python_venv_directory(path, settings.detect_venv.clone(), cx)
                 })?
                 .await
@@ -244,7 +244,7 @@ impl Project {
                     }
                 }
             };
-            let terminal = this.update(&mut cx, |this, cx| {
+            let terminal = this.update(&mut cx, |this, model, cx| {
                 TerminalBuilder::new(
                     local_path.map(|path| path.to_path_buf()),
                     spawn_task,
@@ -259,7 +259,7 @@ impl Project {
                     cx,
                 )
                 .map(|builder| {
-                    let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));
+                    let terminal_handle = cx.new_model(|model, cx| builder.subscribe(cx));
 
                     this.terminals
                         .local_handles
@@ -274,7 +274,7 @@ impl Project {
                             .position(|terminal| terminal.entity_id() == id)
                         {
                             handles.remove(index);
-                            cx.notify();
+                            model.notify(cx);
                         }
                     })
                     .detach();
@@ -303,11 +303,11 @@ impl Project {
     ) -> Task<Option<PathBuf>> {
         cx.spawn(move |this, mut cx| async move {
             if let Some((worktree, _)) = this
-                .update(&mut cx, |this, cx| this.find_worktree(&abs_path, cx))
+                .update(&mut cx, |this, model, cx| this.find_worktree(&abs_path, cx))
                 .ok()?
             {
                 let toolchain = this
-                    .update(&mut cx, |this, cx| {
+                    .update(&mut cx, |this, model, cx| {
                         this.active_toolchain(
                             worktree.read(cx).id(),
                             LanguageName::new("Python"),
@@ -429,7 +429,7 @@ impl Project {
         model: &Model<Project>,
         cx: &mut AppContext,
     ) {
-        terminal_handle.update(cx, |this, _| this.input_bytes(command.into_bytes()));
+        terminal_handle.update(cx, |this, model, _| this.input_bytes(command.into_bytes()));
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakModel<terminal::Terminal>> {

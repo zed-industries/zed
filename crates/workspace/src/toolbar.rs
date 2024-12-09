@@ -90,7 +90,7 @@ impl Toolbar {
 }
 
 impl Render for Toolbar {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         if !self.has_any_visible_items() {
             return div();
         }
@@ -164,10 +164,10 @@ impl Toolbar {
 
     pub fn set_can_navigate(&mut self, can_navigate: bool, model: &Model<Self>, cx: &mut AppContext) {
         self.can_navigate = can_navigate;
-        cx.notify();
+        model.notify(cx);
     }
 
-    pub fn add_item<T>(&mut self, item: View<T>, model: &Model<Self>, cx: &mut AppContext)
+    pub fn add_item<T>(&mut self, item: Model<T>, model: &Model<Self>, cx: &mut AppContext)
     where
         T: 'static + ToolbarItemView,
     {
@@ -182,7 +182,7 @@ impl Toolbar {
                     ToolbarItemEvent::ChangeLocation(new_location) => {
                         if new_location != current_location {
                             *current_location = *new_location;
-                            cx.notify();
+                            model.notify(cx);
                         }
                     }
                 }
@@ -190,7 +190,7 @@ impl Toolbar {
         })
         .detach();
         self.items.push((Box::new(item), location));
-        cx.notify();
+        model.notify(cx);
     }
 
     pub fn set_active_item(&mut self, item: Option<&dyn ItemHandle>, model: &Model<Self>, cx: &mut AppContext) {
@@ -205,7 +205,7 @@ impl Toolbar {
             let new_location = toolbar_item.set_active_pane_item(item, cx);
             if new_location != *current_location {
                 *current_location = new_location;
-                cx.notify();
+                model.notify(cx);
             }
         }
     }
@@ -216,7 +216,7 @@ impl Toolbar {
         }
     }
 
-    pub fn item_of_type<T: ToolbarItemView>(&self) -> Option<View<T>> {
+    pub fn item_of_type<T: ToolbarItemView>(&self) -> Option<Model<T>> {
         self.items
             .iter()
             .find_map(|(item, _)| item.to_any().downcast().ok())
@@ -227,7 +227,7 @@ impl Toolbar {
     }
 }
 
-impl<T: ToolbarItemView> ToolbarItemViewHandle for View<T> {
+impl<T: ToolbarItemView> ToolbarItemViewHandle for Model<T> {
     fn id(&self) -> EntityId {
         self.entity_id()
     }
@@ -242,7 +242,7 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for View<T> {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> ToolbarItemLocation {
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.set_active_pane_item(active_pane_item, cx)
         })
     }
@@ -253,9 +253,9 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for View<T> {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) {
-        self.update(cx, |this, cx| {
+        self.update(cx, |this, model, cx| {
             this.pane_focus_update(pane_focused, cx);
-            cx.notify();
+            model.notify(cx);
         });
     }
 }

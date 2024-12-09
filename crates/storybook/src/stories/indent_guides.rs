@@ -17,7 +17,7 @@ pub struct IndentGuidesStory {
 }
 
 impl IndentGuidesStory {
-    pub fn view(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> View<Self> {
+    pub fn view(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Model<Self> {
         let mut depths = Vec::new();
         depths.push(0);
         depths.push(1);
@@ -29,12 +29,17 @@ impl IndentGuidesStory {
         depths.push(1);
         depths.push(0);
 
-        cx.new_view(|_cx| Self { depths })
+        cx.new_model(|_model, _cx| Self { depths })
     }
 }
 
 impl Render for IndentGuidesStory {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         Story::container()
             .child(Story::title("Indent guides"))
             .child(

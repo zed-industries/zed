@@ -23,7 +23,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct BranchList {
-    pub picker: View<Picker<BranchListDelegate>>,
+    pub picker: Model<Picker<BranchListDelegate>>,
     rem_width: f32,
     _subscription: Subscription,
 }
@@ -45,8 +45,8 @@ impl BranchList {
     }
 
     fn new(delegate: BranchListDelegate, rem_width: f32, model: &Model<Self>, cx: &mut AppContext) -> Self {
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
+        let picker = cx.new_model(|model, cx| Picker::uniform_list(delegate, cx));
+        let _subscription = cx.subscribe(&picker, |_, _, _, cx| model.emit(cx, DismissEvent));
         Self {
             picker,
             rem_width,
@@ -64,12 +64,12 @@ impl FocusableView for BranchList {
 }
 
 impl Render for BranchList {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .w(rems(self.rem_width))
             .child(self.picker.clone())
-            .on_mouse_down_out(cx.listener(|this, _, cx| {
-                this.picker.update(cx, |this, cx| {
+            .on_mouse_down_out(model.listener(|this, model, _, cx| {
+                this.picker.update(cx, |this, model, cx| {
                     this.cancel(&Default::default(), cx);
                 })
             }))
@@ -94,7 +94,7 @@ impl BranchEntry {
 pub struct BranchListDelegate {
     matches: Vec<BranchEntry>,
     all_branches: Vec<Branch>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     selected_index: usize,
     last_query: String,
     /// Max length of branch name before we truncate it and add a trailing `...`.
@@ -103,7 +103,7 @@ pub struct BranchListDelegate {
 
 impl BranchListDelegate {
     async fn new(
-        workspace: View<Workspace>,
+        workspace: Model<Workspace>,
         branch_name_trailoff_after: usize,
         cx: &AsyncAppContext,
     ) -> Result<Self> {
@@ -233,7 +233,7 @@ impl PickerDelegate for BranchListDelegate {
         cx.spawn({
             let branch = branch.clone();
             |picker, mut cx| async move {
-                let branch_change_task = picker.update(&mut cx, |this, cx| {
+                let branch_change_task = picker.update(&mut cx, |this, model, cx| {
                     let workspace = this
                         .delegate
                         .workspace
@@ -257,7 +257,7 @@ impl PickerDelegate for BranchListDelegate {
                 branch_change_task.await?;
 
                 picker.update(&mut cx, |_, cx| {
-                    cx.emit(DismissEvent);
+                    model.emit(cx, DismissEvent);
 
                     Ok::<(), anyhow::Error>(())
                 })
@@ -267,7 +267,7 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
-        cx.emit(DismissEvent);
+        model.emit(cx, DismissEvent);
     }
 
     fn render_match(

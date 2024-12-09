@@ -5,13 +5,18 @@ use ui::Tooltip;
 pub struct ScrollStory;
 
 impl ScrollStory {
-    pub fn view(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> View<ScrollStory> {
-        cx.new_view(|_cx| ScrollStory)
+    pub fn view(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Model<ScrollStory> {
+        cx.new_model(|_model, _cx| ScrollStory)
     }
 }
 
 impl Render for ScrollStory {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let theme = cx.theme();
         let color_1 = theme.status().created;
         let color_2 = theme.status().modified;
@@ -36,7 +41,9 @@ impl Render for ScrollStory {
                         };
                         div()
                             .id(id)
-                            .tooltip(move |cx| Tooltip::text(format!("{}, {}", row, column), cx))
+                            .tooltip(move |window, cx| {
+                                Tooltip::text(format!("{}, {}", row, column), cx)
+                            })
                             .bg(bg)
                             .size(px(100_f32))
                             .when(row >= 5 && column >= 5, |d| {

@@ -43,16 +43,11 @@ impl RenderOnce for Popover {
         div()
             .flex()
             .gap_1()
-            .child(
-                v_flex()
-                    .elevation_2(window, cx)
-                    .py_1()
-                    .children(self.children),
-            )
+            .child(v_flex().elevation_2(cx).py_1().children(self.children))
             .when_some(self.aside, |this, aside| {
                 this.child(
                     v_flex()
-                        .elevation_2(window, cx)
+                        .elevation_2(cx)
                         .bg(cx.theme().colors().surface_background)
                         .px_1()
                         .child(aside),

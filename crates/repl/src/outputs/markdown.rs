@@ -29,7 +29,7 @@ impl MarkdownView {
                 markdown_view.update(&mut cx, |markdown, cx| {
                     markdown.parsing_markdown_task.take();
                     markdown.contents = Some(content);
-                    cx.notify();
+                    model.notify(cx);
                 })
             }
         });
@@ -60,11 +60,14 @@ impl OutputContent for MarkdownView {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Option<Model<Buffer>> {
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new_model(|model, cx| {
             // todo!(): Bring in the language registry so we can set the language to markdown
-            let mut buffer = Buffer::local(self.raw_text.clone(), cx)
-                .with_language(language::PLAIN_TEXT.clone(), cx);
-            buffer.set_capability(language::Capability::ReadOnly, cx);
+            let mut buffer = Buffer::local(self.raw_text.clone(), model, cx).with_language(
+                language::PLAIN_TEXT.clone(),
+                model,
+                cx,
+            );
+            buffer.set_capability(language::Capability::ReadOnly, model, cx);
             buffer
         });
         Some(buffer)
@@ -72,13 +75,13 @@ impl OutputContent for MarkdownView {
 }
 
 impl Render for MarkdownView {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         let Some(parsed) = self.contents.as_ref() else {
             return div().into_any_element();
         };
 
         let mut markdown_render_context =
-            markdown_preview::markdown_renderer::RenderContext::new(None, cx);
+            markdown_preview::markdown_renderer::RenderContext::new(None, model, cx);
 
         v_flex()
             .gap_3()

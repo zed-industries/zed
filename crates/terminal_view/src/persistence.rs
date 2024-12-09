@@ -23,7 +23,7 @@ use crate::{
 
 pub(crate) fn serialize_pane_group(
     pane_group: &PaneGroup,
-    active_pane: &View<Pane>,
+    active_pane: &Model<Pane>,
     window: &Window,
     cx: &AppContext,
 ) -> SerializedPaneGroup {
@@ -32,7 +32,7 @@ pub(crate) fn serialize_pane_group(
 
 fn build_serialized_pane_group(
     pane_group: &Member,
-    active_pane: &View<Pane>,
+    active_pane: &Model<Pane>,
     window: &Window,
     cx: &AppContext,
 ) -> SerializedPaneGroup {
@@ -57,7 +57,7 @@ fn build_serialized_pane_group(
 }
 
 fn serialize_pane(
-    pane: &View<Pane>,
+    pane: &Model<Pane>,
     active: bool,
     window: &Window,
     cx: &AppContext,
@@ -90,16 +90,16 @@ fn serialize_pane(
 }
 
 pub(crate) fn deserialize_terminal_panel(
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     project: Model<Project>,
     database_id: WorkspaceId,
     serialized_panel: SerializedTerminalPanel,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
-) -> Task<anyhow::Result<View<TerminalPanel>>> {
+) -> Task<anyhow::Result<Model<TerminalPanel>>> {
     cx.spawn(move |mut cx| async move {
         let terminal_panel = workspace.update(&mut cx, |workspace, cx| {
-            cx.new_view(|cx| {
+            cx.new_model(|model, cx| {
                 let mut panel = TerminalPanel::new(workspace, cx);
                 panel.height = serialized_panel.height.map(|h| h.round());
                 panel.width = serialized_panel.width.map(|w| w.round());
@@ -113,13 +113,14 @@ pub(crate) fn deserialize_terminal_panel(
                     project,
                     workspace,
                     item_ids.as_slice(),
+                    model,
                     &mut cx,
                 )
                 .await;
                 let active_item = serialized_panel.active_item_id;
                 terminal_panel.update(&mut cx, |terminal_panel, cx| {
-                    terminal_panel.active_pane.update(cx, |pane, cx| {
-                        populate_pane_items(pane, items, active_item, cx);
+                    terminal_panel.active_pane.update(cx, |pane, model, cx| {
+                        populate_pane_items(pane, items, active_item, model, cx);
                     });
                 })?;
             }
@@ -130,6 +131,7 @@ pub(crate) fn deserialize_terminal_panel(
                     terminal_panel.clone(),
                     database_id,
                     serialized_pane_group,
+                    model,
                     &mut cx,
                 )
                 .await;
@@ -149,7 +151,7 @@ pub(crate) fn deserialize_terminal_panel(
 
 fn populate_pane_items(
     pane: &mut Pane,
-    items: Vec<View<TerminalView>>,
+    items: Vec<Model<TerminalView>>,
     active_item: Option<u64>,
     model: &Model<_>,
     cx: &mut AppContext,
@@ -157,24 +159,24 @@ fn populate_pane_items(
     let mut item_index = pane.items_len();
     for item in items {
         let activate_item = Some(item.item_id().as_u64()) == active_item;
-        pane.add_item(Box::new(item), false, false, None, cx);
+        pane.add_item(Box::new(item), false, false, None, model, cx);
         item_index += 1;
         if activate_item {
-            pane.activate_item(item_index, false, false, cx);
+            pane.activate_item(item_index, false, false, model, cx);
         }
     }
 }
 
 #[async_recursion(?Send)]
 async fn deserialize_pane_group(
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     project: Model<Project>,
-    panel: View<TerminalPanel>,
+    panel: Model<TerminalPanel>,
     workspace_id: WorkspaceId,
     serialized: &SerializedPaneGroup,
     window_handle: AnyWindowHandle,
     cx: &mut AsyncAppContext,
-) -> Option<(Member, Option<View<Pane>>)> {
+) -> Option<(Member, Option<Model<Pane>>)> {
     match serialized {
         SerializedPaneGroup::Group {
             axis,
@@ -224,7 +226,7 @@ async fn deserialize_pane_group(
             .await;
 
             let pane = panel
-                .update(cx, |terminal_panel, cx| {
+                .update(cx, |terminal_panel, model, cx| {
                     new_terminal_pane(
                         workspace.clone(),
                         project.clone(),
@@ -236,20 +238,23 @@ async fn deserialize_pane_group(
             let active_item = serialized_pane.active_item;
 
             let terminal = pane
-                .update(cx, |pane, cx| {
-                    populate_pane_items(pane, new_items, active_item, cx);
+                .update(cx, |pane, model, cx| {
+                    populate_pane_items(pane, new_items, active_item, model, cx);
                     // Avoid blank panes in splits
                     if pane.items_len() == 0 {
                         let working_directory = workspace
-                            .update(cx, |workspace, cx| default_working_directory(workspace, cx))
+                            .update(cx, |workspace, model, cx| {
+                                default_working_directory(workspace, cx)
+                            })
                             .ok()
                             .flatten();
                         let kind = TerminalKind::Shell(
                             working_directory.as_deref().map(Path::to_path_buf),
                         );
                         let window = cx.window_handle();
-                        let terminal = project
-                            .update(cx, |project, cx| project.create_terminal(kind, window, cx));
+                        let terminal = project.update(cx, |project, model, cx| {
+                            project.create_terminal(kind, window, cx)
+                        });
                         Some(Some(terminal))
                     } else {
                         Some(None)
@@ -259,11 +264,11 @@ async fn deserialize_pane_group(
                 .flatten()?;
             if let Some(terminal) = terminal {
                 let terminal = terminal.await.ok()?;
-                pane.update(cx, |pane, cx| {
-                    let terminal_view = Box::new(cx.new_view(|cx| {
+                pane.update(cx, |pane, model, cx| {
+                    let terminal_view = Box::new(cx.new_model(|model, cx| {
                         TerminalView::new(terminal, workspace.clone(), Some(workspace_id), cx)
                     }));
-                    pane.add_item(terminal_view, true, false, None, cx);
+                    pane.add_item(terminal_view, true, false, None, model, cx);
                 })
                 .ok()?;
             }
@@ -275,11 +280,11 @@ async fn deserialize_pane_group(
 async fn deserialize_terminal_views(
     workspace_id: WorkspaceId,
     project: Model<Project>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     item_ids: &[u64],
     window_handle: AnyWindowHandle,
     cx: &mut AsyncAppContext,
-) -> Vec<View<TerminalView>> {
+) -> Vec<Model<TerminalView>> {
     let mut items = Vec::with_capacity(item_ids.len());
     let mut deserialized_items = item_ids
         .iter()
@@ -290,6 +295,7 @@ async fn deserialize_terminal_views(
                     workspace.clone(),
                     workspace_id,
                     *item_id,
+                    model,
                     cx,
                 )
             })

@@ -12,13 +12,18 @@ use workspace::{
 
 pub struct UpdateNotification {
     version: SemanticVersion,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
 }
 
 impl EventEmitter<DismissEvent> for UpdateNotification {}
 
 impl Render for UpdateNotification {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let app_name = ReleaseChannel::global(cx).display_name();
 
         v_flex()
@@ -37,7 +42,10 @@ impl Render for UpdateNotification {
                             .id("cancel")
                             .child(Icon::new(IconName::Close))
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _, cx| this.dismiss(&menu::Cancel, cx))),
+                            .on_click(
+                                model
+                                    .listener(|this, model, _, cx| this.dismiss(&menu::Cancel, cx)),
+                            ),
                     ),
             )
             .child(
@@ -45,10 +53,10 @@ impl Render for UpdateNotification {
                     .id("notes")
                     .child(Label::new("View the release notes"))
                     .cursor_pointer()
-                    .on_click(cx.listener(|this, _, cx| {
+                    .on_click(model.listener(|this, model, _, cx| {
                         this.workspace
-                            .update(cx, |workspace, cx| {
-                                crate::view_release_notes_locally(workspace, cx);
+                            .update(cx, |workspace, model, cx| {
+                                crate::view_release_notes_locally(workspace, model, cx);
                             })
                             .log_err();
                         this.dismiss(&menu::Cancel, cx)
@@ -58,11 +66,11 @@ impl Render for UpdateNotification {
 }
 
 impl UpdateNotification {
-    pub fn new(version: SemanticVersion, workspace: WeakView<Workspace>) -> Self {
+    pub fn new(version: SemanticVersion, workspace: WeakModel<Workspace>) -> Self {
         Self { version, workspace }
     }
 
     pub fn dismiss(&mut self, _: &Cancel, model: &Model<Self>, cx: &mut AppContext) {
-        cx.emit(DismissEvent);
+        model.emit(cx, DismissEvent);
     }
 }

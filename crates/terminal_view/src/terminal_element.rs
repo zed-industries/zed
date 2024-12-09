@@ -100,7 +100,7 @@ impl LayoutCell {
             )
         };
 
-        self.text.paint(pos, dimensions.line_height, cx).ok();
+        self.text.paint(pos, dimensions.line_height, model, cx).ok();
     }
 }
 
@@ -156,8 +156,8 @@ impl LayoutRect {
 /// We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: Model<Terminal>,
-    terminal_view: View<TerminalView>,
-    workspace: WeakView<Workspace>,
+    terminal_view: Model<TerminalView>,
+    workspace: WeakModel<Workspace>,
     focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
@@ -178,8 +178,8 @@ impl TerminalElement {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         terminal: Model<Terminal>,
-        terminal_view: View<TerminalView>,
-        workspace: WeakView<Workspace>,
+        terminal_view: Model<TerminalView>,
+        workspace: WeakModel<Workspace>,
         focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
@@ -423,10 +423,10 @@ impl TerminalElement {
     ) -> impl Fn(&E, &mut gpui::Window, &mut gpui::AppContext) {
         move |event, cx| {
             cx.focus(&focus_handle);
-            connection.update(cx, |terminal, cx| {
+            connection.update(cx, |terminal, model, cx| {
                 f(terminal, origin, event, cx);
 
-                cx.notify();
+                model.notify(cx);
             })
         }
     }
@@ -447,9 +447,9 @@ impl TerminalElement {
             let focus = focus.clone();
             move |e, cx| {
                 cx.focus(&focus);
-                terminal.update(cx, |terminal, cx| {
-                    terminal.mouse_down(e, origin, cx);
-                    cx.notify();
+                terminal.update(cx, |terminal, model, cx| {
+                    terminal.mouse_down(e, origin, model, cx);
+                    model.notify(cx);
                 })
             }
         });
@@ -459,27 +459,27 @@ impl TerminalElement {
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
             move |e: &MouseMoveEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble || !focus.is_focused(cx) {
+                if phase != DispatchPhase::Bubble || !focus.is_focused(window) {
                     return;
                 }
 
                 if e.pressed_button.is_some() && !cx.has_active_drag() {
-                    let hovered = hitbox.is_hovered(cx);
-                    terminal.update(cx, |terminal, cx| {
+                    let hovered = hitbox.is_hovered(model, cx);
+                    terminal.update(cx, |terminal, model, cx| {
                         if terminal.selection_started() {
                             terminal.mouse_drag(e, origin, hitbox.bounds);
-                            cx.notify();
+                            model.notify(cx);
                         } else if hovered {
                             terminal.mouse_drag(e, origin, hitbox.bounds);
-                            cx.notify();
+                            model.notify(cx);
                         }
                     })
                 }
 
                 if hitbox.is_hovered(cx) {
-                    terminal.update(cx, |terminal, cx| {
+                    terminal.update(cx, |terminal, model, cx| {
                         terminal.mouse_move(e, origin);
-                        cx.notify();
+                        model.notify(cx);
                     })
                 }
             }
@@ -511,9 +511,9 @@ impl TerminalElement {
             let terminal_view = self.terminal_view.downgrade();
             move |e, cx| {
                 terminal_view
-                    .update(cx, |terminal_view, cx| {
+                    .update(cx, |terminal_view, model, cx| {
                         terminal_view.scroll_wheel(e, origin, cx);
-                        cx.notify();
+                        model.notify(cx);
                     })
                     .ok();
             }
@@ -613,7 +613,7 @@ impl Element for TerminalElement {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Self::PrepaintState {
-        let rem_size = self.rem_size(cx);
+        let rem_size = self.rem_size(model, cx);
         self.interactivity
             .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, cx| {
                 let hitbox = hitbox.unwrap();
@@ -715,9 +715,9 @@ impl Element for TerminalElement {
 
                 let background_color = theme.colors().terminal_background;
 
-                let last_hovered_word = self.terminal.update(cx, |terminal, cx| {
+                let last_hovered_word = self.terminal.update(cx, |terminal, model, cx| {
                     terminal.set_size(dimensions);
-                    terminal.sync(cx);
+                    terminal.sync(model, cx);
                     if self.can_navigate_to_selected_word
                         && terminal.can_navigate_to_selected_word()
                     {
@@ -733,9 +733,9 @@ impl Element for TerminalElement {
                     let mut element = div()
                         .size_full()
                         .id("terminal-element")
-                        .tooltip(move |cx| Tooltip::text(hovered_word.word.clone(), cx))
+                        .tooltip(move |window, cx| Tooltip::text(hovered_word.word.clone(), cx))
                         .into_any_element();
-                    element.prepaint_as_root(offset, bounds.size.into(), cx);
+                    element.prepaint_as_root(offset, bounds.size.into(), model, cx);
                     element
                 });
 
@@ -770,6 +770,7 @@ impl Element for TerminalElement {
                     last_hovered_word
                         .as_ref()
                         .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                    model,
                     cx,
                 );
 
@@ -844,7 +845,7 @@ impl Element for TerminalElement {
                             + point(px(0.), target_line as f32 * dimensions.line_height())
                             - point(px(0.), scroll_top);
                         cx.with_rem_size(rem_size, |cx| {
-                            element.prepaint_as_root(origin, available_space, cx);
+                            element.prepaint_as_root(origin, available_space, model, cx);
                         });
                         Some(element)
                     } else {
@@ -897,7 +898,7 @@ impl Element for TerminalElement {
                 workspace: self.workspace.clone(),
             };
 
-            self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, cx);
+            self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, model, cx);
             if self.can_navigate_to_selected_word && layout.last_hovered_word.is_some() {
                 cx.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
             } else {
@@ -918,8 +919,9 @@ impl Element for TerminalElement {
                                 return;
                             }
 
-                            let handled = this
-                                .update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
+                            let handled = this.update(cx, |term, model, _| {
+                                term.try_modifiers_change(&event.modifiers)
+                            });
 
                             if handled {
                                 cx.refresh();
@@ -928,7 +930,7 @@ impl Element for TerminalElement {
                     });
 
                     for rect in &layout.rects {
-                        rect.paint(origin, &layout.dimensions, cx);
+                        rect.paint(origin, &layout.dimensions, model, cx);
                     }
 
                     for (relative_highlighted_range, color) in
@@ -944,26 +946,26 @@ impl Element for TerminalElement {
                                 color: *color,
                                 corner_radius: 0.15 * layout.dimensions.line_height,
                             };
-                            hr.paint(bounds, cx);
+                            hr.paint(bounds, model, cx);
                         }
                     }
 
                     for cell in &layout.cells {
-                        cell.paint(origin, &layout.dimensions, bounds, cx);
+                        cell.paint(origin, &layout.dimensions, bounds, model, cx);
                     }
 
                     if self.cursor_visible {
                         if let Some(mut cursor) = cursor {
-                            cursor.paint(origin, cx);
+                            cursor.paint(origin, model, cx);
                         }
                     }
 
                     if let Some(mut element) = block_below_cursor_element {
-                        element.paint(cx);
+                        element.paint(model, cx);
                     }
 
                     if let Some(mut element) = hyperlink_tooltip {
-                        element.paint(cx);
+                        element.paint(model, cx);
                     }
                 });
         });
@@ -980,7 +982,7 @@ impl IntoElement for TerminalElement {
 
 struct TerminalInputHandler {
     terminal: Model<Terminal>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     cursor_bounds: Option<Bounds<Pixels>>,
 }
 
@@ -1032,12 +1034,12 @@ impl InputHandler for TerminalInputHandler {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) {
-        self.terminal.update(cx, |terminal, _| {
+        self.terminal.update(cx, |terminal, model, _| {
             terminal.input(text.into());
         });
 
         self.workspace
-            .update(cx, |this, cx| {
+            .update(cx, |this, model, cx| {
                 cx.invalidate_character_coordinates();
                 let project = this.project().read(cx);
                 let telemetry = project.client().telemetry().clone();

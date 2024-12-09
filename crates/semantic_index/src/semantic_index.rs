@@ -220,7 +220,7 @@ impl SemanticDb {
         cx: &mut AppContext,
     ) -> Option<usize> {
         self.project_indices.get(project).map(|project_index| {
-            project_index.update(cx, |project_index, cx| {
+            project_index.update(cx, |project_index, model, cx| {
                 project_index.remaining_summaries(cx)
             })
         })
@@ -231,7 +231,7 @@ impl SemanticDb {
         project: Model<Project>,
         cx: &mut AppContext,
     ) -> Model<ProjectIndex> {
-        let project_index = cx.new_model(|cx| {
+        let project_index = cx.new_model(|model, cx| {
             ProjectIndex::new(
                 project.clone(),
                 self.db_connection.clone().unwrap(),

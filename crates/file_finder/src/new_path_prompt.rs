@@ -250,7 +250,7 @@ impl PickerDelegate for NewPathDelegate {
 
     fn set_selected_index(&mut self, ix: usize, model: &Model<picker>, cx: &mut AppContext) {
         self.selected_index = ix;
-        cx.notify();
+        model.notify(cx);
     }
 
     fn update_matches(
@@ -375,7 +375,7 @@ impl PickerDelegate for NewPathDelegate {
                                 tx.send(Some(path)).ok();
                             }
                         }
-                        cx.emit(gpui::DismissEvent);
+                        model.emit(cx, gpui::DismissEvent);
                     })
                     .ok();
             })
@@ -388,7 +388,7 @@ impl PickerDelegate for NewPathDelegate {
                 tx.send(Some(path)).ok();
             }
         }
-        cx.emit(gpui::DismissEvent);
+        model.emit(cx, gpui::DismissEvent);
     }
 
     fn should_dismiss(&self) -> bool {
@@ -399,7 +399,7 @@ impl PickerDelegate for NewPathDelegate {
         if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
         }
-        cx.emit(gpui::DismissEvent)
+        model.emit(cx, gpui::DismissEvent)
     }
 
     fn render_match(
@@ -441,7 +441,7 @@ impl NewPathDelegate {
         matches: Vec<PathMatch>,
         model: &Model<Picker>, cx: &mut AppContext,
     ) {
-        cx.notify();
+        model.notify(cx);
         if query.is_empty() {
             self.matches = self
                 .project

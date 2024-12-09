@@ -214,7 +214,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
         .await;
 
     let tree_updates = Arc::new(Mutex::new(Vec::new()));
-    tree.update(cx, |_, cx| {
+    tree.update(cx, |_, model, cx| {
         let tree_updates = tree_updates.clone();
         cx.subscribe(&tree, move |_, _, event, _| {
             if let Event::UpdatedEntries(update) = event {
@@ -460,7 +460,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     // has not yet been expanded.
     let prev_read_dir_count = fs.read_dir_call_count();
     let loaded = tree
-        .update(cx, |tree, cx| {
+        .update(cx, |tree, model, cx| {
             tree.load_file("one/node_modules/b/b1.js".as_ref(), cx)
         })
         .await
@@ -500,7 +500,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     // gitignored directory.
     let prev_read_dir_count = fs.read_dir_call_count();
     let loaded = tree
-        .update(cx, |tree, cx| {
+        .update(cx, |tree, model, cx| {
             tree.load_file("one/node_modules/a/a2.js".as_ref(), cx)
         })
         .await
@@ -861,7 +861,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         .await;
     tree.flush_fs_events(cx).await;
 
-    tree.update(cx, |tree, cx| {
+    tree.update(cx, |tree, model, cx| {
         tree.write_file(
             Path::new("tracked-dir/file.txt"),
             "hello".into(),
@@ -871,7 +871,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
     })
     .await
     .unwrap();
-    tree.update(cx, |tree, cx| {
+    tree.update(cx, |tree, model, cx| {
         tree.write_file(
             Path::new("ignored-dir/file.txt"),
             "world".into(),
@@ -1396,7 +1396,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
-    let snapshot1 = tree.update(cx, |tree, cx| {
+    let snapshot1 = tree.update(cx, |tree, model, cx| {
         let tree = tree.as_local_mut().unwrap();
         let snapshot = Arc::new(Mutex::new(tree.snapshot()));
         tree.observe_updates(0, cx, {
@@ -1414,7 +1414,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
     });
 
     let entry = tree
-        .update(cx, |tree, cx| {
+        .update(cx, |tree, model, cx| {
             tree.as_local_mut()
                 .unwrap()
                 .create_entry("a/e".as_ref(), true, cx)
@@ -1430,7 +1430,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         assert_eq!(tree.entry_for_path("a/e").unwrap().kind, EntryKind::Dir);
     });
 
-    let snapshot2 = tree.update(cx, |tree, _| tree.as_local().unwrap().snapshot());
+    let snapshot2 = tree.update(cx, |tree, model, _| tree.as_local().unwrap().snapshot());
     assert_eq!(
         snapshot1.lock().entries(true, 0).collect::<Vec<_>>(),
         snapshot2.entries(true, 0).collect::<Vec<_>>()
@@ -1533,7 +1533,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     .unwrap();
 
     let entry = tree_fake
-        .update(cx, |tree, cx| {
+        .update(cx, |tree, model, cx| {
             tree.as_local_mut()
                 .unwrap()
                 .create_entry("a/b/c/d.txt".as_ref(), false, cx)
@@ -1567,7 +1567,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     .unwrap();
 
     let entry = tree_real
-        .update(cx, |tree, cx| {
+        .update(cx, |tree, model, cx| {
             tree.as_local_mut()
                 .unwrap()
                 .create_entry("a/b/c/d.txt".as_ref(), false, cx)
@@ -1587,7 +1587,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
 
     // Test smallest change
     let entry = tree_real
-        .update(cx, |tree, cx| {
+        .update(cx, |tree, model, cx| {
             tree.as_local_mut()
                 .unwrap()
                 .create_entry("a/b/c/e.txt".as_ref(), false, cx)
@@ -1605,7 +1605,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
 
     // Test largest change
     let entry = tree_real
-        .update(cx, |tree, cx| {
+        .update(cx, |tree, model, cx| {
             tree.as_local_mut()
                 .unwrap()
                 .create_entry("d/e/f/g.txt".as_ref(), false, cx)
@@ -1658,7 +1658,7 @@ async fn test_random_worktree_operations_during_initial_scan(
 
     let mut snapshots = vec![worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot())];
     let updates = Arc::new(Mutex::new(Vec::new()));
-    worktree.update(cx, |tree, cx| {
+    worktree.update(cx, |tree, model, cx| {
         check_worktree_change_events(tree, cx);
 
         tree.as_local_mut().unwrap().observe_updates(0, cx, {
@@ -1672,7 +1672,7 @@ async fn test_random_worktree_operations_during_initial_scan(
 
     for _ in 0..operations {
         worktree
-            .update(cx, |worktree, cx| {
+            .update(cx, |worktree, model, cx| {
                 randomly_mutate_worktree(worktree, &mut rng, cx)
             })
             .await
@@ -1687,7 +1687,9 @@ async fn test_random_worktree_operations_during_initial_scan(
     }
 
     worktree
-        .update(cx, |tree, _| tree.as_local_mut().unwrap().scan_complete())
+        .update(cx, |tree, model, _| {
+            tree.as_local_mut().unwrap().scan_complete()
+        })
         .await;
 
     cx.executor().run_until_parked();
@@ -1748,7 +1750,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     .unwrap();
 
     let updates = Arc::new(Mutex::new(Vec::new()));
-    worktree.update(cx, |tree, cx| {
+    worktree.update(cx, |tree, model, cx| {
         check_worktree_change_events(tree, cx);
 
         tree.as_local_mut().unwrap().observe_updates(0, cx, {
@@ -1761,7 +1763,9 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     });
 
     worktree
-        .update(cx, |tree, _| tree.as_local_mut().unwrap().scan_complete())
+        .update(cx, |tree, model, _| {
+            tree.as_local_mut().unwrap().scan_complete()
+        })
         .await;
 
     fs.as_fake().pause_events();
@@ -1770,7 +1774,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     while mutations_len > 1 {
         if rng.gen_bool(0.2) {
             worktree
-                .update(cx, |worktree, cx| {
+                .update(cx, |worktree, model, cx| {
                     randomly_mutate_worktree(worktree, &mut rng, cx)
                 })
                 .await
@@ -1819,10 +1823,12 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         .await
         .unwrap();
         new_worktree
-            .update(cx, |tree, _| tree.as_local_mut().unwrap().scan_complete())
+            .update(cx, |tree, model, _| {
+                tree.as_local_mut().unwrap().scan_complete()
+            })
             .await;
         new_worktree
-            .update(cx, |tree, _| {
+            .update(cx, |tree, model, _| {
                 tree.as_local_mut()
                     .unwrap()
                     .refresh_entries_for_paths(expanded_paths)
@@ -2301,7 +2307,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
     });
 
     let repo_update_events = Arc::new(Mutex::new(vec![]));
-    tree.update(cx, |_, cx| {
+    tree.update(cx, |_, model, cx| {
         let repo_update_events = repo_update_events.clone();
         cx.subscribe(&tree, move |_, _, event, _| {
             if let Event::UpdatedGitRepositories(update) = event {

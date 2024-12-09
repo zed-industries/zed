@@ -46,10 +46,10 @@ struct ProjectDiffEditor {
     buffer_changes: BTreeMap<WorktreeId, HashMap<ProjectEntryId, Changes>>,
     entry_order: HashMap<WorktreeId, Vec<(ProjectPath, ProjectEntryId)>>,
     excerpts: Model<MultiBuffer>,
-    editor: View<Editor>,
+    editor: Model<Editor>,
 
     project: Model<Project>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     focus_handle: FocusHandle,
     worktree_rescans: HashMap<WorktreeId, Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -78,24 +78,25 @@ impl ProjectDiffEditor {
         }
 
         if let Some(existing) = workspace.item_of_type::<Self>(cx) {
-            workspace.activate_item(&existing, true, true, cx);
+            workspace.activate_item(&existing, true, true, model, cx);
         } else {
             let workspace_handle = cx.view().downgrade();
-            let project_diff =
-                cx.new_view(|cx| Self::new(workspace.project().clone(), workspace_handle, cx));
-            workspace.add_item_to_active_pane(Box::new(project_diff), None, true, cx);
+            let project_diff = cx.new_model(|model, cx| {
+                Self::new(workspace.project().clone(), workspace_handle, cx)
+            });
+            workspace.add_item_to_active_pane(Box::new(project_diff), None, true, model, cx);
         }
     }
 
     fn new(
         project: Model<Project>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
         // TODO diff change subscriptions. For that, needed:
         // * `-20/+50` stats retrieval: some background process that reacts on file changes
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle();
         let changed_entries_subscription =
             cx.subscribe(&project, |project_diff_editor, _, e, cx| {
                 let mut worktree_to_rescan = None;
@@ -154,11 +155,11 @@ impl ProjectDiffEditor {
                 }
             });
 
-        let excerpts = cx.new_model(|cx| MultiBuffer::new(project.read(cx).capability()));
+        let excerpts = cx.new_model(|model, cx| MultiBuffer::new(project.read(cx).capability()));
 
-        let editor = cx.new_view(|cx| {
+        let editor = cx.new_model(|model, cx| {
             let mut diff_display_editor =
-                Editor::for_multibuffer(excerpts.clone(), Some(project.clone()), true, cx);
+                Editor::for_multibuffer(excerpts.clone(), Some(project.clone()), true, model, cx);
             diff_display_editor.set_expand_all_diff_hunks();
             diff_display_editor
         });
@@ -325,7 +326,7 @@ impl ProjectDiffEditor {
                     .update(&mut cx, |project_diff_editor, cx| {
                         project_diff_editor.update_excerpts(id, new_changes, new_entry_order, cx);
                         for change_set in change_sets {
-                            project_diff_editor.editor.update(cx, |editor, cx| {
+                            project_diff_editor.editor.update(cx, |editor, model, cx| {
                                 editor.diff_map.add_change_set(change_set, cx)
                             });
                         }
@@ -849,7 +850,7 @@ impl ProjectDiffEditor {
                 }
             }
 
-            self.excerpts.update(cx, |multi_buffer, cx| {
+            self.excerpts.update(cx, |multi_buffer, model, cx| {
                 for (mut after_excerpt_id, excerpts_to_add) in new_excerpt_hunks {
                     for (_, buffer, hunk_ranges) in excerpts_to_add {
                         let buffer_snapshot = buffer.read(cx).snapshot();
@@ -882,7 +883,7 @@ impl ProjectDiffEditor {
                 }
             });
         } else {
-            self.excerpts.update(cx, |multi_buffer, cx| {
+            self.excerpts.update(cx, |multi_buffer, model, cx| {
                 for new_changes in new_entry_order
                     .iter()
                     .filter_map(|(_, entry_id)| new_changes.get(entry_id))
@@ -930,12 +931,13 @@ impl Item for ProjectDiffEditor {
     }
 
     fn deactivated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        self.editor.update(cx, |editor, cx| editor.deactivated(cx));
+        self.editor
+            .update(cx, |editor, model, cx| editor.deactivated(cx));
     }
 
     fn navigate(&mut self, data: Box<dyn Any>, model: &Model<Self>, cx: &mut AppContext) -> bool {
         self.editor
-            .update(cx, |editor, cx| editor.navigate(data, cx))
+            .update(cx, |editor, model, cx| editor.navigate(data, cx))
     }
 
     fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
@@ -1008,7 +1010,7 @@ impl Item for ProjectDiffEditor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.editor.update(cx, |editor, _| {
+        self.editor.update(cx, |editor, model, _| {
             editor.set_nav_history(Some(nav_history));
         });
     }
@@ -1018,11 +1020,11 @@ impl Item for ProjectDiffEditor {
         _workspace_id: Option<workspace::WorkspaceId>,
         model: &Model<Self>,
         cx: &mut AppContext,
-    ) -> Option<View<Self>>
+    ) -> Option<Model<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_view(|cx| {
+        Some(cx.new_model(|model, cx| {
             ProjectDiffEditor::new(self.project.clone(), self.workspace.clone(), cx)
         }))
     }
@@ -1071,7 +1073,7 @@ impl Item for ProjectDiffEditor {
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
-        self_handle: &'a View<Self>,
+        self_handle: &'a Model<Self>,
         _: &'a AppContext,
     ) -> Option<AnyView> {
         if type_id == TypeId::of::<Self>() {
@@ -1097,13 +1099,19 @@ impl Item for ProjectDiffEditor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.editor
-            .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
+        self.editor.update(cx, |editor, model, cx| {
+            editor.added_to_workspace(workspace, cx)
+        });
     }
 }
 
 impl Render for ProjectDiffEditor {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let child = if self.buffer_changes.is_empty() {
             div()
                 .bg(cx.theme().colors().editor_background)
@@ -1171,9 +1179,9 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
         let file_a_editor = workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 let file_a_editor =
-                    workspace.open_abs_path(PathBuf::from("/root/file_a"), true, cx);
+                    workspace.open_abs_path(PathBuf::from("/root/file_a"), true, model, cx);
                 ProjectDiffEditor::deploy(workspace, &Deploy, cx);
                 file_a_editor
             })
@@ -1183,7 +1191,7 @@ mod tests {
             .downcast::<Editor>()
             .expect("did not open an editor for file_a");
         let project_diff_editor = workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, model, cx| {
                 workspace
                     .active_pane()
                     .read(cx)
@@ -1192,24 +1200,24 @@ mod tests {
             })
             .unwrap()
             .expect("did not find a ProjectDiffEditor");
-        project_diff_editor.update(cx, |project_diff_editor, cx| {
+        project_diff_editor.update(cx, |project_diff_editor, model, cx| {
             assert!(
                 project_diff_editor.editor.read(cx).text(cx).is_empty(),
                 "Should have no changes after opening the diff on no git changes"
             );
         });
 
-        let old_text = file_a_editor.update(cx, |editor, cx| editor.text(cx));
+        let old_text = file_a_editor.update(cx, |editor, model, cx| editor.text(cx));
         let change = "an edit after git add";
         file_a_editor
-            .update(cx, |file_a_editor, cx| {
+            .update(cx, |file_a_editor, model, cx| {
                 file_a_editor.insert(change, cx);
                 file_a_editor.save(false, project.clone(), cx)
             })
             .await
             .expect("failed to save a file");
-        file_a_editor.update(cx, |file_a_editor, cx| {
-            let change_set = cx.new_model(|cx| {
+        file_a_editor.update(cx, |file_a_editor, model, cx| {
+            let change_set = cx.new_model(|model, cx| {
                 BufferChangeSet::new_with_base_text(
                     old_text.clone(),
                     file_a_editor
@@ -1225,19 +1233,21 @@ mod tests {
             file_a_editor
                 .diff_map
                 .add_change_set(change_set.clone(), cx);
-            project.update(cx, |project, cx| {
-                project.buffer_store().update(cx, |buffer_store, cx| {
-                    buffer_store.set_change_set(
-                        file_a_editor
-                            .buffer()
-                            .read(cx)
-                            .as_singleton()
-                            .unwrap()
-                            .read(cx)
-                            .remote_id(),
-                        change_set,
-                    );
-                });
+            project.update(cx, |project, model, cx| {
+                project
+                    .buffer_store()
+                    .update(cx, |buffer_store, model, cx| {
+                        buffer_store.set_change_set(
+                            file_a_editor
+                                .buffer()
+                                .read(cx)
+                                .as_singleton()
+                                .unwrap()
+                                .read(cx)
+                                .remote_id(),
+                            change_set,
+                        );
+                    });
             });
         });
         fs.set_status_for_repo_via_git_operation(
@@ -1248,7 +1258,7 @@ mod tests {
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
-        project_diff_editor.update(cx, |project_diff_editor, cx| {
+        project_diff_editor.update(cx, |project_diff_editor, model, cx| {
             assert_eq!(
                 // TODO assert it better: extract added text (based on the background changes) and deleted text (based on the deleted blocks added)
                 project_diff_editor.editor.read(cx).text(cx),

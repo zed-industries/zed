@@ -13,7 +13,7 @@ type SearchBarActionCallback<A> =
     fn(&mut BufferSearchBar, &A, &Model<BufferSearchBar>, &mut AppContext);
 
 type GetSearchBar<T> =
-    for<'a, 'b, 'c> fn(&'a T, &'b Model<T>, &'c mut AppContext) -> Option<View<BufferSearchBar>>;
+    for<'a, 'b, 'c> fn(&'a T, &'b Model<T>, &'c mut AppContext) -> Option<Model<BufferSearchBar>>;
 
 /// Registers search actions on a div that can be taken out.
 pub struct DivRegistrar<'a, 'b, 'c, T: 'static> {
@@ -27,8 +27,8 @@ pub struct DivRegistrar<'a, 'b, 'c, T: 'static> {
 impl<'a, 'b, 'c, T: 'static> DivRegistrar<'a, 'b, 'c, T> {
     pub fn new(
         search_getter: GetSearchBar<T>,
-        window: &'a mut Window,
         model: &'a Model<T>,
+        window: &'a mut Window,
         cx: &'b mut AppContext,
     ) -> Self {
         Self {
@@ -50,17 +50,17 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
     fn register_handler<A: Action>(&mut self, callback: impl ActionExecutor<A>) {
         let getter = self.search_getter;
         self.div = self.div.take().map(|div| {
-            div.on_action(self.cx.listener(move |this, action, cx| {
-                let should_notify = (getter)(this, cx)
+            div.on_action(self.model.listener(move |this, action, cx| {
+                let should_notify = (getter)(this, model, cx)
                     .clone()
                     .map(|search_bar| {
-                        search_bar.update(cx, |search_bar, cx| {
-                            callback.execute(search_bar, action, cx)
+                        search_bar.update(cx, |search_bar, model, cx| {
+                            callback.execute(search_bar, action, model, cx)
                         })
                     })
                     .unwrap_or(false);
                 if should_notify {
-                    cx.notify();
+                    model.notify(cx);
                 } else {
                     cx.propagate();
                 }
@@ -80,14 +80,14 @@ impl SearchActionsRegistrar for Workspace {
 
             let pane = workspace.active_pane();
             let callback = callback.clone();
-            pane.update(cx, |this, cx| {
-                this.toolbar().update(cx, move |this, cx| {
+            pane.update(cx, |this, model, cx| {
+                this.toolbar().update(cx, move |this, model, cx| {
                     if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
-                        let should_notify = search_bar.update(cx, move |search_bar, cx| {
-                            callback.execute(search_bar, action, cx)
+                        let should_notify = search_bar.update(cx, move |search_bar, model, cx| {
+                            callback.execute(search_bar, action, model, cx)
                         });
                         if should_notify {
-                            cx.notify();
+                            model.notify(cx);
                         } else {
                             cx.propagate();
                         }
@@ -127,7 +127,7 @@ impl<A: Action> ActionExecutor<A> for ForDismissed<A> {
         cx: &mut AppContext,
     ) -> DidHandleAction {
         if search_bar.is_dismissed() {
-            self.0(search_bar, action, cx);
+            self.0(search_bar, action, model, cx);
             true
         } else {
             false
@@ -154,7 +154,7 @@ impl<A: Action> ActionExecutor<A> for ForDeployed<A> {
         if search_bar.is_dismissed() || search_bar.active_searchable_item.is_none() {
             false
         } else {
-            self.0(search_bar, action, cx);
+            self.0(search_bar, action, model, cx);
             true
         }
     }
@@ -178,7 +178,7 @@ impl<A: Action> ActionExecutor<A> for WithResults<A> {
         cx: &mut AppContext,
     ) -> DidHandleAction {
         if search_bar.active_match_index.is_some() {
-            self.0(search_bar, action, cx);
+            self.0(search_bar, action, model, cx);
             true
         } else {
             false

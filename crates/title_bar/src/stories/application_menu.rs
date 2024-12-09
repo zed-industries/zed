@@ -6,13 +6,13 @@ use ui::prelude::*;
 use crate::application_menu::ApplicationMenu;
 
 pub struct ApplicationMenuStory {
-    menu: View<ApplicationMenu>,
+    menu: Model<ApplicationMenu>,
 }
 
 impl ApplicationMenuStory {
     pub fn new(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Self {
         Self {
-            menu: cx.new_view(ApplicationMenu::new),
+            menu: cx.new_model(ApplicationMenu::new),
         }
     }
 }

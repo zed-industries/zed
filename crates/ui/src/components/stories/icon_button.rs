@@ -7,7 +7,12 @@ use crate::{IconButton, IconName};
 pub struct IconButtonStory;
 
 impl Render for IconButtonStory {
-    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        _window: &mut gpui::Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         let default_button = StoryItem::new(
             "Default",
             IconButton::new("default_icon_button", IconName::Hash),
@@ -76,13 +81,13 @@ impl Render for IconButtonStory {
         let with_tooltip_button = StoryItem::new(
             "With `tooltip`",
             IconButton::new("with_tooltip_button", IconName::MessageBubbles)
-                .tooltip(|cx| Tooltip::text("Open messages", cx)),
+                .tooltip(|window, cx| Tooltip::text("Open messages", cx)),
         )
         .description("Displays an icon button that has a tooltip when hovered.")
         .usage(
             r#"
             IconButton::new("with_tooltip_button", Icon::MessageBubbles)
-                .tooltip(|cx| Tooltip::text("Open messages", cx))
+                .tooltip(|window, cx| Tooltip::text("Open messages", cx))
         "#,
         );
 
@@ -90,14 +95,14 @@ impl Render for IconButtonStory {
             "Selected with `tooltip`",
             IconButton::new("selected_with_tooltip_button", IconName::InlayHint)
                 .selected(true)
-                .tooltip(|cx| Tooltip::text("Toggle inlay hints", cx)),
+                .tooltip(|window, cx| Tooltip::text("Toggle inlay hints", cx)),
         )
         .description("Displays a selected icon button with tooltip.")
         .usage(
             r#"
             IconButton::new("selected_with_tooltip_button", Icon::InlayHint)
                 .selected(true)
-                .tooltip(|cx| Tooltip::text("Toggle inlay hints", cx))
+                .tooltip(|window, cx| Tooltip::text("Toggle inlay hints", cx))
         "#,
         );
 

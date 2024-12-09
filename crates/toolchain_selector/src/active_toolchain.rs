@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    div, AsyncAElement, ParentElement, Render, Subscription, Task, View, AppContext, WeakModel,
+    div, AppContext, AsyncAElement, ParentElement, Render, Subscription, Task, View, WeakModel,
     WeakView,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
@@ -13,7 +13,7 @@ use crate::ToolchainSelector;
 pub struct ActiveToolchain {
     active_toolchain: Option<Toolchain>,
     term: SharedString,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     active_buffer: Option<(WorktreeId, WeakModel<Buffer>, Subscription)>,
     _update_toolchain_task: Task<Option<()>>,
 }
@@ -30,7 +30,7 @@ impl ActiveToolchain {
         }
     }
     fn spawn_tracker_task(model: &Model<Self>, cx: &mut AppContext) -> Task<Option<()>> {
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             let active_file = this
                 .update(&mut cx, |this, _| {
                     this.active_buffer
@@ -53,26 +53,28 @@ impl ActiveToolchain {
                 })
                 .ok()?
                 .await?;
-            let _ = this.update(&mut cx, |this, cx| {
+            let _ = this.update(&mut cx, |this, model, cx| {
                 this.term = term;
-                cx.notify();
+                model.notify(cx);
             });
             let worktree_id = active_file
-                .update(&mut cx, |this, cx| Some(this.file()?.worktree_id(cx)))
+                .update(&mut cx, |this, model, cx| {
+                    Some(this.file()?.worktree_id(cx))
+                })
                 .ok()
                 .flatten()?;
             let toolchain =
                 Self::active_toolchain(workspace, worktree_id, language_name, cx.clone()).await?;
-            let _ = this.update(&mut cx, |this, cx| {
+            let _ = this.update(&mut cx, |this, model, cx| {
                 this.active_toolchain = Some(toolchain);
 
-                cx.notify();
+                model.notify(cx);
             });
             Some(())
         })
     }
 
-    fn update_lister(&mut self, editor: View<Editor>, model: &Model<Self>, cx: &mut AppContext) {
+    fn update_lister(&mut self, editor: Model<Editor>, model: &Model<Self>, cx: &mut AppContext) {
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
             if let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx)) {
@@ -86,11 +88,11 @@ impl ActiveToolchain {
             }
         }
 
-        cx.notify();
+        model.notify(cx);
     }
 
     fn active_toolchain(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
         window: AnyWindowHandle,
@@ -102,7 +104,7 @@ impl ActiveToolchain {
                 .ok()
                 .flatten()?;
             let selected_toolchain = workspace
-                .update(&mut cx, |this, cx| {
+                .update(&mut cx, |this, model, cx| {
                     this.project()
                         .read(cx)
                         .active_toolchain(worktree_id, language_name.clone(), cx)
@@ -130,7 +132,7 @@ impl ActiveToolchain {
                         .await
                         .ok()?;
                     project
-                        .update(&mut cx, |this, cx| {
+                        .update(&mut cx, |this, model, cx| {
                             this.activate_toolchain(worktree_id, toolchain.clone(), cx)
                         })
                         .ok()?
@@ -144,20 +146,25 @@ impl ActiveToolchain {
 }
 
 impl Render for ActiveToolchain {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         div().when_some(self.active_toolchain.as_ref(), |el, active_toolchain| {
             let term = self.term.clone();
             el.child(
                 Button::new("change-toolchain", active_toolchain.name.clone())
                     .label_size(LabelSize::Small)
-                    .on_click(cx.listener(|this, _, cx| {
+                    .on_click(model.listener(|this, model, _, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
-                            workspace.update(cx, |workspace, cx| {
-                                ToolchainSelector::toggle(workspace, cx)
+                            workspace.update(cx, |workspace, model, cx| {
+                                ToolchainSelector::toggle(workspace, model, cx)
                             });
                         }
                     }))
-                    .tooltip(move |cx| Tooltip::text(format!("Select {}", &term), cx)),
+                    .tooltip(move |window, cx| Tooltip::text(format!("Select {}", &term), cx)),
             )
         })
     }
@@ -167,12 +174,13 @@ impl StatusItemView for ActiveToolchain {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        model: &Model<Self>, cx: &mut AppContext,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             self.active_toolchain.take();
-            self.update_lister(editor, cx);
+            self.update_lister(editor, model, cx);
         }
-        cx.notify();
+        model.notify(cx);
     }
 }

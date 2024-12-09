@@ -75,7 +75,9 @@ impl Editor {
     ) -> bool {
         let viewport_height = bounds.size.height;
         let visible_lines = viewport_height / line_height;
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let display_map = self
+            .display_map
+            .update(cx, |map, model, cx| map.snapshot(cx));
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
         let original_y = scroll_position.y;
         if let Some(last_bounds) = self.expect_bounds_change.take() {
@@ -91,7 +93,7 @@ impl Editor {
         }
 
         if original_y != scroll_position.y {
-            self.set_scroll_position(scroll_position, cx);
+            self.set_scroll_position(scroll_position, model, cx);
         }
 
         let Some((autoscroll, local)) = self.scroll_manager.autoscroll_request.take() else {
@@ -178,33 +180,33 @@ impl Editor {
 
                 if needs_scroll_up && !needs_scroll_down {
                     scroll_position.y = target_top;
-                    self.set_scroll_position_internal(scroll_position, local, true, cx);
+                    self.set_scroll_position_internal(scroll_position, local, true, model, cx);
                 }
                 if !needs_scroll_up && needs_scroll_down {
                     scroll_position.y = target_bottom - visible_lines;
-                    self.set_scroll_position_internal(scroll_position, local, true, cx);
+                    self.set_scroll_position_internal(scroll_position, local, true, model, cx);
                 }
             }
             AutoscrollStrategy::Center => {
                 scroll_position.y = (target_top - margin).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, model, cx);
             }
             AutoscrollStrategy::Focused => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
                 scroll_position.y = (target_top - margin).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, model, cx);
             }
             AutoscrollStrategy::Top => {
                 scroll_position.y = (target_top).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, model, cx);
             }
             AutoscrollStrategy::Bottom => {
                 scroll_position.y = (target_bottom - visible_lines).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, model, cx);
             }
             AutoscrollStrategy::TopRelative(lines) => {
                 scroll_position.y = target_top - lines as f32;
-                self.set_scroll_position_internal(scroll_position, local, true, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, model, cx);
             }
         }
 
@@ -228,7 +230,9 @@ impl Editor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> bool {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let display_map = self
+            .display_map
+            .update(cx, |map, model, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
 
         let mut target_left;
@@ -290,7 +294,7 @@ impl Editor {
         cx: &mut AppContext,
     ) {
         self.scroll_manager.autoscroll_request = Some((autoscroll, true));
-        cx.notify();
+        model.notify(cx);
     }
 
     pub(crate) fn request_autoscroll_remotely(
@@ -300,6 +304,6 @@ impl Editor {
         cx: &mut AppContext,
     ) {
         self.scroll_manager.autoscroll_request = Some((autoscroll, false));
-        cx.notify();
+        model.notify(cx);
     }
 }

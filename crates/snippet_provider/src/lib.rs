@@ -66,7 +66,7 @@ async fn process_updates(
     entries: Vec<PathBuf>,
     mut cx: AsyncAppContext,
 ) -> Result<()> {
-    let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
+    let fs = this.update(&mut cx, |this, _, _| this.fs.clone())?;
     for entry_path in entries {
         if !entry_path
             .extension()
@@ -116,7 +116,7 @@ async fn initial_scan(
     path: Arc<Path>,
     mut cx: AsyncAppContext,
 ) -> Result<()> {
-    let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
+    let fs = this.update(&mut cx, |this, _, _| this.fs.clone())?;
     let entries = fs.read_dir(&path).await;
     if let Ok(entries) = entries {
         let entries = entries
@@ -141,12 +141,12 @@ struct GlobalSnippetWatcher(Model<SnippetProvider>);
 impl GlobalSnippetWatcher {
     fn new(fs: Arc<dyn Fs>, cx: &mut AppContext) -> Self {
         let global_snippets_dir = paths::config_dir().join("snippets");
-        let provider = cx.new_model(|_cx| SnippetProvider {
+        let provider = cx.new_model(|_model, _cx| SnippetProvider {
             fs,
             snippets: Default::default(),
             watch_tasks: vec![],
         });
-        provider.update(cx, |this, cx| {
+        provider.update(cx, |this, model, cx| {
             this.watch_directory(&global_snippets_dir, cx)
         });
         Self(provider)
@@ -184,8 +184,8 @@ impl SnippetProvider {
     fn watch_directory(&mut self, path: &Path, model: &Model<Self>, cx: &AppContext) {
         let path: Arc<Path> = Arc::from(path);
 
-        self.watch_tasks.push(cx.spawn(|this, mut cx| async move {
-            let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
+        self.watch_tasks.push(model.spawn(cx, |this, mut cx| async move {
+            let fs = this.update(&mut cx, |this, _, _| this.fs.clone())?;
             let watched_path = path.clone();
             let watcher = fs.watch(&watched_path, Duration::from_secs(1));
             initial_scan(this.clone(), path, cx.clone()).await?;

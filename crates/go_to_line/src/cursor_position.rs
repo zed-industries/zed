@@ -23,7 +23,7 @@ pub struct CursorPosition {
     position: Option<Point>,
     selected_count: SelectionStats,
     context: Option<FocusHandle>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     update_position: Task<()>,
     _observe_active_editor: Option<Subscription>,
 }
@@ -42,7 +42,7 @@ impl CursorPosition {
 
     fn update_position(
         &mut self,
-        editor: View<Editor>,
+        editor: Model<Editor>,
         debounce: Option<Duration>,
         model: &Model<Self>,
         cx: &mut AppContext,
@@ -55,7 +55,7 @@ impl CursorPosition {
 
             editor
                 .update(&mut cx, |editor, cx| {
-                    cursor_position.update(cx, |cursor_position, cx| {
+                    cursor_position.update(cx, |cursor_position, model, cx| {
                         cursor_position.selected_count = SelectionStats::default();
                         cursor_position.selected_count.selections = editor.selections.count();
                         match editor.mode() {
@@ -95,7 +95,7 @@ impl CursorPosition {
                             }
                         }
 
-                        cx.notify();
+                        model.notify(cx);
                     })
                 })
                 .ok()
@@ -154,7 +154,12 @@ impl CursorPosition {
 }
 
 impl Render for CursorPosition {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",
@@ -168,29 +173,32 @@ impl Render for CursorPosition {
             el.child(
                 Button::new("go-to-line-column", text)
                     .label_size(LabelSize::Small)
-                    .on_click(cx.listener(|this, _, cx| {
+                    .on_click(model.listener(|this, model, _, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
-                            workspace.update(cx, |workspace, cx| {
+                            workspace.update(cx, |workspace, model, cx| {
                                 if let Some(editor) = workspace
                                     .active_item(cx)
                                     .and_then(|item| item.act_as::<Editor>(cx))
                                 {
-                                    workspace
-                                        .toggle_modal(cx, |cx| crate::GoToLine::new(editor, cx))
+                                    workspace.toggle_modal(cx, |cx| {
+                                        crate::GoToLine::new(editor, model, cx)
+                                    })
                                 }
                             });
                         }
                     }))
-                    .tooltip(move |cx| match context.as_ref() {
+                    .tooltip(move |window, cx| match context.as_ref() {
                         Some(context) => Tooltip::for_action_in(
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
                             context,
+                            window,
                             cx,
                         ),
                         None => Tooltip::for_action(
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
+                            window,
                             cx,
                         ),
                     }),
@@ -211,15 +219,15 @@ impl StatusItemView for CursorPosition {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
             self._observe_active_editor =
                 Some(cx.observe(&editor, |cursor_position, editor, cx| {
-                    Self::update_position(cursor_position, editor, Some(UPDATE_DEBOUNCE), cx)
+                    Self::update_position(cursor_position, editor, Some(UPDATE_DEBOUNCE), model, cx)
                 }));
-            self.update_position(editor, None, cx);
+            self.update_position(editor, None, model, cx);
         } else {
             self.position = None;
             self._observe_active_editor = None;
         }
 
-        cx.notify();
+        model.notify(cx);
     }
 }
 

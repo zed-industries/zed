@@ -7,7 +7,12 @@ use crate::Disclosure;
 pub struct DisclosureStory;
 
 impl Render for DisclosureStory {
-    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        _window: &mut gpui::Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<Disclosure>())
             .child(Story::label("Toggled"))

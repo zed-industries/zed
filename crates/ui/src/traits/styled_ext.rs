@@ -3,7 +3,7 @@ use gpui::{hsla, Styled};
 use crate::prelude::*;
 use crate::ElevationIndex;
 
-fn elevated<E: Styled>(this: E, window: &Window, cx: &AppContext, index: ElevationIndex) -> E {
+fn elevated<E: Styled>(this: E, cx: &AppContext, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .rounded_lg()
         .border_1()
@@ -11,12 +11,7 @@ fn elevated<E: Styled>(this: E, window: &Window, cx: &AppContext, index: Elevati
         .shadow(index.shadow())
 }
 
-fn elevated_borderless<E: Styled>(
-    this: E,
-    window: &Window,
-    cx: &AppContext,
-    index: ElevationIndex,
-) -> E {
+fn elevated_borderless<E: Styled>(this: E, cx: &AppContext, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .rounded_lg()
         .shadow(index.shadow())
@@ -43,15 +38,15 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Example Elements: Title Bar, Panel, Tab Bar, Editor
-    fn elevation_1(self, window: &Window, cx: &AppContext) -> Self {
-        elevated(self, window, cx, ElevationIndex::Surface)
+    fn elevation_1(self, cx: &AppContext) -> Self {
+        elevated(self, cx, ElevationIndex::Surface)
     }
 
     /// See [`elevation_1`].
     ///
     /// Renders a borderless version [`elevation_1`].
-    fn elevation_1_borderless(self, window: &Window, cx: &AppContext) -> Self {
-        elevated_borderless(self, window, cx, ElevationIndex::Surface)
+    fn elevation_1_borderless(self, cx: &AppContext) -> Self {
+        elevated_borderless(self, cx, ElevationIndex::Surface)
     }
 
     /// Non-Modal Elevated Surfaces appear above the [`Surface`](ElevationIndex::Surface) layer and is used for things that should appear above most UI elements like an editor or panel, but not elements like popovers, context menus, modals, etc.
@@ -59,15 +54,15 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Notifications, Palettes, Detached/Floating Windows, Detached/Floating Panels
-    fn elevation_2(self, window: &Window, cx: &AppContext) -> Self {
-        elevated(self, window, cx, ElevationIndex::ElevatedSurface)
+    fn elevation_2(self, cx: &AppContext) -> Self {
+        elevated(self, cx, ElevationIndex::ElevatedSurface)
     }
 
     /// See [`elevation_2`].
     ///
     /// Renders a borderless version [`elevation_2`].
-    fn elevation_2_borderless(self, window: &Window, cx: &AppContext) -> Self {
-        elevated_borderless(self, window, cx, ElevationIndex::ElevatedSurface)
+    fn elevation_2_borderless(self, cx: &AppContext) -> Self {
+        elevated_borderless(self, cx, ElevationIndex::ElevatedSurface)
     }
 
     /// Modal Surfaces are used for elements that should appear above all other UI elements and are located above the wash layer. This is the maximum elevation at which UI elements can be rendered in their default state.
@@ -79,24 +74,24 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Settings Modal, Channel Management, Wizards/Setup UI, Dialogs
-    fn elevation_3(self, window: &Window, cx: &AppContext) -> Self {
-        elevated(self, window, cx, ElevationIndex::ModalSurface)
+    fn elevation_3(self, cx: &AppContext) -> Self {
+        elevated(self, cx, ElevationIndex::ModalSurface)
     }
 
     /// See [`elevation_3`].
     ///
     /// Renders a borderless version [`elevation_3`].
-    fn elevation_3_borderless(self, window: &Window, cx: &AppContext) -> Self {
-        elevated_borderless(self, window, cx, ElevationIndex::ModalSurface)
+    fn elevation_3_borderless(self, cx: &AppContext) -> Self {
+        elevated_borderless(self, cx, ElevationIndex::ModalSurface)
     }
 
     /// The theme's primary border color.
-    fn border_primary(self, window: &Window, cx: &AppContext) -> Self {
+    fn border_primary(self, cx: &AppContext) -> Self {
         self.border_color(cx.theme().colors().border)
     }
 
     /// The theme's secondary or muted border color.
-    fn border_muted(self, window: &Window, cx: &AppContext) -> Self {
+    fn border_muted(self, cx: &AppContext) -> Self {
         self.border_color(cx.theme().colors().border_variant)
     }
 

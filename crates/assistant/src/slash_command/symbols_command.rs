@@ -34,7 +34,7 @@ impl SlashCommand for OutlineSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
+        _workspace: Option<WeakModel<Workspace>>,
         _window: &mut gpui::Window,
         _cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -50,12 +50,12 @@ impl SlashCommand for OutlineSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Task<SlashCommandResult> {
-        let output = workspace.update(cx, |workspace, cx| {
+        let output = workspace.update(cx, |workspace, model, cx| {
             let Some(active_item) = workspace.active_item(cx) else {
                 return Task::ready(Err(anyhow!("no active tab")));
             };

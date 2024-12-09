@@ -17,13 +17,13 @@ use workspace::Workspace;
 use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
 
 pub struct ActiveThread {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
     thread: Model<Thread>,
     messages: Vec<MessageId>,
     list_state: ListState,
-    rendered_messages_by_id: HashMap<MessageId, View<Markdown>>,
+    rendered_messages_by_id: HashMap<MessageId, Model<Markdown>>,
     last_error: Option<ThreadError>,
     _subscriptions: Vec<Subscription>,
 }
@@ -31,13 +31,14 @@ pub struct ActiveThread {
 impl ActiveThread {
     pub fn new(
         thread: Model<Thread>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
-        model: &Model<Self>, cx: &mut AppContext,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let subscriptions = vec![
-            cx.observe(&thread, |_, _, cx| cx.notify()),
+            cx.observe(&thread, |_, _, cx| model.notify(cx)),
             cx.subscribe(&thread, Self::handle_thread_event),
         ];
 
@@ -51,7 +52,7 @@ impl ActiveThread {
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.view().downgrade();
                 move |ix, window: &mut gpui::Window, cx: &mut gpui::AppContext| {
-                    this.update(cx, |this, cx| this.render_message(ix, cx))
+                    this.update(cx, |this, model, cx| this.render_message(ix, cx))
                         .unwrap()
                 }
             }),
@@ -60,7 +61,7 @@ impl ActiveThread {
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
-            this.push_message(&message.id, message.text.clone(), cx);
+            this.push_message(&message.id, message.text.clone(), model, cx);
         }
 
         this
@@ -82,7 +83,13 @@ impl ActiveThread {
         self.last_error.take();
     }
 
-    fn push_message(&mut self, id: &MessageId, text: String, model: &Model<Self>, cx: &mut AppContext) {
+    fn push_message(
+        &mut self,
+        id: &MessageId,
+        text: String,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let old_len = self.messages.len();
         self.messages.push(*id);
         self.list_state.splice(old_len..old_len, 1);
@@ -120,7 +127,7 @@ impl ActiveThread {
             ..Default::default()
         };
 
-        let markdown = cx.new_view(|cx| {
+        let markdown = cx.new_model(|model, cx| {
             Markdown::new(
                 text,
                 markdown_style,
@@ -136,7 +143,8 @@ impl ActiveThread {
         &mut self,
         _: Model<Thread>,
         event: &ThreadEvent,
-        model: &Model<Self>, cx: &mut AppContext,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             ThreadEvent::ShowError(error) => {
@@ -146,7 +154,7 @@ impl ActiveThread {
             ThreadEvent::SummaryChanged => {}
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
-                    markdown.update(cx, |markdown, cx| {
+                    markdown.update(cx, |markdown, model, cx| {
                         markdown.append(text, cx);
                     });
                 }
@@ -158,10 +166,10 @@ impl ActiveThread {
                     .message(*message_id)
                     .map(|message| message.text.clone())
                 {
-                    self.push_message(message_id, message_text, cx);
+                    self.push_message(message_id, message_text, model, cx);
                 }
 
-                cx.notify();
+                model.notify(cx);
             }
             ThreadEvent::UsePendingTools => {
                 let pending_tool_uses = self
@@ -174,10 +182,10 @@ impl ActiveThread {
                     .collect::<Vec<_>>();
 
                 for tool_use in pending_tool_uses {
-                    if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                        let task = tool.run(tool_use.input, self.workspace.clone(), cx);
+                    if let Some(tool) = self.tools.tool(&tool_use.name, model, cx) {
+                        let task = tool.run(tool_use.input, self.workspace.clone(), model, cx);
 
-                        self.thread.update(cx, |thread, cx| {
+                        self.thread.update(cx, |thread, model, cx| {
                             thread.insert_tool_output(
                                 tool_use.assistant_message_id,
                                 tool_use.id.clone(),
@@ -236,7 +244,12 @@ impl ActiveThread {
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        _window: &mut gpui::Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         list(self.list_state.clone()).flex_1()
     }
 }

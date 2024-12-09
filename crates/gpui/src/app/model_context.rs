@@ -55,7 +55,7 @@ impl<'a, T: &Model<'>, 'static> AppContext {
         let this = self.weak_model();
         self.app.observe_internal(entity, move |e, cx| {
             if let Some(this) = this.upgrade() {
-                this.update(cx, |this, cx| on_notify(this, e, cx));
+                this.update(cx, |this, model, cx| on_notify(this, e, cx));
                 true
             } else {
                 false
@@ -78,7 +78,7 @@ impl<'a, T: &Model<'>, 'static> AppContext {
         let this = self.weak_model();
         self.app.subscribe_internal(entity, move |e, event, cx| {
             if let Some(this) = this.upgrade() {
-                this.update(cx, |this, cx| on_event(this, e, event, cx));
+                this.update(cx, |this, model, cx| on_event(this, e, event, cx));
                 true
             } else {
                 false
@@ -123,7 +123,7 @@ impl<'a, T: &Model<'>, 'static> AppContext {
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
                 if let Some(this) = this.upgrade() {
-                    this.update(cx, |this, cx| on_release(this, entity, cx));
+                    this.update(cx, |this, model, cx| on_release(this, entity, cx));
                 }
             }),
         );
@@ -142,7 +142,7 @@ impl<'a, T: &Model<'>, 'static> AppContext {
         let handle = self.weak_model();
         let (subscription, activate) = self.global_observers.insert(
             TypeId::of::<G>(),
-            Box::new(move |cx| handle.update(cx, |view, cx| f(view, cx)).is_ok()),
+            Box::new(move |cx| handle.update(cx, |view, model, cx| f(view, cx)).is_ok()),
         );
         self.defer(move |_| activate());
         subscription
@@ -162,7 +162,7 @@ impl<'a, T: &Model<'>, 'static> AppContext {
         let (subscription, activate) = self.app.quit_observers.insert(
             (),
             Box::new(move |cx| {
-                let future = handle.update(cx, |entity, cx| on_quit(entity, cx)).ok();
+                let future = handle.update(cx, |entity, model, cx| on_quit(entity, cx)).ok();
                 async move {
                     if let Some(future) = future {
                         future.await;
@@ -268,7 +268,7 @@ impl<'a, T&Model<'AppContexta, T> {
     fn read_window<U, R>(
         &self,
         window: &WindowHandle<U>,
-        read: impl FnOnce(View<U>, &AppContext) -> R,
+        read: impl FnOnce(Model<U>, &AppContext) -> R,
     ) -> Result<R>
     where
         U: 'static,

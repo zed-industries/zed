@@ -29,7 +29,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                 let options = notification_window_options(screen, window_size, cx);
                 let Some(window) = cx
                     .open_window(options, |cx| {
-                        cx.new_view(|_| {
+                        cx.new_model(|_, _| {
                             ProjectSharedNotification::new(
                                 owner.clone(),
                                 *project_id,
@@ -55,7 +55,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             if let Some(windows) = notification_windows.remove(project_id) {
                 for window in windows {
                     window
-                        .update(cx, |_, cx| {
+                        .update(cx, |_, model, cx| {
                             cx.remove_window();
                         })
                         .ok();
@@ -67,7 +67,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             for (_, windows) in notification_windows.drain() {
                 for window in windows {
                     window
-                        .update(cx, |_, cx| {
+                        .update(cx, |_, model, cx| {
                             cx.remove_window();
                         })
                         .ok();
@@ -112,28 +112,42 @@ impl ProjectSharedNotification {
         if let Some(active_room) =
             ActiveCall::global(cx).read_with(cx, |call, _| call.room().cloned())
         {
-            active_room.update(cx, |_, cx| {
-                cx.emit(room::Event::RemoteProjectInvitationDiscarded {
-                    project_id: self.project_id,
-                });
+            active_room.update(cx, |_, model, cx| {
+                model.emit(
+                    cx,
+                    room::Event::RemoteProjectInvitationDiscarded {
+                        project_id: self.project_id,
+                    },
+                );
             });
         }
     }
 }
 
 impl Render for ProjectSharedNotification {
-    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(cx);
 
         div().size_full().font(ui_font).child(
             CollabNotification::new(
                 self.owner.avatar_uri.clone(),
-                Button::new("open", "Open").on_click(cx.listener(move |this, _event, cx| {
-                    this.join(cx);
-                })),
-                Button::new("dismiss", "Dismiss").on_click(cx.listener(move |this, _event, cx| {
-                    this.dismiss(cx);
-                })),
+                Button::new("open", "Open").on_click(model.listener(
+                    cx,
+                    move |this, _event, cx| {
+                        this.join(cx);
+                    },
+                )),
+                Button::new("dismiss", "Dismiss").on_click(model.listener(
+                    cx,
+                    move |this, _event, cx| {
+                        this.dismiss(cx);
+                    },
+                )),
             )
             .child(Label::new(self.owner.github_login.clone()))
             .child(Label::new(format!(

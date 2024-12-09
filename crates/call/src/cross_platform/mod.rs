@@ -34,7 +34,7 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
     );
     CallSettings::register(cx);
 
-    let active_call = cx.new_model(|cx| ActiveCall::new(client, user_store, cx));
+    let active_call = cx.new_model(|model, cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(GlobalActiveCall(active_call));
 }
 
@@ -127,7 +127,7 @@ impl ActiveCall {
         envelope: TypedEnvelope<proto::IncomingCall>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
+        let user_store = this.update(&mut cx, |this, _, _| this.user_store.clone())?;
         let call = IncomingCall {
             room_id: envelope.payload.room_id,
             participants: user_store
@@ -142,7 +142,7 @@ impl ActiveCall {
                 .await?,
             initial_project: envelope.payload.initial_project,
         };
-        this.update(&mut cx, |this, _| {
+        this.update(&mut cx, |this, _, _| {
             *this.incoming_call.0.borrow_mut() = Some(call);
         })?;
 
@@ -154,7 +154,7 @@ impl ActiveCall {
         envelope: TypedEnvelope<proto::CallCanceled>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |this, _| {
+        this.update(&mut cx, |this, _, _| {
             let mut incoming_call = this.incoming_call.0.borrow_mut();
             if incoming_call
                 .as_ref()
@@ -185,7 +185,7 @@ impl ActiveCall {
         if !self.pending_invites.insert(called_user_id) {
             return Task::ready(Err(anyhow!("user was already invited")));
         }
-        cx.notify();
+        model.notify(cx);
 
         if self._join_debouncer.running() {
             return Task::ready(Ok(()));
@@ -235,14 +235,16 @@ impl ActiveCall {
                             })?
                             .await?;
 
-                        this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))?
-                            .await?;
+                        this.update(&mut cx, |this, model, cx| {
+                            this.set_room(Some(room.clone()), cx)
+                        })?
+                        .await?;
 
                         anyhow::Ok(room)
                     };
 
                     let room = create_room.await;
-                    this.update(&mut cx, |this, _| this.pending_room_creation = None)?;
+                    this.update(&mut cx, |this, _, _| this.pending_room_creation = None)?;
                     room.map_err(Arc::new)
                 })
                 .shared();
@@ -256,15 +258,17 @@ impl ActiveCall {
         cx.spawn(move |this, mut cx| async move {
             let result = invite.await;
             if result.is_ok() {
-                this.update(&mut cx, |this, cx| this.report_call_event("invite", cx))?;
+                this.update(&mut cx, |this, model, cx| {
+                    this.report_call_event("invite", cx)
+                })?;
             } else {
                 //TODO: report collaboration error
                 log::error!("invite failed: {:?}", result);
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.pending_invites.remove(&called_user_id);
-                cx.notify();
+                model.notify(cx);
             })?;
             result
         })
@@ -324,11 +328,11 @@ impl ActiveCall {
             ._join_debouncer
             .spawn(cx, move |cx| Room::join(room_id, client, user_store, cx));
 
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             let room = join.await?;
-            this.update(&mut cx, |this, cx| this.set_room(room.clone(), cx))?
+            this.update(&mut cx, |this, model, cx| this.set_room(room.clone(), cx))?
                 .await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.report_call_event("accept incoming", cx)
             })?;
             Ok(())
@@ -359,7 +363,7 @@ impl ActiveCall {
             if room.read(cx).channel_id() == Some(channel_id) {
                 return Task::ready(Ok(Some(room)));
             } else {
-                room.update(cx, |room, cx| room.clear_state(cx));
+                room.update(cx, |room, model, cx| room.clear_state(cx));
             }
         }
 
@@ -373,11 +377,11 @@ impl ActiveCall {
             Room::join_channel(channel_id, client, user_store, cx).await
         });
 
-        cx.spawn(|this, mut cx| async move {
+        model.spawn(cx, |this, mut cx| async move {
             let room = join.await?;
-            this.update(&mut cx, |this, cx| this.set_room(room.clone(), cx))?
+            this.update(&mut cx, |this, model, cx| this.set_room(room.clone(), cx))?
                 .await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, model, cx| {
                 this.report_call_event("join channel", cx)
             })?;
             Ok(room)
@@ -385,15 +389,15 @@ impl ActiveCall {
     }
 
     pub fn hang_up(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
-        cx.notify();
+        model.notify(cx);
         self.report_call_event("hang up", cx);
 
         Audio::end_call(cx);
 
         let channel_id = self.channel_id(cx);
         if let Some((room, _)) = self.room.take() {
-            cx.emit(Event::RoomLeft { channel_id });
-            room.update(cx, |room, cx| room.leave(cx))
+            model.emit(cx, Event::RoomLeft { channel_id });
+            room.update(cx, |room, model, cx| room.leave(cx))
         } else {
             Task::ready(Ok(()))
         }
@@ -407,7 +411,7 @@ impl ActiveCall {
     ) -> Task<Result<u64>> {
         if let Some((room, _)) = self.room.as_ref() {
             self.report_call_event("share project", cx);
-            room.update(cx, |room, cx| room.share_project(project, cx))
+            room.update(cx, |room, model, cx| room.share_project(project, cx))
         } else {
             Task::ready(Err(anyhow!("no active call")))
         }
@@ -421,7 +425,7 @@ impl ActiveCall {
     ) -> Result<()> {
         if let Some((room, _)) = self.room.as_ref() {
             self.report_call_event("unshare project", cx);
-            room.update(cx, |room, cx| room.unshare_project(project, cx))
+            room.update(cx, |room, model, cx| room.unshare_project(project, cx))
         } else {
             Err(anyhow!("no active call"))
         }
@@ -440,7 +444,7 @@ impl ActiveCall {
         if project.is_some() || !*ZED_ALWAYS_ACTIVE {
             self.location = project.map(|project| project.downgrade());
             if let Some((room, _)) = self.room.as_ref() {
-                return room.update(cx, |room, cx| room.set_location(project, cx));
+                return room.update(cx, |room, model, cx| room.set_location(project, cx));
             }
         }
         Task::ready(Ok(()))
@@ -455,7 +459,7 @@ impl ActiveCall {
         if room.as_ref() == self.room.as_ref().map(|room| &room.0) {
             Task::ready(Ok(()))
         } else {
-            cx.notify();
+            model.notify(cx);
             if let Some(room) = room {
                 if room.read(cx).status().is_offline() {
                     self.room = None;
@@ -467,9 +471,9 @@ impl ActiveCall {
                                 this.set_room(None, cx).detach_and_log_err(cx);
                             }
 
-                            cx.notify();
+                            model.notify(cx);
                         }),
-                        cx.subscribe(&room, |_, _, event, cx| cx.emit(event.clone())),
+                        cx.subscribe(&room, |_, _, event, cx| model.emit(cx, event.clone())),
                     ];
                     self.room = Some((room.clone(), subscriptions));
                     let location = self
@@ -477,8 +481,10 @@ impl ActiveCall {
                         .as_ref()
                         .and_then(|location| location.upgrade());
                     let channel_id = room.read(cx).channel_id();
-                    cx.emit(Event::RoomJoined { channel_id });
-                    room.update(cx, |room, cx| room.set_location(location.as_ref(), cx))
+                    model.emit(cx, Event::RoomJoined { channel_id });
+                    room.update(cx, |room, model, cx| {
+                        room.set_location(location.as_ref(), cx)
+                    })
                 }
             } else {
                 self.room = None;

@@ -89,7 +89,7 @@ impl RenderOnce for BufferFontFamilyControl {
             .child(DropdownMenu::new(
                 "buffer-font-family",
                 value.clone(),
-                ContextMenu::build(cx, |mut menu, cx| {
+                ContextMenu::build(cx, window, |mut menu, model, window, cx| {
                     let font_family_cache = FontFamilyCache::global(cx);
 
                     for font_name in font_family_cache.list_font_families(cx) {
@@ -193,7 +193,7 @@ impl RenderOnce for BufferFontWeightControl {
             .child(DropdownMenu::new(
                 "buffer-font-weight",
                 value.0.to_string(),
-                ContextMenu::build(cx, |mut menu, _cx| {
+                ContextMenu::build(cx, window, |mut menu, model, window, cx| {
                     for weight in FontWeight::ALL {
                         menu = menu.custom_entry(
                             move |_cx| Label::new(weight.0.to_string()).into_any_element(),
@@ -413,7 +413,7 @@ impl RenderOnce for RelativeLineNumbersControl {
         DropdownMenu::new(
             "relative-line-numbers",
             if value { "Relative" } else { "Ascending" },
-            ContextMenu::build(cx, |menu, _cx| {
+            ContextMenu::build(cx, window, |menu, window, model, cx| {
                 menu.custom_entry(
                     |_cx| Label::new("Ascending").into_any_element(),
                     move |cx| Self::write(false, cx),

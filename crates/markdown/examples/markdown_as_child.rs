@@ -36,7 +36,7 @@ pub fn main() {
 
         cx.activate(true);
         let _ = cx.open_window(WindowOptions::default(), |cx| {
-            cx.new_view(|cx| {
+            cx.new_model(|model, cx| {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
                         font_family: "Zed Mono".into(),
@@ -86,7 +86,7 @@ pub fn main() {
                     break_style: Default::default(),
                     heading: Default::default(),
                 };
-                let markdown = cx.new_view(|cx| {
+                let markdown = cx.new_model(|model, cx| {
                     Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, None, cx)
                 });
 
@@ -96,7 +96,7 @@ pub fn main() {
     });
 }
 struct HelloWorld {
-    markdown: View<Markdown>,
+    markdown: Model<Markdown>,
 }
 
 impl Render for HelloWorld {

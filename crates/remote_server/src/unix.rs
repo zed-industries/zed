@@ -438,7 +438,7 @@ pub fn execute_run(
         extension::init(cx);
         let extension_host_proxy = ExtensionHostProxy::global(cx);
 
-        let project = cx.new_model(|cx| {
+        let project = cx.new_model(|model, cx| {
             let fs = Arc::new(RealFs::new(Default::default(), None));
             let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
 

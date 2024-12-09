@@ -133,7 +133,7 @@ pub(super) fn refresh_linked_ranges(
         let highlights = futures::future::join_all(highlights).await;
 
         editor
-            .update(&mut cx, |this, cx| {
+            .update(&mut cx, |this, model, cx| {
                 this.linked_edit_ranges.0.clear();
                 if this.pending_rename.is_some() {
                     return;
@@ -157,7 +157,7 @@ pub(super) fn refresh_linked_ranges(
                     values.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0, &snapshot));
                 }
 
-                cx.notify();
+                model.notify(cx);
             })
             .ok()?;
 

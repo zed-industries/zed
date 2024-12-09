@@ -26,7 +26,7 @@ pub enum MenuPosition {
 
 pub struct MouseContextMenu {
     pub(crate) position: MenuPosition,
-    pub(crate) context_menu: View<ui::ContextMenu>,
+    pub(crate) context_menu: Model<ui::ContextMenu>,
     _subscription: Subscription,
 }
 
@@ -44,7 +44,7 @@ impl MouseContextMenu {
         editor: &mut Editor,
         source: multi_buffer::Anchor,
         position: Point<Pixels>,
-        context_menu: View<ui::ContextMenu>,
+        context_menu: Model<ui::ContextMenu>,
         model: &Model<Editor>,
         cx: &mut AppContext,
     ) -> Option<Self> {
@@ -54,17 +54,22 @@ impl MouseContextMenu {
                 x: editor.gutter_dimensions.width,
                 y: Pixels(0.0),
             };
-        let source_position = editor.to_pixel_point(source, &editor_snapshot, cx)?;
+        let source_position = editor.to_pixel_point(source, &editor_snapshot, model, cx)?;
         let menu_position = MenuPosition::PinnedToEditor {
             source,
             offset: position - (source_position + content_origin),
         };
-        return Some(MouseContextMenu::new(menu_position, context_menu, cx));
+        return Some(MouseContextMenu::new(
+            menu_position,
+            context_menu,
+            model,
+            cx,
+        ));
     }
 
     pub(crate) fn new(
         position: MenuPosition,
-        context_menu: View<ui::ContextMenu>,
+        context_menu: Model<ui::ContextMenu>,
         model: &Model<Editor>,
         cx: &mut AppContext,
     ) -> Self {
@@ -111,7 +116,7 @@ pub fn deploy_context_menu(
     model: &Model<Editor>,
     cx: &mut AppContext,
 ) {
-    if !editor.is_focused(cx) {
+    if !editor.is_focused(window) {
         editor.focus(cx);
     }
 
@@ -159,7 +164,7 @@ pub fn deploy_context_menu(
             .into_iter()
             .any(|s| !s.is_empty());
 
-        ui::ContextMenu::build(cx, |menu, _cx| {
+        ui::ContextMenu::build(cx, window, |menu, model, window, cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
                 .action("Go to Definition", Box::new(GoToDefinition))
@@ -202,18 +207,28 @@ pub fn deploy_context_menu(
     };
 
     editor.mouse_context_menu = match position {
-        Some(position) => {
-            MouseContextMenu::pinned_to_editor(editor, source_anchor, position, context_menu, cx)
-        }
+        Some(position) => MouseContextMenu::pinned_to_editor(
+            editor,
+            source_anchor,
+            position,
+            context_menu,
+            model,
+            cx,
+        ),
         None => {
             let menu_position = MenuPosition::PinnedToEditor {
                 source: source_anchor,
                 offset: editor.character_size(cx),
             };
-            Some(MouseContextMenu::new(menu_position, context_menu, cx))
+            Some(MouseContextMenu::new(
+                menu_position,
+                context_menu,
+                model,
+                cx,
+            ))
         }
     };
-    cx.notify();
+    model.notify(cx);
 }
 
 #[cfg(test)]
@@ -247,7 +262,7 @@ mod tests {
         "});
         cx.editor(|editor, _app| assert!(editor.mouse_context_menu.is_none()));
         cx.update_editor(|editor, cx| {
-            deploy_context_menu(editor, Some(Default::default()), point, cx)
+            deploy_context_menu(editor, Some(Default::default()), point, model, cx)
         });
 
         cx.assert_editor_state(indoc! {"
