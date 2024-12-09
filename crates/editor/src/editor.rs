@@ -5384,6 +5384,8 @@ impl Editor {
             return;
         }
 
+        self.report_inline_completion_event(true, cx);
+
         match &active_inline_completion.completion {
             InlineCompletion::Move(position) => {
                 let position = *position;
