@@ -659,7 +659,12 @@ impl Item for NotebookEditor {
         true
     }
 
-    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        params: TabContentParams,
+        window: &Window,
+        cx: &AppContext,
+    ) -> AnyElement {
         let path = &self.notebook_item.read(cx).path;
         let title = path
             .file_name()
@@ -673,7 +678,7 @@ impl Item for NotebookEditor {
             .into_any_element()
     }
 
-    fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, window: &Window, _cx: &ui::AppContext) -> Option<Icon> {
         Some(IconName::Book.into())
     }
 

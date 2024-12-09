@@ -167,7 +167,8 @@ impl ThemeSelectorDelegate {
 impl PickerDelegate for ThemeSelectorDelegate {
     type ListItem = ui::ListItem;
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext) -> Arc<str> {
         "Select Theme...".into()
     }
 

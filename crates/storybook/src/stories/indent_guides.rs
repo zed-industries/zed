@@ -2,7 +2,7 @@ use std::fmt::format;
 
 use gpui::{
     colors, div, prelude::*, uniform_list, DefaultColor, DefaultThemeAppearance, Hsla, Render,
-    View, ViewContext, WindowContext,
+    View, ViewContext, 
 };
 use story::Story;
 use strum::IntoEnumIterator;
@@ -17,7 +17,7 @@ pub struct IndentGuidesStory {
 }
 
 impl IndentGuidesStory {
-    pub fn view(cx: &mut WindowContext) -> View<Self> {
+    pub fn view(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> View<Self> {
         let mut depths = Vec::new();
         depths.push(0);
         depths.push(1);

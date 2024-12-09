@@ -14,7 +14,6 @@ use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
     KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Selectable, Tooltip,
-    WindowContext,
 };
 use util::ResultExt;
 use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
@@ -153,7 +152,7 @@ impl PickerDelegate for TasksModalDelegate {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _: &mut gpui::Window, _: &mut gpui::AppContext) -> Arc<str> {
         self.placeholder_text.clone()
     }
 

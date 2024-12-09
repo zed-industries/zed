@@ -158,7 +158,11 @@ impl PickerDelegate for PromptPickerDelegate {
         self.matches.len()
     }
 
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+    fn no_matches_text(
+        &self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
+    ) -> SharedString {
         if self.store.prompt_count() == 0 {
             "No prompts.".into()
         } else {
@@ -179,7 +183,7 @@ impl PickerDelegate for PromptPickerDelegate {
         }
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Search...".into()
     }
 

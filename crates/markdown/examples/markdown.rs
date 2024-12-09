@@ -6,8 +6,8 @@ use node_runtime::NodeRuntime;
 use settings::SettingsStore;
 use std::sync::Arc;
 use theme::LoadThemes;
+use ui::div;
 use ui::prelude::*;
-use ui::{div, WindowContext};
 
 const MARKDOWN_EXAMPLE: &str = r#"
 # Markdown Example Document
@@ -175,7 +175,8 @@ impl MarkdownExample {
         text: String,
         style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Self {
         let markdown =
             cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), None, cx));

@@ -954,7 +954,7 @@ impl FileFinderDelegate {
         0
     }
 
-    fn key_context(&self, cx: &WindowContext) -> KeyContext {
+    fn key_context(&self, window: &Window, cx: &AppContext) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("FileFinder");
         if self.popover_menu_handle.is_focused(cx) {
@@ -967,7 +967,7 @@ impl FileFinderDelegate {
 impl PickerDelegate for FileFinderDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Search project files...".into()
     }
 

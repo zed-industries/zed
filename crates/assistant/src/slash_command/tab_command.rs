@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{prelude::*, ActiveTheme, WindowContext};
+use ui::{prelude::*, ActiveTheme};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -52,7 +52,8 @@ impl SlashCommand for TabSlashCommand {
         arguments: &[String],
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let mut has_all_tabs_completion_item = false;
         let argument_set = arguments
@@ -139,7 +140,8 @@ impl SlashCommand for TabSlashCommand {
         _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<SlashCommandResult> {
         let tab_items_search = tab_items_for_queries(
             Some(workspace),
@@ -164,7 +166,8 @@ fn tab_items_for_queries(
     queries: &[String],
     cancel: Arc<AtomicBool>,
     strict_match: bool,
-    cx: &mut WindowContext,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
 ) -> Task<anyhow::Result<Vec<(Option<PathBuf>, BufferSnapshot, usize)>>> {
     let empty_query = queries.is_empty() || queries.iter().all(|query| query.trim().is_empty());
     let queries = queries.to_owned();

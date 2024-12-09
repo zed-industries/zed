@@ -1,7 +1,7 @@
 use futures::FutureExt;
 use gpui::{
     AnyElement, AnyView, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText,
-    IntoElement, SharedString, StrikethroughStyle, StyledText, UnderlineStyle, WindowContext,
+    IntoElement, SharedString, StrikethroughStyle, StyledText, UnderlineStyle,
 };
 use language::{HighlightId, Language, LanguageRegistry};
 use std::{ops::Range, sync::Arc};
@@ -39,8 +39,16 @@ pub struct RichText {
     pub link_urls: Arc<[String]>,
 
     pub custom_ranges: Vec<Range<usize>>,
-    custom_ranges_tooltip_fn:
-        Option<Arc<dyn Fn(usize, Range<usize>, &mut WindowContext) -> Option<AnyView>>>,
+    custom_ranges_tooltip_fn: Option<
+        Arc<
+            dyn Fn(
+                usize,
+                Range<usize>,
+                &mut gpui::Window,
+                &mut gpui::AppContext,
+            ) -> Option<AnyView>,
+        >,
+    >,
 }
 
 /// Allows one to specify extra links to the rendered markdown, which can be used
@@ -85,12 +93,18 @@ impl RichText {
 
     pub fn set_tooltip_builder_for_custom_ranges(
         &mut self,
-        f: impl Fn(usize, Range<usize>, &mut WindowContext) -> Option<AnyView> + 'static,
+        f: impl Fn(usize, Range<usize>, &mut gpui::Window, &mut gpui::AppContext) -> Option<AnyView>
+            + 'static,
     ) {
         self.custom_ranges_tooltip_fn = Some(Arc::new(f));
     }
 
-    pub fn element(&self, id: ElementId, cx: &mut WindowContext) -> AnyElement {
+    pub fn element(
+        &self,
+        id: ElementId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> AnyElement {
         let theme = cx.theme();
         let code_background = theme.colors().surface_background;
 

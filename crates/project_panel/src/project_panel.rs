@@ -22,12 +22,12 @@ use command_palette_hooks::CommandPaletteFilter;
 use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
-    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView, Hsla,
+    AnyElement, AppContext, AssetSource, Asy Bounds, ClipboardItem, DismissEvent, Div,
+    DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
     Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
-    VisualContext as _, WeakView, WindowContext,
+    VisualContext as _, WeakView,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -492,7 +492,8 @@ impl ProjectPanel {
 
     pub async fn load(
         workspace: WeakView<Workspace>,
-        mut cx: AsyncWindowContext,
+        mut window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> Result<View<Self>> {
         let serialized_panel = cx
             .background_executor()
@@ -4169,7 +4170,7 @@ impl EventEmitter<Event> for ProjectPanel {}
 impl EventEmitter<PanelEvent> for ProjectPanel {}
 
 impl Panel for ProjectPanel {
-    fn position(&self, cx: &WindowContext) -> DockPosition {
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
         match ProjectPanelSettings::get_global(cx).dock {
             ProjectPanelDockPosition::Left => DockPosition::Left,
             ProjectPanelDockPosition::Right => DockPosition::Right,
@@ -4194,7 +4195,7 @@ impl Panel for ProjectPanel {
         );
     }
 
-    fn size(&self, cx: &WindowContext) -> Pixels {
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| ProjectPanelSettings::get_global(cx).default_width)
     }
@@ -4205,13 +4206,13 @@ impl Panel for ProjectPanel {
         cx.notify();
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<IconName> {
         ProjectPanelSettings::get_global(cx)
             .button
             .then_some(IconName::FileTree)
     }
 
-    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, cx: &AppContext) -> Option<&'static str> {
         Some("Project Panel")
     }
 
@@ -4223,7 +4224,7 @@ impl Panel for ProjectPanel {
         "Project Panel"
     }
 
-    fn starts_open(&self, cx: &WindowContext) -> bool {
+    fn starts_open(&self, window: &Window, cx: &AppContext) -> bool {
         let project = &self.project.read(cx);
         project.visible_worktrees(cx).any(|tree| {
             tree.read(cx)

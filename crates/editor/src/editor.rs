@@ -72,13 +72,13 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
-    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardEntry,
+    AppContext, Asy AvailableSpace, BackgroundExecutor, Bounds, ClipboardEntry,
     ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusOutEvent,
     FocusableView, FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext,
     ListSizingBehavior, Model, ModelContext, MouseButton, PaintQuad, ParentElement, Pixels, Render,
     ScrollStrategy, SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task,
     TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, View,
-    ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle, WeakView, WindowContext,
+    ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle, WeakView,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -195,7 +195,8 @@ pub fn render_parsed_markdown(
     parsed: &language::ParsedMarkdown,
     editor_style: &EditorStyle,
     workspace: Option<WeakView<Workspace>>,
-    cx: &mut WindowContext,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
 ) -> InteractiveText {
     let code_span_background_color = cx
         .theme()
@@ -424,7 +425,7 @@ impl Default for EditorStyle {
     }
 }
 
-pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
+pub fn make_inlay_hints_style(window: &Window, cx: &AppContext) -> HighlightStyle {
     let show_background = language_settings::language_settings(None, None, cx)
         .inlay_hints
         .show_background;
@@ -2195,7 +2196,7 @@ impl Editor {
         this
     }
 
-    pub fn mouse_menu_is_focused(&self, cx: &WindowContext) -> bool {
+    pub fn mouse_menu_is_focused(&self, window: &Window, cx: &AppContext) -> bool {
         self.mouse_context_menu
             .as_ref()
             .is_some_and(|menu| menu.context_menu.focus_handle(cx).is_focused(cx))
@@ -2356,7 +2357,11 @@ impl Editor {
         self.buffer().read(cx).title(cx)
     }
 
-    pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
+    pub fn snapshot(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> EditorSnapshot {
         let git_blame_gutter_max_author_length = self
             .render_git_blame_gutter(cx)
             .then(|| {
@@ -2463,7 +2468,7 @@ impl Editor {
         self.refresh_inline_completion(false, false, cx);
     }
 
-    pub fn placeholder_text(&self, _cx: &WindowContext) -> Option<&str> {
+    pub fn placeholder_text(&self, _window: &Window, cx: &AppContext) -> Option<&str> {
         self.placeholder_text.as_deref()
     }
 
@@ -4368,7 +4373,7 @@ impl Editor {
             .collect()
     }
 
-    pub fn text_layout_details(&self, cx: &WindowContext) -> TextLayoutDetails {
+    pub fn text_layout_details(&self, window: &Window, cx: &AppContext) -> TextLayoutDetails {
         TextLayoutDetails {
             text_system: cx.text_system().clone(),
             editor_style: self.style.clone().unwrap(),
@@ -4962,7 +4967,8 @@ impl Editor {
         workspace: WeakView<Workspace>,
         transaction: ProjectTransaction,
         title: String,
-        mut cx: AsyncWindowContext,
+        mut window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> Result<()> {
         let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
         cx.update(|cx| {
@@ -9446,7 +9452,8 @@ impl Editor {
         project: Model<Project>,
         snapshot: DisplaySnapshot,
         runnable_ranges: Vec<RunnableRange>,
-        mut cx: AsyncWindowContext,
+        mut window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> Vec<((BufferId, u32), RunnableTasks)> {
         runnable_ranges
             .into_iter()
@@ -9486,7 +9493,8 @@ impl Editor {
     fn templates_with_tags(
         project: &Model<Project>,
         runnable: &mut Runnable,
-        cx: &WindowContext<'_>,
+        window: &Window,
+        cx: &AppContext,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
             let (worktree_id, file) = project
@@ -11658,7 +11666,7 @@ impl Editor {
         EditorSettings::override_global(editor_settings, cx);
     }
 
-    pub fn should_use_relative_line_numbers(&self, cx: &WindowContext) -> bool {
+    pub fn should_use_relative_line_numbers(&self, window: &Window, cx: &AppContext) -> bool {
         self.use_relative_line_numbers
             .unwrap_or(EditorSettings::get_global(cx).relative_line_numbers)
     }
@@ -11727,7 +11735,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn working_directory(&self, cx: &WindowContext) -> Option<PathBuf> {
+    pub fn working_directory(&self, window: &Window, cx: &AppContext) -> Option<PathBuf> {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 if let Some(dir) = file.abs_path(cx).parent() {
@@ -11869,23 +11877,35 @@ impl Editor {
         self.show_git_blame_gutter
     }
 
-    pub fn render_git_blame_gutter(&mut self, cx: &mut WindowContext) -> bool {
+    pub fn render_git_blame_gutter(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> bool {
         self.show_git_blame_gutter && self.has_blame_entries(cx)
     }
 
-    pub fn render_git_blame_inline(&mut self, cx: &mut WindowContext) -> bool {
+    pub fn render_git_blame_inline(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> bool {
         self.show_git_blame_inline
             && self.focus_handle.is_focused(cx)
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
     }
 
-    fn has_blame_entries(&self, cx: &mut WindowContext) -> bool {
+    fn has_blame_entries(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> bool {
         self.blame()
             .map_or(false, |blame| blame.read(cx).has_generated_entries())
     }
 
-    fn newest_selection_head_on_empty_line(&mut self, cx: &mut WindowContext) -> bool {
+    fn newest_selection_head_on_empty_line(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> bool {
         let cursor_anchor = self.selections.newest_anchor().head();
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -12178,7 +12198,8 @@ impl Editor {
     /// Allows to ignore certain kinds of highlights.
     pub fn highlighted_display_rows(
         &mut self,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> BTreeMap<DisplayRow, Hsla> {
         let snapshot = self.snapshot(cx);
         let mut used_highlight_orders = HashMap::default();
@@ -12523,7 +12544,8 @@ impl Editor {
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
-        cx: &WindowContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> Vec<Range<DisplayPoint>> {
         display_snapshot
             .buffer_snapshot
@@ -12589,7 +12611,7 @@ impl Editor {
         }
     }
 
-    pub fn show_local_cursors(&self, cx: &WindowContext) -> bool {
+    pub fn show_local_cursors(&self, window: &Window, cx: &AppContext) -> bool {
         (self.read_only(cx) || self.blink_manager.read(cx).visible())
             && self.focus_handle.is_focused(cx)
     }
@@ -13181,11 +13203,11 @@ impl Editor {
         supports
     }
 
-    pub fn focus(&self, cx: &mut WindowContext) {
+    pub fn focus(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         cx.focus(&self.focus_handle)
     }
 
-    pub fn is_focused(&self, cx: &WindowContext) -> bool {
+    pub fn is_focused(&self, window: &Window, cx: &AppContext) -> bool {
         self.focus_handle.is_focused(cx)
     }
 
@@ -13248,7 +13270,7 @@ impl Editor {
 
     pub fn register_action<A: Action>(
         &mut self,
-        listener: impl Fn(&A, &mut WindowContext) + 'static,
+        listener: impl Fn(&A, &mut gpui::Window, &mut gpui::AppContext) + 'static,
     ) -> Subscription {
         let id = self.next_editor_action_id.post_inc();
         let listener = Arc::new(listener);
@@ -13858,7 +13880,8 @@ pub trait CodeActionProvider {
         &self,
         buffer: &Model<Buffer>,
         range: Range<text::Anchor>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<CodeAction>>>;
 
     fn apply_code_action(
@@ -13867,7 +13890,8 @@ pub trait CodeActionProvider {
         action: CodeAction,
         excerpt_id: ExcerptId,
         push_to_history: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<ProjectTransaction>>;
 }
 
@@ -13876,7 +13900,8 @@ impl CodeActionProvider for Model<Project> {
         &self,
         buffer: &Model<Buffer>,
         range: Range<text::Anchor>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<CodeAction>>> {
         self.update(cx, |project, cx| {
             project.code_actions(buffer, range, None, cx)
@@ -13889,7 +13914,8 @@ impl CodeActionProvider for Model<Project> {
         action: CodeAction,
         _excerpt_id: ExcerptId,
         push_to_history: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<ProjectTransaction>> {
         self.update(cx, |project, cx| {
             project.apply_code_action(buffer_handle, action, push_to_history, cx)
@@ -14382,7 +14408,8 @@ impl EditorSnapshot {
         buffer_row: MultiBufferRow,
         row_contains_cursor: bool,
         editor: View<Editor>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<AnyElement> {
         let folded = self.is_line_folded(buffer_row);
         let mut is_foldable = false;
@@ -14395,17 +14422,19 @@ impl EditorSnapshot {
             match crease {
                 Crease::Inline { render_toggle, .. } | Crease::Block { render_toggle, .. } => {
                     if let Some(render_toggle) = render_toggle {
-                        let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
-                            if folded {
-                                editor.update(cx, |editor, cx| {
-                                    editor.fold_at(&crate::FoldAt { buffer_row }, cx)
-                                });
-                            } else {
-                                editor.update(cx, |editor, cx| {
-                                    editor.unfold_at(&crate::UnfoldAt { buffer_row }, cx)
-                                });
-                            }
-                        });
+                        let toggle_callback = Arc::new(
+                            move |folded, window: &mut gpui::Window, cx: &mut gpui::AppContext| {
+                                if folded {
+                                    editor.update(cx, |editor, cx| {
+                                        editor.fold_at(&crate::FoldAt { buffer_row }, cx)
+                                    });
+                                } else {
+                                    editor.update(cx, |editor, cx| {
+                                        editor.unfold_at(&crate::UnfoldAt { buffer_row }, cx)
+                                    });
+                                }
+                            },
+                        );
                         return Some((render_toggle)(buffer_row, folded, toggle_callback, cx));
                     }
                 }
@@ -14435,7 +14464,8 @@ impl EditorSnapshot {
     pub fn render_crease_trailer(
         &self,
         buffer_row: MultiBufferRow,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<AnyElement> {
         let folded = self.is_line_folded(buffer_row);
         if let Crease::Inline { render_trailer, .. } = self

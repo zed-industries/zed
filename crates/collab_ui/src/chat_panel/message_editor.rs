@@ -5,8 +5,8 @@ use collections::HashSet;
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AsyncWindowContext, FocusableView, FontStyle, FontWeight, HighlightStyle, IntoElement, Model,
-    Render, Task, TextStyle, View, ViewContext, WeakView,
+    AsyncAppContext, FontStyle, FontWeight, HighlightStyle, IntoElement, Model, Render, Task,
+    TextStyle, View, ViewContext, WeakView,
 };
 use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
@@ -286,7 +286,7 @@ impl MessageEditor {
     }
 
     async fn resolve_completions_for_candidates(
-        cx: &AsyncWindowContext,
+        cx: &Async
         query: &str,
         candidates: &[StringMatchCandidate],
         range: Range<Anchor>,
@@ -459,7 +459,8 @@ impl MessageEditor {
     async fn find_mentions(
         this: WeakView<MessageEditor>,
         buffer: BufferSnapshot,
-        mut cx: AsyncWindowContext,
+        mut window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) {
         let (buffer, ranges) = cx
             .background_executor()

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use call::{report_call_event_for_room, ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, User};
-use gpui::{actions, AppContext, Task, WindowContext};
+use gpui::{actions, AppContext, Task};
 use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
 use rpc::proto::{self};
 use theme::ActiveTheme;
@@ -16,7 +16,11 @@ actions!(
     [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
 );
 
-fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut WindowContext) {
+fn toggle_screen_sharing(
+    _: &ToggleScreenSharing,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         let client = call.client();

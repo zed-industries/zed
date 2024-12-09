@@ -78,7 +78,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         cx.notify();
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Select a model...".into()
     }
 
@@ -298,7 +298,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 }
 
 impl<T: PopoverTrigger> RenderOnce for LanguageModelSelector<T> {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let selected_provider = LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map(|m| m.id());

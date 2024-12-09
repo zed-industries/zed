@@ -59,7 +59,8 @@ impl SlashCommand for SearchSlashCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -71,7 +72,7 @@ impl SlashCommand for SearchSlashCommand {
         _context_buffer: language::BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window, cx: &mut gpui::AppContext,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));

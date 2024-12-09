@@ -158,7 +158,8 @@ impl PaneGroup {
         &mut self,
         active_pane: &View<Pane>,
         direction: SplitDirection,
-        cx: &WindowContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> Option<&View<Pane>> {
         let bounding_box = self.bounding_box_for_pane(active_pane)?;
         let cursor = active_pane.read(cx).pixel_position_of_cursor(cx);
@@ -741,14 +742,14 @@ impl SplitDirection {
         [Self::Up, Self::Down, Self::Left, Self::Right]
     }
 
-    pub fn vertical(cx: &WindowContext) -> Self {
+    pub fn vertical(window: &Window, cx: &AppContext) -> Self {
         match WorkspaceSettings::get_global(cx).pane_split_direction_vertical {
             PaneSplitDirectionVertical::Left => SplitDirection::Left,
             PaneSplitDirectionVertical::Right => SplitDirection::Right,
         }
     }
 
-    pub fn horizontal(cx: &WindowContext) -> Self {
+    pub fn horizontal(window: &Window, cx: &AppContext) -> Self {
         match WorkspaceSettings::get_global(cx).pane_split_direction_horizontal {
             PaneSplitDirectionHorizontal::Down => SplitDirection::Down,
             PaneSplitDirectionHorizontal::Up => SplitDirection::Up,
@@ -815,7 +816,7 @@ mod element {
     use gpui::{
         px, relative, size, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
         MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
-        WeakView, WindowContext,
+        WeakView,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -891,7 +892,8 @@ mod element {
             child_start: Point<Pixels>,
             container_size: Size<Pixels>,
             workspace: WeakView<Workspace>,
-            cx: &mut WindowContext,
+            window: &mut gpui::Window,
+            cx: &mut gpui::AppContext,
         ) {
             let min_size = match axis {
                 Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
@@ -975,7 +977,8 @@ mod element {
         fn layout_handle(
             axis: Axis,
             pane_bounds: Bounds<Pixels>,
-            cx: &mut WindowContext,
+            window: &mut gpui::Window,
+            cx: &mut gpui::AppContext,
         ) -> PaneAxisHandleLayout {
             let handle_bounds = Bounds {
                 origin: pane_bounds.origin.apply_along(axis, |origin| {
@@ -1018,7 +1021,7 @@ mod element {
         fn request_layout(
             &mut self,
             _global_id: Option<&GlobalElementId>,
-            cx: &mut ui::prelude::WindowContext,
+            cx: &mut ui::prelude::
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             let style = Style {
                 flex_grow: 1.,
@@ -1035,7 +1038,8 @@ mod element {
             global_id: Option<&GlobalElementId>,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
-            cx: &mut WindowContext,
+            window: &mut gpui::Window,
+            cx: &mut gpui::AppContext,
         ) -> PaneAxisLayout {
             let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
                 global_id.unwrap(),
@@ -1119,7 +1123,7 @@ mod element {
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,
-            cx: &mut ui::prelude::WindowContext,
+            cx: &mut ui::prelude::
         ) {
             for child in &mut layout.children {
                 child.element.paint(cx);

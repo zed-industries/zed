@@ -45,7 +45,8 @@ impl ParentElement for KernelListItem {
 }
 
 impl RenderOnce for KernelListItem {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext) -> impl IntoElement {
         ListItem::new(self.kernel_specification.name())
             .selectable(false)
             .start_slot(

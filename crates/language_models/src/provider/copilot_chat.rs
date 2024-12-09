@@ -25,7 +25,7 @@ use strum::IntoEnumIterator;
 use ui::{
     div, h_flex, v_flex, Button, ButtonCommon, Clickable, Color, Context, FixedWidth, Icon,
     IconName, IconPosition, IconSize, IntoElement, Label, LabelCommon, ParentElement, Styled,
-    ViewContext, VisualContext, WindowContext,
+    ViewContext, VisualContext, 
 };
 
 use super::anthropic::count_anthropic_tokens;
@@ -129,7 +129,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(result)
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+    fn configuration_view(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> AnyView {
         let state = self.state.clone();
         cx.new_view(|cx| ConfigurationView::new(state, cx)).into()
     }

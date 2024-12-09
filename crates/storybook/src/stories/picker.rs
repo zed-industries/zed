@@ -1,5 +1,5 @@
 use fuzzy::StringMatchCandidate;
-use gpui::{div, prelude::*, KeyBinding, Render, SharedString, Styled, Task, View, WindowContext};
+use gpui::{div, prelude::*, KeyBinding, Render, SharedString, Styled, Task, View};
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{prelude::*, ListItemSpacing};
@@ -41,7 +41,7 @@ impl PickerDelegate for Delegate {
         self.candidates.len()
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Test".into()
     }
 
@@ -113,7 +113,7 @@ impl PickerDelegate for Delegate {
 }
 
 impl PickerStory {
-    pub fn new(cx: &mut WindowContext) -> View<Self> {
+    pub fn new(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> View<Self> {
         cx.new_view(|cx| {
             cx.bind_keys([
                 KeyBinding::new("up", menu::SelectPrev, Some("picker")),

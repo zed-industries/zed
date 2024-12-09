@@ -82,11 +82,11 @@ impl FocusableView for SettingsPage {
 impl Item for SettingsPage {
     type Event = ItemEvent;
 
-    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, cx: &AppContext) -> Option<Icon> {
         Some(Icon::new(IconName::Settings))
     }
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some("Settings".into())
     }
 

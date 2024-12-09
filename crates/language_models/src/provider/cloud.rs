@@ -363,7 +363,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+    fn configuration_view(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> AnyView {
         cx.new_view(|_cx| ConfigurationView {
             state: self.state.clone(),
         })
@@ -374,7 +374,11 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         !self.state.read(cx).has_accepted_terms_of_service(cx)
     }
 
-    fn render_accept_terms(&self, cx: &mut WindowContext) -> Option<AnyElement> {
+    fn render_accept_terms(
+        &self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Option<AnyElement> {
         let state = self.state.read(cx);
 
         let terms = [(

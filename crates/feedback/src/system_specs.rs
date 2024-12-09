@@ -5,7 +5,6 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use serde::Serialize;
 use std::{env, fmt::Display};
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
-use ui::WindowContext;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemSpecs {
@@ -20,7 +19,7 @@ pub struct SystemSpecs {
 }
 
 impl SystemSpecs {
-    pub fn new(cx: &WindowContext) -> Task<Self> {
+    pub fn new(window: &Window, cx: &AppContext) -> Task<Self> {
         let app_version = AppVersion::global(cx).to_string();
         let release_channel = ReleaseChannel::global(cx);
         let os_name = telemetry::os_name();

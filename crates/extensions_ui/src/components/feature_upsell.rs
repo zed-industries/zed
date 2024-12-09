@@ -49,7 +49,7 @@ impl FeatureUpsell {
 }
 
 impl RenderOnce for FeatureUpsell {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         self.base
             .p_4()
             .justify_between()

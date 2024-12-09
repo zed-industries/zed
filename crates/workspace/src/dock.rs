@@ -6,7 +6,7 @@ use gpui::{
     deferred, div, px, Action, AnchorCorner, AnyView, AppContext, Axis, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, MouseDownEvent,
     MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    ViewContext, VisualContext, WeakView,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -28,21 +28,21 @@ pub use proto::PanelId;
 
 pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn persistent_name() -> &'static str;
-    fn position(&self, cx: &WindowContext) -> DockPosition;
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
-    fn size(&self, cx: &WindowContext) -> Pixels;
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>);
-    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
-    fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str>;
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<ui::IconName>;
+    fn icon_tooltip(&self, window: &Window, cx: &AppContext) -> Option<&'static str>;
     fn toggle_action(&self) -> Box<dyn Action>;
-    fn icon_label(&self, _: &WindowContext) -> Option<String> {
+    fn icon_label(&self, _: &Window, _: &AppContext) -> Option<String> {
         None
     }
-    fn is_zoomed(&self, _cx: &WindowContext) -> bool {
+    fn is_zoomed(&self, _window: &Window, cx: &AppContext) -> bool {
         false
     }
-    fn starts_open(&self, _cx: &WindowContext) -> bool {
+    fn starts_open(&self, _window: &Window, cx: &AppContext) -> bool {
         false
     }
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
@@ -58,20 +58,25 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
 pub trait PanelHandle: Send + Sync {
     fn panel_id(&self) -> EntityId;
     fn persistent_name(&self) -> &'static str;
-    fn position(&self, cx: &WindowContext) -> DockPosition;
-    fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
-    fn set_position(&self, position: DockPosition, cx: &mut WindowContext);
-    fn is_zoomed(&self, cx: &WindowContext) -> bool;
-    fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext);
-    fn set_active(&self, active: bool, cx: &mut WindowContext);
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition;
+    fn position_is_valid(&self, position: DockPosition, window: &Window, cx: &AppContext) -> bool;
+    fn set_position(
+        &self,
+        position: DockPosition,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    );
+    fn is_zoomed(&self, window: &Window, cx: &AppContext) -> bool;
+    fn set_zoomed(&self, zoomed: bool, window: &mut gpui::Window, cx: &mut gpui::AppContext);
+    fn set_active(&self, active: bool, window: &mut gpui::Window, cx: &mut gpui::AppContext);
     fn remote_id(&self) -> Option<proto::PanelId>;
-    fn pane(&self, cx: &WindowContext) -> Option<View<Pane>>;
-    fn size(&self, cx: &WindowContext) -> Pixels;
-    fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext);
-    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
-    fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str>;
-    fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action>;
-    fn icon_label(&self, cx: &WindowContext) -> Option<String>;
+    fn pane(&self, window: &Window, cx: &AppContext) -> Option<View<Pane>>;
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels;
+    fn set_size(&self, size: Option<Pixels>, window: &mut gpui::Window, cx: &mut gpui::AppContext);
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<ui::IconName>;
+    fn icon_tooltip(&self, window: &Window, cx: &AppContext) -> Option<&'static str>;
+    fn toggle_action(&self, window: &Window, cx: &AppContext) -> Box<dyn Action>;
+    fn icon_label(&self, window: &Window, cx: &AppContext) -> Option<String>;
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn to_any(&self) -> AnyView;
 }
@@ -88,31 +93,36 @@ where
         T::persistent_name()
     }
 
-    fn position(&self, cx: &WindowContext) -> DockPosition {
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
         self.read(cx).position(cx)
     }
 
-    fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool {
+    fn position_is_valid(&self, position: DockPosition, window: &Window, cx: &AppContext) -> bool {
         self.read(cx).position_is_valid(position)
     }
 
-    fn set_position(&self, position: DockPosition, cx: &mut WindowContext) {
+    fn set_position(
+        &self,
+        position: DockPosition,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         self.update(cx, |this, cx| this.set_position(position, cx))
     }
 
-    fn is_zoomed(&self, cx: &WindowContext) -> bool {
+    fn is_zoomed(&self, window: &Window, cx: &AppContext) -> bool {
         self.read(cx).is_zoomed(cx)
     }
 
-    fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext) {
+    fn set_zoomed(&self, zoomed: bool, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         self.update(cx, |this, cx| this.set_zoomed(zoomed, cx))
     }
 
-    fn set_active(&self, active: bool, cx: &mut WindowContext) {
+    fn set_active(&self, active: bool, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         self.update(cx, |this, cx| this.set_active(active, cx))
     }
 
-    fn pane(&self, cx: &WindowContext) -> Option<View<Pane>> {
+    fn pane(&self, window: &Window, cx: &AppContext) -> Option<View<Pane>> {
         self.read(cx).pane()
     }
 
@@ -120,27 +130,27 @@ where
         T::remote_id()
     }
 
-    fn size(&self, cx: &WindowContext) -> Pixels {
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         self.read(cx).size(cx)
     }
 
-    fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext) {
+    fn set_size(&self, size: Option<Pixels>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         self.update(cx, |this, cx| this.set_size(size, cx))
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<ui::IconName> {
         self.read(cx).icon(cx)
     }
 
-    fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, window: &Window, cx: &AppContext) -> Option<&'static str> {
         self.read(cx).icon_tooltip(cx)
     }
 
-    fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action> {
+    fn toggle_action(&self, window: &Window, cx: &AppContext) -> Box<dyn Action> {
         self.read(cx).toggle_action()
     }
 
-    fn icon_label(&self, cx: &WindowContext) -> Option<String> {
+    fn icon_label(&self, window: &Window, cx: &AppContext) -> Option<String> {
         self.read(cx).icon_label(cx)
     }
 
@@ -545,7 +555,7 @@ impl Dock {
         }
     }
 
-    pub fn zoomed_panel(&self, cx: &WindowContext) -> Option<Arc<dyn PanelHandle>> {
+    pub fn zoomed_panel(&self, window: &Window, cx: &AppContext) -> Option<Arc<dyn PanelHandle>> {
         let entry = self.visible_entry()?;
         if entry.panel.is_zoomed(cx) {
             Some(entry.panel.clone())
@@ -554,14 +564,19 @@ impl Dock {
         }
     }
 
-    pub fn panel_size(&self, panel: &dyn PanelHandle, cx: &WindowContext) -> Option<Pixels> {
+    pub fn panel_size(
+        &self,
+        panel: &dyn PanelHandle,
+        window: &Window,
+        cx: &AppContext,
+    ) -> Option<Pixels> {
         self.panel_entries
             .iter()
             .find(|entry| entry.panel.panel_id() == panel.panel_id())
             .map(|entry| entry.panel.size(cx))
     }
 
-    pub fn active_panel_size(&self, cx: &WindowContext) -> Option<Pixels> {
+    pub fn active_panel_size(&self, window: &Window, cx: &AppContext) -> Option<Pixels> {
         if self.is_open {
             self.panel_entries
                 .get(self.active_panel_index)
@@ -595,7 +610,12 @@ impl Dock {
         dispatch_context
     }
 
-    pub fn clamp_panel_size(&mut self, max_size: Pixels, cx: &mut WindowContext) {
+    pub fn clamp_panel_size(
+        &mut self,
+        max_size: Pixels,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let max_size = px((max_size.0 - RESIZE_HANDLE_SIZE.0).abs());
         for panel in self.panel_entries.iter().map(|entry| &entry.panel) {
             if panel.size(cx) > max_size {
@@ -810,7 +830,7 @@ impl StatusItemView for PanelButtons {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::*;
-    use gpui::{actions, div, ViewContext, WindowContext};
+    use gpui::{actions, div, ViewContext};
 
     pub struct TestPanel {
         pub position: DockPosition,
@@ -824,7 +844,11 @@ pub mod test {
     impl EventEmitter<PanelEvent> for TestPanel {}
 
     impl TestPanel {
-        pub fn new(position: DockPosition, cx: &mut WindowContext) -> Self {
+        pub fn new(
+            position: DockPosition,
+            window: &mut gpui::Window,
+            cx: &mut gpui::AppContext,
+        ) -> Self {
             Self {
                 position,
                 zoomed: false,
@@ -846,7 +870,7 @@ pub mod test {
             "TestPanel"
         }
 
-        fn position(&self, _: &gpui::WindowContext) -> super::DockPosition {
+        fn position(&self, _: &gpui::AppContext) -> super::DockPosition {
             self.position
         }
 
@@ -859,7 +883,7 @@ pub mod test {
             cx.update_global::<SettingsStore, _>(|_, _| {});
         }
 
-        fn size(&self, _: &WindowContext) -> Pixels {
+        fn size(&self, _: &Window, _: &AppContext) -> Pixels {
             self.size
         }
 
@@ -867,11 +891,11 @@ pub mod test {
             self.size = size.unwrap_or(px(300.));
         }
 
-        fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
+        fn icon(&self, _: &Window, _: &AppContext) -> Option<ui::IconName> {
             None
         }
 
-        fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+        fn icon_tooltip(&self, _window: &Window, cx: &AppContext) -> Option<&'static str> {
             None
         }
 
@@ -879,7 +903,7 @@ pub mod test {
             ToggleTestPanel.boxed_clone()
         }
 
-        fn is_zoomed(&self, _: &WindowContext) -> bool {
+        fn is_zoomed(&self, _: &Window, _: &AppContext) -> bool {
             self.zoomed
         }
 

@@ -6,7 +6,7 @@ use call::{RemoteVideoTrack, RemoteVideoTrackView};
 use client::{proto::PeerId, User};
 use gpui::{
     div, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement, ParentElement,
-    Render, SharedString, Styled, View, ViewContext, VisualContext, WindowContext,
+    Render, SharedString, Styled, View, ViewContext, VisualContext,
 };
 use std::sync::Arc;
 use ui::{prelude::*, Icon, IconName};
@@ -76,11 +76,11 @@ impl Item for SharedScreen {
         }
     }
 
-    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, cx: &AppContext) -> Option<Icon> {
         Some(Icon::new(IconName::Screen))
     }
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 

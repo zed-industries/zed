@@ -91,7 +91,7 @@ impl TerminalInlineAssistant {
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
         initial_prompt: Option<String>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window, cx: &mut gpui::AppContext,
     ) {
         let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
@@ -135,7 +135,7 @@ impl TerminalInlineAssistant {
         self.focus_assist(assist_id, cx);
     }
 
-    fn focus_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut WindowContext) {
+    fn focus_assist(&mut self, assist_id: TerminalInlineAssistId, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         let assist = &self.assists[&assist_id];
         if let Some(prompt_editor) = assist.prompt_editor.as_ref() {
             prompt_editor.update(cx, |this, cx| {
@@ -151,7 +151,7 @@ impl TerminalInlineAssistant {
         &mut self,
         prompt_editor: View<PromptEditor>,
         event: &PromptEditorEvent,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window, cx: &mut gpui::AppContext,
     ) {
         let assist_id = prompt_editor.read(cx).id;
         match event {
@@ -176,7 +176,7 @@ impl TerminalInlineAssistant {
         }
     }
 
-    fn start_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut WindowContext) {
+    fn start_assist(&mut self, assist_id: TerminalInlineAssistId, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -214,7 +214,7 @@ impl TerminalInlineAssistant {
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
     }
 
-    fn stop_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut WindowContext) {
+    fn stop_assist(&mut self, assist_id: TerminalInlineAssistId, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -227,7 +227,7 @@ impl TerminalInlineAssistant {
     fn request_for_inline_assist(
         &self,
         assist_id: TerminalInlineAssistId,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window, cx: &mut gpui::AppContext,
     ) -> Result<LanguageModelRequest> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
@@ -297,7 +297,7 @@ impl TerminalInlineAssistant {
         assist_id: TerminalInlineAssistId,
         undo: bool,
         execute: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window, cx: &mut gpui::AppContext,
     ) {
         self.dismiss_assist(assist_id, cx);
 
@@ -349,7 +349,7 @@ impl TerminalInlineAssistant {
     fn dismiss_assist(
         &mut self,
         assist_id: TerminalInlineAssistId,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window, cx: &mut gpui::AppContext,
     ) -> bool {
         let Some(assist) = self.assists.get_mut(&assist_id) else {
             return false;
@@ -371,7 +371,7 @@ impl TerminalInlineAssistant {
         &mut self,
         assist_id: TerminalInlineAssistId,
         height: u8,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window, cx: &mut gpui::AppContext,
     ) {
         if let Some(assist) = self.assists.get_mut(&assist_id) {
             if let Some(prompt_editor) = assist.prompt_editor.as_ref().cloned() {
@@ -407,7 +407,7 @@ impl TerminalInlineAssist {
         include_context: bool,
         prompt_editor: View<PromptEditor>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window, cx: &mut gpui::AppContext,
     ) -> Self {
         let codegen = prompt_editor.read(cx).codegen.clone();
         Self {
@@ -737,7 +737,7 @@ impl PromptEditor {
         this
     }
 
-    fn placeholder_text(cx: &WindowContext) -> String {
+    fn placeholder_text(window: &Window, cx: &AppContext) -> String {
         let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();

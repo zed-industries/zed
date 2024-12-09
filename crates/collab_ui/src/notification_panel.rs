@@ -6,11 +6,11 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, img, list, px, AnyElement, AppContext, AsyncWindowContext, CursorStyle,
+    actions, div, img, list, px, AnyElement, AppContext, Asy CursorStyle,
     DismissEvent, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     IntoElement, ListAlignment, ListScrollEvent, ListState, Model, ParentElement, Render,
     StatefulInteractiveElement, Styled, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -168,7 +168,8 @@ impl NotificationPanel {
 
     pub fn load(
         workspace: WeakView<Workspace>,
-        cx: AsyncWindowContext,
+        window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
@@ -662,7 +663,7 @@ impl Panel for NotificationPanel {
         "NotificationPanel"
     }
 
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, window: &gpui::Window, cx: &gpui::AppContext) -> DockPosition {
         NotificationPanelSettings::get_global(cx).dock
     }
 
@@ -678,7 +679,7 @@ impl Panel for NotificationPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, window: &gpui::Window, cx: &gpui::AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| NotificationPanelSettings::get_global(cx).default_width)
     }
@@ -702,7 +703,7 @@ impl Panel for NotificationPanel {
         }
     }
 
-    fn icon(&self, cx: &gpui::WindowContext) -> Option<IconName> {
+    fn icon(&self, window: &gpui::Window, cx: &gpui::AppContext) -> Option<IconName> {
         let show_button = NotificationPanelSettings::get_global(cx).button;
         if !show_button {
             return None;
@@ -715,11 +716,11 @@ impl Panel for NotificationPanel {
         Some(IconName::BellDot)
     }
 
-    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, cx: &AppContext) -> Option<&'static str> {
         Some("Notification Panel")
     }
 
-    fn icon_label(&self, cx: &WindowContext) -> Option<String> {
+    fn icon_label(&self, window: &Window, cx: &AppContext) -> Option<String> {
         let count = self.notification_store.read(cx).unread_notification_count();
         if count == 0 {
             None

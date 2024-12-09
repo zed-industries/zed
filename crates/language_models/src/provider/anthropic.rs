@@ -228,7 +228,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+    fn configuration_view(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> AnyView {
         cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
             .into()
     }

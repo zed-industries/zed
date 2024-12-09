@@ -4,7 +4,7 @@ use base64::{
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
     Engine as _,
 };
-use gpui::{img, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, WindowContext};
+use gpui::{img, ClipboardItem, Image, ImageFormat, Pixels, RenderImage};
 use std::sync::Arc;
 use ui::{div, prelude::*, IntoElement, Styled};
 
@@ -92,11 +92,11 @@ impl Render for ImageView {
 }
 
 impl OutputContent for ImageView {
-    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &Window, cx: &AppContext) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_image(self.clipboard_image.as_ref()))
     }
 
-    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+    fn has_clipboard_content(&self, _window: &Window, cx: &AppContext) -> bool {
         true
     }
 }

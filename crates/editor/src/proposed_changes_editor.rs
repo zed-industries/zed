@@ -288,11 +288,11 @@ impl EventEmitter<EditorEvent> for ProposedChangesEditor {}
 impl Item for ProposedChangesEditor {
     type Event = EditorEvent;
 
-    fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, window: &Window, _cx: &ui::AppContext) -> Option<Icon> {
         Some(Icon::new(IconName::Diff))
     }
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some(self.title.clone())
     }
 

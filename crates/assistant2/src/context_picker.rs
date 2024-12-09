@@ -51,7 +51,7 @@ impl PickerDelegate for ContextPickerDelegate {
         cx.notify();
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Select a context source…".into()
     }
 
@@ -150,7 +150,7 @@ impl PickerDelegate for ContextPickerDelegate {
 }
 
 impl<T: PopoverTrigger> RenderOnce for ContextPicker<T> {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let entries = vec![
             ContextPickerEntry {
                 name: "directory".into(),

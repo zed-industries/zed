@@ -8,7 +8,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Model, View, WeakView};
+use gpui::{AsyncA, View, WeakView};
 use project::Project;
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
@@ -333,7 +333,8 @@ impl SerializedPaneGroup {
         project: &Model<Project>,
         workspace_id: WorkspaceId,
         workspace: WeakView<Workspace>,
-        cx: &mut AsyncWindowContext,
+        window_handle: AnyWindowHandle,
+        cx: &mut AsyncAppContext,
     ) -> Option<(Member, Option<View<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
         match self {
             SerializedPaneGroup::Group {
@@ -422,7 +423,8 @@ impl SerializedPane {
         pane: &WeakView<Pane>,
         workspace_id: WorkspaceId,
         workspace: WeakView<Workspace>,
-        cx: &mut AsyncWindowContext,
+        window_handle: AnyWindowHandle,
+        cx: &mut AsyncAppContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut item_tasks = Vec::new();
         let mut active_item_index = None;

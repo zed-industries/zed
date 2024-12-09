@@ -8,7 +8,7 @@ use gpui::{
     div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
     ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length,
     Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, View,
-    WeakView, WindowContext,
+    WeakView,
 };
 use settings::Settings;
 use std::{
@@ -25,7 +25,8 @@ use ui::{
 };
 use workspace::Workspace;
 
-type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowContext)>>;
+type CheckboxClickedCallback =
+    Arc<Box<dyn Fn(bool, Range<usize>, &mut gpui::Window, &mut gpui::AppContext)>>;
 
 #[derive(Clone)]
 pub struct RenderContext {
@@ -45,7 +46,11 @@ pub struct RenderContext {
 }
 
 impl RenderContext {
-    pub fn new(workspace: Option<WeakView<Workspace>>, cx: &WindowContext) -> RenderContext {
+    pub fn new(
+        workspace: Option<WeakView<Workspace>>,
+        window: &Window,
+        cx: &AppContext,
+    ) -> RenderContext {
         let theme = cx.theme().clone();
 
         let settings = ThemeSettings::get_global(cx);
@@ -72,7 +77,7 @@ impl RenderContext {
 
     pub fn with_checkbox_clicked_callback(
         mut self,
-        callback: impl Fn(bool, Range<usize>, &mut WindowContext) + 'static,
+        callback: impl Fn(bool, Range<usize>, &mut gpui::Window, &mut gpui::AppContext) + 'static,
     ) -> Self {
         self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
         self
@@ -109,7 +114,8 @@ impl RenderContext {
 pub fn render_parsed_markdown(
     parsed: &ParsedMarkdown,
     workspace: Option<WeakView<Workspace>>,
-    cx: &WindowContext,
+    window: &Window,
+    cx: &AppContext,
 ) -> Vec<AnyElement> {
     let mut cx = RenderContext::new(workspace, cx);
     let mut elements = Vec::new();
@@ -567,7 +573,8 @@ impl InteractiveMarkdownElementTooltip {
     pub fn new(
         tooltip_text: Option<String>,
         action_text: &str,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> View<Self> {
         let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
 

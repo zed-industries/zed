@@ -27,8 +27,8 @@ enum SlashCommandEntry {
     Info(SlashCommandInfo),
     Advert {
         name: SharedString,
-        renderer: fn(&mut WindowContext<'_>) -> AnyElement,
-        on_confirm: fn(&mut WindowContext<'_>),
+        renderer: fn(&mut gpui::Window, &mut gpui::AppContext) -> AnyElement,
+        on_confirm: fn(&mut gpui::Window, &mut gpui::AppContext),
     },
 }
 
@@ -78,7 +78,7 @@ impl PickerDelegate for SlashCommandDelegate {
         cx.notify();
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Select a command...".into()
     }
 
@@ -237,7 +237,7 @@ impl PickerDelegate for SlashCommandDelegate {
 }
 
 impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let all_models = self
             .working_set
             .featured_command_names(cx)

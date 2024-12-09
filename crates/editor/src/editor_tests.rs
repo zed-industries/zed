@@ -667,7 +667,11 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             let handle = cx.view();
             editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(handle)));
 
-            fn pop_history(editor: &mut Editor, cx: &mut WindowContext) -> Option<NavigationEntry> {
+            fn pop_history(
+                editor: &mut Editor,
+                window: &mut gpui::Window,
+                cx: &mut gpui::AppContext,
+            ) -> Option<NavigationEntry> {
                 editor.nav_history.as_mut().unwrap().pop_backward(cx)
             }
 
@@ -13519,7 +13523,7 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
             struct RenderArgs {
                 row: MultiBufferRow,
                 folded: bool,
-                callback: Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
+                callback: Arc<dyn Fn(bool, &mut gpui::Window, &mut gpui::AppContext) + Send + Sync>,
             }
 
             let crease = Crease::inline(

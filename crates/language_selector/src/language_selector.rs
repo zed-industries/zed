@@ -181,7 +181,7 @@ impl LanguageSelectorDelegate {
 impl PickerDelegate for LanguageSelectorDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Select a language…".into()
     }
 

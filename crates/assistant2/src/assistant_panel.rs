@@ -4,9 +4,9 @@ use anyhow::Result;
 use assistant_tool::ToolWorkingSet;
 use client::zed_urls;
 use gpui::{
-    prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, EventEmitter,
+    prelude::*, px, svg, Action, AnyElement, AppContext, Asy EventEmitter,
     FocusHandle, FocusableView, FontWeight, Model, Pixels, Task, View, ViewContext, WeakView,
-    WindowContext,
+
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
@@ -54,7 +54,8 @@ pub struct AssistantPanel {
 impl AssistantPanel {
     pub fn load(
         workspace: WeakView<Workspace>,
-        cx: AsyncWindowContext,
+        window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let tools = Arc::new(ToolWorkingSet::default());
@@ -173,7 +174,7 @@ impl Panel for AssistantPanel {
         "AssistantPanel2"
     }
 
-    fn position(&self, _cx: &WindowContext) -> DockPosition {
+    fn position(&self, _window: &Window, cx: &AppContext) -> DockPosition {
         DockPosition::Right
     }
 
@@ -183,7 +184,7 @@ impl Panel for AssistantPanel {
 
     fn set_position(&mut self, _position: DockPosition, _cx: &mut ViewContext<Self>) {}
 
-    fn size(&self, _cx: &WindowContext) -> Pixels {
+    fn size(&self, _window: &Window, cx: &AppContext) -> Pixels {
         px(640.)
     }
 
@@ -195,11 +196,11 @@ impl Panel for AssistantPanel {
         Some(proto::PanelId::AssistantPanel)
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
+    fn icon(&self, _window: &Window, cx: &AppContext) -> Option<IconName> {
         Some(IconName::ZedAssistant)
     }
 
-    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, cx: &AppContext) -> Option<&'static str> {
         Some("Assistant Panel")
     }
 

@@ -7,7 +7,7 @@ use language::LanguageRegistry;
 use paths::config_dir;
 use picker::{Picker, PickerDelegate};
 use std::{borrow::Borrow, fs, sync::Arc};
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, WindowContext};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, ModalView, Workspace};
 
@@ -113,7 +113,7 @@ impl ScopeSelectorDelegate {
 impl PickerDelegate for ScopeSelectorDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _: &mut gpui::Window, _: &mut gpui::AppContext) -> Arc<str> {
         "Select snippet scope...".into()
     }
 

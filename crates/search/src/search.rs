@@ -107,7 +107,7 @@ impl SearchOptions {
         &self,
         active: bool,
         focus_handle: FocusHandle,
-        action: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+        action: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::AppContext) + 'static,
     ) -> impl IntoElement {
         IconButton::new(self.label(), self.icon())
             .on_click(action)
@@ -122,7 +122,7 @@ impl SearchOptions {
     }
 }
 
-pub(crate) fn show_no_more_matches(cx: &mut WindowContext) {
+pub(crate) fn show_no_more_matches(window: &mut gpui::Window, cx: &mut gpui::AppContext) {
     cx.defer(|cx| {
         struct NotifType();
         let notification_id = NotificationId::unique::<NotifType>();

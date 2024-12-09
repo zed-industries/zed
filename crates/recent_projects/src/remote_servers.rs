@@ -61,7 +61,7 @@ struct CreateRemoteServer {
 }
 
 impl CreateRemoteServer {
-    fn new(cx: &mut WindowContext<'_>) -> Self {
+    fn new(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Self {
         let address_editor = cx.new_view(Editor::single_line);
         address_editor.update(cx, |this, cx| {
             this.focus_handle(cx).focus(cx);
@@ -88,7 +88,7 @@ struct EditNicknameState {
 }
 
 impl EditNicknameState {
-    fn new(index: usize, cx: &mut WindowContext<'_>) -> Self {
+    fn new(index: usize, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Self {
         let this = Self {
             index,
             editor: cx.new_view(Editor::single_line),
@@ -264,7 +264,7 @@ struct DefaultState {
     servers: Vec<ProjectEntry>,
 }
 impl DefaultState {
-    fn new(cx: &WindowContext<'_>) -> Self {
+    fn new(window: &Window, cx: &AppContext) -> Self {
         let handle = ScrollHandle::new();
         let scrollbar = ScrollbarState::new(handle.clone());
         let add_new_server = NavigableEntry::new(&handle, cx);
@@ -309,7 +309,7 @@ enum Mode {
 }
 
 impl Mode {
-    fn default_mode(cx: &WindowContext<'_>) -> Self {
+    fn default_mode(window: &Window, cx: &AppContext) -> Self {
         Self::Default(DefaultState::new(cx))
     }
 }
@@ -321,7 +321,7 @@ impl RemoteServerProjects {
         });
     }
 
-    pub fn open(workspace: View<Workspace>, cx: &mut WindowContext) {
+    pub fn open(workspace: View<Workspace>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         workspace.update(cx, |workspace, cx| {
             let handle = cx.view().downgrade();
             workspace.toggle_modal(cx, |cx| Self::new(cx, handle))
@@ -1003,7 +1003,8 @@ impl RemoteServerProjects {
                             fn callback(
                                 workspace: WeakView<Workspace>,
                                 connection_string: SharedString,
-                                cx: &mut WindowContext<'_>,
+                                window: &mut gpui::Window,
+                                cx: &mut gpui::AppContext,
                             ) {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     connection_string.to_string(),
@@ -1069,7 +1070,8 @@ impl RemoteServerProjects {
                                 remote_servers: View<RemoteServerProjects>,
                                 index: usize,
                                 connection_string: SharedString,
-                                cx: &mut WindowContext<'_>,
+                                window: &mut gpui::Window,
+                                cx: &mut gpui::AppContext,
                             ) {
                                 let prompt_message =
                                     format!("Remove server `{}`?", connection_string);
@@ -1340,7 +1342,11 @@ impl RemoteServerProjects {
     }
 }
 
-fn get_text(element: &View<Editor>, cx: &mut WindowContext) -> String {
+fn get_text(
+    element: &View<Editor>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) -> String {
     element.read(cx).text(cx).trim().to_string()
 }
 

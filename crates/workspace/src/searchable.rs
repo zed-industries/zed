@@ -2,8 +2,7 @@ use std::{any::Any, sync::Arc};
 
 use any_vec::AnyVec;
 use gpui::{
-    AnyView, AnyWeakView, AppContext, EventEmitter, Subscription, Task, View, ViewContext,
-    WeakView, WindowContext,
+    AnyView, AnyWeakView, AppContext, EventEmitter, Subscription, Task, View, ViewContext, WeakView,
 };
 use project::search::SearchQuery;
 
@@ -65,7 +64,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
 
     fn toggle_filtered_search_ranges(&mut self, _enabled: bool, _cx: &mut ViewContext<Self>) {}
 
-    fn get_matches(&self, _: &mut WindowContext) -> Vec<Self::Match> {
+    fn get_matches(&self, _: &mut gpui::Window, _: &mut gpui::AppContext) -> Vec<Self::Match> {
         Vec::new()
     }
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>);
@@ -122,25 +121,44 @@ pub trait SearchableItemHandle: ItemHandle {
     fn supported_options(&self) -> SearchOptions;
     fn subscribe_to_search_events(
         &self,
-        cx: &mut WindowContext,
-        handler: Box<dyn Fn(&SearchEvent, &mut WindowContext) + Send>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+        handler: Box<dyn Fn(&SearchEvent, &mut gpui::Window, &mut gpui::AppContext) + Send>,
     ) -> Subscription;
-    fn clear_matches(&self, cx: &mut WindowContext);
-    fn update_matches(&self, matches: &AnyVec<dyn Send>, cx: &mut WindowContext);
-    fn query_suggestion(&self, cx: &mut WindowContext) -> String;
-    fn activate_match(&self, index: usize, matches: &AnyVec<dyn Send>, cx: &mut WindowContext);
-    fn select_matches(&self, matches: &AnyVec<dyn Send>, cx: &mut WindowContext);
+    fn clear_matches(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext);
+    fn update_matches(
+        &self,
+        matches: &AnyVec<dyn Send>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    );
+    fn query_suggestion(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> String;
+    fn activate_match(
+        &self,
+        index: usize,
+        matches: &AnyVec<dyn Send>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    );
+    fn select_matches(
+        &self,
+        matches: &AnyVec<dyn Send>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    );
     fn replace(
         &self,
         _: any_vec::element::ElementRef<'_, dyn Send>,
         _: &SearchQuery,
-        _: &mut WindowContext,
+        _: &mut gpui::Window,
+        _: &mut gpui::AppContext,
     );
     fn replace_all(
         &self,
         matches: &mut dyn Iterator<Item = any_vec::element::ElementRef<'_, dyn Send>>,
         query: &SearchQuery,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     );
     fn match_index_for_direction(
         &self,
@@ -148,21 +166,34 @@ pub trait SearchableItemHandle: ItemHandle {
         current_index: usize,
         direction: Direction,
         count: usize,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> usize;
     fn find_matches(
         &self,
         query: Arc<SearchQuery>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<AnyVec<dyn Send>>;
     fn active_match_index(
         &self,
         matches: &AnyVec<dyn Send>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<usize>;
-    fn search_bar_visibility_changed(&self, visible: bool, cx: &mut WindowContext);
+    fn search_bar_visibility_changed(
+        &self,
+        visible: bool,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    );
 
-    fn toggle_filtered_search_ranges(&mut self, enabled: bool, cx: &mut WindowContext);
+    fn toggle_filtered_search_ranges(
+        &mut self,
+        enabled: bool,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    );
 }
 
 impl<T: SearchableItem> SearchableItemHandle for View<T> {
@@ -180,30 +211,47 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
 
     fn subscribe_to_search_events(
         &self,
-        cx: &mut WindowContext,
-        handler: Box<dyn Fn(&SearchEvent, &mut WindowContext) + Send>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+        handler: Box<dyn Fn(&SearchEvent, &mut gpui::Window, &mut gpui::AppContext) + Send>,
     ) -> Subscription {
         cx.subscribe(self, move |_, event: &SearchEvent, cx| handler(event, cx))
     }
 
-    fn clear_matches(&self, cx: &mut WindowContext) {
+    fn clear_matches(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         self.update(cx, |this, cx| this.clear_matches(cx));
     }
-    fn update_matches(&self, matches: &AnyVec<dyn Send>, cx: &mut WindowContext) {
+    fn update_matches(
+        &self,
+        matches: &AnyVec<dyn Send>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| this.update_matches(matches.as_slice(), cx));
     }
-    fn query_suggestion(&self, cx: &mut WindowContext) -> String {
+    fn query_suggestion(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> String {
         self.update(cx, |this, cx| this.query_suggestion(cx))
     }
-    fn activate_match(&self, index: usize, matches: &AnyVec<dyn Send>, cx: &mut WindowContext) {
+    fn activate_match(
+        &self,
+        index: usize,
+        matches: &AnyVec<dyn Send>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
             this.activate_match(index, matches.as_slice(), cx)
         });
     }
 
-    fn select_matches(&self, matches: &AnyVec<dyn Send>, cx: &mut WindowContext) {
+    fn select_matches(
+        &self,
+        matches: &AnyVec<dyn Send>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| this.select_matches(matches.as_slice(), cx));
     }
@@ -214,7 +262,8 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         current_index: usize,
         direction: Direction,
         count: usize,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> usize {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
@@ -224,7 +273,8 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
     fn find_matches(
         &self,
         query: Arc<SearchQuery>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<AnyVec<dyn Send>> {
         let matches = self.update(cx, |this, cx| this.find_matches(query, cx));
         cx.spawn(|_| async {
@@ -242,7 +292,8 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
     fn active_match_index(
         &self,
         matches: &AnyVec<dyn Send>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<usize> {
         let matches = matches.downcast_ref()?;
         self.update(cx, |this, cx| {
@@ -254,7 +305,8 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         &self,
         mat: any_vec::element::ElementRef<'_, dyn Send>,
         query: &SearchQuery,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let mat = mat.downcast_ref().unwrap();
         self.update(cx, |this, cx| this.replace(mat, query, cx))
@@ -264,20 +316,31 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         &self,
         matches: &mut dyn Iterator<Item = any_vec::element::ElementRef<'_, dyn Send>>,
         query: &SearchQuery,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         self.update(cx, |this, cx| {
             this.replace_all(&mut matches.map(|m| m.downcast_ref().unwrap()), query, cx);
         })
     }
 
-    fn search_bar_visibility_changed(&self, visible: bool, cx: &mut WindowContext) {
+    fn search_bar_visibility_changed(
+        &self,
+        visible: bool,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         self.update(cx, |this, cx| {
             this.search_bar_visibility_changed(visible, cx)
         });
     }
 
-    fn toggle_filtered_search_ranges(&mut self, enabled: bool, cx: &mut WindowContext) {
+    fn toggle_filtered_search_ranges(
+        &mut self,
+        enabled: bool,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         self.update(cx, |this, cx| {
             this.toggle_filtered_search_ranges(enabled, cx)
         });

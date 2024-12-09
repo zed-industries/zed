@@ -7,7 +7,7 @@ use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, svg, Action, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -362,7 +362,7 @@ impl WelcomePage {
         this
     }
 
-    fn section_label(&self, cx: &WindowContext) -> Div {
+    fn section_label(&self, window: &Window, cx: &AppContext) -> Div {
         div()
             .pl_1()
             .font_buffer(cx)
@@ -402,7 +402,7 @@ impl FocusableView for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some("Welcome".into())
     }
 

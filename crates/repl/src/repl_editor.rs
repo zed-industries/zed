@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use editor::Editor;
-use gpui::{prelude::*, Entity, View, WeakView, WindowContext};
+use gpui::{prelude::*, Entity, View, WeakView};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
 
@@ -18,7 +18,8 @@ use crate::{
 pub fn assign_kernelspec(
     kernel_specification: KernelSpecification,
     weak_editor: WeakView<Editor>,
-    cx: &mut WindowContext,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
 ) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
@@ -72,7 +73,12 @@ pub fn assign_kernelspec(
     Ok(())
 }
 
-pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) -> Result<()> {
+pub fn run(
+    editor: WeakView<Editor>,
+    move_down: bool,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
         return Ok(());
@@ -169,7 +175,8 @@ pub enum SessionSupport {
 
 pub fn worktree_id_for_editor(
     editor: WeakView<Editor>,
-    cx: &mut WindowContext,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
 ) -> Option<WorktreeId> {
     editor.upgrade().and_then(|editor| {
         editor
@@ -183,7 +190,11 @@ pub fn worktree_id_for_editor(
     })
 }
 
-pub fn session(editor: WeakView<Editor>, cx: &mut WindowContext) -> SessionSupport {
+pub fn session(
+    editor: WeakView<Editor>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) -> SessionSupport {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
 
@@ -217,7 +228,11 @@ pub fn session(editor: WeakView<Editor>, cx: &mut WindowContext) -> SessionSuppo
     }
 }
 
-pub fn clear_outputs(editor: WeakView<Editor>, cx: &mut WindowContext) {
+pub fn clear_outputs(
+    editor: WeakView<Editor>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
@@ -229,7 +244,7 @@ pub fn clear_outputs(editor: WeakView<Editor>, cx: &mut WindowContext) {
     });
 }
 
-pub fn interrupt(editor: WeakView<Editor>, cx: &mut WindowContext) {
+pub fn interrupt(editor: WeakView<Editor>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
@@ -242,7 +257,7 @@ pub fn interrupt(editor: WeakView<Editor>, cx: &mut WindowContext) {
     });
 }
 
-pub fn shutdown(editor: WeakView<Editor>, cx: &mut WindowContext) {
+pub fn shutdown(editor: WeakView<Editor>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
@@ -255,7 +270,7 @@ pub fn shutdown(editor: WeakView<Editor>, cx: &mut WindowContext) {
     });
 }
 
-pub fn restart(editor: WeakView<Editor>, cx: &mut WindowContext) {
+pub fn restart(editor: WeakView<Editor>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
     let Some(editor) = editor.upgrade() else {
         return;
     };
@@ -452,7 +467,11 @@ fn language_supported(language: &Arc<Language>) -> bool {
     }
 }
 
-fn get_language(editor: WeakView<Editor>, cx: &mut WindowContext) -> Option<Arc<Language>> {
+fn get_language(
+    editor: WeakView<Editor>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) -> Option<Arc<Language>> {
     editor
         .update(cx, |editor, cx| {
             let selection = editor.selections.newest::<usize>(cx);

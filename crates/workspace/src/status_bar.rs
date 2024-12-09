@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
     AnyView, Decorations, IntoElement, ParentElement, Render, Styled, Subscription, View,
-    ViewContext, WindowContext,
+    ViewContext,
 };
 use std::any::TypeId;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
@@ -21,7 +21,8 @@ trait StatusItemViewHandle: Send {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     );
     fn item_type(&self) -> TypeId;
 }
@@ -187,7 +188,8 @@ impl<T: StatusItemView> StatusItemViewHandle for View<T> {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, cx)

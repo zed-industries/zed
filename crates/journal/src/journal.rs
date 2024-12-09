@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::Editor;
-use gpui::{actions, AppContext, ViewContext, WindowContext};
+use gpui::{actions, AppContext, ViewContext};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -68,7 +68,11 @@ pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
     .detach();
 }
 
-pub fn new_journal_entry(workspace: &Workspace, cx: &mut WindowContext) {
+pub fn new_journal_entry(
+    workspace: &Workspace,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) {
     let settings = JournalSettings::get_global(cx);
     let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
         Some(journal_dir) => journal_dir,

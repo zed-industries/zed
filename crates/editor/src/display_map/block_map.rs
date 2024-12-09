@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AnyElement, EntityId, Pixels, WindowContext};
+use gpui::{AnyElement, EntityId, Pixels};
 use language::{Chunk, Patch, Point};
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, MultiBufferRow, MultiBufferSnapshot, ToOffset, ToPoint as _,
@@ -22,7 +22,7 @@ use std::{
 };
 use sum_tree::{Bias, SumTree, Summary, TreeMap};
 use text::Edit;
-use ui::ElementId;
+use ui::{AppContext, ElementId};
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 const BULLETS: &str = "********************************************************************************************************************************";
@@ -258,7 +258,8 @@ pub enum BlockStyle {
 }
 
 pub struct BlockContext<'a, 'b> {
-    pub context: &'b mut WindowContext<'a>,
+    pub window: &'a mut Window,
+    pub context: &'b mut AppContext,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
     pub gutter_dimensions: &'b GutterDimensions,
@@ -1686,8 +1687,8 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
     }
 }
 
-impl<'a> Deref for BlockContext<'a, '_> {
-    type Target = WindowContext<'a>;
+impl Deref for BlockContext<'_, '_> {
+    type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
         self.context

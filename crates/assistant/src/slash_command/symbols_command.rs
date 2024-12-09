@@ -8,7 +8,7 @@ use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::Arc;
 use std::{path::Path, sync::atomic::AtomicBool};
-use ui::{IconName, WindowContext};
+use ui::IconName;
 use workspace::Workspace;
 
 pub(crate) struct OutlineSlashCommand;
@@ -35,7 +35,8 @@ impl SlashCommand for OutlineSlashCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
@@ -51,7 +52,8 @@ impl SlashCommand for OutlineSlashCommand {
         _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<SlashCommandResult> {
         let output = workspace.update(cx, |workspace, cx| {
             let Some(active_item) = workspace.active_item(cx) else {

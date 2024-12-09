@@ -87,7 +87,11 @@ fn cell_content(row: &Value, field: &str) -> String {
 const TABLE_Y_PADDING_MULTIPLE: f32 = 0.5;
 
 impl TableView {
-    pub fn new(table: &TabularDataResource, cx: &mut WindowContext) -> Self {
+    pub fn new(
+        table: &TabularDataResource,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Self {
         let mut widths = Vec::with_capacity(table.schema.fields.len());
 
         let text_system = cx.text_system();
@@ -199,7 +203,8 @@ impl TableView {
         schema: &TableSchema,
         is_header: bool,
         row: &Value,
-        cx: &WindowContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> AnyElement {
         let theme = cx.theme();
 
@@ -285,11 +290,11 @@ impl Render for TableView {
 }
 
 impl OutputContent for TableView {
-    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &Window, cx: &AppContext) -> Option<ClipboardItem> {
         Some(self.cached_clipboard_content.clone())
     }
 
-    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+    fn has_clipboard_content(&self, _window: &Window, cx: &AppContext) -> bool {
         true
     }
 }

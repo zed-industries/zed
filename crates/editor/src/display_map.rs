@@ -66,7 +66,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::LineIndent;
-use ui::{px, SharedString, WindowContext};
+use ui::{px, SharedString};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -76,7 +76,8 @@ pub enum FoldStatus {
     Foldable,
 }
 
-pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
+pub type RenderFoldToggle =
+    Arc<dyn Fn(FoldStatus, &mut gpui::Window, &mut gpui::AppContext) -> AnyElement>;
 
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;

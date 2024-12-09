@@ -2,7 +2,6 @@ use gpui::{
     div, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
     IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Refineable, Render,
     RenderablePromptHandle, Styled, TextStyleRefinement, View, ViewContext, VisualContext,
-    WindowContext,
 };
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
@@ -24,7 +23,8 @@ pub fn fallback_prompt_renderer(
     detail: Option<&str>,
     actions: &[&str],
     handle: PromptHandle,
-    cx: &mut WindowContext,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
 ) -> RenderablePromptHandle {
     let renderer = cx.new_view({
         |cx| FallbackPromptRenderer {

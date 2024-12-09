@@ -8,7 +8,7 @@ use settings::get_key_equivalents;
 use ui::{
     div, h_flex, px, v_flex, ButtonCommon, Clickable, FluentBuilder, InteractiveElement, Label,
     LabelCommon, LabelSize, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    ViewContext, VisualContext, WindowContext,
+    ViewContext, VisualContext,
 };
 use ui::{Button, ButtonStyle};
 use workspace::Item;
@@ -145,7 +145,7 @@ impl Item for KeyContextView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some("Keyboard Context".into())
     }
 

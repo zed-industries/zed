@@ -4,7 +4,7 @@ use git::repository::Branch;
 use gpui::{
     rems, AnyElement, AppContext, AsyncAppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
@@ -133,7 +133,7 @@ impl BranchListDelegate {
 impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Select branch...".into()
     }
 

@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ObjectFit, ParentElement,
-    Render, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use persistence::IMAGE_VIEWER;
 use theme::Theme;
@@ -93,7 +93,12 @@ impl Item for ImageView {
         Some(file_path.into())
     }
 
-    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        params: TabContentParams,
+        window: &Window,
+        cx: &AppContext,
+    ) -> AnyElement {
         let path = self.image_item.read(cx).file.path();
         let title = path
             .file_name()
@@ -107,7 +112,7 @@ impl Item for ImageView {
             .into_any_element()
     }
 
-    fn tab_icon(&self, cx: &WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
         let path = self.image_item.read(cx).path();
         ItemSettings::get_global(cx)
             .file_icons
@@ -172,7 +177,8 @@ impl SerializableItem for ImageView {
         _workspace: WeakView<Workspace>,
         workspace_id: WorkspaceId,
         item_id: ItemId,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<gpui::Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let image_path = IMAGE_VIEWER
@@ -203,7 +209,8 @@ impl SerializableItem for ImageView {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<ItemId>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<gpui::Result<()>> {
         cx.spawn(|_| IMAGE_VIEWER.delete_unloaded_items(workspace_id, alive_items))
     }
@@ -242,7 +249,10 @@ impl FocusableView for ImageView {
 impl Render for ImageView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let image = self.image_item.read(cx).image.clone();
-        let checkered_background = |bounds: Bounds<Pixels>, _, cx: &mut WindowContext| {
+        let checkered_background = |bounds: Bounds<Pixels>,
+                                    _,
+                                    window: &mut gpui::Window,
+                                    cx: &mut gpui::AppContext| {
             let square_size = 32.0;
 
             let start_y = bounds.origin.y.0;

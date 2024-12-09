@@ -6,7 +6,7 @@ use crate::{
     Hover, RangeToAnchorExt,
 };
 use gpui::{
-    div, px, AnyElement, AsyncWindowContext, FontWeight, Hsla, InteractiveElement, IntoElement,
+    div, px, AnyElement, Asy FontWeight, Hsla, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Pixels, ScrollHandle, Size, Stateful, StatefulInteractiveElement,
     StyleRefinement, Styled, Task, TextStyleRefinement, View, ViewContext,
 };
@@ -522,7 +522,8 @@ async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-    cx: &mut AsyncWindowContext,
+    window_handle: AnyWindowHandle,
+    cx: &mut AsyncAppContext,
 ) -> Option<View<Markdown>> {
     let fallback_language_name = if let Some(ref l) = language {
         let l = Arc::clone(l);

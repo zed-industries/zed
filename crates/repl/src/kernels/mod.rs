@@ -6,7 +6,7 @@ use futures::{
     future::Shared,
     stream,
 };
-use gpui::{AppContext, Model, Task, WindowContext};
+use gpui::{AppContext, Model, Task};
 use language::LanguageName;
 pub use native_kernel::*;
 
@@ -148,7 +148,11 @@ pub trait RunningKernel: Send + Debug {
     fn set_execution_state(&mut self, state: ExecutionState);
     fn kernel_info(&self) -> Option<&KernelInfoReply>;
     fn set_kernel_info(&mut self, info: KernelInfoReply);
-    fn force_shutdown(&mut self, cx: &mut WindowContext) -> Task<anyhow::Result<()>>;
+    fn force_shutdown(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Task<anyhow::Result<()>>;
 }
 
 #[derive(Debug, Clone)]

@@ -11,9 +11,9 @@ use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::repository::GitFileStatus;
 use gpui::{
-    point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
+    point, AnyElement, AppContext, Asy Context, Entity, EntityId, EventEmitter,
     IntoElement, Model, ParentElement, Pixels, SharedString, Styled, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    VisualContext, WeakView,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
@@ -61,7 +61,8 @@ impl FollowableItem for Editor {
         workspace: View<Workspace>,
         remote_id: ViewId,
         state: &mut Option<proto::view::Variant>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<Task<Result<View<Self>>>> {
         let project = workspace.read(cx).project().to_owned();
         let Some(proto::view::Variant::Editor(_)) = state else {
@@ -170,7 +171,7 @@ impl FollowableItem for Editor {
         cx.notify();
     }
 
-    fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant> {
+    fn to_state_proto(&self, window: &Window, cx: &AppContext) -> Option<proto::view::Variant> {
         let buffer = self.buffer.read(cx);
         if buffer
             .as_singleton()
@@ -240,7 +241,8 @@ impl FollowableItem for Editor {
         &self,
         event: &EditorEvent,
         update: &mut Option<proto::update_view::Variant>,
-        cx: &WindowContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> bool {
         let update =
             update.get_or_insert_with(|| proto::update_view::Variant::Editor(Default::default()));
@@ -313,11 +315,11 @@ impl FollowableItem for Editor {
         })
     }
 
-    fn is_project_item(&self, _cx: &WindowContext) -> bool {
+    fn is_project_item(&self, _window: &Window, cx: &AppContext) -> bool {
         true
     }
 
-    fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<Dedup> {
+    fn dedup(&self, existing: &Self, window: &Window, cx: &AppContext) -> Option<Dedup> {
         let self_singleton = self.buffer.read(cx).as_singleton()?;
         let other_singleton = existing.buffer.read(cx).as_singleton()?;
         if self_singleton == other_singleton {
@@ -332,7 +334,8 @@ async fn update_editor_from_message(
     this: WeakView<Editor>,
     project: Model<Project>,
     message: proto::update_view::Editor,
-    cx: &mut AsyncWindowContext,
+    window_handle: AnyWindowHandle,
+    cx: &mut AsyncAppContext,
 ) -> Result<()> {
     // Open all of the buffers of which excerpts were added to the editor.
     let inserted_excerpt_buffer_ids = message
@@ -595,7 +598,7 @@ impl Item for Editor {
         Some(path.to_string_lossy().to_string().into())
     }
 
-    fn tab_icon(&self, cx: &WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
         ItemSettings::get_global(cx)
             .file_icons
             .then(|| {
@@ -609,7 +612,12 @@ impl Item for Editor {
             .map(Icon::from_path)
     }
 
-    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        params: TabContentParams,
+        window: &Window,
+        cx: &AppContext,
+    ) -> AnyElement {
         let label_color = if ItemSettings::get_global(cx).git_status {
             self.buffer()
                 .read(cx)
@@ -944,7 +952,8 @@ impl SerializableItem for Editor {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<ItemId>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<()>> {
         cx.spawn(|_| DB.delete_unloaded_items(workspace_id, alive_items))
     }
@@ -954,7 +963,8 @@ impl SerializableItem for Editor {
         workspace: WeakView<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: ItemId,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<View<Self>>> {
         let serialized_editor = match DB
             .get_serialized_editor(item_id, workspace_id)
@@ -1202,7 +1212,7 @@ pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
-    fn get_matches(&self, _: &mut WindowContext) -> Vec<Range<Anchor>> {
+    fn get_matches(&self, _: &mut gpui::Window, _: &mut gpui::AppContext) -> Vec<Range<Anchor>> {
         self.background_highlights
             .get(&TypeId::of::<BufferSearchHighlights>())
             .map_or(Vec::new(), |(_color, ranges)| {

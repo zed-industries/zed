@@ -335,7 +335,7 @@ impl HitboxId {
 }
 
 /// A rectangular region that potentially blocks hitboxes inserted prior.
-/// See [WindowContext::insert_hitbox] for more details.
+/// See [Window::insert_hitbox] for more details.
 #[derive(Clone, Debug, Deref)]
 pub struct Hitbox {
     /// A unique identifier for the hitbox.
@@ -3964,7 +3964,7 @@ impl From<(&'static str, u32)> for ElementId {
 }
 
 /// A rectangle to be rendered in the window at the given position and size.
-/// Passed as an argument [`WindowContext::paint_quad`].
+/// Passed as an argument [`Window::paint_quad`].
 #[derive(Clone)]
 pub struct PaintQuad {
     /// The bounds of the quad within the window.

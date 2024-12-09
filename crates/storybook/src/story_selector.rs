@@ -43,7 +43,7 @@ pub enum ComponentStory {
 }
 
 impl ComponentStory {
-    pub fn story(&self, cx: &mut WindowContext) -> AnyView {
+    pub fn story(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> AnyView {
         match self {
             Self::ApplicationMenu => cx
                 .new_view(|cx| title_bar::ApplicationMenuStory::new(cx))
@@ -111,7 +111,7 @@ impl FromStr for StorySelector {
 }
 
 impl StorySelector {
-    pub fn story(&self, cx: &mut WindowContext) -> AnyView {
+    pub fn story(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> AnyView {
         match self {
             Self::Component(component_story) => component_story.story(cx),
             Self::KitchenSink => KitchenSinkStory::view(cx).into(),

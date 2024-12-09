@@ -26,7 +26,7 @@ use futures::{
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
     FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -114,7 +114,12 @@ impl InlineAssistant {
         }
     }
 
-    pub fn register_workspace(&mut self, workspace: &View<Workspace>, cx: &mut WindowContext) {
+    pub fn register_workspace(
+        &mut self,
+        workspace: &View<Workspace>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         cx.subscribe(workspace, |workspace, event, cx| {
             Self::update_global(cx, |this, cx| {
                 this.handle_workspace_event(workspace, event, cx)
@@ -142,7 +147,8 @@ impl InlineAssistant {
         &mut self,
         workspace: View<Workspace>,
         event: &workspace::Event,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         match event {
             workspace::Event::UserSavedItem { item, .. } => {
@@ -169,7 +175,8 @@ impl InlineAssistant {
         &mut self,
         workspace: &View<Workspace>,
         item: &dyn ItemHandle,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
@@ -190,7 +197,8 @@ impl InlineAssistant {
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
         initial_prompt: Option<String>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
             (
@@ -360,7 +368,8 @@ impl InlineAssistant {
         focus: bool,
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> InlineAssistId {
         let assist_group_id = self.next_assist_group_id.post_inc();
         let prompt_buffer = cx.new_model(|cx| Buffer::local(&initial_prompt, cx));
@@ -443,7 +452,8 @@ impl InlineAssistant {
         editor: &View<Editor>,
         range: &Range<Anchor>,
         prompt_editor: &View<PromptEditor>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> [CustomBlockId; 2] {
         let prompt_editor_height = prompt_editor.update(cx, |prompt_editor, cx| {
             prompt_editor
@@ -480,7 +490,12 @@ impl InlineAssistant {
         })
     }
 
-    fn handle_prompt_editor_focus_in(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    fn handle_prompt_editor_focus_in(
+        &mut self,
+        assist_id: InlineAssistId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let assist = &self.assists[&assist_id];
         let Some(decorations) = assist.decorations.as_ref() else {
             return;
@@ -524,7 +539,8 @@ impl InlineAssistant {
     fn handle_prompt_editor_focus_out(
         &mut self,
         assist_id: InlineAssistId,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let assist = &self.assists[&assist_id];
         let assist_group = self.assist_groups.get_mut(&assist.group_id).unwrap();
@@ -546,7 +562,8 @@ impl InlineAssistant {
         &mut self,
         prompt_editor: View<PromptEditor>,
         event: &PromptEditorEvent,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let assist_id = prompt_editor.read(cx).id;
         match event {
@@ -568,7 +585,12 @@ impl InlineAssistant {
         }
     }
 
-    fn handle_editor_newline(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
+    fn handle_editor_newline(
+        &mut self,
+        editor: View<Editor>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) else {
             return;
         };
@@ -599,7 +621,12 @@ impl InlineAssistant {
         cx.propagate();
     }
 
-    fn handle_editor_cancel(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
+    fn handle_editor_cancel(
+        &mut self,
+        editor: View<Editor>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) else {
             return;
         };
@@ -653,7 +680,12 @@ impl InlineAssistant {
         cx.propagate();
     }
 
-    fn handle_editor_release(&mut self, editor: WeakView<Editor>, cx: &mut WindowContext) {
+    fn handle_editor_release(
+        &mut self,
+        editor: WeakView<Editor>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         if let Some(editor_assists) = self.assists_by_editor.get_mut(&editor) {
             for assist_id in editor_assists.assist_ids.clone() {
                 self.finish_assist(assist_id, true, cx);
@@ -661,7 +693,12 @@ impl InlineAssistant {
         }
     }
 
-    fn handle_editor_change(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
+    fn handle_editor_change(
+        &mut self,
+        editor: View<Editor>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) else {
             return;
         };
@@ -690,7 +727,8 @@ impl InlineAssistant {
         &mut self,
         editor: View<Editor>,
         event: &EditorEvent,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let Some(editor_assists) = self.assists_by_editor.get_mut(&editor.downgrade()) else {
             return;
@@ -754,7 +792,13 @@ impl InlineAssistant {
         }
     }
 
-    pub fn finish_assist(&mut self, assist_id: InlineAssistId, undo: bool, cx: &mut WindowContext) {
+    pub fn finish_assist(
+        &mut self,
+        assist_id: InlineAssistId,
+        undo: bool,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         if let Some(assist) = self.assists.get(&assist_id) {
             let assist_group_id = assist.group_id;
             if self.assist_groups[&assist_group_id].linked {
@@ -833,7 +877,12 @@ impl InlineAssistant {
         }
     }
 
-    fn dismiss_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
+    fn dismiss_assist(
+        &mut self,
+        assist_id: InlineAssistId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> bool {
         let Some(assist) = self.assists.get_mut(&assist_id) else {
             return false;
         };
@@ -873,7 +922,12 @@ impl InlineAssistant {
         true
     }
 
-    fn focus_next_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    fn focus_next_assist(
+        &mut self,
+        assist_id: InlineAssistId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let Some(assist) = self.assists.get(&assist_id) else {
             return;
         };
@@ -901,7 +955,12 @@ impl InlineAssistant {
         assist.editor.update(cx, |editor, cx| editor.focus(cx)).ok();
     }
 
-    fn focus_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    fn focus_assist(
+        &mut self,
+        assist_id: InlineAssistId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let Some(assist) = self.assists.get(&assist_id) else {
             return;
         };
@@ -918,7 +977,12 @@ impl InlineAssistant {
         self.scroll_to_assist(assist_id, cx);
     }
 
-    pub fn scroll_to_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    pub fn scroll_to_assist(
+        &mut self,
+        assist_id: InlineAssistId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let Some(assist) = self.assists.get(&assist_id) else {
             return;
         };
@@ -976,7 +1040,8 @@ impl InlineAssistant {
     fn unlink_assist_group(
         &mut self,
         assist_group_id: InlineAssistGroupId,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Vec<InlineAssistId> {
         let assist_group = self.assist_groups.get_mut(&assist_group_id).unwrap();
         assist_group.linked = false;
@@ -991,7 +1056,12 @@ impl InlineAssistant {
         assist_group.assist_ids.clone()
     }
 
-    pub fn start_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    pub fn start_assist(
+        &mut self,
+        assist_id: InlineAssistId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -1026,7 +1096,12 @@ impl InlineAssistant {
             .log_err();
     }
 
-    pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    pub fn stop_assist(
+        &mut self,
+        assist_id: InlineAssistId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -1036,7 +1111,12 @@ impl InlineAssistant {
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
     }
 
-    fn update_editor_highlights(&self, editor: &View<Editor>, cx: &mut WindowContext) {
+    fn update_editor_highlights(
+        &self,
+        editor: &View<Editor>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let mut gutter_pending_ranges = Vec::new();
         let mut gutter_transformed_ranges = Vec::new();
         let mut foreground_ranges = Vec::new();
@@ -1131,7 +1211,8 @@ impl InlineAssistant {
         &mut self,
         editor: &View<Editor>,
         assist_id: InlineAssistId,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let Some(assist) = self.assists.get_mut(&assist_id) else {
             return;
@@ -1236,7 +1317,7 @@ struct InlineAssistScrollLock {
 
 impl EditorInlineAssists {
     #[allow(clippy::too_many_arguments)]
-    fn new(editor: &View<Editor>, cx: &mut WindowContext) -> Self {
+    fn new(editor: &View<Editor>, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Self {
         let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
         Self {
             assist_ids: Vec::new(),
@@ -1276,7 +1357,9 @@ impl EditorInlineAssists {
                 editor.update(cx, |editor, cx| {
                     let editor_handle = cx.view().downgrade();
                     editor.register_action(
-                        move |_: &editor::actions::Newline, cx: &mut WindowContext| {
+                        move |_: &editor::actions::Newline,
+                              window: &mut gpui::Window,
+                              cx: &mut gpui::AppContext| {
                             InlineAssistant::update_global(cx, |this, cx| {
                                 if let Some(editor) = editor_handle.upgrade() {
                                     this.handle_editor_newline(editor, cx)
@@ -1288,7 +1371,9 @@ impl EditorInlineAssists {
                 editor.update(cx, |editor, cx| {
                     let editor_handle = cx.view().downgrade();
                     editor.register_action(
-                        move |_: &editor::actions::Cancel, cx: &mut WindowContext| {
+                        move |_: &editor::actions::Cancel,
+                              window: &mut gpui::Window,
+                              cx: &mut gpui::AppContext| {
                             InlineAssistant::update_global(cx, |this, cx| {
                                 if let Some(editor) = editor_handle.upgrade() {
                                     this.handle_editor_cancel(editor, cx)
@@ -1695,7 +1780,7 @@ impl PromptEditor {
         self.subscribe_to_editor(cx);
     }
 
-    fn placeholder_text(codegen: &Codegen, cx: &WindowContext) -> String {
+    fn placeholder_text(codegen: &Codegen, window: &Window, cx: &AppContext) -> String {
         let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
@@ -2219,7 +2304,8 @@ impl InlineAssist {
         range: Range<Anchor>,
         codegen: Model<Codegen>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Self {
         let prompt_editor_focus_handle = prompt_editor.focus_handle(cx);
         InlineAssist {
@@ -2314,7 +2400,11 @@ impl InlineAssist {
         Some(decorations.prompt_editor.read(cx).prompt(cx))
     }
 
-    fn assistant_panel_context(&self, cx: &WindowContext) -> Option<LanguageModelRequest> {
+    fn assistant_panel_context(
+        &self,
+        window: &Window,
+        cx: &AppContext,
+    ) -> Option<LanguageModelRequest> {
         if self.include_context {
             let workspace = self.workspace.as_ref()?;
             let workspace = workspace.upgrade()?.read(cx);
@@ -2331,7 +2421,11 @@ impl InlineAssist {
         }
     }
 
-    pub fn count_tokens(&self, cx: &WindowContext) -> BoxFuture<'static, Result<TokenCounts>> {
+    pub fn count_tokens(
+        &self,
+        window: &Window,
+        cx: &AppContext,
+    ) -> BoxFuture<'static, Result<TokenCounts>> {
         let Some(user_prompt) = self.user_prompt(cx) else {
             return future::ready(Err(anyhow!("no user prompt"))).boxed();
         };
@@ -3414,7 +3508,8 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         &self,
         buffer: &Model<Buffer>,
         range: Range<text::Anchor>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<CodeAction>>> {
         if !AssistantSettings::get_global(cx).enabled {
             return Task::ready(Ok(Vec::new()));
@@ -3467,7 +3562,8 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         action: CodeAction,
         excerpt_id: ExcerptId,
         _push_to_history: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<ProjectTransaction>> {
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();

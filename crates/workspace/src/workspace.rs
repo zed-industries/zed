@@ -32,12 +32,12 @@ use futures::{
 };
 use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
-    transparent_black, Action, AnyView, AnyWeakView, AppContext, AsyncAppContext,
-    AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
-    EventEmitter, Flatten, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke,
-    ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
-    ResizeEdge, Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds,
-    WindowHandle, WindowId, WindowOptions,
+    transparent_black, Action, AnyView, AnyWeakView, AppContext, AsyncAppContext, Bounds,
+    CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId, EventEmitter, Flatten,
+    FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, ManagedView, Model,
+    ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size,
+    Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds, WindowHandle, WindowId,
+    WindowOptions,
 };
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -95,7 +95,7 @@ pub use ui;
 use ui::{
     div, h_flex, px, BorrowAppContext, Context as _, Div, FluentBuilder, InteractiveElement as _,
     IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
-    VisualContext as _, WindowContext,
+    VisualContext as _, 
 };
 use util::{paths::SanitizedPath, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -250,7 +250,10 @@ pub struct Toast {
     id: NotificationId,
     msg: Cow<'static, str>,
     autohide: bool,
-    on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut WindowContext)>)>,
+    on_click: Option<(
+        Cow<'static, str>,
+        Arc<dyn Fn(&mut gpui::Window, &mut gpui::AppContext)>,
+    )>,
 }
 
 impl Toast {
@@ -266,7 +269,7 @@ impl Toast {
     pub fn on_click<F, M>(mut self, message: M, on_click: F) -> Self
     where
         M: Into<Cow<'static, str>>,
-        F: Fn(&mut WindowContext) + 'static,
+        F: Fn(&mut gpui::Window, &mut gpui::AppContext) + 'static,
     {
         self.on_click = Some((message.into(), Arc::new(on_click)));
         self
@@ -377,7 +380,8 @@ struct ProjectItemOpeners(Vec<ProjectItemOpener>);
 type ProjectItemOpener = fn(
     &Model<Project>,
     &ProjectPath,
-    &mut WindowContext,
+    &mut gpui::Window,
+    &mut gpui::AppContext,
 )
     -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
 
@@ -414,7 +418,8 @@ struct FollowableViewDescriptor {
         View<Workspace>,
         ViewId,
         &mut Option<proto::view::Variant>,
-        &mut WindowContext,
+        &mut gpui::Window,
+        &mut gpui::AppContext,
     ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>,
     to_followable_view: fn(&AnyView) -> Box<dyn FollowableItemHandle>,
 }
@@ -441,7 +446,8 @@ impl FollowableViewRegistry {
         workspace: View<Workspace>,
         view_id: ViewId,
         mut state: Option<proto::view::Variant>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>> {
         cx.update_default_global(|this: &mut Self, cx| {
             this.0.values().find_map(|descriptor| {
@@ -470,7 +476,8 @@ struct SerializableItemDescriptor {
         ItemId,
         &mut ViewContext<Pane>,
     ) -> Task<Result<Box<dyn ItemHandle>>>,
-    cleanup: fn(WorkspaceId, Vec<ItemId>, &mut WindowContext) -> Task<Result<()>>,
+    cleanup:
+        fn(WorkspaceId, Vec<ItemId>, &mut gpui::Window, &mut gpui::AppContext) -> Task<Result<()>>,
     view_to_serializable_item: fn(AnyView) -> Box<dyn SerializableItemHandle>,
 }
 
@@ -505,7 +512,8 @@ impl SerializableItemRegistry {
         item_kind: &str,
         workspace_id: WorkspaceId,
         loaded_items: Vec<ItemId>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<()>> {
         let Some(descriptor) = Self::descriptor(item_kind, cx) else {
             return Task::ready(Err(anyhow!(
@@ -2174,7 +2182,8 @@ impl Workspace {
     pub fn save_active_item(
         &mut self,
         save_intent: SaveIntent,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<()>> {
         let project = self.project.clone();
         let pane = self.active_pane();
@@ -2418,7 +2427,7 @@ impl Workspace {
         }
     }
 
-    pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<View<T>> {
+    pub fn panel<T: Panel>(&self, window: &Window, cx: &AppContext) -> Option<View<T>> {
         [&self.left_dock, &self.bottom_dock, &self.right_dock]
             .iter()
             .find_map(|dock| dock.read(cx).panel::<T>())
@@ -2506,7 +2515,8 @@ impl Workspace {
         item: Box<dyn ItemHandle>,
         destination_index: Option<usize>,
         focus_item: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         self.add_item(
             self.active_pane.clone(),
@@ -2525,7 +2535,8 @@ impl Workspace {
         destination_index: Option<usize>,
         activate_pane: bool,
         focus_item: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         if let Some(text) = item.telemetry_event_text(cx) {
             self.client()
@@ -2607,7 +2618,8 @@ impl Workspace {
         path: impl Into<ProjectPath>,
         pane: Option<WeakView<Pane>>,
         focus_item: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         self.open_path_preview(path, pane, focus_item, false, cx)
     }
@@ -2618,7 +2630,8 @@ impl Workspace {
         pane: Option<WeakView<Pane>>,
         focus_item: bool,
         allow_preview: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         let pane = pane.unwrap_or_else(|| {
             self.last_active_center_pane.clone().unwrap_or_else(|| {
@@ -2698,7 +2711,8 @@ impl Workspace {
     fn load_path(
         &mut self,
         path: ProjectPath,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
         let project = self.project().clone();
         let project_item_builders = cx.default_global::<ProjectItemOpeners>().clone();
@@ -2806,7 +2820,8 @@ impl Workspace {
         item: &dyn ItemHandle,
         activate_pane: bool,
         focus_item: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> bool {
         let result = self.panes.iter().find_map(|pane| {
             pane.read(cx)
@@ -2832,7 +2847,7 @@ impl Workspace {
         }
     }
 
-    pub fn activate_next_pane(&mut self, cx: &mut WindowContext) {
+    pub fn activate_next_pane(&mut self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         let panes = self.center.panes();
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let next_ix = (ix + 1) % panes.len();
@@ -2841,7 +2856,7 @@ impl Workspace {
         }
     }
 
-    pub fn activate_previous_pane(&mut self, cx: &mut WindowContext) {
+    pub fn activate_previous_pane(&mut self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         let panes = self.center.panes();
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
@@ -2853,7 +2868,8 @@ impl Workspace {
     pub fn activate_pane_in_direction(
         &mut self,
         direction: SplitDirection,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         use ActivateInDirectionTarget as Target;
         enum Origin {
@@ -2957,7 +2973,8 @@ impl Workspace {
     pub fn find_pane_in_direction(
         &mut self,
         direction: SplitDirection,
-        cx: &WindowContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> Option<View<Pane>> {
         self.center
             .find_pane_in_direction(&self.active_pane, direction, cx)
@@ -3254,7 +3271,7 @@ impl Workspace {
         &self.active_pane
     }
 
-    pub fn focused_pane(&self, cx: &WindowContext) -> View<Pane> {
+    pub fn focused_pane(&self, window: &Window, cx: &AppContext) -> View<Pane> {
         for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
             if dock.focus_handle(cx).contains_focused(cx) {
                 if let Some(pane) = dock
@@ -3461,7 +3478,7 @@ impl Workspace {
         self.update_window_title(cx);
     }
 
-    fn update_window_title(&mut self, cx: &mut WindowContext) {
+    fn update_window_title(&mut self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         let project = self.project().read(cx);
         let mut title = String::new();
 
@@ -3505,7 +3522,7 @@ impl Workspace {
         cx.set_window_title(&title);
     }
 
-    fn update_window_edited(&mut self, cx: &mut WindowContext) {
+    fn update_window_edited(&mut self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         let is_edited = !self.project.read(cx).is_disconnected(cx)
             && self
                 .items(cx)
@@ -3603,7 +3620,8 @@ impl Workspace {
         this: &WeakView<Self>,
         leader_id: PeerId,
         update: proto::UpdateFollowers,
-        cx: &mut AsyncWindowContext,
+        window_handle: AnyWindowHandle,
+        cx: &mut AsyncAppContext,
     ) -> Result<()> {
         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
             proto::update_followers::Variant::CreateView(view) => {
@@ -3675,7 +3693,8 @@ impl Workspace {
         this: WeakView<Self>,
         leader_id: PeerId,
         view: &proto::View,
-        cx: &mut AsyncWindowContext,
+        window_handle: AnyWindowHandle,
+        cx: &mut AsyncAppContext,
     ) -> Result<()> {
         let this = this.upgrade().context("workspace dropped")?;
 
@@ -3767,7 +3786,11 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
+    pub fn update_active_view_for_followers(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
         if cx.is_window_active() {
@@ -3820,7 +3843,8 @@ impl Workspace {
 
     fn active_item_for_followers(
         &self,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> (Option<Box<dyn ItemHandle>>, Option<proto::PanelId>) {
         let mut active_item = None;
         let mut panel_id = None;
@@ -3848,7 +3872,8 @@ impl Workspace {
         &self,
         project_only: bool,
         update: proto::update_followers::Variant,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<()> {
         // If this update only applies to for followers in the current project,
         // then skip it unless this project is shared. If it applies to all
@@ -3949,7 +3974,8 @@ impl Workspace {
         &self,
         _peer_id: PeerId,
         _pane: &View<Pane>,
-        _cx: &mut WindowContext,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
     ) -> Option<View<SharedScreen>> {
         None
     }
@@ -3959,7 +3985,8 @@ impl Workspace {
         &self,
         peer_id: PeerId,
         pane: &View<Pane>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<View<SharedScreen>> {
         let call = self.active_call()?;
         let room = call.read(cx).room()?.read(cx);
@@ -4056,7 +4083,11 @@ impl Workspace {
         }
     }
 
-    fn remove_from_session(&mut self, cx: &mut WindowContext) -> Task<()> {
+    fn remove_from_session(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Task<()> {
         self.session_id.take();
         self.serialize_workspace_internal(cx)
     }
@@ -4097,12 +4128,20 @@ impl Workspace {
         }
     }
 
-    fn serialize_workspace_internal(&self, cx: &mut WindowContext) -> Task<()> {
+    fn serialize_workspace_internal(
+        &self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Task<()> {
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
         };
 
-        fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &WindowContext) -> SerializedPane {
+        fn serialize_pane_handle(
+            pane_handle: &View<Pane>,
+            window: &Window,
+            cx: &AppContext,
+        ) -> SerializedPane {
             let (items, active, pinned_count) = {
                 let pane = pane_handle.read(cx);
                 let active_item_id = pane.active_item().map(|item| item.item_id());
@@ -4129,7 +4168,8 @@ impl Workspace {
 
         fn build_serialized_pane_group(
             pane_group: &Member,
-            cx: &WindowContext,
+            window: &Window,
+            cx: &AppContext,
         ) -> SerializedPaneGroup {
             match pane_group {
                 Member::Axis(PaneAxis {
@@ -4151,7 +4191,11 @@ impl Workspace {
             }
         }
 
-        fn build_serialized_docks(this: &Workspace, cx: &mut WindowContext) -> DockStructure {
+        fn build_serialized_docks(
+            this: &Workspace,
+            window: &mut gpui::Window,
+            cx: &mut gpui::AppContext,
+        ) -> DockStructure {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock
@@ -4236,7 +4280,8 @@ impl Workspace {
     async fn serialize_items(
         this: &WeakView<Self>,
         items_rx: UnboundedReceiver<Box<dyn SerializableItemHandle>>,
-        cx: &mut AsyncWindowContext,
+        window_handle: AnyWindowHandle,
+        cx: &mut AsyncAppContext,
     ) -> Result<()> {
         const CHUNK_SIZE: usize = 200;
         const THROTTLE_TIME: Duration = Duration::from_millis(200);
@@ -4523,7 +4568,7 @@ impl Workspace {
         div
     }
 
-    pub fn has_active_modal(&self, cx: &WindowContext<'_>) -> bool {
+    pub fn has_active_modal(&self, window: &Window, cx: &AppContext) -> bool {
         self.modal_layer.read(cx).has_active_modal()
     }
 
@@ -4531,8 +4576,12 @@ impl Workspace {
         self.modal_layer.read(cx).active_modal()
     }
 
-    pub fn toggle_modal<V: ModalView, B>(&mut self, cx: &mut WindowContext, build: B)
-    where
+    pub fn toggle_modal<V: ModalView, B>(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+        build: B,
+    ) where
         B: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.modal_layer
@@ -4559,7 +4608,8 @@ impl Workspace {
         &self,
         position: DockPosition,
         dock: &View<Dock>,
-        cx: &WindowContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> Option<Div> {
         if self.zoomed_position == Some(position) {
             return None;
@@ -4581,7 +4631,10 @@ impl Workspace {
         )
     }
 
-    pub fn for_window(cx: &mut WindowContext) -> Option<View<Workspace>> {
+    pub fn for_window(
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Option<View<Workspace>> {
         let window = cx.window_handle().downcast::<Workspace>()?;
         cx.read_window(&window, |workspace, _| workspace).ok()
     }
@@ -4594,7 +4647,8 @@ impl Workspace {
 fn leader_border_for_pane(
     follower_states: &HashMap<PeerId, FollowerState>,
     pane: &View<Pane>,
-    cx: &WindowContext,
+    window: &Window,
+    cx: &AppContext,
 ) -> Option<Div> {
     let (leader_id, _follower_state) = follower_states.iter().find_map(|(leader_id, state)| {
         if state.pane() == pane {
@@ -5893,7 +5947,11 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     Some(size(px(width as f32), px(height as f32)))
 }
 
-pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext) -> Stateful<Div> {
+pub fn client_side_decorations(
+    element: impl IntoElement,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) -> Stateful<Div> {
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = cx.window_decorations();
 
@@ -6111,7 +6169,12 @@ fn resize_edge(
     }
 }
 
-fn join_pane_into_active(active_pane: &View<Pane>, pane: &View<Pane>, cx: &mut WindowContext<'_>) {
+fn join_pane_into_active(
+    active_pane: &View<Pane>,
+    pane: &View<Pane>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) {
     if pane == active_pane {
         return;
     } else if pane.read(cx).items_len() == 0 {
@@ -6125,7 +6188,12 @@ fn join_pane_into_active(active_pane: &View<Pane>, pane: &View<Pane>, cx: &mut W
     }
 }
 
-fn move_all_items(from_pane: &View<Pane>, to_pane: &View<Pane>, cx: &mut WindowContext<'_>) {
+fn move_all_items(
+    from_pane: &View<Pane>,
+    to_pane: &View<Pane>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) {
     let destination_is_different = from_pane != to_pane;
     let mut moved_items = 0;
     for (item_ix, item_handle) in from_pane
@@ -6157,7 +6225,8 @@ pub fn move_item(
     destination: &View<Pane>,
     item_id_to_move: EntityId,
     destination_index: usize,
-    cx: &mut WindowContext<'_>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
 ) {
     let Some((item_ix, item_handle)) = source
         .read(cx)

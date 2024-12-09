@@ -12,9 +12,9 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, EventEmitter,
+    actions, Action, AnchorCorner, AnyView, AppContext, Asy EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
-    Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
 use project::{terminals::TerminalKind, Fs, Project, ProjectEntryId};
@@ -223,7 +223,8 @@ impl TerminalPanel {
 
     pub async fn load(
         workspace: WeakView<Workspace>,
-        mut cx: AsyncWindowContext,
+        mut window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> Result<View<Self>> {
         let serialized_panel = cx
             .background_executor()
@@ -661,7 +662,8 @@ impl TerminalPanel {
         pane: &View<Pane>,
         item_index: usize,
         focus: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         pane.update(cx, |pane, cx| {
             pane.activate_item(item_index, true, focus, cx)
@@ -832,7 +834,7 @@ impl TerminalPanel {
         })
     }
 
-    fn has_no_terminals(&self, cx: &WindowContext) -> bool {
+    fn has_no_terminals(&self, window: &Window, cx: &AppContext) -> bool {
         self.active_pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
     }
 
@@ -988,7 +990,8 @@ pub fn new_terminal_pane(
 
 async fn wait_for_terminals_tasks(
     terminals_for_task: Vec<(usize, View<Pane>, View<TerminalView>)>,
-    cx: &mut AsyncWindowContext,
+    window_handle: AnyWindowHandle,
+    cx: &mut AsyncAppContext,
 ) {
     let pending_tasks = terminals_for_task.iter().filter_map(|(_, _, terminal)| {
         terminal
@@ -1145,7 +1148,7 @@ impl FocusableView for TerminalPanel {
 }
 
 impl Panel for TerminalPanel {
-    fn position(&self, cx: &WindowContext) -> DockPosition {
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
         match TerminalSettings::get_global(cx).dock {
             TerminalDockPosition::Left => DockPosition::Left,
             TerminalDockPosition::Bottom => DockPosition::Bottom,
@@ -1172,7 +1175,7 @@ impl Panel for TerminalPanel {
         );
     }
 
-    fn size(&self, cx: &WindowContext) -> Pixels {
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         let settings = TerminalSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
@@ -1191,7 +1194,7 @@ impl Panel for TerminalPanel {
         cx.notify();
     }
 
-    fn is_zoomed(&self, cx: &WindowContext) -> bool {
+    fn is_zoomed(&self, window: &Window, cx: &AppContext) -> bool {
         self.active_pane.read(cx).is_zoomed()
     }
 
@@ -1220,7 +1223,7 @@ impl Panel for TerminalPanel {
         })
     }
 
-    fn icon_label(&self, cx: &WindowContext) -> Option<String> {
+    fn icon_label(&self, window: &Window, cx: &AppContext) -> Option<String> {
         let count = self
             .center
             .panes()
@@ -1238,7 +1241,7 @@ impl Panel for TerminalPanel {
         "TerminalPanel"
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<IconName> {
         if (self.enabled || !self.has_no_terminals(cx)) && TerminalSettings::get_global(cx).button {
             Some(IconName::Terminal)
         } else {
@@ -1246,7 +1249,7 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, cx: &AppContext) -> Option<&'static str> {
         Some("Terminal Panel")
     }
 

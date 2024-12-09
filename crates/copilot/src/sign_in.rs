@@ -13,7 +13,7 @@ const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 
 struct CopilotStartingToast;
 
-pub fn initiate_sign_in(cx: &mut WindowContext) {
+pub fn initiate_sign_in(window: &mut gpui::Window, cx: &mut gpui::AppContext) {
     let Some(copilot) = Copilot::global(cx) else {
         return;
     };

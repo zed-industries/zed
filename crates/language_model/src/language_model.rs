@@ -10,7 +10,7 @@ pub mod fake_provider;
 use anyhow::Result;
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
-use gpui::{AnyElement, AnyView, AppContext, AsyncAppContext, SharedString, Task, WindowContext};
+use gpui::{AnyElement, AnyView, AppContext, AsyncAppContext, SharedString, Task};
 pub use model::*;
 use proto::Plan;
 pub use rate_limiter::*;
@@ -241,11 +241,15 @@ pub trait LanguageModelProvider: 'static {
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &AppContext) {}
     fn is_authenticated(&self, cx: &AppContext) -> bool;
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>>;
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView;
+    fn configuration_view(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> AnyView;
     fn must_accept_terms(&self, _cx: &AppContext) -> bool {
         false
     }
-    fn render_accept_terms(&self, _cx: &mut WindowContext) -> Option<AnyElement> {
+    fn render_accept_terms(
+        &self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
+    ) -> Option<AnyElement> {
         None
     }
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>>;

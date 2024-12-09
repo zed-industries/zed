@@ -154,7 +154,7 @@ impl FocusableView for ReplSessionsPage {
 impl Item for ReplSessionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some("REPL Sessions".into())
     }
 
@@ -254,7 +254,7 @@ impl ParentElement for ReplSessionsContainer {
 }
 
 impl RenderOnce for ReplSessionsContainer {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> impl IntoElement {
         v_flex()
             .p_4()
             .gap_2()

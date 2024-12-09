@@ -19,7 +19,7 @@ use crate::{
 use anyhow::Context;
 use clock::Global;
 use futures::future;
-use gpui::{AsyncWindowContext, Model, ModelContext, Task, ViewContext};
+use gpui::{AsyncA, ModelContext, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
@@ -825,22 +825,24 @@ fn new_update_task(
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
         ));
 
-        let query_range_failed =
-            |range: &Range<language::Anchor>, e: anyhow::Error, cx: &mut AsyncWindowContext| {
-                log::error!("inlay hint update task for range failed: {e:#?}");
-                editor
-                    .update(cx, |editor, cx| {
-                        if let Some(task_ranges) = editor
-                            .inlay_hint_cache
-                            .update_tasks
-                            .get_mut(&query.excerpt_id)
-                        {
-                            let buffer_snapshot = excerpt_buffer.read(cx).snapshot();
-                            task_ranges.invalidate_range(&buffer_snapshot, range);
-                        }
-                    })
-                    .ok()
-            };
+        let query_range_failed = |range: &Range<language::Anchor>,
+                                  e: anyhow::Error,
+                                  window_handle: AnyWindowHandle,
+                                  cx: &mut AsyncAppContext| {
+            log::error!("inlay hint update task for range failed: {e:#?}");
+            editor
+                .update(cx, |editor, cx| {
+                    if let Some(task_ranges) = editor
+                        .inlay_hint_cache
+                        .update_tasks
+                        .get_mut(&query.excerpt_id)
+                    {
+                        let buffer_snapshot = excerpt_buffer.read(cx).snapshot();
+                        task_ranges.invalidate_range(&buffer_snapshot, range);
+                    }
+                })
+                .ok()
+        };
 
         for (range, result) in visible_range_update_results {
             if let Err(e) = result {

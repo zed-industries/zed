@@ -197,7 +197,7 @@ impl TabSwitcherDelegate {
         .detach();
     }
 
-    fn update_matches(&mut self, cx: &mut WindowContext) {
+    fn update_matches(&mut self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         self.matches.clear();
         let Some(pane) = self.pane.upgrade() else {
             return;
@@ -280,11 +280,15 @@ impl TabSwitcherDelegate {
 impl PickerDelegate for TabSwitcherDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         Arc::default()
     }
 
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+    fn no_matches_text(
+        &self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
+    ) -> SharedString {
         "No tabs".into()
     }
 

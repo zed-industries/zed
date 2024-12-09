@@ -90,7 +90,8 @@ pub struct BlockProperties {
 }
 
 pub struct BlockContext<'a, 'b> {
-    pub context: &'b mut WindowContext<'a>,
+    pub window: &'a mut Window,
+    pub context: &'b mut AppContext,
     pub dimensions: TerminalSize,
 }
 
@@ -1030,7 +1031,12 @@ impl Item for TerminalView {
         Some(self.terminal().read(cx).title(false).into())
     }
 
-    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        params: TabContentParams,
+        window: &Window,
+        cx: &AppContext,
+    ) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
         let rerun_button = |task_id: task::TaskId| {
@@ -1182,7 +1188,8 @@ impl SerializableItem for TerminalView {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<workspace::ItemId>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<gpui::Result<()>> {
         cx.spawn(|_| TERMINAL_DB.delete_unloaded_items(workspace_id, alive_items))
     }
@@ -1219,7 +1226,8 @@ impl SerializableItem for TerminalView {
         workspace: WeakView<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<anyhow::Result<View<Self>>> {
         let window = cx.window_handle();
         cx.spawn(|mut cx| async move {

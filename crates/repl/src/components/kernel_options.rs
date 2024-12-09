@@ -16,7 +16,7 @@ use gpui::SharedString;
 use gpui::Task;
 use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
-type OnSelect = Box<dyn Fn(KernelSpecification, &mut WindowContext)>;
+type OnSelect = Box<dyn Fn(KernelSpecification, &mut gpui::Window, &mut gpui::AppContext)>;
 
 #[derive(IntoElement)]
 pub struct KernelSelector<T: PopoverTrigger> {
@@ -89,7 +89,7 @@ impl PickerDelegate for KernelPickerDelegate {
         cx.notify();
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Select a kernel...".into()
     }
 
@@ -226,7 +226,7 @@ impl PickerDelegate for KernelPickerDelegate {
 }
 
 impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let store = ReplStore::global(cx).read(cx);
 
         let all_kernels: Vec<KernelSpecification> = store

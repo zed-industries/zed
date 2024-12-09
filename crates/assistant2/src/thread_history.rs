@@ -98,7 +98,7 @@ impl PastThread {
 }
 
 impl RenderOnce for PastThread {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let (id, summary) = {
             const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
             let thread = self.thread.read(cx);

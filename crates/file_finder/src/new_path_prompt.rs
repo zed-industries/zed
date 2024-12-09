@@ -24,7 +24,7 @@ struct Match {
 }
 
 impl Match {
-    fn entry<'a>(&'a self, project: &'a Project, cx: &'a WindowContext) -> Option<&'a Entry> {
+    fn entry<'a>(&'a self, project: &'a Project, cx: &'a AppContext) -> Option<&'a Entry> {
         if let Some(suffix) = &self.suffix {
             let (worktree, path) = if let Some(path_match) = &self.path_match {
                 (
@@ -45,7 +45,7 @@ impl Match {
         }
     }
 
-    fn is_dir(&self, project: &Project, cx: &WindowContext) -> bool {
+    fn is_dir(&self, project: &Project, cx: &AppContext) -> bool {
         self.entry(project, cx).is_some_and(|e| e.is_dir())
             || self.suffix.as_ref().is_some_and(|s| s.ends_with('/'))
     }
@@ -68,7 +68,7 @@ impl Match {
         }
     }
 
-    fn project_path(&self, project: &Project, cx: &WindowContext) -> Option<ProjectPath> {
+    fn project_path(&self, project: &Project, cx: &AppContext) -> Option<ProjectPath> {
         let worktree_id = if let Some(path_match) = &self.path_match {
             WorktreeId::from_usize(path_match.worktree_id)
         } else if let Some(worktree) = project.visible_worktrees(cx).find(|worktree| {
@@ -91,7 +91,7 @@ impl Match {
         })
     }
 
-    fn existing_prefix(&self, project: &Project, cx: &WindowContext) -> Option<PathBuf> {
+    fn existing_prefix(&self, project: &Project, cx: &AppContext) -> Option<PathBuf> {
         let worktree = project.worktrees(cx).next()?.read(cx);
         let mut prefix = PathBuf::new();
         let parts = self.suffix.as_ref()?.split('/');
@@ -105,7 +105,7 @@ impl Match {
         None
     }
 
-    fn styled_text(&self, project: &Project, cx: &WindowContext) -> StyledText {
+    fn styled_text(&self, project: &Project, cx: &AppContext) -> StyledText {
         let mut text = "./".to_string();
         let mut highlights = Vec::new();
         let mut offset = text.as_bytes().len();
@@ -419,11 +419,15 @@ impl PickerDelegate for NewPathDelegate {
         )
     }
 
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+    fn no_matches_text(
+        &self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
+    ) -> SharedString {
         "Type a path...".into()
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         Arc::from("[directory/]filename.ext")
     }
 }

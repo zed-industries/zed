@@ -16,7 +16,7 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, uniform_list, Action, AppContext, ClipboardItem, EventEmitter, Flatten, FocusableView,
     InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -634,7 +634,8 @@ impl ExtensionsPage {
     fn render_remote_extension_context_menu(
         this: &View<Self>,
         extension_id: Arc<str>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> View<ContextMenu> {
         let context_menu = ContextMenu::build(cx, |context_menu, cx| {
             context_menu
@@ -888,7 +889,7 @@ impl ExtensionsPage {
         }));
     }
 
-    pub fn search_query(&self, cx: &WindowContext) -> Option<String> {
+    pub fn search_query(&self, window: &Window, cx: &AppContext) -> Option<String> {
         let search = self.query_editor.read(cx).text(cx);
         if search.trim().is_empty() {
             None
@@ -1165,7 +1166,7 @@ impl FocusableView for ExtensionsPage {
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some("Extensions".into())
     }
 

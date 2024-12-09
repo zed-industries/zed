@@ -52,7 +52,7 @@ impl Tool for ContextServerTool {
         self: std::sync::Arc<Self>,
         input: serde_json::Value,
         _workspace: gpui::WeakView<workspace::Workspace>,
-        cx: &mut ui::WindowContext,
+        cx: &mut ui::
     ) -> gpui::Task<gpui::Result<String>> {
         if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
             cx.foreground_executor().spawn({

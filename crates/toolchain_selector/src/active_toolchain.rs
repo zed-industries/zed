@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    div, AsyncWindowContext, IntoElement, ParentElement, Render, Subscription, Task, View,
-    ViewContext, WeakModel, WeakView,
+    div, AsyncAElement, ParentElement, Render, Subscription, Task, View, ViewContext, WeakModel,
+    WeakView,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
 use project::{Project, WorktreeId};
@@ -93,7 +93,8 @@ impl ActiveToolchain {
         workspace: WeakView<Workspace>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
-        cx: AsyncWindowContext,
+        window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> Task<Option<Toolchain>> {
         cx.spawn(move |mut cx| async move {
             let workspace_id = workspace

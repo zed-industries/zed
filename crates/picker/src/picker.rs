@@ -4,7 +4,7 @@ use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent,
     DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListSizingBehavior, ListState,
     MouseButton, MouseUpEvent, Render, ScrollStrategy, Task, UniformListScrollHandle, View,
-    ViewContext, WindowContext,
+    ViewContext,
 };
 use head::Head;
 use serde::Deserialize;
@@ -74,11 +74,15 @@ pub trait PickerDelegate: Sized + 'static {
         &self,
         _ix: usize,
         _cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
+    ) -> Option<Box<dyn Fn(&mut gpui::Window, &mut gpui::AppContext) + 'static>> {
         None
     }
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str>;
+    fn no_matches_text(
+        &self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
+    ) -> SharedString {
         "No matches".into()
     }
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
@@ -265,7 +269,7 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    pub fn focus(&self, cx: &mut WindowContext) {
+    pub fn focus(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         self.focus_handle(cx).focus(cx);
     }
 
@@ -425,7 +429,7 @@ impl<D: PickerDelegate> Picker<D> {
         self.cancel(&menu::Cancel, cx);
     }
 
-    pub fn refresh_placeholder(&mut self, cx: &mut WindowContext<'_>) {
+    pub fn refresh_placeholder(&mut self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         match &self.head {
             Head::Editor(view) => {
                 let placeholder = self.delegate.placeholder_text(cx);
@@ -493,7 +497,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut WindowContext<'_>) {
+    pub fn set_query(
+        &self,
+        query: impl Into<Arc<str>>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         if let Head::Editor(ref editor) = &self.head {
             editor.update(cx, |editor, cx| {
                 editor.set_text(query, cx);

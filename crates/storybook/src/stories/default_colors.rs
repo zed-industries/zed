@@ -1,6 +1,5 @@
 use gpui::{
     colors, div, prelude::*, DefaultColor, DefaultThemeAppearance, Hsla, Render, View, ViewContext,
-    WindowContext,
 };
 use story::Story;
 use strum::IntoEnumIterator;
@@ -9,7 +8,7 @@ use ui::{h_flex, ActiveTheme};
 pub struct DefaultColorsStory;
 
 impl DefaultColorsStory {
-    pub fn view(cx: &mut WindowContext) -> View<Self> {
+    pub fn view(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> View<Self> {
         cx.new_view(|_cx| Self)
     }
 }

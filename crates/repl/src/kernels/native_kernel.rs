@@ -5,7 +5,7 @@ use futures::{
     stream::{SelectAll, StreamExt},
     AsyncBufReadExt as _, SinkExt as _,
 };
-use gpui::{EntityId, Task, View, WindowContext};
+use gpui::{EntityId, Task, View};
 use jupyter_protocol::{
     connection_info::{ConnectionInfo, Transport},
     ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
@@ -115,7 +115,8 @@ impl NativeRunningKernel {
         fs: Arc<dyn Fs>,
         // todo: convert to weak view
         session: View<Session>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
         cx.spawn(|cx| async move {
             let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
@@ -347,7 +348,11 @@ impl RunningKernel for NativeRunningKernel {
         self.kernel_info = Some(info);
     }
 
-    fn force_shutdown(&mut self, _cx: &mut WindowContext) -> Task<anyhow::Result<()>> {
+    fn force_shutdown(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
+    ) -> Task<anyhow::Result<()>> {
         self._process_status_task.take();
         self.request_tx.close_channel();
 

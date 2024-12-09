@@ -5,7 +5,7 @@ use gpui::{
     HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
     LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
     Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle, View, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    UTF16Selection, UnderlineStyle, View, WeakView, WhiteSpace, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -88,7 +88,8 @@ impl LayoutCell {
         origin: Point<Pixels>,
         dimensions: &TerminalSize,
         _visible_bounds: Bounds<Pixels>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let pos = {
             let point = self.point;
@@ -127,7 +128,13 @@ impl LayoutRect {
         }
     }
 
-    pub fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalSize, cx: &mut WindowContext) {
+    pub fn paint(
+        &self,
+        origin: Point<Pixels>,
+        dimensions: &TerminalSize,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let position = {
             let alac_point = self.point;
             point(
@@ -202,7 +209,8 @@ impl TerminalElement {
         // terminal_theme: &TerminalStyle,
         text_system: &WindowTextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
-        cx: &WindowContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
         let theme = cx.theme();
         let mut cells = vec![];
@@ -412,7 +420,7 @@ impl TerminalElement {
         origin: Point<Pixels>,
         focus_handle: FocusHandle,
         f: impl Fn(&mut Terminal, Point<Pixels>, &E, &mut ModelContext<Terminal>),
-    ) -> impl Fn(&E, &mut WindowContext) {
+    ) -> impl Fn(&E, &mut gpui::Window, &mut gpui::AppContext) {
         move |event, cx| {
             cx.focus(&focus_handle);
             connection.update(cx, |terminal, cx| {
@@ -428,7 +436,8 @@ impl TerminalElement {
         origin: Point<Pixels>,
         mode: TermMode,
         hitbox: &Hitbox,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
@@ -549,7 +558,7 @@ impl TerminalElement {
         }
     }
 
-    fn rem_size(&self, cx: &WindowContext) -> Option<Pixels> {
+    fn rem_size(&self, window: &Window, cx: &AppContext) -> Option<Pixels> {
         let settings = ThemeSettings::get_global(cx).clone();
         let buffer_font_size = settings.buffer_font_size(cx);
         let rem_size_scale = {
@@ -581,7 +590,8 @@ impl Element for TerminalElement {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id = self
             .interactivity
@@ -600,7 +610,8 @@ impl Element for TerminalElement {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Self::PrepaintState {
         let rem_size = self.rem_size(cx);
         self.interactivity
@@ -867,7 +878,8 @@ impl Element for TerminalElement {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
-        cx: &mut WindowContext<'_>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             let scroll_top = self.terminal_view.read(cx).scroll_top;
@@ -976,7 +988,8 @@ impl InputHandler for TerminalInputHandler {
     fn selected_text_range(
         &mut self,
         _ignore_disabled_input: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<UTF16Selection> {
         if self
             .terminal
@@ -994,7 +1007,11 @@ impl InputHandler for TerminalInputHandler {
         }
     }
 
-    fn marked_text_range(&mut self, _: &mut WindowContext) -> Option<std::ops::Range<usize>> {
+    fn marked_text_range(
+        &mut self,
+        _: &mut gpui::Window,
+        _: &mut gpui::AppContext,
+    ) -> Option<std::ops::Range<usize>> {
         None
     }
 
@@ -1002,7 +1019,8 @@ impl InputHandler for TerminalInputHandler {
         &mut self,
         _: std::ops::Range<usize>,
         _: &mut Option<std::ops::Range<usize>>,
-        _: &mut WindowContext,
+        _: &mut gpui::Window,
+        _: &mut gpui::AppContext,
     ) -> Option<String> {
         None
     }
@@ -1011,7 +1029,8 @@ impl InputHandler for TerminalInputHandler {
         &mut self,
         _replacement_range: Option<std::ops::Range<usize>>,
         text: &str,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         self.terminal.update(cx, |terminal, _| {
             terminal.input(text.into());
@@ -1032,16 +1051,18 @@ impl InputHandler for TerminalInputHandler {
         _range_utf16: Option<std::ops::Range<usize>>,
         _new_text: &str,
         _new_selected_range: Option<std::ops::Range<usize>>,
-        _: &mut WindowContext,
+        _: &mut gpui::Window,
+        _: &mut gpui::AppContext,
     ) {
     }
 
-    fn unmark_text(&mut self, _: &mut WindowContext) {}
+    fn unmark_text(&mut self, _: &mut gpui::Window, _: &mut gpui::AppContext) {}
 
     fn bounds_for_range(
         &mut self,
         _range_utf16: std::ops::Range<usize>,
-        _: &mut WindowContext,
+        _: &mut gpui::Window,
+        _: &mut gpui::AppContext,
     ) -> Option<Bounds<Pixels>> {
         self.cursor_bounds
     }

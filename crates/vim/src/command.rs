@@ -15,7 +15,6 @@ use gpui::{actions, impl_actions, Action, AppContext, Global, ViewContext};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
-use ui::WindowContext;
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, SaveIntent};
 
@@ -423,7 +422,8 @@ impl Position {
         &self,
         vim: &Vim,
         editor: &mut Editor,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Result<MultiBufferRow> {
         let snapshot = editor.snapshot(cx);
         let target = match self {
@@ -469,7 +469,8 @@ impl CommandRange {
         &self,
         vim: &Vim,
         editor: &mut Editor,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Result<Range<MultiBufferRow>> {
         let start = self.start.buffer_row(vim, editor, cx)?;
         let end = if let Some(end) = self.end.as_ref() {

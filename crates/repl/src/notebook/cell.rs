@@ -62,7 +62,10 @@ impl CellControl {
 }
 
 impl Clickable for CellControl {
-    fn on_click(self, handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static) -> Self {
+    fn on_click(
+        self,
+        handler: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::AppContext) + 'static,
+    ) -> Self {
         let button = self.button.on_click(handler);
         Self { button }
     }
@@ -80,7 +83,11 @@ pub enum Cell {
     Raw(View<RawCell>),
 }
 
-fn convert_outputs(outputs: &Vec<nbformat::v4::Output>, cx: &mut WindowContext) -> Vec<Output> {
+fn convert_outputs(
+    outputs: &Vec<nbformat::v4::Output>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) -> Vec<Output> {
     outputs
         .into_iter()
         .map(|output| match output {
@@ -107,7 +114,8 @@ impl Cell {
         cell: &nbformat::v4::Cell,
         languages: &Arc<LanguageRegistry>,
         notebook_language: Shared<Task<Option<Arc<Language>>>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Self {
         match cell {
             nbformat::v4::Cell::Markdown {

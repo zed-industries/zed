@@ -169,7 +169,7 @@ impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Arc<str> {
         let (create_window, reuse_window) = if self.create_new_window {
             (
                 cx.keystroke_text_for(&menu::Confirm),
@@ -345,7 +345,11 @@ impl PickerDelegate for RecentProjectsDelegate {
 
     fn dismissed(&mut self, _: &mut ViewContext<Picker<Self>>) {}
 
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+    fn no_matches_text(
+        &self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
+    ) -> SharedString {
         if self.workspaces.is_empty() {
             "Recently opened projects will show up here".into()
         } else {

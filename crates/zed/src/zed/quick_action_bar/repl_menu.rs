@@ -369,7 +369,7 @@ impl QuickActionBar {
     }
 }
 
-fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
+fn session_state(session: View<Session>, window: &Window, cx: &AppContext) -> ReplMenuState {
     let session = session.read(cx);
 
     let kernel_name = session.kernel_specification.name();

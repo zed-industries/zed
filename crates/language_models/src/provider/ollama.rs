@@ -211,7 +211,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+    fn configuration_view(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> AnyView {
         let state = self.state.clone();
         cx.new_view(|cx| ConfigurationView::new(state, cx)).into()
     }
@@ -436,7 +436,7 @@ impl ConfigurationView {
         }
     }
 
-    fn retry_connection(&self, cx: &mut WindowContext) {
+    fn retry_connection(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         self.state
             .update(cx, |state, cx| state.fetch_models(cx))
             .detach_and_log_err(cx);

@@ -11,7 +11,7 @@ use fuzzy::StringMatch;
 use gpui::{
     div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, HighlightStyle,
     ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    VisualContext, WeakView,
 };
 use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
@@ -26,7 +26,12 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(OutlineView::register).detach();
 }
 
-pub fn toggle(editor: View<Editor>, _: &ToggleOutline, cx: &mut WindowContext) {
+pub fn toggle(
+    editor: View<Editor>,
+    _: &ToggleOutline,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) {
     let outline = editor
         .read(cx)
         .buffer()
@@ -122,7 +127,7 @@ impl OutlineViewDelegate {
         }
     }
 
-    fn restore_active_editor(&mut self, cx: &mut WindowContext) {
+    fn restore_active_editor(&mut self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         self.active_editor.update(cx, |editor, cx| {
             editor.clear_row_highlights::<OutlineRowHighlights>();
             if let Some(scroll_position) = self.prev_scroll_position {
@@ -160,7 +165,7 @@ impl OutlineViewDelegate {
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Search buffer symbols...".into()
     }
 

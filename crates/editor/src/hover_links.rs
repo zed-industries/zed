@@ -5,7 +5,7 @@ use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
 };
-use gpui::{px, AppContext, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
+use gpui::{px, AppContext, Asy Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
@@ -635,7 +635,8 @@ pub fn show_link_definition(
 pub(crate) fn find_url(
     buffer: &Model<language::Buffer>,
     position: text::Anchor,
-    mut cx: AsyncWindowContext,
+    mut window: AnyWindowHandle,
+    cx: AsyncAppContext,
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
@@ -698,7 +699,8 @@ pub(crate) async fn find_file(
     buffer: &Model<language::Buffer>,
     project: Option<Model<Project>>,
     position: text::Anchor,
-    cx: &mut AsyncWindowContext,
+    window_handle: AnyWindowHandle,
+    cx: &mut AsyncAppContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
     let project = project?;
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
@@ -709,7 +711,8 @@ pub(crate) async fn find_file(
         candidate_file_path: &str,
         project: &Model<Project>,
         buffer: &Model<language::Buffer>,
-        cx: &mut AsyncWindowContext,
+        window_handle: AnyWindowHandle,
+        cx: &mut AsyncAppContext,
     ) -> Option<ResolvedPath> {
         project
             .update(cx, |project, cx| {

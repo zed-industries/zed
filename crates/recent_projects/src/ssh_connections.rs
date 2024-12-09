@@ -24,7 +24,7 @@ use settings::{Settings, SettingsSources};
 use theme::ThemeSettings;
 use ui::{
     prelude::*, ActiveTheme, Color, Icon, IconName, IconSize, InteractiveElement, IntoElement,
-    Label, LabelCommon, Styled, ViewContext, VisualContext, WindowContext,
+    Label, LabelCommon, Styled, ViewContext, VisualContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -309,7 +309,7 @@ pub(crate) struct SshConnectionHeader {
 }
 
 impl RenderOnce for SshConnectionHeader {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let theme = cx.theme();
 
         let mut header_color = theme.colors().text;
@@ -515,7 +515,8 @@ pub fn connect_over_ssh(
     unique_identifier: ConnectionIdentifier,
     connection_options: SshConnectionOptions,
     ui: View<SshPrompt>,
-    cx: &mut WindowContext,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
 ) -> Task<Result<Option<Model<SshRemoteClient>>>> {
     let window = cx.window_handle();
     let known_password = connection_options.password.clone();

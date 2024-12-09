@@ -7,7 +7,7 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{actions, Editor};
 use gpui::{
-    actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, ClipboardItem,
+    actions, div, list, prelude::*, px, Action, AppContext, Asy ClipboardItem,
     CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight,
     HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, Stateful, Subscription,
     Task, View, ViewContext, VisualContext, WeakView,
@@ -188,7 +188,8 @@ impl ChatPanel {
 
     pub fn load(
         workspace: WeakView<Workspace>,
-        cx: AsyncWindowContext,
+        window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
@@ -698,7 +699,8 @@ impl ChatPanel {
         this: &View<Self>,
         message_id: u64,
         can_delete_message: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> View<ContextMenu> {
         let menu = {
             ContextMenu::build(cx, move |menu, cx| {
@@ -1096,7 +1098,7 @@ impl FocusableView for ChatPanel {
 }
 
 impl Panel for ChatPanel {
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, window: &gpui::Window, cx: &gpui::AppContext) -> DockPosition {
         ChatPanelSettings::get_global(cx).dock
     }
 
@@ -1112,7 +1114,7 @@ impl Panel for ChatPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, window: &gpui::Window, cx: &gpui::AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| ChatPanelSettings::get_global(cx).default_width)
     }
@@ -1134,11 +1136,11 @@ impl Panel for ChatPanel {
         "ChatPanel"
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<ui::IconName> {
         Some(ui::IconName::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
     }
 
-    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, cx: &AppContext) -> Option<&'static str> {
         Some("Chat Panel")
     }
 
@@ -1146,7 +1148,7 @@ impl Panel for ChatPanel {
         Box::new(ToggleFocus)
     }
 
-    fn starts_open(&self, cx: &WindowContext) -> bool {
+    fn starts_open(&self, window: &Window, cx: &AppContext) -> bool {
         ActiveCall::global(cx)
             .read(cx)
             .room()

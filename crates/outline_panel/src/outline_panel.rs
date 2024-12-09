@@ -24,12 +24,12 @@ use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement,
-    AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div,
-    ElementId, EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement,
-    IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton,
+    AppContext, AssetSource, Asy Bounds, ClipboardItem, DismissEvent, Div, ElementId,
+    EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement, IntoElement,
+    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
     StatefulInteractiveElement as _, Styled, Subscription, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    ViewContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -588,7 +588,8 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
 impl OutlinePanel {
     pub async fn load(
         workspace: WeakView<Workspace>,
-        mut cx: AsyncWindowContext,
+        mut window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> anyhow::Result<View<Self>> {
         let serialized_panel = cx
             .background_executor()
@@ -2481,7 +2482,7 @@ impl OutlinePanel {
         self.update_fs_entries(&new_active_editor, new_entries, None, cx);
     }
 
-    fn clear_previous(&mut self, cx: &mut WindowContext<'_>) {
+    fn clear_previous(&mut self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         self.fs_entries_update_task = Task::ready(());
         self.outline_fetch_tasks.clear();
         self.cached_entries_update_task = Task::ready(());
@@ -3274,7 +3275,8 @@ impl OutlinePanel {
         track_matches: bool,
         entry: PanelEntry,
         depth: usize,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let entry = if let PanelEntry::FoldedDirs(worktree_id, entries) = &entry {
             match entries.len() {
@@ -4131,7 +4133,7 @@ impl Panel for OutlinePanel {
         "Outline Panel"
     }
 
-    fn position(&self, cx: &WindowContext) -> DockPosition {
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
         match OutlinePanelSettings::get_global(cx).dock {
             OutlinePanelDockPosition::Left => DockPosition::Left,
             OutlinePanelDockPosition::Right => DockPosition::Right,
@@ -4156,7 +4158,7 @@ impl Panel for OutlinePanel {
         );
     }
 
-    fn size(&self, cx: &WindowContext) -> Pixels {
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| OutlinePanelSettings::get_global(cx).default_width)
     }
@@ -4167,13 +4169,13 @@ impl Panel for OutlinePanel {
         cx.notify();
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<IconName> {
         OutlinePanelSettings::get_global(cx)
             .button
             .then_some(IconName::ListTree)
     }
 
-    fn icon_tooltip(&self, _: &WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _: &Window, _: &AppContext) -> Option<&'static str> {
         Some("Outline Panel")
     }
 
@@ -4181,7 +4183,7 @@ impl Panel for OutlinePanel {
         Box::new(ToggleFocus)
     }
 
-    fn starts_open(&self, _: &WindowContext) -> bool {
+    fn starts_open(&self, _: &Window, _: &AppContext) -> bool {
         self.active
     }
 
@@ -4404,7 +4406,7 @@ fn empty_icon() -> AnyElement {
         .into_any_element()
 }
 
-fn horizontal_separator(cx: &mut WindowContext) -> Div {
+fn horizontal_separator(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Div {
     div().mx_2().border_primary(cx).border_t_1()
 }
 
@@ -5420,7 +5422,11 @@ mod tests {
             .snapshot(cx)
     }
 
-    fn selected_row_text(editor: &View<Editor>, cx: &mut WindowContext) -> String {
+    fn selected_row_text(
+        editor: &View<Editor>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> String {
         editor.update(cx, |editor, cx| {
                 let selections = editor.selections.all::<language::Point>(cx);
                 assert_eq!(selections.len(), 1, "Active editor should have exactly one selection after any outline panel interactions");

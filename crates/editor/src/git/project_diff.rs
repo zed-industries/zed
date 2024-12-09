@@ -24,7 +24,7 @@ use text::{OffsetRangeExt, ToPoint};
 use theme::ActiveTheme;
 use ui::{
     div, h_flex, Color, Context, FluentBuilder, Icon, IconName, IntoElement, Label, LabelCommon,
-    ParentElement, SharedString, Styled, ViewContext, VisualContext, WindowContext,
+    ParentElement, SharedString, Styled, ViewContext, VisualContext,
 };
 use util::{paths::compare_paths, ResultExt};
 use workspace::{
@@ -930,7 +930,7 @@ impl Item for ProjectDiffEditor {
         Some("Project Diff".into())
     }
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &Window, _: &AppContext) -> AnyElement {
         if self.buffer_changes.is_empty() {
             Label::new("No changes")
                 .color(if params.selected {

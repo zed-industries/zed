@@ -32,7 +32,7 @@ impl ParentElement for CollabNotification {
 }
 
 impl RenderOnce for CollabNotification {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         h_flex()
             .text_ui(cx)
             .justify_between()

@@ -8,7 +8,7 @@ use crate::{
     Vim,
 };
 use editor::Editor;
-use gpui::{actions, Action, ViewContext, WindowContext};
+use gpui::{actions, Action, ViewContext};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -88,7 +88,12 @@ impl Replayer {
         })))
     }
 
-    pub fn replay(&mut self, actions: Vec<ReplayableAction>, cx: &mut WindowContext) {
+    pub fn replay(
+        &mut self,
+        actions: Vec<ReplayableAction>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let mut lock = self.0.borrow_mut();
         let range = lock.ix..lock.ix;
         lock.actions.splice(range, actions);
@@ -104,7 +109,7 @@ impl Replayer {
         self.0.borrow_mut().actions.clear()
     }
 
-    pub fn next(self, cx: &mut WindowContext) {
+    pub fn next(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         let mut lock = self.0.borrow_mut();
         let action = if lock.ix < 10000 {
             lock.actions.get(lock.ix).cloned()

@@ -16,7 +16,7 @@ use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
     FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement, KeyContext, Model,
     ModelContext, ParentElement, Point, Render, SharedString, Styled, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
+    TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WeakView,
 };
 use language::Buffer;
 use menu::Confirm;
@@ -420,11 +420,11 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, cx: &AppContext) -> Option<Icon> {
         Some(Icon::new(IconName::MagnifyingGlass))
     }
 
-    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, window: &Window, cx: &AppContext) -> Option<SharedString> {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)
@@ -919,7 +919,7 @@ impl ProjectSearchView {
         }
     }
 
-    pub fn search_query_text(&self, cx: &WindowContext) -> String {
+    pub fn search_query_text(&self, window: &Window, cx: &AppContext) -> String {
         self.query_editor.read(cx).text(cx)
     }
 
@@ -1230,7 +1230,7 @@ impl ProjectSearchView {
             )
     }
 
-    fn border_color_for(&self, panel: InputPanel, cx: &WindowContext) -> Hsla {
+    fn border_color_for(&self, panel: InputPanel, window: &Window, cx: &AppContext) -> Hsla {
         if self.panels_with_errors.contains(&panel) {
             Color::Error.color(cx)
         } else {

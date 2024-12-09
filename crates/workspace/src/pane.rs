@@ -15,11 +15,11 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
-    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
+    AppContext, Asy ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
     EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
     MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
-    WindowContext,
+
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
@@ -288,7 +288,8 @@ pub struct Pane {
     pub(crate) workspace: WeakView<Workspace>,
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
-    can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
+    can_drop_predicate:
+        Option<Arc<dyn Fn(&dyn Any, &mut gpui::Window, &mut gpui::AppContext) -> bool>>,
     custom_drop_handle:
         Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
     can_split_predicate: Option<Arc<dyn Fn(&mut Self, &dyn Any, &mut ViewContext<Self>) -> bool>>,
@@ -372,7 +373,9 @@ impl Pane {
         workspace: WeakView<Workspace>,
         project: Model<Project>,
         next_timestamp: Arc<AtomicUsize>,
-        can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool + 'static>>,
+        can_drop_predicate: Option<
+            Arc<dyn Fn(&dyn Any, &mut gpui::Window, &mut gpui::AppContext) -> bool + 'static>,
+        >,
         double_click_dispatch_action: Box<dyn Action>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -543,7 +546,7 @@ impl Pane {
         }
     }
 
-    pub fn has_focus(&self, cx: &WindowContext) -> bool {
+    pub fn has_focus(&self, window: &Window, cx: &AppContext) -> bool {
         // We not only check whether our focus handle contains focus, but also
         // whether the active item might have focus, because we might have just activated an item
         // that hasn't rendered yet.
@@ -1601,7 +1604,8 @@ impl Pane {
         item_ix: usize,
         item: &dyn ItemHandle,
         save_intent: SaveIntent,
-        cx: &mut AsyncWindowContext,
+        window_handle: AnyWindowHandle,
+        cx: &mut AsyncAppContext,
     ) -> Result<bool> {
         const CONFLICT_MESSAGE: &str =
                 "This file has changed on disk since you started editing it. Do you want to overwrite it?";
@@ -1785,7 +1789,8 @@ impl Pane {
     pub fn autosave_item(
         item: &dyn ItemHandle,
         project: Model<Project>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<()>> {
         let format = !matches!(
             item.workspace_settings(cx).autosave,
@@ -1862,7 +1867,12 @@ impl Pane {
         });
     }
 
-    fn entry_abs_path(&self, entry: ProjectEntryId, cx: &WindowContext) -> Option<PathBuf> {
+    fn entry_abs_path(
+        &self,
+        entry: ProjectEntryId,
+        window: &Window,
+        cx: &AppContext,
+    ) -> Option<PathBuf> {
         let worktree = self
             .workspace
             .upgrade()?
@@ -3035,16 +3045,29 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
+    pub fn push<D: 'static + Send + Any>(
+        &mut self,
+        data: Option<D>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         self.history
             .push(data, self.item.clone(), self.is_preview, cx);
     }
 
-    pub fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
+    pub fn pop_backward(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Option<NavigationEntry> {
         self.history.pop(NavigationMode::GoingBack, cx)
     }
 
-    pub fn pop_forward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
+    pub fn pop_forward(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Option<NavigationEntry> {
         self.history.pop(NavigationMode::GoingForward, cx)
     }
 }
@@ -3090,7 +3113,12 @@ impl NavHistory {
         self.0.lock().mode = NavigationMode::Normal;
     }
 
-    pub fn pop(&mut self, mode: NavigationMode, cx: &mut WindowContext) -> Option<NavigationEntry> {
+    pub fn pop(
+        &mut self,
+        mode: NavigationMode,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Option<NavigationEntry> {
         let mut state = self.0.lock();
         let entry = match mode {
             NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
@@ -3112,7 +3140,8 @@ impl NavHistory {
         data: Option<D>,
         item: Arc<dyn WeakItemHandle>,
         is_preview: bool,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let state = &mut *self.0.lock();
         match state.mode {
@@ -3186,7 +3215,7 @@ impl NavHistory {
 }
 
 impl NavHistoryState {
-    pub fn did_update(&self, cx: &mut WindowContext) {
+    pub fn did_update(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         if let Some(pane) = self.pane.upgrade() {
             cx.defer(move |cx| {
                 pane.update(cx, |pane, cx| pane.history_updated(cx));
@@ -3244,7 +3273,11 @@ pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &AppContext) -> Vec<usize>
     tab_details
 }
 
-pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &WindowContext) -> Option<Indicator> {
+pub fn render_item_indicator(
+    item: Box<dyn ItemHandle>,
+    window: &Window,
+    cx: &AppContext,
+) -> Option<Indicator> {
     maybe!({
         let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
             (true, _) => Color::Warning,

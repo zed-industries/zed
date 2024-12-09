@@ -18,7 +18,7 @@ use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement,
     Render, SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    WeakView,
 };
 use language::{
     Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
@@ -693,7 +693,7 @@ impl Item for ProjectDiagnosticsEditor {
         Some("Project Diagnostics".into())
     }
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &Window, _: &AppContext) -> AnyElement {
         h_flex()
             .gap_1()
             .when(

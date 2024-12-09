@@ -288,7 +288,11 @@ impl PickerDelegate for OpenPathDelegate {
         )
     }
 
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+    fn no_matches_text(
+        &self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
+    ) -> SharedString {
         if let Some(error) = self.directory_state.as_ref().and_then(|s| s.error.clone()) {
             error
         } else {
@@ -296,7 +300,7 @@ impl PickerDelegate for OpenPathDelegate {
         }
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         Arc::from("[directory/]filename.ext")
     }
 }

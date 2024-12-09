@@ -14,7 +14,7 @@ use language_model::{
 use semantic_index::{FileSummary, SemanticDb};
 use smol::channel;
 use std::sync::{atomic::AtomicBool, Arc};
-use ui::{prelude::*, BorrowAppContext, WindowContext};
+use ui::{prelude::*, BorrowAppContext};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -54,7 +54,8 @@ impl SlashCommand for AutoCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         // There's no autocomplete for a prompt, since it's arbitrary text.
         // However, we can use this opportunity to kick off a drain of the backlog.
@@ -76,7 +77,7 @@ impl SlashCommand for AutoCommand {
 
         let cx: &mut AppContext = cx;
 
-        cx.spawn(|cx: gpui::AsyncAppContext| async move {
+        cx.spawn(|cx: AsyncAppContext| async move {
             let task = project_index.read_with(&cx, |project_index, cx| {
                 project_index.flush_summary_backlogs(cx)
             })?;
@@ -98,7 +99,8 @@ impl SlashCommand for AutoCommand {
         _context_buffer: language::BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
@@ -115,7 +117,7 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("no project indexer")));
         };
 
-        let task = cx.spawn(|cx: gpui::AsyncWindowContext| async move {
+        let task = cx.spawn(|cx: AsyncAppContext| async move {
             let summaries = project_index
                 .read_with(&cx, |project_index, cx| project_index.all_summaries(cx))?
                 .await?;

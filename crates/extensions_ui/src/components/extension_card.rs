@@ -29,7 +29,7 @@ impl ParentElement for ExtensionCard {
 }
 
 impl RenderOnce for ExtensionCard {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         div().w_full().child(
             v_flex()
                 .w_full()

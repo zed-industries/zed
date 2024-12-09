@@ -83,7 +83,7 @@ impl PickerDelegate for ContactFinderDelegate {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Search collaborator by username...".into()
     }
 

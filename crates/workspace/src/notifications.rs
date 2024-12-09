@@ -1,9 +1,9 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
 use gpui::{
-    svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, Entity, EntityId,
+    svg, AnyView, AppContext, Asy ClipboardItem, DismissEvent, Entity, EntityId,
     EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext,
-    VisualContext, WindowContext,
+    VisualContext,
 };
 use language::DiagnosticSeverity;
 
@@ -240,7 +240,7 @@ impl LanguageServerPrompt {
         }
     }
 
-    async fn select_option(this: View<Self>, ix: usize, mut cx: AsyncWindowContext) {
+    async fn select_option(this: View<Self>, ix: usize, mut cx: AsyncAppContext) {
         util::maybe!(async move {
             let potential_future = this.update(&mut cx, |this, _| {
                 this.request.take().map(|request| request.respond(ix))
@@ -566,7 +566,11 @@ pub trait NotifyResultExt {
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Self::Ok>;
 
-    fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<Self::Ok>;
+    fn notify_async_err(
+        self,
+        window_handle: AnyWindowHandle,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Self::Ok>;
 }
 
 impl<T, E> NotifyResultExt for Result<T, E>
@@ -586,7 +590,11 @@ where
         }
     }
 
-    fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<T> {
+    fn notify_async_err(
+        self,
+        window_handle: AnyWindowHandle,
+        cx: &mut AsyncAppContext,
+    ) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(err) => {
@@ -604,7 +612,7 @@ where
 }
 
 pub trait NotifyTaskExt {
-    fn detach_and_notify_err(self, cx: &mut WindowContext);
+    fn detach_and_notify_err(self, window: &mut gpui::Window, cx: &mut gpui::AppContext);
 }
 
 impl<R, E> NotifyTaskExt for Task<Result<R, E>>
@@ -612,7 +620,7 @@ where
     E: std::fmt::Debug + std::fmt::Display + Sized + 'static,
     R: 'static,
 {
-    fn detach_and_notify_err(self, cx: &mut WindowContext) {
+    fn detach_and_notify_err(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         cx.spawn(|mut cx| async move { self.await.notify_async_err(&mut cx) })
             .detach();
     }
@@ -622,15 +630,19 @@ pub trait DetachAndPromptErr<R> {
     fn prompt_err(
         self,
         msg: &str,
-        cx: &mut WindowContext,
-        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+        f: impl FnOnce(&anyhow::Error, &mut gpui::Window, &mut gpui::AppContext) -> Option<String>
+            + 'static,
     ) -> Task<Option<R>>;
 
     fn detach_and_prompt_err(
         self,
         msg: &str,
-        cx: &mut WindowContext,
-        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+        f: impl FnOnce(&anyhow::Error, &mut gpui::Window, &mut gpui::AppContext) -> Option<String>
+            + 'static,
     );
 }
 
@@ -641,8 +653,10 @@ where
     fn prompt_err(
         self,
         msg: &str,
-        cx: &mut WindowContext,
-        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+        f: impl FnOnce(&anyhow::Error, &mut gpui::Window, &mut gpui::AppContext) -> Option<String>
+            + 'static,
     ) -> Task<Option<R>> {
         let msg = msg.to_owned();
         cx.spawn(|mut cx| async move {
@@ -664,8 +678,10 @@ where
     fn detach_and_prompt_err(
         self,
         msg: &str,
-        cx: &mut WindowContext,
-        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+        f: impl FnOnce(&anyhow::Error, &mut gpui::Window, &mut gpui::AppContext) -> Option<String>
+            + 'static,
     ) {
         self.prompt_err(msg, cx, f).detach();
     }

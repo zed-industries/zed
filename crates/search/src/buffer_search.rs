@@ -16,7 +16,7 @@ use gpui::{
     actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusHandle,
     FocusableView, Hsla, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
     Render, ScrollHandle, Styled, Subscription, Task, TextStyle, View, ViewContext,
-    VisualContext as _, WindowContext,
+    VisualContext as _,
 };
 use project::{
     search::SearchQuery,
@@ -732,10 +732,10 @@ impl BufferSearchBar {
         });
     }
 
-    pub fn query(&self, cx: &WindowContext) -> String {
+    pub fn query(&self, window: &Window, cx: &AppContext) -> String {
         self.query_editor.read(cx).text(cx)
     }
-    pub fn replacement(&self, cx: &WindowContext) -> String {
+    pub fn replacement(&self, window: &Window, cx: &AppContext) -> String {
         self.replacement_editor.read(cx).text(cx)
     }
     pub fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> Option<String> {
@@ -788,7 +788,7 @@ impl BufferSearchBar {
         &self,
         option: SearchOptions,
         focus_handle: FocusHandle,
-        action: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        action: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::AppContext) + 'static,
     ) -> impl IntoElement {
         let is_active = self.search_options.contains(option);
         option.as_button(is_active, focus_handle, action)
@@ -976,7 +976,11 @@ impl BufferSearchBar {
         self.toggle_search_option(SearchOptions::REGEX, cx)
     }
 
-    fn clear_active_searchable_item_matches(&mut self, cx: &mut WindowContext) {
+    fn clear_active_searchable_item_matches(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             self.active_match_index = None;
             self.searchable_items_with_matches

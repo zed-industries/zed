@@ -80,7 +80,7 @@ impl Item for ThemePreview {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(crate::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, window: &Window, cx: &AppContext) -> Option<SharedString> {
         let name = cx.theme().name.clone();
         Some(format!("{} Preview", name).into())
     }
@@ -104,7 +104,7 @@ impl Item for ThemePreview {
 const AVATAR_URL: &str = "https://avatars.githubusercontent.com/u/1714999?v=4";
 
 impl ThemePreview {
-    fn preview_bg(cx: &WindowContext) -> Hsla {
+    fn preview_bg(window: &Window, cx: &AppContext) -> Hsla {
         cx.theme().colors().editor_background
     }
 

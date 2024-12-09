@@ -1,11 +1,11 @@
-use gpui::{div, prelude::*, px, Render, SharedString, Styled, View, WindowContext};
+use gpui::{div, prelude::*, px, Render, SharedString, Styled, View};
 use ui::prelude::*;
 use ui::Tooltip;
 
 pub struct ScrollStory;
 
 impl ScrollStory {
-    pub fn view(cx: &mut WindowContext) -> View<ScrollStory> {
+    pub fn view(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> View<ScrollStory> {
         cx.new_view(|_cx| ScrollStory)
     }
 }

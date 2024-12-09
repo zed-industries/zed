@@ -48,8 +48,9 @@ struct EditorBlock {
     execution_view: View<ExecutionView>,
 }
 
-type CloseBlockFn =
-    Arc<dyn for<'a> Fn(CustomBlockId, &'a mut WindowContext) + Send + Sync + 'static>;
+type CloseBlockFn = Arc<
+    dyn for<'a, 'b> Fn(CustomBlockId, &'a mut Window, &'b mut AppContext) + Send + Sync + 'static,
+>;
 
 impl EditorBlock {
     fn new(
@@ -415,8 +416,8 @@ impl Session {
         let session_view = cx.view().downgrade();
         let weak_editor = self.editor.clone();
 
-        let on_close: CloseBlockFn =
-            Arc::new(move |block_id: CustomBlockId, cx: &mut WindowContext| {
+        let on_close: CloseBlockFn = Arc::new(
+            move |block_id: CustomBlockId, window: &mut gpui::Window, cx: &mut gpui::AppContext| {
                 if let Some(session) = session_view.upgrade() {
                     session.update(cx, |session, cx| {
                         session.blocks.remove(&parent_message_id);
@@ -431,7 +432,8 @@ impl Session {
                         editor.remove_blocks(block_ids, None, cx);
                     });
                 }
-            });
+            },
+        );
 
         let Ok(editor_block) =
             EditorBlock::new(self.editor.clone(), anchor_range, status, on_close, cx)

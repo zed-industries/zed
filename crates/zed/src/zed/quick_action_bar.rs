@@ -349,7 +349,7 @@ struct QuickActionBarButton {
     action: Box<dyn Action>,
     focus_handle: FocusHandle,
     tooltip: SharedString,
-    on_click: Box<dyn Fn(&ClickEvent, &mut WindowContext)>,
+    on_click: Box<dyn Fn(&ClickEvent, &mut gpui::Window, &mut gpui::AppContext)>,
 }
 
 impl QuickActionBarButton {
@@ -360,7 +360,7 @@ impl QuickActionBarButton {
         action: Box<dyn Action>,
         focus_handle: FocusHandle,
         tooltip: impl Into<SharedString>,
-        on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        on_click: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::AppContext) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -375,7 +375,7 @@ impl QuickActionBarButton {
 }
 
 impl RenderOnce for QuickActionBarButton {
-    fn render(self, _: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _: &mut gpui::Window, _: &mut gpui::AppContext) -> impl IntoElement {
         let tooltip = self.tooltip.clone();
         let action = self.action.boxed_clone();
 

@@ -9,7 +9,6 @@ use futures::StreamExt;
 use gpui::{
     div, surface, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     ParentElement, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
-    WindowContext,
 };
 use std::sync::{Arc, Weak};
 use ui::{prelude::*, Icon, IconName};
@@ -93,11 +92,11 @@ impl Item for SharedScreen {
         }
     }
 
-    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, cx: &AppContext) -> Option<Icon> {
         Some(Icon::new(IconName::Screen))
     }
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 

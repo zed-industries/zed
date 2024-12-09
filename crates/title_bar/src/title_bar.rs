@@ -248,12 +248,12 @@ impl TitleBar {
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn height(cx: &mut WindowContext) -> Pixels {
+    pub fn height(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Pixels {
         (1.75 * cx.rem_size()).max(px(34.))
     }
 
     #[cfg(target_os = "windows")]
-    pub fn height(_cx: &mut WindowContext) -> Pixels {
+    pub fn height(_window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Pixels {
         // todo(windows) instead of hard coded size report the actual size to the Windows platform API
         px(32.)
     }

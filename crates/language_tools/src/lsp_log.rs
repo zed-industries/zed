@@ -5,7 +5,7 @@ use futures::{channel::mpsc, StreamExt};
 use gpui::{
     actions, div, AnchorCorner, AppContext, Context, EventEmitter, FocusHandle, FocusableView,
     IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakModel, WindowContext,
+    ViewContext, VisualContext, WeakModel,
 };
 use language::LanguageServerId;
 use lsp::{
@@ -1007,7 +1007,7 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some("LSP Logs".into())
     }
 

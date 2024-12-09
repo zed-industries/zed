@@ -3,7 +3,7 @@ use gpui::{
     actions, div, rems, uniform_list, AppContext, Div, EventEmitter, FocusHandle, FocusableView,
     Hsla, InteractiveElement, IntoElement, Model, MouseButton, MouseDownEvent, MouseMoveEvent,
     ParentElement, Render, ScrollStrategy, SharedString, Styled, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    ViewContext, VisualContext, WeakView,
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
@@ -382,7 +382,7 @@ impl Item for SyntaxTreeView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some("Syntax Tree".into())
     }
 

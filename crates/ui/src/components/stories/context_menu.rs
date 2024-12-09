@@ -6,7 +6,7 @@ use crate::{right_click_menu, ContextMenu, Label};
 
 actions!(context_menu, [PrintCurrentDate, PrintBestFood]);
 
-fn build_menu(cx: &mut WindowContext, header: impl Into<SharedString>) -> View<ContextMenu> {
+fn build_menu(window: &mut gpui::Window, cx: &mut gpui::AppContext, header: impl Into<SharedString>) -> View<ContextMenu> {
     ContextMenu::build(cx, |menu, _| {
         menu.header(header)
             .separator()

@@ -11,7 +11,7 @@ use crate::{
     InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
-use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext};
+use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
 use settings::Settings;
@@ -142,7 +142,7 @@ pub struct ScrollManager {
 }
 
 impl ScrollManager {
-    pub fn new(cx: &mut WindowContext) -> Self {
+    pub fn new(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Self {
         ScrollManager {
             vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
             anchor: ScrollAnchor::new(),

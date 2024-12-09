@@ -54,7 +54,8 @@ impl SlashCommand for TerminalSlashCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -66,7 +67,8 @@ impl SlashCommand for TerminalSlashCommand {
         _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
@@ -108,7 +110,8 @@ impl SlashCommand for TerminalSlashCommand {
 
 fn resolve_active_terminal(
     workspace: &View<Workspace>,
-    cx: &WindowContext,
+    window: &Window,
+    cx: &AppContext,
 ) -> Option<View<TerminalView>> {
     if let Some(terminal_view) = workspace
         .read(cx)

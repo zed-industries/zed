@@ -4,7 +4,7 @@ use std::ops::Range;
 /// Implement this trait to allow models to handle textual input when implementing an editor, field, etc.
 ///
 /// Once your model implements this trait, you can use it to construct an [`ElementInputHandler<V>`].
-/// This input handler can then be assigned during paint by calling [`WindowContext::handle_input`].
+/// This input handler can then be assigned during paint by calling [`Window::handle_input`].
 ///
 /// See [`InputHandler`] for details on how to implement each method.
 pub trait InputHandlerModel: 'static + Sized {
@@ -152,7 +152,7 @@ impl<T: InputHandlerModel> InputHandler for Model<T> {
     }
 }
 
-/// The canonical implementation of [`PlatformInputHandler`]. Call [`WindowContext::handle_input`]
+/// The canonical implementation of [`PlatformInputHandler`]. Call [`Window::handle_input`]
 /// with an instance during your element's paint.
 pub struct ElementInputHandler<T> {
     model: Model<T>,

@@ -6,7 +6,7 @@ pub use crate::slash_command_registry::*;
 use anyhow::Result;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
+use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
 use serde::{Deserialize, Serialize};
@@ -79,7 +79,8 @@ pub trait SlashCommand: 'static + Send + Sync {
         arguments: &[String],
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
     fn accepts_arguments(&self) -> bool {
@@ -97,14 +98,20 @@ pub trait SlashCommand: 'static + Send + Sync {
         // It may be that `LspAdapterDelegate` needs a more general name, or
         // perhaps another kind of delegate is needed here.
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<SlashCommandResult>;
 }
 
 pub type RenderFoldPlaceholder = Arc<
     dyn Send
         + Sync
-        + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
+        + Fn(
+            ElementId,
+            Arc<dyn Fn(&mut gpui::Window, &mut gpui::AppContext)>,
+            &mut gpui::Window,
+            &mut gpui::AppContext,
+        ) -> AnyElement,
 >;
 
 #[derive(Debug, PartialEq)]

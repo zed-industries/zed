@@ -12,7 +12,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement,
-    AppContext, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
+    AppContext, Asy Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
     EventEmitter, FocusHandle, FocusableView, FontStyle, InteractiveElement, IntoElement,
     ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
     Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
@@ -303,7 +303,8 @@ impl CollabPanel {
 
     pub async fn load(
         workspace: WeakView<Workspace>,
-        mut cx: AsyncWindowContext,
+        mut window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> anyhow::Result<View<Self>> {
         let serialized_panel = cx
             .background_executor()
@@ -1629,7 +1630,7 @@ impl CollabPanel {
         self.collapsed_channels.binary_search(&channel_id).is_ok()
     }
 
-    fn leave_call(cx: &mut WindowContext) {
+    fn leave_call(window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         ActiveCall::global(cx)
             .update(cx, |call, cx| call.hang_up(cx))
             .detach_and_prompt_err("Failed to hang up", cx, |_, _| None);
@@ -2671,7 +2672,12 @@ impl CollabPanel {
     }
 }
 
-fn render_tree_branch(is_last: bool, overdraw: bool, cx: &mut WindowContext) -> impl IntoElement {
+fn render_tree_branch(
+    is_last: bool,
+    overdraw: bool,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) -> impl IntoElement {
     let rem_size = cx.rem_size();
     let line_height = cx.text_style().line_height_in_pixels(rem_size);
     let width = rem_size * 1.5;
@@ -2747,7 +2753,7 @@ impl Render for CollabPanel {
 impl EventEmitter<PanelEvent> for CollabPanel {}
 
 impl Panel for CollabPanel {
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, window: &gpui::Window, cx: &gpui::AppContext) -> DockPosition {
         CollaborationPanelSettings::get_global(cx).dock
     }
 
@@ -2763,7 +2769,7 @@ impl Panel for CollabPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, window: &gpui::Window, cx: &gpui::AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| CollaborationPanelSettings::get_global(cx).default_width)
     }
@@ -2774,13 +2780,13 @@ impl Panel for CollabPanel {
         cx.notify();
     }
 
-    fn icon(&self, cx: &gpui::WindowContext) -> Option<ui::IconName> {
+    fn icon(&self, window: &gpui::Window, cx: &gpui::AppContext) -> Option<ui::IconName> {
         CollaborationPanelSettings::get_global(cx)
             .button
             .then_some(ui::IconName::UserGroup)
     }
 
-    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, cx: &AppContext) -> Option<&'static str> {
         Some("Collab Panel")
     }
 

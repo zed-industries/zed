@@ -40,11 +40,11 @@ use fs::Fs;
 use futures::FutureExt;
 use gpui::{
     canvas, div, img, percentage, point, prelude::*, pulsating_between, size, Action, Animation,
-    AnimationExt, AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry,
-    ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle,
-    FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
-    Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription,
-    Task, Transformation, UpdateGlobal, View, WeakModel, WeakView,
+    AnimationExt, AnyElement, AnyView, AppContext, Asy ClipboardEntry, ClipboardItem,
+    CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
+    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    UpdateGlobal, View, WeakModel, WeakView,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -202,7 +202,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Search...".into()
     }
 
@@ -315,7 +315,8 @@ impl AssistantPanel {
     pub fn load(
         workspace: WeakView<Workspace>,
         prompt_builder: Arc<PromptBuilder>,
-        cx: AsyncWindowContext,
+        window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
@@ -898,7 +899,8 @@ impl AssistantPanel {
     fn resolve_inline_assist_target(
         workspace: &mut Workspace,
         assistant_panel: &View<AssistantPanel>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<InlineAssistTarget> {
         if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) {
             if terminal_panel
@@ -1371,7 +1373,7 @@ impl Panel for AssistantPanel {
         "AssistantPanel"
     }
 
-    fn position(&self, cx: &WindowContext) -> DockPosition {
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
         match AssistantSettings::get_global(cx).dock {
             AssistantDockPosition::Left => DockPosition::Left,
             AssistantDockPosition::Bottom => DockPosition::Bottom,
@@ -1398,7 +1400,7 @@ impl Panel for AssistantPanel {
         );
     }
 
-    fn size(&self, cx: &WindowContext) -> Pixels {
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         let settings = AssistantSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
@@ -1416,7 +1418,7 @@ impl Panel for AssistantPanel {
         cx.notify();
     }
 
-    fn is_zoomed(&self, cx: &WindowContext) -> bool {
+    fn is_zoomed(&self, window: &Window, cx: &AppContext) -> bool {
         self.pane.read(cx).is_zoomed()
     }
 
@@ -1442,7 +1444,7 @@ impl Panel for AssistantPanel {
         Some(proto::PanelId::AssistantPanel)
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<IconName> {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled || !settings.button {
             return None;
@@ -1451,7 +1453,7 @@ impl Panel for AssistantPanel {
         Some(IconName::ZedAssistant)
     }
 
-    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, cx: &AppContext) -> Option<&'static str> {
         Some("Assistant Panel")
     }
 
@@ -1720,7 +1722,7 @@ impl ContextEditor {
         });
     }
 
-    fn cursors(&self, cx: &mut WindowContext) -> Vec<usize> {
+    fn cursors(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Vec<usize> {
         let selections = self
             .editor
             .update(cx, |editor, cx| editor.selections.all::<usize>(cx));
@@ -1908,7 +1910,12 @@ impl ContextEditor {
                                 ..Default::default()
                             };
                             let render_trailer =
-                                move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+                                move |_row,
+                                      _unfold,
+                                      _window: &mut gpui::Window,
+                                      _cx: &mut gpui::AppContext| {
+                                    Empty.into_any()
+                                };
 
                             let start = buffer
                                 .anchor_in_excerpt(excerpt_id, tool_use.source_range.start)
@@ -1978,7 +1985,7 @@ impl ContextEditor {
                             let confirm_command = Arc::new({
                                 let context_editor = context_editor.clone();
                                 let command = command.clone();
-                                move |cx: &mut WindowContext| {
+                                move |window: &mut gpui::Window, cx: &mut gpui::AppContext| {
                                     context_editor
                                         .update(cx, |context_editor, cx| {
                                             context_editor.run_command(
@@ -1997,20 +2004,25 @@ impl ContextEditor {
                                 render: Arc::new(move |_, _, _| Empty.into_any()),
                                 ..Default::default()
                             };
-                            let render_toggle = {
-                                let confirm_command = confirm_command.clone();
-                                let command = command.clone();
-                                move |row, _, _, _cx: &mut WindowContext| {
+                            let render_toggle =
+                                {
+                                    let confirm_command = confirm_command.clone();
+                                    let command = command.clone();
+                                    move |row, _, _, _window: &mut gpui::Window,
+                                _cx: &mut gpui::AppContext| {
                                     render_pending_slash_command_gutter_decoration(
                                         row,
                                         &command.status,
                                         confirm_command.clone(),
                                     )
                                 }
-                            };
+                                };
                             let render_trailer = {
                                 let command = command.clone();
-                                move |row, _unfold, cx: &mut WindowContext| {
+                                move |row,
+                                      _unfold,
+                                      window: &mut gpui::Window,
+                                      cx: &mut gpui::AppContext| {
                                     // TODO: In the future we should investigate how we can expose
                                     // this as a hook on the `SlashCommand` trait so that we don't
                                     // need to special-case it here.
@@ -2089,7 +2101,10 @@ impl ContextEditor {
                         ..Default::default()
                     };
                     let render_trailer =
-                        move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+                        move |_row,
+                              _unfold,
+                              _window: &mut gpui::Window,
+                              _cx: &mut gpui::AppContext| Empty.into_any();
 
                     let start = buffer
                         .anchor_in_excerpt(excerpt_id, output_range.start)
@@ -2496,7 +2511,8 @@ impl ContextEditor {
     async fn open_patch_editor(
         this: WeakView<Self>,
         patch: AssistantPatch,
-        mut cx: AsyncWindowContext,
+        mut window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> Result<()> {
         let project = this.update(&mut cx, |this, _| this.project.clone())?;
         let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
@@ -2544,7 +2560,8 @@ impl ContextEditor {
     async fn update_patch_editor(
         this: WeakView<Self>,
         patch: AssistantPatch,
-        mut cx: AsyncWindowContext,
+        mut window: AnyWindowHandle,
+        cx: AsyncAppContext,
     ) -> Result<()> {
         let project = this.update(&mut cx, |this, _| this.project.clone())?;
         let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
@@ -2617,7 +2634,7 @@ impl ContextEditor {
         })
     }
 
-    fn esc_kbd(cx: &WindowContext) -> Div {
+    fn esc_kbd(window: &Window, cx: &AppContext) -> Div {
         let colors = cx.theme().colors().clone();
 
         h_flex()
@@ -4087,7 +4104,11 @@ fn render_fold_icon_button(
     editor: WeakView<Editor>,
     icon: IconName,
     label: SharedString,
-) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement> {
+) -> Arc<
+    dyn Send
+        + Sync
+        + Fn(FoldId, Range<Anchor>, &mut gpui::Window, &mut gpui::AppContext) -> AnyElement,
+> {
     Arc::new(move |fold_id, fold_range, _cx| {
         let editor = editor.clone();
         ButtonLike::new(fold_id)
@@ -4214,7 +4235,7 @@ impl FocusableView for ContextEditor {
 impl Item for ContextEditor {
     type Event = editor::EditorEvent;
 
-    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some(util::truncate_and_trailoff(&self.title(cx), MAX_TAB_TITLE_LEN).into())
     }
 
@@ -4338,7 +4359,7 @@ impl FollowableItem for ContextEditor {
         self.remote_id
     }
 
-    fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant> {
+    fn to_state_proto(&self, window: &Window, cx: &AppContext) -> Option<proto::view::Variant> {
         let context = self.context.read(cx);
         Some(proto::view::Variant::ContextEditor(
             proto::view::ContextEditor {
@@ -4358,7 +4379,8 @@ impl FollowableItem for ContextEditor {
         workspace: View<Workspace>,
         id: workspace::ViewId,
         state: &mut Option<proto::view::Variant>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<Task<Result<View<Self>>>> {
         let proto::view::Variant::ContextEditor(_) = state.as_ref()? else {
             return None;
@@ -4413,7 +4435,8 @@ impl FollowableItem for ContextEditor {
         &self,
         event: &Self::Event,
         update: &mut Option<proto::update_view::Variant>,
-        cx: &WindowContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> bool {
         self.editor
             .read(cx)
@@ -4431,7 +4454,7 @@ impl FollowableItem for ContextEditor {
         })
     }
 
-    fn is_project_item(&self, _cx: &WindowContext) -> bool {
+    fn is_project_item(&self, _window: &Window, cx: &AppContext) -> bool {
         true
     }
 
@@ -4445,7 +4468,7 @@ impl FollowableItem for ContextEditor {
         })
     }
 
-    fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<item::Dedup> {
+    fn dedup(&self, existing: &Self, window: &Window, cx: &AppContext) -> Option<item::Dedup> {
         if existing.context.read(cx).id() == self.context.read(cx).id() {
             Some(item::Dedup::KeepExisting)
         } else {
@@ -4744,7 +4767,7 @@ impl EventEmitter<()> for ContextHistory {}
 impl Item for ContextHistory {
     type Event = ();
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some("History".into())
     }
 }
@@ -4934,18 +4957,19 @@ impl FocusableView for ConfigurationView {
 impl Item for ConfigurationView {
     type Event = ConfigurationViewEvent;
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some("Configuration".into())
     }
 }
 
-type ToggleFold = Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>;
+type ToggleFold = Arc<dyn Fn(bool, &mut gpui::Window, &mut gpui::AppContext) + Send + Sync>;
 
 fn render_slash_command_output_toggle(
     row: MultiBufferRow,
     is_folded: bool,
     fold: ToggleFold,
-    _cx: &mut WindowContext,
+    _window: &mut gpui::Window,
+    _cx: &mut gpui::AppContext,
 ) -> AnyElement {
     Disclosure::new(
         ("slash-command-output-fold-indicator", row.0 as u64),
@@ -4961,8 +4985,9 @@ fn fold_toggle(
 ) -> impl Fn(
     MultiBufferRow,
     bool,
-    Arc<dyn Fn(bool, &mut WindowContext<'_>) + Send + Sync>,
-    &mut WindowContext<'_>,
+    Arc<dyn Fn(bool, &mut gpui::Window, &mut gpui::AppContext) + Send + Sync>,
+    &mut gpui::Window,
+    &mut gpui::AppContext,
 ) -> AnyElement {
     move |row, is_folded, fold, _cx| {
         Disclosure::new((name, row.0 as u64), !is_folded)
@@ -5005,7 +5030,8 @@ fn render_quote_selection_output_toggle(
     row: MultiBufferRow,
     is_folded: bool,
     fold: ToggleFold,
-    _cx: &mut WindowContext,
+    _window: &mut gpui::Window,
+    _cx: &mut gpui::AppContext,
 ) -> AnyElement {
     Disclosure::new(("quote-selection-indicator", row.0 as u64), !is_folded)
         .selected(is_folded)
@@ -5016,7 +5042,7 @@ fn render_quote_selection_output_toggle(
 fn render_pending_slash_command_gutter_decoration(
     row: MultiBufferRow,
     status: &PendingSlashCommandStatus,
-    confirm_command: Arc<dyn Fn(&mut WindowContext)>,
+    confirm_command: Arc<dyn Fn(&mut gpui::Window, &mut gpui::AppContext)>,
 ) -> AnyElement {
     let mut icon = IconButton::new(
         ("slash-command-gutter-decoration", row.0),
@@ -5042,7 +5068,8 @@ fn render_pending_slash_command_gutter_decoration(
 fn render_docs_slash_command_trailer(
     row: MultiBufferRow,
     command: ParsedSlashCommand,
-    cx: &mut WindowContext,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
 ) -> AnyElement {
     if command.arguments.is_empty() {
         return Empty.into_any();

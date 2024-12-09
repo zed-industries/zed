@@ -13,7 +13,6 @@ use editor::{
 use gpui::{
     actions, AnyView, AppContext, ClipboardItem, Entity as _, EventEmitter, FocusableView, Model,
     Pixels, Point, Render, Subscription, Task, View, ViewContext, VisualContext as _, WeakView,
-    WindowContext,
 };
 use project::Project;
 use rpc::proto::ChannelVisibility;
@@ -53,7 +52,8 @@ impl ChannelView {
         channel_id: ChannelId,
         link_position: Option<String>,
         workspace: View<Workspace>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<View<Self>>> {
         let pane = workspace.read(cx).active_pane().clone();
         let channel_view = Self::open_in_pane(
@@ -83,7 +83,8 @@ impl ChannelView {
         link_position: Option<String>,
         pane: View<Pane>,
         workspace: View<Workspace>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<View<Self>>> {
         let channel_view = Self::load(channel_id, workspace, cx);
         cx.spawn(|mut cx| async move {
@@ -133,7 +134,8 @@ impl ChannelView {
     pub fn load(
         channel_id: ChannelId,
         workspace: View<Workspace>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<View<Self>>> {
         let weak_workspace = workspace.downgrade();
         let workspace = workspace.read(cx);
@@ -387,7 +389,7 @@ impl Item for ChannelView {
         }
     }
 
-    fn tab_icon(&self, cx: &WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
         let channel = self.channel(cx)?;
         let icon = match channel.visibility {
             ChannelVisibility::Public => IconName::Public,
@@ -397,7 +399,12 @@ impl Item for ChannelView {
         Some(Icon::new(icon))
     }
 
-    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> gpui::AnyElement {
+    fn tab_content(
+        &self,
+        params: TabContentParams,
+        window: &Window,
+        cx: &AppContext,
+    ) -> gpui::AnyElement {
         let (channel_name, status) = if let Some(channel) = self.channel(cx) {
             let status = match (
                 self.channel_buffer.read(cx).buffer().read(cx).read_only(),
@@ -490,7 +497,7 @@ impl FollowableItem for ChannelView {
         self.remote_id
     }
 
-    fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant> {
+    fn to_state_proto(&self, window: &Window, cx: &AppContext) -> Option<proto::view::Variant> {
         let channel_buffer = self.channel_buffer.read(cx);
         if !channel_buffer.is_connected() {
             return None;
@@ -514,7 +521,8 @@ impl FollowableItem for ChannelView {
         workspace: View<workspace::Workspace>,
         remote_id: workspace::ViewId,
         state: &mut Option<proto::view::Variant>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Option<gpui::Task<anyhow::Result<View<Self>>>> {
         let Some(proto::view::Variant::ChannelView(_)) = state else {
             return None;
@@ -563,7 +571,8 @@ impl FollowableItem for ChannelView {
         &self,
         event: &EditorEvent,
         update: &mut Option<proto::update_view::Variant>,
-        cx: &WindowContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> bool {
         self.editor
             .read(cx)
@@ -587,7 +596,7 @@ impl FollowableItem for ChannelView {
         })
     }
 
-    fn is_project_item(&self, _cx: &WindowContext) -> bool {
+    fn is_project_item(&self, _window: &Window, cx: &AppContext) -> bool {
         false
     }
 
@@ -595,7 +604,7 @@ impl FollowableItem for ChannelView {
         Editor::to_follow_event(event)
     }
 
-    fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<Dedup> {
+    fn dedup(&self, existing: &Self, window: &Window, cx: &AppContext) -> Option<Dedup> {
         let existing = existing.channel_buffer.read(cx);
         if self.channel_buffer.read(cx).channel_id == existing.channel_id {
             if existing.is_connected() {

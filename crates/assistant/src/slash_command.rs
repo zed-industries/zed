@@ -5,7 +5,7 @@ use assistant_slash_command::AfterCompletion;
 pub use assistant_slash_command::{SlashCommand, SlashCommandOutput};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{AppContext, Model, Task, ViewContext, WeakView, WindowContext};
+use gpui::{AppContext, Model, Task, ViewContext, WeakView};
 use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
 use parking_lot::{Mutex, RwLock};
 use project::CompletionIntent;
@@ -71,7 +71,8 @@ impl SlashCommandCompletionProvider {
         command_name: &str,
         command_range: Range<Anchor>,
         name_range: Range<Anchor>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<project::Completion>>> {
         let slash_commands = self.slash_commands.clone();
         let candidates = slash_commands
@@ -120,7 +121,7 @@ impl SlashCommandCompletionProvider {
                                     let editor = editor.clone();
                                     let workspace = workspace.clone();
                                     Arc::new(
-                                        move |intent: CompletionIntent, cx: &mut WindowContext| {
+                                        move |intent: CompletionIntent, window: &mut gpui::Window, cx: &mut gpui::AppContext| {
                                             if !requires_argument
                                                 && (!accepts_arguments || intent.is_complete())
                                             {
@@ -165,7 +166,8 @@ impl SlashCommandCompletionProvider {
         command_range: Range<Anchor>,
         argument_range: Range<Anchor>,
         last_argument_range: Range<Anchor>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<project::Completion>>> {
         let new_cancel_flag = Arc::new(AtomicBool::new(false));
         let mut flag = self.cancel_flag.lock();
@@ -203,7 +205,7 @@ impl SlashCommandCompletionProvider {
 
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
-                                        move |intent: CompletionIntent, cx: &mut WindowContext| {
+                                        move |intent: CompletionIntent, window: &mut gpui::Window, cx: &mut gpui::AppContext| {
                                             if new_argument.after_completion.run()
                                                 || intent.is_complete()
                                             {

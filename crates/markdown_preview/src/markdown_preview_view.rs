@@ -462,11 +462,11 @@ impl EventEmitter<PreviewEvent> for MarkdownPreviewView {}
 impl Item for MarkdownPreviewView {
     type Event = PreviewEvent;
 
-    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, cx: &AppContext) -> Option<Icon> {
         Some(Icon::new(IconName::FileDoc))
     }
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some(if let Some(description) = &self.tab_description {
             description.clone().into()
         } else {

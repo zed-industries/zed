@@ -50,7 +50,7 @@ impl ActiveThread {
             rendered_messages_by_id: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.view().downgrade();
-                move |ix, cx: &mut WindowContext| {
+                move |ix, window: &mut gpui::Window, cx: &mut gpui::AppContext| {
                     this.update(cx, |this, cx| this.render_message(ix, cx))
                         .unwrap()
                 }

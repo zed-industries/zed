@@ -2,7 +2,7 @@ use editor::{scroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     rems, AppContext, DismissEvent, FontWeight, Model, ParentElement, StyledText, Task, View,
-    ViewContext, WeakView, WindowContext,
+    ViewContext, WeakView,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -104,7 +104,7 @@ impl ProjectSymbolsDelegate {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         "Search project symbols...".into()
     }
 

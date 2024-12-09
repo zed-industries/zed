@@ -74,32 +74,40 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
 }
 
 pub(crate) trait OutputContent {
-    fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem>;
-    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+    fn clipboard_content(&self, window: &Window, cx: &AppContext) -> Option<ClipboardItem>;
+    fn has_clipboard_content(&self, _window: &Window, cx: &AppContext) -> bool {
         false
     }
-    fn has_buffer_content(&self, _cx: &WindowContext) -> bool {
+    fn has_buffer_content(&self, _window: &Window, cx: &AppContext) -> bool {
         false
     }
-    fn buffer_content(&mut self, _cx: &mut WindowContext) -> Option<Model<Buffer>> {
+    fn buffer_content(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
+    ) -> Option<Model<Buffer>> {
         None
     }
 }
 
 impl<V: OutputContent + 'static> OutputContent for View<V> {
-    fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, window: &Window, cx: &AppContext) -> Option<ClipboardItem> {
         self.read(cx).clipboard_content(cx)
     }
 
-    fn has_clipboard_content(&self, cx: &WindowContext) -> bool {
+    fn has_clipboard_content(&self, window: &Window, cx: &AppContext) -> bool {
         self.read(cx).has_clipboard_content(cx)
     }
 
-    fn has_buffer_content(&self, cx: &WindowContext) -> bool {
+    fn has_buffer_content(&self, window: &Window, cx: &AppContext) -> bool {
         self.read(cx).has_buffer_content(cx)
     }
 
-    fn buffer_content(&mut self, cx: &mut WindowContext) -> Option<Model<Buffer>> {
+    fn buffer_content(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Option<Model<Buffer>> {
         self.update(cx, |item, cx| item.buffer_content(cx))
     }
 }
@@ -259,7 +267,12 @@ impl Output {
         }
     }
 
-    pub fn new(data: &MimeBundle, display_id: Option<String>, cx: &mut WindowContext) -> Self {
+    pub fn new(
+        data: &MimeBundle,
+        display_id: Option<String>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Self {
         match data.richest(rank_mime_type) {
             Some(MimeType::Plain(text)) => Output::Plain {
                 content: cx.new_view(|cx| TerminalOutput::from(text, cx)),

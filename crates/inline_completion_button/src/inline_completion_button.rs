@@ -3,8 +3,8 @@ use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
 use fs::Fs;
 use gpui::{
-    div, Action, AnchorCorner, AppContext, AsyncWindowContext, Entity, IntoElement, ParentElement,
-    Render, Subscription, View, ViewContext, WeakView, WindowContext,
+    div, Action, AnchorCorner, AppContext, Asy Entity, IntoElement, ParentElement,
+    Render, Subscription, View, ViewContext, WeakView,
 };
 use language::{
     language_settings::{
@@ -239,7 +239,8 @@ impl InlineCompletionButton {
     pub fn build_language_settings_menu(
         &self,
         mut menu: ContextMenu,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> ContextMenu {
         let fs = self.fs.clone();
 
@@ -389,7 +390,8 @@ impl SupermavenButtonStatus {
 async fn configure_disabled_globs(
     workspace: WeakView<Workspace>,
     path_to_disable: Option<Arc<Path>>,
-    mut cx: AsyncWindowContext,
+    mut window: AnyWindowHandle,
+    cx: AsyncAppContext,
 ) -> Result<()> {
     let settings_editor = workspace
         .update(&mut cx, |_, cx| {

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, fmt::Debug, ops::Range, sync::Arc};
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
-use ui::{IconName, SharedString, WindowContext};
+use ui::{IconName, SharedString};
 
 use crate::{BlockStyle, FoldPlaceholder, RenderBlock};
 
@@ -117,12 +117,16 @@ type RenderToggleFn = Arc<
         + Fn(
             MultiBufferRow,
             bool,
-            Arc<dyn Send + Sync + Fn(bool, &mut WindowContext)>,
-            &mut WindowContext,
+            Arc<dyn Send + Sync + Fn(bool, &mut gpui::Window, &mut gpui::AppContext)>,
+            &mut gpui::Window,
+            &mut gpui::AppContext,
         ) -> AnyElement,
 >;
-type RenderTrailerFn =
-    Arc<dyn Send + Sync + Fn(MultiBufferRow, bool, &mut WindowContext) -> AnyElement>;
+type RenderTrailerFn = Arc<
+    dyn Send
+        + Sync
+        + Fn(MultiBufferRow, bool, &mut gpui::Window, &mut gpui::AppContext) -> AnyElement,
+>;
 
 #[derive(Clone)]
 pub enum Crease<T> {
@@ -185,15 +189,16 @@ impl<T> Crease<T> {
             + Fn(
                 MultiBufferRow,
                 bool,
-                Arc<dyn Send + Sync + Fn(bool, &mut WindowContext)>,
-                &mut WindowContext,
+                Arc<dyn Send + Sync + Fn(bool, &mut gpui::Window, &mut gpui::AppContext)>,
+                &mut gpui::Window,
+                &mut gpui::AppContext,
             ) -> ToggleElement
             + 'static,
         ToggleElement: IntoElement,
         RenderTrailer: 'static
             + Send
             + Sync
-            + Fn(MultiBufferRow, bool, &mut WindowContext) -> TrailerElement
+            + Fn(MultiBufferRow, bool, &mut gpui::Window, &mut gpui::AppContext) -> TrailerElement
             + 'static,
         TrailerElement: IntoElement,
     {

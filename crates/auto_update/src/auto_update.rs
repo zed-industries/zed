@@ -4,7 +4,7 @@ use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use gpui::{
     actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
-    SemanticVersion, Task, WindowContext,
+    SemanticVersion, Task,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -172,7 +172,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     cx.set_global(GlobalAutoUpdate(Some(auto_updater)));
 }
 
-pub fn check(_: &Check, cx: &mut WindowContext) {
+pub fn check(_: &Check, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
     if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION") {
         drop(cx.prompt(
             gpui::PromptLevel::Info,

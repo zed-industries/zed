@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{div, prelude::*, ClipboardItem, Model, Task, ViewContext, WindowContext};
+use gpui::{div, prelude::*, ClipboardItem, Model, Task, ViewContext};
 use language::Buffer;
 use markdown_preview::{
     markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
@@ -43,19 +43,23 @@ impl MarkdownView {
 }
 
 impl OutputContent for MarkdownView {
-    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &Window, cx: &AppContext) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_string(self.raw_text.clone()))
     }
 
-    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+    fn has_clipboard_content(&self, _window: &Window, cx: &AppContext) -> bool {
         true
     }
 
-    fn has_buffer_content(&self, _cx: &WindowContext) -> bool {
+    fn has_buffer_content(&self, _window: &Window, cx: &AppContext) -> bool {
         true
     }
 
-    fn buffer_content(&mut self, cx: &mut WindowContext) -> Option<Model<Buffer>> {
+    fn buffer_content(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) -> Option<Model<Buffer>> {
         let buffer = cx.new_model(|cx| {
             // todo!(): Bring in the language registry so we can set the language to markdown
             let mut buffer = Buffer::local(self.raw_text.clone(), cx)

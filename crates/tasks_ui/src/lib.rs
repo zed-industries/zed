@@ -1,6 +1,6 @@
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
-use gpui::{AppContext, Task as AsyncTask, ViewContext, WindowContext};
+use gpui::{AppContext, Task as AsyncTask, ViewContext};
 use modal::TasksModal;
 use project::{Location, WorktreeId};
 use task::TaskId;
@@ -180,7 +180,8 @@ fn spawn_task_with_name(
 
 fn active_item_selection_properties(
     workspace: &Workspace,
-    cx: &mut WindowContext,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
 ) -> (Option<WorktreeId>, Option<Location>) {
     let active_item = workspace.active_item(cx);
     let worktree_id = active_item

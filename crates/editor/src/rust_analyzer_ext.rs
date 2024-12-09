@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Context as _;
-use gpui::{Context, View, ViewContext, VisualContext, WindowContext};
+use gpui::{Context, View, ViewContext, VisualContext};
 use language::Language;
 use multi_buffer::MultiBuffer;
 use project::lsp_ext_command::ExpandMacro;
@@ -18,7 +18,11 @@ fn is_rust_language(language: &Language) -> bool {
     language.name() == "Rust".into()
 }
 
-pub fn apply_related_actions(editor: &View<Editor>, cx: &mut WindowContext) {
+pub fn apply_related_actions(
+    editor: &View<Editor>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::AppContext,
+) {
     if editor
         .update(cx, |e, cx| {
             find_specific_language_server_in_selection(e, cx, is_rust_language, RUST_ANALYZER_NAME)

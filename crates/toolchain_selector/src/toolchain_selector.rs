@@ -209,7 +209,7 @@ impl ToolchainSelectorDelegate {
 impl PickerDelegate for ToolchainSelectorDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut gpui::Window, _cx: &mut gpui::AppContext) -> Arc<str> {
         self.placeholder_text.clone()
     }
 

@@ -217,7 +217,6 @@ type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewModelListener = Box<dyn FnMut(AnyModel, &mut AppContext) + 'static>;
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
-/// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
 /// You need a reference to an `AppContext` to access the state of a [Model].
 pub struct AppContext {
     pub(crate) this: Weak<AppCell>,
@@ -548,9 +547,8 @@ impl AppContext {
         self.platform.active_window()
     }
 
-    /// Opens a new window with the given option and the root view returned by the given function.
-    /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
-    /// functionality.
+    /// Opens a new window with the given options and the state T returned by the given function.
+    /// The function is invoked with a `Model<T>` `Window`, and `AppContext`.
     pub fn open_window<T>(
         &mut self,
         options: crate::WindowOptions,

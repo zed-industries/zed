@@ -125,7 +125,8 @@ impl SlashCommand for FetchSlashCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -137,7 +138,7 @@ impl SlashCommand for FetchSlashCommand {
         _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut gpui::Window, cx: &mut gpui::AppContext,
     ) -> Task<SlashCommandResult> {
         let Some(argument) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing URL")));
