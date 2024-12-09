@@ -378,7 +378,7 @@ fn show_hover(
                             },
                             ..Default::default()
                         };
-                        Markdown::new_text(text, markdown_style.clone(), None, cx, None)
+                        Markdown::new_text(text, markdown_style.clone(), None, None, cx)
                     })
                     .ok();
 
@@ -593,8 +593,8 @@ async fn parse_blocks(
                 combined_text,
                 markdown_style.clone(),
                 Some(language_registry.clone()),
-                cx,
                 fallback_language_name,
+                cx,
             )
         })
         .ok();

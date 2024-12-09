@@ -33,7 +33,7 @@ pub(crate) fn handle_msg(
         WM_ACTIVATE => handle_activate_msg(handle, wparam, state_ptr),
         WM_CREATE => handle_create_msg(handle, state_ptr),
         WM_MOVE => handle_move_msg(handle, lparam, state_ptr),
-        WM_SIZE => handle_size_msg(lparam, state_ptr),
+        WM_SIZE => handle_size_msg(wparam, lparam, state_ptr),
         WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => handle_size_move_loop(handle),
         WM_EXITSIZEMOVE | WM_EXITMENULOOP => handle_size_move_loop_exit(handle),
         WM_TIMER => handle_timer_msg(handle, wparam, state_ptr),
@@ -136,7 +136,15 @@ fn handle_move_msg(
     Some(0)
 }
 
-fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_size_msg(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    if wparam.0 == SIZE_MINIMIZED as usize {
+        return Some(0);
+    }
+
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
     let mut lock = state_ptr.state.borrow_mut();

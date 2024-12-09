@@ -113,7 +113,15 @@ impl EditorLspTestContext {
         app_state
             .fs
             .as_fake()
-            .insert_tree(root, json!({ "dir": { file_name.clone(): "" }}))
+            .insert_tree(
+                root,
+                json!({
+                    ".git": {},
+                    "dir": {
+                        file_name.clone(): ""
+                    }
+                }),
+            )
             .await;
 
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));

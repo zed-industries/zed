@@ -125,7 +125,7 @@ impl ProjectIndex {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {
+            project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
                 self.update_worktree_indices(cx);
             }
             _ => {}

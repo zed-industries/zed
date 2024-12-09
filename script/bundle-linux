@@ -92,7 +92,7 @@ cp "${target_dir}/${target_triple}/release/cli" "${zed_dir}/bin/zed"
 find_libs() {
     ldd ${target_dir}/${target_triple}/release/zed |\
         cut -d' ' -f3 |\
-        grep -v '\<\(libstdc++.so\|libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\)'
+        grep -v '\<\(libstdc++.so\|libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\)'
 }
 
 mkdir -p "${zed_dir}/lib"

@@ -1,13 +1,15 @@
 use gpui::{
     div, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
-    IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Render,
-    RenderablePromptHandle, Styled, ViewContext, VisualContext, WindowContext,
+    IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Refineable, Render,
+    RenderablePromptHandle, Styled, TextStyleRefinement, View, ViewContext, VisualContext,
+    WindowContext,
 };
+use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    h_flex, v_flex, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder, LabelSize,
-    TintColor,
+    h_flex, v_flex, ActiveTheme, ButtonCommon, ButtonStyle, Clickable, ElevationIndex,
+    FluentBuilder, LabelSize, TintColor,
 };
 use workspace::ui::StyledExt;
 
@@ -28,10 +30,27 @@ pub fn fallback_prompt_renderer(
         |cx| FallbackPromptRenderer {
             _level: level,
             message: message.to_string(),
-            detail: detail.map(ToString::to_string),
             actions: actions.iter().map(ToString::to_string).collect(),
             focus: cx.focus_handle(),
             active_action_id: 0,
+            detail: detail.filter(|text| !text.is_empty()).map(|text| {
+                cx.new_view(|cx| {
+                    let settings = ThemeSettings::get_global(cx);
+                    let mut base_text_style = cx.text_style();
+                    base_text_style.refine(&TextStyleRefinement {
+                        font_family: Some(settings.ui_font.family.clone()),
+                        font_size: Some(settings.ui_font_size.into()),
+                        color: Some(ui::Color::Muted.color(cx)),
+                        ..Default::default()
+                    });
+                    let markdown_style = MarkdownStyle {
+                        base_text_style,
+                        selection_background_color: { cx.theme().players().local().selection },
+                        ..Default::default()
+                    };
+                    Markdown::new(text.to_string(), markdown_style, None, None, cx)
+                })
+            }),
         }
     });
 
@@ -42,10 +61,10 @@ pub fn fallback_prompt_renderer(
 pub struct FallbackPromptRenderer {
     _level: PromptLevel,
     message: String,
-    detail: Option<String>,
     actions: Vec<String>,
     focus: FocusHandle,
     active_action_id: usize,
+    detail: Option<View<Markdown>>,
 }
 
 impl FallbackPromptRenderer {
@@ -111,13 +130,11 @@ impl Render for FallbackPromptRenderer {
                     .child(self.message.clone())
                     .text_color(ui::Color::Default.color(cx)),
             )
-            .children(self.detail.clone().map(|detail| {
-                div()
-                    .w_full()
-                    .text_xs()
-                    .text_color(ui::Color::Muted.color(cx))
-                    .child(detail)
-            }))
+            .children(
+                self.detail
+                    .clone()
+                    .map(|detail| div().w_full().text_xs().child(detail)),
+            )
             .child(h_flex().justify_end().gap_2().children(
                 self.actions.iter().enumerate().rev().map(|(ix, action)| {
                     ui::Button::new(ix, action.clone())
