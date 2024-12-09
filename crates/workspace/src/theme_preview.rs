@@ -1,5 +1,5 @@
 #![allow(unused, dead_code)]
-use component_preview::{get_all_component_previews, ComponentPreview as _};
+use component_system::{get_all_component_previews, ComponentPreview as _};
 use gpui::{actions, hsla, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
@@ -28,7 +28,6 @@ pub fn init(cx: &mut AppContext) {
 enum ThemePreviewPage {
     Overview,
     Typography,
-    Components,
 }
 
 impl ThemePreviewPage {
@@ -36,7 +35,6 @@ impl ThemePreviewPage {
         match self {
             Self::Overview => "Overview",
             Self::Typography => "Typography",
-            Self::Components => "Components",
         }
     }
 }
@@ -62,7 +60,6 @@ impl ThemePreview {
         match page {
             ThemePreviewPage::Overview => self.render_overview_page(cx).into_any_element(),
             ThemePreviewPage::Typography => self.render_typography_page(cx).into_any_element(),
-            ThemePreviewPage::Components => self.render_components_page(cx).into_any_element(),
         }
     }
 }
@@ -501,32 +498,6 @@ impl ThemePreview {
                 .child(Headline::new("Body Text").size(HeadlineSize::Small))
                 .child(Label::new("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."))
             )
-    }
-
-    fn render_components_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        let all_previews = get_all_component_previews();
-        let layer = ElevationIndex::Surface;
-
-        v_flex()
-            .id("theme-preview-components")
-            .overflow_scroll()
-            .size_full()
-            .gap_2()
-            .children(all_previews.into_iter().map(|preview_name| {
-                let id = ElementId::Name(format!("{}-preview", preview_name).into());
-                v_flex()
-                    .gap_4()
-                    .child(Headline::new(preview_name).size(HeadlineSize::Small))
-                    .child(
-                        div().id(id).child(match preview_name {
-                            "Avatar" => Avatar::preview(cx),
-                            // Add other component preview matches here
-                            _ => div()
-                                .child(format!("Preview not implemented for {}", preview_name))
-                                .into_any_element(),
-                        }),
-                    )
-            }))
     }
 
     fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {

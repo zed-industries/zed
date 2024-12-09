@@ -28,7 +28,7 @@ story = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 ui_macros.workspace = true
-component_preview.workspace = true
+component_system.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

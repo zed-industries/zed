@@ -4,7 +4,7 @@ use crate::{
     Indicator,
 };
 
-use component_preview::ComponentPreview;
+use component_system::ComponentPreview;
 use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
 use ui_macros::IntoComponent;
 

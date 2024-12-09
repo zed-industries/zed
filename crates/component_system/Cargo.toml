@@ -1,5 +1,5 @@
 [package]
-name = "component_preview"
+name = "component_system"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,14 +9,13 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/component_preview.rs"
+path = "src/component_system.rs"
 
 [dependencies]
 gpui.workspace = true
-ui.workspace = true
-component_system.workspace = true
-strum.workspace = true
-workspace.workspace = true
+lazy_static.workspace = true
+linkme.workspace = true
+once_cell.workspace = true
 
 [features]
 default = []

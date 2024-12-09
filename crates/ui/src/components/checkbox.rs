@@ -1,9 +1,6 @@
 #![allow(missing_docs)]
 
-use crate::{
-    prelude::*,
-    utils::{component_preview, component_preview_group},
-};
+use crate::prelude::*;
 use gpui::{div, prelude::*, ElementId, IntoElement, Styled, WindowContext};
 use std::sync::Arc;
 

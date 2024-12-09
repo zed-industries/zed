@@ -51,7 +51,7 @@ pub fn derive_into_component(input: TokenStream) -> TokenStream {
     };
 
     let expanded = quote! {
-        impl component_preview::Component for #name {
+        impl component_system::Component for #name {
             fn scope() -> &'static str {
                 #scope_expr
             }
@@ -63,24 +63,24 @@ pub fn derive_into_component(input: TokenStream) -> TokenStream {
             #description_impl
         }
 
-        #[linkme::distributed_slice(component_preview::__ALL_COMPONENTS)]
+        #[linkme::distributed_slice(component_system::__ALL_COMPONENTS)]
         fn __register_component() {
-            component_preview::COMPONENTS
+            component_system::COMPONENTS
                 .lock()
                 .unwrap()
                 .push((
-                    <#name as component_preview::Component>::scope(),
-                    <#name as component_preview::Component>::name(),
-                    <#name as component_preview::Component>::description()
+                    <#name as component_system::Component>::scope(),
+                    <#name as component_system::Component>::name(),
+                    <#name as component_system::Component>::description()
                 ));
         }
 
-        #[linkme::distributed_slice(component_preview::__ALL_PREVIEWS)]
+        #[linkme::distributed_slice(component_system::__ALL_PREVIEWS)]
         fn __register_preview() {
-            component_preview::PREVIEWS
+            component_system::PREVIEWS
                 .lock()
                 .unwrap()
-                .push(<#name as component_preview::Component>::name());
+                .push(<#name as component_system::Component>::name());
         }
     };
 
