@@ -312,7 +312,7 @@ impl Zeta {
             }
 
             let response = serde_json::from_str::<PredictEditsResponse>(&body)?;
-            let output_excerpt = response.text;
+            let output_excerpt = response.output_excerpt;
             log::debug!("prediction took: {:?}", start.elapsed());
             log::debug!("completion response: {}", output_excerpt);
 
@@ -885,7 +885,7 @@ mod tests {
                 .status(200)
                 .body(
                     serde_json::to_string(&PredictEditsResponse {
-                        text: completion_response.to_string(),
+                        output_excerpt: completion_response.to_string(),
                     })
                     .unwrap()
                     .into(),

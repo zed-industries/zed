@@ -5516,11 +5516,11 @@ impl Editor {
         let mut inlay_ids = Vec::new();
         let invalidation_row_range;
         let completion;
-        if cursor_row > edit_end_row {
-            invalidation_row_range = edit_start_row..cursor_row;
-            completion = InlineCompletion::Move(first_edit_start);
-        } else if cursor_row < edit_start_row {
+        if cursor_row < edit_start_row {
             invalidation_row_range = cursor_row..edit_end_row;
+            completion = InlineCompletion::Move(first_edit_start);
+        } else if cursor_row > edit_end_row {
+            invalidation_row_range = edit_start_row..cursor_row;
             completion = InlineCompletion::Move(first_edit_start);
         } else {
             if edits

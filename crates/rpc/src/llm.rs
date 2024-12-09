@@ -42,5 +42,5 @@ pub struct PredictEditsParams {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PredictEditsResponse {
-    pub text: String,
+    pub output_excerpt: String,
 }

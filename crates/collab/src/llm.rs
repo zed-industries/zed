@@ -491,7 +491,9 @@ async fn predict_edits(
         .choices
         .pop()
         .context("no output from completion response")?;
-    Ok(Json(PredictEditsResponse { text: choice.text }))
+    Ok(Json(PredictEditsResponse {
+        output_excerpt: choice.text,
+    }))
 }
 
 /// The maximum monthly spending an individual user can reach on the free tier
