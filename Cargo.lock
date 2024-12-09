@@ -6271,8 +6271,6 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "language",
- "project",
- "text",
 ]
 
 [[package]]
@@ -6282,6 +6280,7 @@ dependencies = [
  "anyhow",
  "copilot",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -6297,6 +6296,7 @@ dependencies = [
  "ui",
  "workspace",
  "zed_actions",
+ "zeta",
 ]
 
 [[package]]
@@ -16146,6 +16146,7 @@ dependencies = [
  "winresource",
  "workspace",
  "zed_actions",
+ "zeta",
 ]
 
 [[package]]
@@ -16454,6 +16455,43 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
+]
+
+[[package]]
+name = "zeta"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "call",
+ "client",
+ "clock",
+ "collections",
+ "ctor",
+ "editor",
+ "env_logger 0.11.5",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "indoc",
+ "inline_completion",
+ "language",
+ "language_models",
+ "log",
+ "menu",
+ "reqwest_client",
+ "rpc",
+ "serde_json",
+ "settings",
+ "similar",
+ "telemetry_events",
+ "theme",
+ "tree-sitter-go",
+ "tree-sitter-rust",
+ "ui",
+ "util",
+ "uuid",
+ "workspace",
+ "worktree",
 ]
 
 [[package]]
