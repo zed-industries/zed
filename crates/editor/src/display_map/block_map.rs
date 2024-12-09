@@ -566,7 +566,6 @@ impl BlockMap {
                 }
             }
 
-            println!("item after seeking to start {:?}", cursor.item());
             // Decide where the edit ends
             // * It should end at a transform boundary
             // * Coalesce edits that intersect the same transform
@@ -575,10 +574,7 @@ impl BlockMap {
             loop {
                 // Seek to the transform starting at or after the end of the edit
                 cursor.seek(&old_end, Bias::Left, &());
-                println!("item after seeking to end {:?}", cursor.item());
                 cursor.next(&());
-                println!("item after calling next {:?}", cursor.item());
-
                 // Extend edit to the end of the discarded transform so it is reconstructed in full
                 let transform_rows_after_edit = cursor.start().0 - old_end.0;
                 old_end.0 += transform_rows_after_edit;
@@ -610,8 +606,6 @@ impl BlockMap {
                     break;
                 }
             }
-
-            dbg!(cursor.item());
 
             // Find the blocks within this edited region.
             let new_buffer_start =
@@ -805,22 +799,23 @@ impl BlockMap {
             if let Some(new_buffer_id) = new_buffer_id {
                 if folded_buffers.contains(&new_buffer_id) {
                     let mut next_excerpt = excerpt_boundary.next;
-                    let mut wrap_end_row = wrap_row;
-                    while let Some(next_boundary) = boundaries.peek() {
-                        wrap_end_row = wrap_snapshot
-                            .make_wrap_point(Point::new(next_boundary.row.0, 0), Bias::Left)
-                            .row();
+                    let mut buffer_end = Point::new(excerpt_boundary.row.0, 0)
+                        + next_excerpt.as_ref().unwrap().text_summary.lines;
 
+                    while let Some(next_boundary) = boundaries.peek() {
                         if let Some(next_excerpt) = &next_boundary.next {
-                            if next_excerpt.buffer_id != new_buffer_id {
-                                // TODO kb works but seems like a hack
-                                // wrap_end_row = wrap_end_row.saturating_sub(1);
+                            if next_excerpt.buffer_id == new_buffer_id {
+                                buffer_end = Point::new(next_boundary.row.0, 0)
+                                    + next_excerpt.text_summary.lines;
+                            } else {
                                 break;
                             }
                         }
 
                         next_excerpt = boundaries.next().unwrap().next;
                     }
+
+                    let wrap_end_row = wrap_snapshot.make_wrap_point(buffer_end, Bias::Right).row();
 
                     return Some((
                         BlockPlacement::Replace(WrapRow(wrap_row)..WrapRow(wrap_end_row)),
@@ -1226,7 +1221,6 @@ impl<'a> BlockMapWriter<'a> {
     // TODO kb the last buffer folded disappears
     // TODO kb custom blocks (e.g. diagnostics in the tab) are not removed on fold
     // TODO kb indent guides and gutter buttons for folded blocks are pushed upwards, and can be seen between the blocks
-    // TODO kb folding multiple buffers and unfolding one in the middle makes its next neighbour look unfolded
     pub fn fold_buffer(
         &mut self,
         buffer_id: BufferId,
@@ -1257,8 +1251,16 @@ impl<'a> BlockMapWriter<'a> {
 
         let mut edits = Patch::default();
         for range in multi_buffer.excerpt_ranges_for_buffer(buffer_id, cx) {
-            let range = wrap_snapshot.make_wrap_point(range.start, Bias::Left).row()
-                ..wrap_snapshot.make_wrap_point(range.end, Bias::Right).row() + 1;
+            let last_edit_row = wrap_snapshot.make_wrap_point(range.end, Bias::Right).row()
+                // make range exclusive
+                + 1
+                // invalidate more, to ensure that the next block's `show_excerpt_controls` are affected
+                // as that field influences previous buffer's controls too
+                + 1;
+            let last_edit_row = wrap_snapshot
+                .clip_point(WrapPoint(Point::new(last_edit_row, 0)), Bias::Right)
+                .row();
+            let range = wrap_snapshot.make_wrap_point(range.start, Bias::Left).row()..last_edit_row;
             edits.push(Edit {
                 old: range.clone(),
                 new: range,

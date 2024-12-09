@@ -194,6 +194,7 @@ pub struct ExcerptInfo {
     pub buffer: BufferSnapshot,
     pub buffer_id: BufferId,
     pub range: ExcerptRange<text::Anchor>,
+    pub text_summary: TextSummary,
 }
 
 impl std::fmt::Debug for ExcerptInfo {
@@ -1562,8 +1563,6 @@ impl MultiBuffer {
                         let excerpt_start = cursor.start().1;
                         let excerpt_end = excerpt_start + excerpt.text_summary.lines;
                         Some(excerpt_start..excerpt_end)
-                        // TODO kb
-                        // Some(cursor.start().1..cursor.end(&()).1)
                     } else {
                         None
                     }
@@ -3581,6 +3580,7 @@ impl MultiBufferSnapshot {
                     buffer: excerpt.buffer.clone(),
                     buffer_id: excerpt.buffer_id,
                     range: excerpt.range.clone(),
+                    text_summary: excerpt.text_summary.clone(),
                 });
 
                 if next.is_none() {
@@ -3596,6 +3596,7 @@ impl MultiBufferSnapshot {
                     buffer: prev_excerpt.buffer.clone(),
                     buffer_id: prev_excerpt.buffer_id,
                     range: prev_excerpt.range.clone(),
+                    text_summary: prev_excerpt.text_summary.clone(),
                 });
                 let row = MultiBufferRow(cursor.start().1.row);
 
