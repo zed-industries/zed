@@ -311,8 +311,8 @@ impl LivekitWindow {
             let sources = cx.screen_capture_sources();
             cx.spawn(|this, mut cx| async move {
                 let sources = sources.await.unwrap()?;
-                let source = sources.into_iter().next().unwrap();
-                let (track, stream) = capture_local_video_track(&*source).await?;
+                let mut source = sources.into_iter().next().unwrap();
+                let (track, stream) = capture_local_video_track(&mut *source).await?;
                 let publication = participant
                     .publish_track(
                         LocalTrack::Video(track),
