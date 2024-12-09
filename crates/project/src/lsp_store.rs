@@ -2950,21 +2950,6 @@ impl LspStore {
             })
     }
 
-    pub fn diagnostics_for_buffer(
-        &self,
-        path: &ProjectPath,
-    ) -> Option<
-        &[(
-            LanguageServerId,
-            Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
-        )],
-    > {
-        self.diagnostics
-            .get(&path.worktree_id)?
-            .get(&path.path)
-            .map(|diagnostics| diagnostics.as_slice())
-    }
-
     pub fn started_language_servers(&self) -> Vec<(WorktreeId, LanguageServerName)> {
         self.language_server_ids.keys().cloned().collect()
     }
