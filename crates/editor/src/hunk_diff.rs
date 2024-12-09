@@ -89,7 +89,6 @@ impl DiffMap {
         self.snapshot
             .0
             .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
-        Editor::sync_expanded_diff_hunks(self, buffer_id, cx);
         self.diff_bases.insert(
             buffer_id,
             DiffBaseState {
@@ -105,6 +104,7 @@ impl DiffMap {
                 change_set,
             },
         );
+        Editor::sync_expanded_diff_hunks(self, buffer_id, cx);
     }
 
     pub fn hunks(&self, include_folded: bool) -> impl Iterator<Item = &ExpandedHunk> {

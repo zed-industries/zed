@@ -150,9 +150,6 @@
   // Whether to display inline and alongside documentation for items in the
   // completions menu
   "show_completion_documentation": true,
-  // The debounce delay before re-querying the language server for completion
-  // documentation when not included in original completion list.
-  "completion_documentation_secondary_query_debounce": 300,
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   /// Whether to show the signature help after completion or a bracket pair inserted.
@@ -573,7 +570,8 @@
     //     "Neighbour"
     "activate_on_close": "history",
     /// Which files containing diagnostic errors/warnings to mark in the tabs.
-    /// This setting can take the following three values:
+    /// Diagnostics are only shown when file icons are also active.
+    /// This setting only works when can take the following three values:
     ///
     /// 1. Do not mark any files:
     ///    "off"
@@ -581,7 +579,7 @@
     ///    "errors"
     /// 3. Mark files with errors and warnings:
     ///    "all"
-    "show_diagnostics": "all"
+    "show_diagnostics": "off"
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -688,6 +686,7 @@
     "**/.git",
     "**/.svn",
     "**/.hg",
+    "**/.jj",
     "**/CVS",
     "**/.DS_Store",
     "**/Thumbs.db",

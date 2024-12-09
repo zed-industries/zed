@@ -638,6 +638,12 @@ impl LanguageServer {
                         snippet_edit_support: Some(true),
                         ..WorkspaceEditClientCapabilities::default()
                     }),
+                    file_operations: Some(WorkspaceFileOperationsClientCapabilities {
+                        dynamic_registration: Some(false),
+                        did_rename: Some(true),
+                        will_rename: Some(true),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
