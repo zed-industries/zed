@@ -468,7 +468,7 @@ async fn predict_edits(
         .prediction_model
         .as_ref()
         .context("no PREDICTION_MODEL configured on the server")?;
-    let prompt = include_str!("./llm/complete_prompt.md")
+    let prompt = include_str!("./llm/prediction_prompt.md")
         .replace("<events>", &params.input_events)
         .replace("<excerpt>", &params.input_excerpt);
     let mut response = open_ai::complete_text(
