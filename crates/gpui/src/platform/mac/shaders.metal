@@ -4,6 +4,10 @@
 using namespace metal;
 
 float4 hsla_to_rgba(Hsla hsla);
+float3 srgb_to_linear(float3 color);
+float3 linear_to_srgb(float3 color);
+float4 srgb_to_oklab(float4 color);
+float4 oklab_to_srgb(float4 color);
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *viewport_size);
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
@@ -21,20 +25,34 @@ float2 erf(float2 x);
 float blur_along_x(float x, float y, float sigma, float corner,
                    float2 half_size);
 float4 over(float4 below, float4 above);
+float radians(float degrees);
+float4 gradient_color(Background background, float2 position, Bounds_ScaledPixels bounds,
+  float4 solid_color, float4 color0, float4 color1);
+
+struct GradientColor {
+  float4 solid;
+  float4 color0;
+  float4 color1;
+};
+GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid, Hsla color0, Hsla color1);
 
 struct QuadVertexOutput {
-  float4 position [[position]];
-  float4 background_color [[flat]];
-  float4 border_color [[flat]];
   uint quad_id [[flat]];
+  float4 position [[position]];
+  float4 border_color [[flat]];
+  float4 background_solid [[flat]];
+  float4 background_color0 [[flat]];
+  float4 background_color1 [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
 struct QuadFragmentInput {
-  float4 position [[position]];
-  float4 background_color [[flat]];
-  float4 border_color [[flat]];
   uint quad_id [[flat]];
+  float4 position [[position]];
+  float4 border_color [[flat]];
+  float4 background_solid [[flat]];
+  float4 background_color0 [[flat]];
+  float4 background_color1 [[flat]];
 };
 
 vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
@@ -51,13 +69,23 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
       to_device_position(unit_vertex, quad.bounds, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
                                                  quad.content_mask.bounds);
-  float4 background_color = hsla_to_rgba(quad.background);
   float4 border_color = hsla_to_rgba(quad.border_color);
+
+  GradientColor gradient = prepare_gradient_color(
+    quad.background.tag,
+    quad.background.color_space,
+    quad.background.solid,
+    quad.background.colors[0].color,
+    quad.background.colors[1].color
+  );
+
   return QuadVertexOutput{
-      device_position,
-      background_color,
-      border_color,
       quad_id,
+      device_position,
+      border_color,
+      gradient.solid,
+      gradient.color0,
+      gradient.color1,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
@@ -65,6 +93,11 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               constant Quad *quads
                               [[buffer(QuadInputIndex_Quads)]]) {
   Quad quad = quads[input.quad_id];
+  float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
+  float2 center = float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
+  float2 center_to_point = input.position.xy - center;
+  float4 color = gradient_color(quad.background, input.position.xy, quad.bounds,
+    input.background_solid, input.background_color0, input.background_color1);
 
   // Fast path when the quad is not rounded and doesn't have any border.
   if (quad.corner_radii.top_left == 0. && quad.corner_radii.bottom_left == 0. &&
@@ -72,14 +105,9 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       quad.corner_radii.bottom_right == 0. && quad.border_widths.top == 0. &&
       quad.border_widths.left == 0. && quad.border_widths.right == 0. &&
       quad.border_widths.bottom == 0.) {
-    return input.background_color;
+    return color;
   }
 
-  float2 half_size =
-      float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
-  float2 center =
-      float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
-  float2 center_to_point = input.position.xy - center;
   float corner_radius;
   if (center_to_point.x < 0.) {
     if (center_to_point.y < 0.) {
@@ -118,15 +146,12 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
     border_width = vertical_border;
   }
 
-  float4 color;
-  if (border_width == 0.) {
-    color = input.background_color;
-  } else {
+  if (border_width != 0.) {
     float inset_distance = distance + border_width;
     // Blend the border on top of the background and then linearly interpolate
     // between the two as we slide inside the background.
-    float4 blended_border = over(input.background_color, input.border_color);
-    color = mix(blended_border, input.background_color,
+    float4 blended_border = over(color, input.border_color);
+    color = mix(blended_border, color,
                 saturate(0.5 - inset_distance));
   }
 
@@ -437,7 +462,10 @@ fragment float4 path_rasterization_fragment(PathRasterizationFragmentInput input
 struct PathSpriteVertexOutput {
   float4 position [[position]];
   float2 tile_position;
-  float4 color [[flat]];
+  uint sprite_id [[flat]];
+  float4 solid_color [[flat]];
+  float4 color0 [[flat]];
+  float4 color1 [[flat]];
 };
 
 vertex PathSpriteVertexOutput path_sprite_vertex(
@@ -456,8 +484,23 @@ vertex PathSpriteVertexOutput path_sprite_vertex(
   float4 device_position =
       to_device_position(unit_vertex, sprite.bounds, viewport_size);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
-  float4 color = hsla_to_rgba(sprite.color);
-  return PathSpriteVertexOutput{device_position, tile_position, color};
+
+  GradientColor gradient = prepare_gradient_color(
+    sprite.color.tag,
+    sprite.color.color_space,
+    sprite.color.solid,
+    sprite.color.colors[0].color,
+    sprite.color.colors[1].color
+  );
+
+  return PathSpriteVertexOutput{
+    device_position,
+    tile_position,
+    sprite_id,
+    gradient.solid,
+    gradient.color0,
+    gradient.color1
+  };
 }
 
 fragment float4 path_sprite_fragment(
@@ -469,7 +512,10 @@ fragment float4 path_sprite_fragment(
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
   float mask = 1. - abs(1. - fmod(sample.r, 2.));
-  float4 color = input.color;
+  PathSprite sprite = sprites[input.sprite_id];
+  Background background = sprite.color;
+  float4 color = gradient_color(background, input.position.xy, sprite.bounds,
+    input.solid_color, input.color0, input.color1);
   color.a *= mask;
   return color;
 }
@@ -572,6 +618,56 @@ float4 hsla_to_rgba(Hsla hsla) {
   rgba.z = (b + m);
   rgba.w = a;
   return rgba;
+}
+
+float3 srgb_to_linear(float3 color) {
+  return pow(color, float3(2.2));
+}
+
+float3 linear_to_srgb(float3 color) {
+  return pow(color, float3(1.0 / 2.2));
+}
+
+// Converts a sRGB color to the Oklab color space.
+// Reference: https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab
+float4 srgb_to_oklab(float4 color) {
+  // Convert non-linear sRGB to linear sRGB
+  color = float4(srgb_to_linear(color.rgb), color.a);
+
+  float l = 0.4122214708 * color.r + 0.5363325363 * color.g + 0.0514459929 * color.b;
+  float m = 0.2119034982 * color.r + 0.6806995451 * color.g + 0.1073969566 * color.b;
+  float s = 0.0883024619 * color.r + 0.2817188376 * color.g + 0.6299787005 * color.b;
+
+  float l_ = pow(l, 1.0/3.0);
+  float m_ = pow(m, 1.0/3.0);
+  float s_ = pow(s, 1.0/3.0);
+
+  return float4(
+   	0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+   	1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+   	0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+   	color.a
+  );
+}
+
+// Converts an Oklab color to the sRGB color space.
+float4 oklab_to_srgb(float4 color) {
+  float l_ = color.r + 0.3963377774 * color.g + 0.2158037573 * color.b;
+  float m_ = color.r - 0.1055613458 * color.g - 0.0638541728 * color.b;
+  float s_ = color.r - 0.0894841775 * color.g - 1.2914855480 * color.b;
+
+  float l = l_ * l_ * l_;
+  float m = m_ * m_ * m_;
+  float s = s_ * s_ * s_;
+
+  float3 linear_rgb = float3(
+   	4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+   	-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+   	-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+  );
+
+  // Convert linear sRGB to non-linear sRGB
+  return float4(linear_to_srgb(linear_rgb), color.a);
 }
 
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
@@ -690,4 +786,82 @@ float4 over(float4 below, float4 above) {
       (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
   result.a = alpha;
   return result;
+}
+
+GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid,
+                                     Hsla color0, Hsla color1) {
+  GradientColor out;
+  if (tag == 0) {
+    out.solid = hsla_to_rgba(solid);
+  } else if (tag == 1) {
+    out.color0 = hsla_to_rgba(color0);
+    out.color1 = hsla_to_rgba(color1);
+
+    // Prepare color space in vertex for avoid conversion
+    // in fragment shader for performance reasons
+    if (color_space == 1) {
+      // Oklab
+      out.color0 = srgb_to_oklab(out.color0);
+      out.color1 = srgb_to_oklab(out.color1);
+    }
+  }
+
+  return out;
+}
+
+float4 gradient_color(Background background,
+                      float2 position,
+                      Bounds_ScaledPixels bounds,
+                      float4 solid_color, float4 color0, float4 color1) {
+  float4 color;
+
+  switch (background.tag) {
+    case 0:
+      color = solid_color;
+      break;
+    case 1: {
+      // -90 degrees to match the CSS gradient angle.
+      float radians = (fmod(background.angle, 360.0) - 90.0) * (M_PI_F / 180.0);
+      float2 direction = float2(cos(radians), sin(radians));
+
+      // Expand the short side to be the same as the long side
+      if (bounds.size.width > bounds.size.height) {
+          direction.y *= bounds.size.height / bounds.size.width;
+      } else {
+          direction.x *=  bounds.size.width / bounds.size.height;
+      }
+
+      // Get the t value for the linear gradient with the color stop percentages.
+      float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
+      float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
+      float2 center_to_point = position - center;
+      float t = dot(center_to_point, direction) / length(direction);
+      // Check the direct to determine the use x or y
+      if (abs(direction.x) > abs(direction.y)) {
+          t = (t + half_size.x) / bounds.size.width;
+      } else {
+          t = (t + half_size.y) / bounds.size.height;
+      }
+
+      // Adjust t based on the stop percentages
+      t = (t - background.colors[0].percentage)
+        / (background.colors[1].percentage
+        - background.colors[0].percentage);
+      t = clamp(t, 0.0, 1.0);
+
+      switch (background.color_space) {
+        case 0:
+          color = mix(color0, color1, t);
+          break;
+        case 1: {
+          float4 oklab_color = mix(color0, color1, t);
+          color = oklab_to_srgb(oklab_color);
+          break;
+        }
+      }
+      break;
+    }
+  }
+
+  return color;
 }
