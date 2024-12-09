@@ -29,7 +29,6 @@ axum = { version = "0.6", features = ["json", "headers", "ws"] }
 axum-extra = { version = "0.4", features = ["erased-json"] }
 base64.workspace = true
 chrono.workspace = true
-clickhouse.workspace = true
 clock.workspace = true
 collections.workspace = true
 dashmap.workspace = true
