@@ -3447,6 +3447,7 @@ mod tests {
 
             app_state.languages.add(markdown_language());
 
+            vim_mode_setting::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             audio::init((), cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
