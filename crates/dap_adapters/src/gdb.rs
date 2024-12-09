@@ -31,6 +31,7 @@ impl DebugAdapter for GdbDebugAdapter {
         &self,
         delegate: &dyn DapDelegate,
         config: &DebugAdapterConfig,
+        user_installed_path: Option<std::path::PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         let user_setting_path = user_installed_path
             .filter(|p| p.exists())
@@ -53,7 +54,6 @@ impl DebugAdapter for GdbDebugAdapter {
             arguments: Some(vec!["-i=dap".into()]),
             envs: None,
             cwd: config.cwd.clone(),
-            version: "1".into(),
         })
     }
 
@@ -73,6 +73,7 @@ impl DebugAdapter for GdbDebugAdapter {
         &self,
         _: &dyn DapDelegate,
         _: &DebugAdapterConfig,
+        _: Option<std::path::PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         unimplemented!("GDB cannot be installed by Zed (yet)")
     }

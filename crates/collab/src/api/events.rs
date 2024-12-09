@@ -483,7 +483,7 @@ pub async fn post_events(
                         checksum_matched,
                     ))
             }
-            Event::Cpu(_) | Event::Memory(_) => continue,
+            Event::Cpu(_) | Event::Memory(_) | Event::InlineCompletionRating(_) => continue,
             Event::App(event) => to_upload.app_events.push(AppEventRow::from_event(
                 event.clone(),
                 wrapper,
@@ -1404,6 +1404,10 @@ fn for_snowflake(
                         "Discarded"
                     }
                 ),
+                serde_json::to_value(e).unwrap(),
+            ),
+            Event::InlineCompletionRating(e) => (
+                "Inline Completion Feedback".to_string(),
                 serde_json::to_value(e).unwrap(),
             ),
             Event::Call(e) => {

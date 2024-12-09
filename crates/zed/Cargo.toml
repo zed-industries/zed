@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.164.0"
+version = "0.166.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -20,6 +20,7 @@ anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
 assistant2.workspace = true
+assistant_tools.workspace = true
 async-watch.workspace = true
 audio.workspace = true
 auto_update.workspace = true
@@ -70,6 +71,7 @@ language_tools.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 libc.workspace = true
 log.workspace = true
+markdown.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 mimalloc = { version = "0.1", optional = true }
@@ -126,6 +128,7 @@ vim_mode_setting.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zeta.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

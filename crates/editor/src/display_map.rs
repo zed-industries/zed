@@ -82,7 +82,7 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -434,7 +434,7 @@ impl DisplayMap {
         style: HighlightStyle,
     ) {
         self.text_highlights
-            .insert(Some(type_id), Arc::new((style, ranges)));
+            .insert(type_id, Arc::new((style, ranges)));
     }
 
     pub(crate) fn highlight_inlays(
@@ -457,11 +457,11 @@ impl DisplayMap {
     }
 
     pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
-        let highlights = self.text_highlights.get(&Some(type_id))?;
+        let highlights = self.text_highlights.get(&type_id)?;
         Some((highlights.0, &highlights.1))
     }
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
-        let mut cleared = self.text_highlights.remove(&Some(type_id)).is_some();
+        let mut cleared = self.text_highlights.remove(&type_id).is_some();
         cleared |= self.inlay_highlights.remove(&type_id).is_some();
         cleared
     }
@@ -684,8 +684,8 @@ impl DisplaySnapshot {
             .map(|row| row.map(MultiBufferRow))
     }
 
-    pub fn max_buffer_row(&self) -> MultiBufferRow {
-        self.buffer_snapshot.max_buffer_row()
+    pub fn widest_line_number(&self) -> u32 {
+        self.buffer_snapshot.widest_line_number()
     }
 
     pub fn prev_line_boundary(&self, mut point: MultiBufferPoint) -> (Point, DisplayPoint) {
@@ -726,11 +726,10 @@ impl DisplaySnapshot {
 
     // used by line_mode selections and tries to match vim behavior
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
+        let max_row = self.buffer_snapshot.max_row().0;
         let new_start = if range.start.row == 0 {
             MultiBufferPoint::new(0, 0)
-        } else if range.start.row == self.max_buffer_row().0
-            || (range.end.column > 0 && range.end.row == self.max_buffer_row().0)
-        {
+        } else if range.start.row == max_row || (range.end.column > 0 && range.end.row == max_row) {
             MultiBufferPoint::new(
                 range.start.row - 1,
                 self.buffer_snapshot
@@ -742,7 +741,7 @@ impl DisplaySnapshot {
 
         let new_end = if range.end.column == 0 {
             range.end
-        } else if range.end.row < self.max_buffer_row().0 {
+        } else if range.end.row < max_row {
             self.buffer_snapshot
                 .clip_point(MultiBufferPoint::new(range.end.row + 1, 0), Bias::Left)
         } else {
@@ -1137,8 +1136,14 @@ impl DisplaySnapshot {
         DisplayRow(self.block_snapshot.longest_row())
     }
 
+    pub fn longest_row_in_range(&self, range: Range<DisplayRow>) -> DisplayRow {
+        let block_range = BlockRow(range.start.0)..BlockRow(range.end.0);
+        let longest_row = self.block_snapshot.longest_row_in_range(block_range);
+        DisplayRow(longest_row.0)
+    }
+
     pub fn starts_indent(&self, buffer_row: MultiBufferRow) -> bool {
-        let max_row = self.buffer_snapshot.max_buffer_row();
+        let max_row = self.buffer_snapshot.max_row();
         if buffer_row >= max_row {
             return false;
         }
@@ -1251,7 +1256,7 @@ impl DisplaySnapshot {
         &self,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
         let type_id = TypeId::of::<Tag>();
-        self.text_highlights.get(&Some(type_id)).cloned()
+        self.text_highlights.get(&type_id).cloned()
     }
 
     #[allow(unused)]

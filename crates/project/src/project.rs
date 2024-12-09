@@ -26,7 +26,7 @@ pub mod search_history;
 mod yarn;
 
 use anyhow::{anyhow, Context as _, Result};
-use buffer_store::{BufferStore, BufferStoreEvent};
+use buffer_store::{BufferChangeSet, BufferStore, BufferStoreEvent};
 use client::{proto, Client, Collaborator, PendingEntitySubscription, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 
@@ -121,7 +121,7 @@ const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
 
-pub trait Item {
+pub trait ProjectItem {
     fn try_open(
         project: &Model<Project>,
         path: &ProjectPath,
@@ -131,6 +131,7 @@ pub trait Item {
         Self: Sized;
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
+    fn is_dirty(&self) -> bool;
 }
 
 #[derive(Clone)]
@@ -258,11 +259,11 @@ pub enum Event {
     DebugClientLog(DebugAdapterClientId, String),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
-    WorktreeAdded,
+    WorktreeAdded(WorktreeId),
     WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
-    WorktreeUpdatedGitRepositories,
+    WorktreeUpdatedGitRepositories(WorktreeId),
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -277,7 +278,7 @@ pub enum Event {
     DisconnectedFromHost,
     DisconnectedFromSshRemote,
     Closed,
-    DeletedEntry(ProjectEntryId),
+    DeletedEntry(WorktreeId, ProjectEntryId),
     CollaboratorUpdated {
         old_peer_id: proto::PeerId,
         new_peer_id: proto::PeerId,
@@ -606,6 +607,8 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
+
+        client.add_model_request_handler(WorktreeStore::handle_rename_project_entry);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -1200,7 +1203,7 @@ impl Project {
         for (project_path, breakpoints) in open_breakpoints.iter() {
             let buffer = maybe!({
                 let buffer_store = self.buffer_store.read(cx);
-                let buffer_id = buffer_store.buffer_id_for_project_path(project_path, cx)?;
+                let buffer_id = buffer_store.buffer_id_for_project_path(project_path)?;
                 let buffer = self.buffer_for_id(*buffer_id, cx)?;
                 Some(buffer.read(cx))
             });
@@ -1294,7 +1297,7 @@ impl Project {
             let buffer_id = self
                 .buffer_store
                 .read(cx)
-                .buffer_id_for_project_path(project_path, cx)?;
+                .buffer_id_for_project_path(project_path)?;
             Some(self.buffer_for_id(*buffer_id, cx)?.read(cx))
         });
 
@@ -1806,11 +1809,45 @@ impl Project {
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<CreatedEntry>> {
-        let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
+        let worktree_store = self.worktree_store.read(cx);
+        let new_path = new_path.into();
+        let Some((worktree, old_path, is_dir)) = worktree_store
+            .worktree_and_entry_for_id(entry_id, cx)
+            .map(|(worktree, entry)| (worktree, entry.path.clone(), entry.is_dir()))
+        else {
             return Task::ready(Err(anyhow!(format!("No worktree for entry {entry_id:?}"))));
         };
-        worktree.update(cx, |worktree, cx| {
-            worktree.rename_entry(entry_id, new_path, cx)
+
+        let worktree_id = worktree.read(cx).id();
+
+        let lsp_store = self.lsp_store().downgrade();
+        cx.spawn(|_, mut cx| async move {
+            let (old_abs_path, new_abs_path) = {
+                let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
+                (root_path.join(&old_path), root_path.join(&new_path))
+            };
+            LspStore::will_rename_entry(
+                lsp_store.clone(),
+                worktree_id,
+                &old_abs_path,
+                &new_abs_path,
+                is_dir,
+                cx.clone(),
+            )
+            .await;
+
+            let entry = worktree
+                .update(&mut cx, |worktree, cx| {
+                    worktree.rename_entry(entry_id, new_path.clone(), cx)
+                })?
+                .await?;
+
+            lsp_store
+                .update(&mut cx, |this, _| {
+                    this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
+                })
+                .ok();
+            Ok(entry)
         })
     }
 
@@ -1821,6 +1858,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
+        cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
         worktree.update(cx, |worktree, cx| {
             worktree.delete_entry(entry_id, trash, cx)
         })
@@ -2146,6 +2184,20 @@ impl Project {
 
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.open_buffer(path.into(), cx)
+        })
+    }
+
+    pub fn open_unstaged_changes(
+        &mut self,
+        buffer: Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<BufferChangeSet>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.open_unstaged_changes(buffer, cx)
         })
     }
 
@@ -2567,7 +2619,7 @@ impl Project {
         match event {
             WorktreeStoreEvent::WorktreeAdded(worktree) => {
                 self.on_worktree_added(worktree, cx);
-                cx.emit(Event::WorktreeAdded);
+                cx.emit(Event::WorktreeAdded(worktree.read(cx).id()));
             }
             WorktreeStoreEvent::WorktreeRemoved(_, id) => {
                 cx.emit(Event::WorktreeRemoved(*id));
@@ -2588,23 +2640,25 @@ impl Project {
             }
         }
         cx.observe(worktree, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(worktree, |project, worktree, event, cx| match event {
-            worktree::Event::UpdatedEntries(changes) => {
-                cx.emit(Event::WorktreeUpdatedEntries(
-                    worktree.read(cx).id(),
-                    changes.clone(),
-                ));
+        cx.subscribe(worktree, |project, worktree, event, cx| {
+            let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+            match event {
+                worktree::Event::UpdatedEntries(changes) => {
+                    cx.emit(Event::WorktreeUpdatedEntries(
+                        worktree.read(cx).id(),
+                        changes.clone(),
+                    ));
 
-                let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
-                project
-                    .client()
-                    .telemetry()
-                    .report_discovered_project_events(worktree_id, changes);
+                    project
+                        .client()
+                        .telemetry()
+                        .report_discovered_project_events(worktree_id, changes);
+                }
+                worktree::Event::UpdatedGitRepositories(_) => {
+                    cx.emit(Event::WorktreeUpdatedGitRepositories(worktree_id));
+                }
+                worktree::Event::DeletedEntry(id) => cx.emit(Event::DeletedEntry(worktree_id, *id)),
             }
-            worktree::Event::UpdatedGitRepositories(_) => {
-                cx.emit(Event::WorktreeUpdatedGitRepositories);
-            }
-            worktree::Event::DeletedEntry(id) => cx.emit(Event::DeletedEntry(*id)),
         })
         .detach();
         cx.notify();
@@ -2629,10 +2683,7 @@ impl Project {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        if matches!(
-            event,
-            BufferEvent::Edited { .. } | BufferEvent::Reloaded | BufferEvent::DiffBaseChanged
-        ) {
+        if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
@@ -2729,34 +2780,32 @@ impl Project {
     }
 
     fn recalculate_buffer_diffs(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
-        let buffers = self.buffers_needing_diff.drain().collect::<Vec<_>>();
         cx.spawn(move |this, mut cx| async move {
-            let tasks: Vec<_> = buffers
-                .iter()
-                .filter_map(|buffer| {
-                    let buffer = buffer.upgrade()?;
-                    buffer
-                        .update(&mut cx, |buffer, cx| buffer.recalculate_diff(cx))
-                        .ok()
-                        .flatten()
-                })
-                .collect();
-
-            futures::future::join_all(tasks).await;
-
-            this.update(&mut cx, |this, cx| {
-                if this.buffers_needing_diff.is_empty() {
-                    // TODO: Would a `ModelContext<Project>.notify()` suffice here?
-                    for buffer in buffers {
-                        if let Some(buffer) = buffer.upgrade() {
-                            buffer.update(cx, |_, cx| cx.notify());
+            loop {
+                let task = this
+                    .update(&mut cx, |this, cx| {
+                        let buffers = this
+                            .buffers_needing_diff
+                            .drain()
+                            .filter_map(|buffer| buffer.upgrade())
+                            .collect::<Vec<_>>();
+                        if buffers.is_empty() {
+                            None
+                        } else {
+                            Some(this.buffer_store.update(cx, |buffer_store, cx| {
+                                buffer_store.recalculate_buffer_diffs(buffers, cx)
+                            }))
                         }
-                    }
+                    })
+                    .ok()
+                    .flatten();
+
+                if let Some(task) = task {
+                    task.await;
                 } else {
-                    this.recalculate_buffer_diffs(cx).detach();
+                    break;
                 }
-            })
-            .ok();
+            }
         })
     }
 
@@ -4555,6 +4604,10 @@ impl Project {
     ) -> Option<Arc<DebugAdapterClient>> {
         self.dap_store.read(cx).client_by_id(id)
     }
+
+    pub fn buffer_store(&self) -> &Model<BufferStore> {
+        &self.buffer_store
+    }
 }
 
 fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::CodeActionKind> {
@@ -4764,7 +4817,7 @@ impl ResolvedPath {
     }
 }
 
-impl Item for Buffer {
+impl ProjectItem for Buffer {
     fn try_open(
         project: &Model<Project>,
         path: &ProjectPath,
@@ -4782,6 +4835,10 @@ impl Item for Buffer {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.is_dirty()
     }
 }
 

@@ -767,7 +767,7 @@ impl Transport for FakeTransport {
                             .unwrap();
                         writer.flush().await.unwrap();
                     }
-                    _ => unreachable!("You can only send a request and an event that is redirected to the ouput reader"),
+                    _ => unreachable!("You can only send a request and an event that is redirected to the output reader"),
                 }
             }
         })

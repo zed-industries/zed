@@ -30,7 +30,10 @@ use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
+use lsp::{
+    CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions,
+    LanguageServerName,
+};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -75,7 +78,7 @@ pub use language_registry::{
 };
 pub use lsp::LanguageServerId;
 pub use outline::*;
-pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
+pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer, TreeSitterOptions};
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 
@@ -126,6 +129,10 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
         LanguageConfig {
             name: "Plain Text".into(),
             soft_wrap: Some(SoftWrap::EditorWidth),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["txt".to_owned()],
+                first_line_pattern: None,
+            },
             ..Default::default()
         },
         None,
@@ -484,6 +491,11 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn language_ids(&self) -> HashMap<String, String> {
         Default::default()
     }
+
+    /// Support custom initialize params.
+    fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
+        Ok(original)
+    }
 }
 
 async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
@@ -836,6 +848,7 @@ pub struct Grammar {
     pub(crate) runnable_config: Option<RunnableConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
+    pub text_object_config: Option<TextObjectConfig>,
     pub embedding_config: Option<EmbeddingConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
@@ -859,6 +872,44 @@ pub struct OutlineConfig {
     pub open_capture_ix: Option<u32>,
     pub close_capture_ix: Option<u32>,
     pub annotation_capture_ix: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextObject {
+    InsideFunction,
+    AroundFunction,
+    InsideClass,
+    AroundClass,
+    InsideComment,
+    AroundComment,
+}
+
+impl TextObject {
+    pub fn from_capture_name(name: &str) -> Option<TextObject> {
+        match name {
+            "function.inside" => Some(TextObject::InsideFunction),
+            "function.around" => Some(TextObject::AroundFunction),
+            "class.inside" => Some(TextObject::InsideClass),
+            "class.around" => Some(TextObject::AroundClass),
+            "comment.inside" => Some(TextObject::InsideComment),
+            "comment.around" => Some(TextObject::AroundComment),
+            _ => None,
+        }
+    }
+
+    pub fn around(&self) -> Option<Self> {
+        match self {
+            TextObject::InsideFunction => Some(TextObject::AroundFunction),
+            TextObject::InsideClass => Some(TextObject::AroundClass),
+            TextObject::InsideComment => Some(TextObject::AroundComment),
+            _ => None,
+        }
+    }
+}
+
+pub struct TextObjectConfig {
+    pub query: Query,
+    pub text_objects_by_capture_ix: Vec<(u32, TextObject)>,
 }
 
 #[derive(Debug)]
@@ -938,6 +989,7 @@ impl Language {
                     highlights_query: None,
                     brackets_config: None,
                     outline_config: None,
+                    text_object_config: None,
                     embedding_config: None,
                     indents_config: None,
                     injection_config: None,
@@ -1008,7 +1060,12 @@ impl Language {
         if let Some(query) = queries.runnables {
             self = self
                 .with_runnable_query(query.as_ref())
-                .context("Error loading tests query")?;
+                .context("Error loading runnables query")?;
+        }
+        if let Some(query) = queries.text_objects {
+            self = self
+                .with_text_object_query(query.as_ref())
+                .context("Error loading textobject query")?;
         }
         Ok(self)
     }
@@ -1082,6 +1139,26 @@ impl Language {
                 annotation_capture_ix,
             });
         }
+        Ok(self)
+    }
+
+    pub fn with_text_object_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let query = Query::new(&grammar.ts_language, source)?;
+
+        let mut text_objects_by_capture_ix = Vec::new();
+        for (ix, name) in query.capture_names().iter().enumerate() {
+            if let Some(text_object) = TextObject::from_capture_name(name) {
+                text_objects_by_capture_ix.push((ix as u32, text_object));
+            }
+        }
+
+        grammar.text_object_config = Some(TextObjectConfig {
+            query,
+            text_objects_by_capture_ix,
+        });
         Ok(self)
     }
 
@@ -1409,6 +1486,10 @@ impl Language {
 
     pub fn prettier_parser_name(&self) -> Option<&str> {
         self.config.prettier_parser_name.as_deref()
+    }
+
+    pub fn config(&self) -> &LanguageConfig {
+        &self.config
     }
 }
 

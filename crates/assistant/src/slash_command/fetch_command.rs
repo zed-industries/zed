@@ -108,6 +108,10 @@ impl SlashCommand for FetchSlashCommand {
         "Insert fetched URL contents".into()
     }
 
+    fn icon(&self) -> IconName {
+        IconName::Globe
+    }
+
     fn menu_text(&self) -> String {
         self.description()
     }
@@ -162,7 +166,7 @@ impl SlashCommand for FetchSlashCommand {
                 text,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    icon: IconName::AtSign,
+                    icon: IconName::Globe,
                     label: format!("fetch {}", url).into(),
                     metadata: None,
                 }],

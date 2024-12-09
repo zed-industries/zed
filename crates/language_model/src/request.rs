@@ -347,7 +347,7 @@ impl LanguageModelRequest {
                             }
                             MessageContent::ToolUse(tool_use) => {
                                 Some(anthropic::RequestContent::ToolUse {
-                                    id: tool_use.id,
+                                    id: tool_use.id.to_string(),
                                     name: tool_use.name,
                                     input: tool_use.input,
                                     cache_control,

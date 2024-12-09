@@ -10,6 +10,7 @@ pub use language::*;
 use lsp::{LanguageServerBinary, LanguageServerName};
 use regex::Regex;
 use smol::fs::{self};
+use std::fmt::Display;
 use std::{
     any::Any,
     borrow::Cow,
@@ -444,6 +445,10 @@ const RUST_PACKAGE_TASK_VARIABLE: VariableName =
 const RUST_BIN_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_BIN_NAME"));
 
+/// The bin kind (bin/example) corresponding to the current file in Cargo.toml
+const RUST_BIN_KIND_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_BIN_KIND"));
+
 const RUST_MAIN_FUNCTION_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("_rust_main_function_end"));
 
@@ -469,12 +474,16 @@ impl ContextProvider for RustContextProvider {
             .is_some();
 
         if is_main_function {
-            if let Some((package_name, bin_name)) = local_abs_path.and_then(|path| {
+            if let Some(target) = local_abs_path.and_then(|path| {
                 package_name_and_bin_name_from_abs_path(path, project_env.as_ref())
             }) {
                 return Task::ready(Ok(TaskVariables::from_iter([
-                    (RUST_PACKAGE_TASK_VARIABLE.clone(), package_name),
-                    (RUST_BIN_NAME_TASK_VARIABLE.clone(), bin_name),
+                    (RUST_PACKAGE_TASK_VARIABLE.clone(), target.package_name),
+                    (RUST_BIN_NAME_TASK_VARIABLE.clone(), target.target_name),
+                    (
+                        RUST_BIN_KIND_TASK_VARIABLE.clone(),
+                        target.target_kind.to_string(),
+                    ),
                 ])));
             }
         }
@@ -568,8 +577,9 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "cargo run -p {} --bin {}",
+                    "cargo run -p {} --{} {}",
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    RUST_BIN_KIND_TASK_VARIABLE.template_value(),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
@@ -577,7 +587,7 @@ impl ContextProvider for RustContextProvider {
                     "run".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    "--bin".into(),
+                    format!("--{}", RUST_BIN_KIND_TASK_VARIABLE.template_value()),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
                 ],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -635,10 +645,42 @@ struct CargoTarget {
     src_path: String,
 }
 
+#[derive(Debug, PartialEq)]
+enum TargetKind {
+    Bin,
+    Example,
+}
+
+impl Display for TargetKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TargetKind::Bin => write!(f, "bin"),
+            TargetKind::Example => write!(f, "example"),
+        }
+    }
+}
+
+impl TryFrom<&str> for TargetKind {
+    type Error = ();
+    fn try_from(value: &str) -> Result<Self, ()> {
+        match value {
+            "bin" => Ok(Self::Bin),
+            "example" => Ok(Self::Example),
+            _ => Err(()),
+        }
+    }
+}
+/// Which package and binary target are we in?
+struct TargetInfo {
+    package_name: String,
+    target_name: String,
+    target_kind: TargetKind,
+}
+
 fn package_name_and_bin_name_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
-) -> Option<(String, String)> {
+) -> Option<TargetInfo> {
     let mut command = util::command::new_std_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
@@ -656,10 +698,14 @@ fn package_name_and_bin_name_from_abs_path(
     let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
 
     retrieve_package_id_and_bin_name_from_metadata(metadata, abs_path).and_then(
-        |(package_id, bin_name)| {
+        |(package_id, bin_name, target_kind)| {
             let package_name = package_name_from_pkgid(&package_id);
 
-            package_name.map(|package_name| (package_name.to_owned(), bin_name))
+            package_name.map(|package_name| TargetInfo {
+                package_name: package_name.to_owned(),
+                target_name: bin_name,
+                target_kind,
+            })
         },
     )
 }
@@ -667,13 +713,19 @@ fn package_name_and_bin_name_from_abs_path(
 fn retrieve_package_id_and_bin_name_from_metadata(
     metadata: CargoMetadata,
     abs_path: &Path,
-) -> Option<(String, String)> {
+) -> Option<(String, String, TargetKind)> {
     for package in metadata.packages {
         for target in package.targets {
-            let is_bin = target.kind.iter().any(|kind| kind == "bin");
+            let Some(bin_kind) = target
+                .kind
+                .iter()
+                .find_map(|kind| TargetKind::try_from(kind.as_ref()).ok())
+            else {
+                continue;
+            };
             let target_path = PathBuf::from(target.src_path);
-            if target_path == abs_path && is_bin {
-                return Some((package.id, target.name));
+            if target_path == abs_path {
+                return Some((package.id, target.name, bin_kind));
             }
         }
     }
@@ -1066,7 +1118,11 @@ mod tests {
             (
                 r#"{"packages":[{"id":"path+file:///path/to/zed/crates/zed#0.131.0","targets":[{"name":"zed","kind":["bin"],"src_path":"/path/to/zed/src/main.rs"}]}]}"#,
                 "/path/to/zed/src/main.rs",
-                Some(("path+file:///path/to/zed/crates/zed#0.131.0", "zed")),
+                Some((
+                    "path+file:///path/to/zed/crates/zed#0.131.0",
+                    "zed",
+                    TargetKind::Bin,
+                )),
             ),
             (
                 r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["bin"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
@@ -1074,6 +1130,16 @@ mod tests {
                 Some((
                     "path+file:///path/to/custom-package#my-custom-package@0.1.0",
                     "my-custom-bin",
+                    TargetKind::Bin,
+                )),
+            ),
+            (
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                "/path/to/custom-package/src/main.rs",
+                Some((
+                    "path+file:///path/to/custom-package#my-custom-package@0.1.0",
+                    "my-custom-bin",
+                    TargetKind::Example,
                 )),
             ),
             (
@@ -1088,7 +1154,7 @@ mod tests {
 
             assert_eq!(
                 retrieve_package_id_and_bin_name_from_metadata(metadata, absolute_path),
-                expected.map(|(pkgid, bin)| (pkgid.to_owned(), bin.to_owned()))
+                expected.map(|(pkgid, name, kind)| (pkgid.to_owned(), name.to_owned(), kind))
             );
         }
     }

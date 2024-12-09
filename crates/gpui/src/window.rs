@@ -1241,7 +1241,11 @@ impl<'a> WindowContext<'a> {
     /// that currently owns the mouse cursor.
     /// On mac, this is equivalent to `is_window_active`.
     pub fn is_window_hovered(&self) -> bool {
-        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+        if cfg!(any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )) {
             self.window.hovered.get()
         } else {
             self.is_window_active()
@@ -1752,12 +1756,18 @@ impl<'a> WindowContext<'a> {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
-        window.next_frame.accessed_element_states.extend(
-            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index]
-                .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
-        );
+        if let Some(element_states) = window
+            .rendered_frame
+            .accessed_element_states
+            .get(range.start.accessed_element_states_index..range.end.accessed_element_states_index)
+        {
+            window.next_frame.accessed_element_states.extend(
+                element_states
+                    .iter()
+                    .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+            );
+        }
+
         window
             .text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
@@ -3064,28 +3074,8 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Represent this action as a key binding string, to display in the UI.
-    pub fn keystroke_text_for_action(&self, action: &dyn Action) -> String {
+    pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
         self.bindings_for_action(action)
-            .into_iter()
-            .next()
-            .map(|binding| {
-                binding
-                    .keystrokes()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-            .unwrap_or_else(|| action.name().to_string())
-    }
-
-    /// Represent this action as a key binding string, to display in the UI.
-    pub fn keystroke_text_for_action_in(
-        &self,
-        action: &dyn Action,
-        focus_handle: &FocusHandle,
-    ) -> String {
-        self.bindings_for_action_in(action, focus_handle)
             .into_iter()
             .next()
             .map(|binding| {
@@ -3146,7 +3136,7 @@ impl<'a> WindowContext<'a> {
                     self.window.mouse_position = position;
                     if self.active_drag.is_none() {
                         self.active_drag = Some(AnyDrag {
-                            value: Box::new(paths.clone()),
+                            value: Arc::new(paths.clone()),
                             view: self.new_view(|_| paths).into(),
                             cursor_offset: position,
                         });

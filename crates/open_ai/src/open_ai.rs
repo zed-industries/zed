@@ -170,6 +170,24 @@ pub struct Request {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct CompletionRequest {
+    pub model: String,
+    pub prompt: String,
+    pub max_tokens: u32,
+    pub temperature: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prediction: Option<Prediction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite_speculation: Option<bool>,
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Prediction {
+    Content { content: String },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ToolChoice {
     Auto,
@@ -286,6 +304,21 @@ pub struct ResponseStreamEvent {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct CompletionResponse {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<CompletionChoice>,
+    pub usage: Usage,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CompletionChoice {
+    pub text: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Response {
     pub id: String,
     pub object: String,
@@ -325,6 +358,56 @@ pub async fn complete(
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
         let response: Response = serde_json::from_str(&body)?;
+        Ok(response)
+    } else {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+
+        #[derive(Deserialize)]
+        struct OpenAiResponse {
+            error: OpenAiError,
+        }
+
+        #[derive(Deserialize)]
+        struct OpenAiError {
+            message: String,
+        }
+
+        match serde_json::from_str::<OpenAiResponse>(&body) {
+            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
+                "Failed to connect to OpenAI API: {}",
+                response.error.message,
+            )),
+
+            _ => Err(anyhow!(
+                "Failed to connect to OpenAI API: {} {}",
+                response.status(),
+                body,
+            )),
+        }
+    }
+}
+
+pub async fn complete_text(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: CompletionRequest,
+) -> Result<CompletionResponse> {
+    let uri = format!("{api_url}/completions");
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key));
+
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let mut response = client.send(request).await?;
+
+    if response.status().is_success() {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        let response = serde_json::from_str(&body)?;
         Ok(response)
     } else {
         let mut body = String::new();

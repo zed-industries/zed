@@ -150,9 +150,6 @@
   // Whether to display inline and alongside documentation for items in the
   // completions menu
   "show_completion_documentation": true,
-  // The debounce delay before re-querying the language server for completion
-  // documentation when not included in original completion list.
-  "completion_documentation_secondary_query_debounce": 300,
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   /// Whether to show the signature help after completion or a bracket pair inserted.
@@ -300,6 +297,8 @@
   "scroll_beyond_last_line": "one_page",
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
+  // Whether to scroll when clicking near the edge of the visible text area.
+  "autoscroll_on_clicks": false,
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
@@ -490,9 +489,6 @@
     "version": "2",
     // Whether the assistant is enabled.
     "enabled": true,
-    // Whether to show inline hints showing the keybindings to use the inline assistant and the
-    // assistant panel.
-    "show_hints": false,
     // Whether to show the assistant panel button in the status bar.
     "button": true,
     // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.
@@ -560,13 +556,26 @@
     "close_position": "right",
     // Whether to show the file icon for a tab.
     "file_icons": false,
+    // Whether to always show the close button on tabs.
+    "always_show_close_button": false,
     // What to do after closing the current tab.
     //
     // 1. Activate the tab that was open previously (default)
     //     "History"
     // 2. Activate the neighbour tab (prefers the right one, if present)
     //     "Neighbour"
-    "activate_on_close": "history"
+    "activate_on_close": "history",
+    /// Which files containing diagnostic errors/warnings to mark in the tabs.
+    /// Diagnostics are only shown when file icons are also active.
+    /// This setting only works when can take the following three values:
+    ///
+    /// 1. Do not mark any files:
+    ///    "off"
+    /// 2. Only mark files with errors:
+    ///    "errors"
+    /// 3. Mark files with errors and warnings:
+    ///    "all"
+    "show_diagnostics": "off"
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -673,6 +682,7 @@
     "**/.git",
     "**/.svn",
     "**/.hg",
+    "**/.jj",
     "**/CVS",
     "**/.DS_Store",
     "**/Thumbs.db",
@@ -1128,6 +1138,7 @@
     "use_system_clipboard": "always",
     "use_multiline_find": false,
     "use_smartcase_find": false,
+    "highlight_on_yank_duration": 200,
     "custom_digraphs": {}
   },
   // The server to connect to. If the environment variable
@@ -1185,6 +1196,8 @@
   //   "W": "workspace::Save"
   // }
   "command_aliases": {},
+  // Whether to show user picture in titlebar.
+  "show_user_picture": true,
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.

@@ -8,6 +8,7 @@ members = [
     "crates/assistant2",
     "crates/assistant_slash_command",
     "crates/assistant_tool",
+    "crates/assistant_tools",
     "crates/audio",
     "crates/auto_update",
     "crates/auto_update_ui",
@@ -22,7 +23,8 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
-    "crates/context_servers",
+    "crates/context_server",
+    "crates/context_server_settings",
     "crates/copilot",
     "crates/dap",
     "crates/dap_adapters",
@@ -66,8 +68,9 @@ members = [
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
-    "crates/live_kit_client",
-    "crates/live_kit_server",
+    "crates/livekit_client",
+    "crates/livekit_client_macos",
+    "crates/livekit_server",
     "crates/lsp",
     "crates/markdown",
     "crates/markdown_preview",
@@ -141,6 +144,7 @@ members = [
     "crates/worktree",
     "crates/zed",
     "crates/zed_actions",
+    "crates/zeta",
 
     #
     # Extensions
@@ -195,6 +199,7 @@ assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tool = { path = "crates/assistant_tool" }
+assistant_tools = { path = "crates/assistant_tools" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 auto_update_ui = { path = "crates/auto_update_ui" }
@@ -209,7 +214,8 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
-context_servers = { path = "crates/context_servers" }
+context_server = { path = "crates/context_server" }
+context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
@@ -232,7 +238,9 @@ git = { path = "crates/git" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
-gpui = { path = "crates/gpui", default-features = false, features = ["http_client"]}
+gpui = { path = "crates/gpui", default-features = false, features = [
+    "http_client",
+] }
 gpui_macros = { path = "crates/gpui_macros" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
@@ -250,8 +258,9 @@ language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
-live_kit_client = { path = "crates/live_kit_client" }
-live_kit_server = { path = "crates/live_kit_server" }
+livekit_client = { path = "crates/livekit_client" }
+livekit_client_macos = { path = "crates/livekit_client_macos" }
+livekit_server = { path = "crates/livekit_server" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
@@ -325,6 +334,7 @@ workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
+zeta = { path = "crates/zeta" }
 
 #
 # External crates
@@ -335,7 +345,7 @@ alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "91
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
-ashpd = "0.9.1"
+ashpd = { version = "0.10", default-features = false, features = ["async-std"]}
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
@@ -384,20 +394,23 @@ heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 hyper = "0.14"
+http = "1.1"
 ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "2"
 itertools = "0.13.0"
 jsonwebtoken = "9.3"
-jupyter-protocol = { version = "0.3.0" }
-jupyter-websocket-client = { version = "0.5.0" }
+jupyter-protocol = { version = "0.5.0" }
+jupyter-websocket-client = { version = "0.8.0" }
 libc = "0.2"
+libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
+livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="799f10133d93ba2a88642cd480d01ec4da53408c", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
-nbformat = { version = "0.7.0" }
+nbformat = { version = "0.9.0" }
 nix = "0.29"
 num-format = "0.4.4"
 once_cell = "1.19.0"
@@ -407,10 +420,10 @@ parking_lot = "0.12.1"
 pathdiff = "0.2"
 pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
 pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
-pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c"  }
-pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c"  }
-pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c"  }
-pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c"  }
+pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
+pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
+pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
+pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 profiling = "1"
@@ -431,7 +444,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = { version = "0.22.0", default-features = false, features = [
+runtimelib = { version = "0.24.0", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rustc-demangle = "0.1.23"
@@ -503,7 +516,7 @@ unindent = "0.1.7"
 unicode-segmentation = "1.10"
 unicode-script = "0.5.7"
 url = "2.2"
-uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
+uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 wasmparser = "0.215"
 wasm-encoder = "0.215"
 wasmtime = { version = "24", default-features = false, features = [
@@ -571,6 +584,10 @@ features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ]
+
+# TODO livekit https://github.com/RustAudio/cpal/pull/891
+[patch.crates-io]
+cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
@@ -674,6 +691,7 @@ new_ret_no_self = { level = "allow" }
 # We have a few `next` functions that differ in lifetimes
 # compared to Iterator::next. Yet, clippy complains about those.
 should_implement_trait = { level = "allow" }
+let_underscore_future = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]

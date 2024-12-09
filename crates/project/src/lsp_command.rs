@@ -1775,21 +1775,54 @@ impl LspCommand for GetCompletions {
         if let Some(item_defaults) = item_defaults {
             let default_data = item_defaults.data.as_ref();
             let default_commit_characters = item_defaults.commit_characters.as_ref();
+            let default_edit_range = item_defaults.edit_range.as_ref();
+            let default_insert_text_format = item_defaults.insert_text_format.as_ref();
             let default_insert_text_mode = item_defaults.insert_text_mode.as_ref();
 
             if default_data.is_some()
                 || default_commit_characters.is_some()
+                || default_edit_range.is_some()
+                || default_insert_text_format.is_some()
                 || default_insert_text_mode.is_some()
             {
                 for item in completions.iter_mut() {
-                    if let Some(data) = default_data {
-                        item.data = Some(data.clone())
+                    if item.data.is_none() && default_data.is_some() {
+                        item.data = default_data.cloned()
                     }
-                    if let Some(characters) = default_commit_characters {
-                        item.commit_characters = Some(characters.clone())
+                    if item.commit_characters.is_none() && default_commit_characters.is_some() {
+                        item.commit_characters = default_commit_characters.cloned()
                     }
-                    if let Some(text_mode) = default_insert_text_mode {
-                        item.insert_text_mode = Some(*text_mode)
+                    if item.text_edit.is_none() {
+                        if let Some(default_edit_range) = default_edit_range {
+                            match default_edit_range {
+                                CompletionListItemDefaultsEditRange::Range(range) => {
+                                    item.text_edit =
+                                        Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                            range: *range,
+                                            new_text: item.label.clone(),
+                                        }))
+                                }
+                                CompletionListItemDefaultsEditRange::InsertAndReplace {
+                                    insert,
+                                    replace,
+                                } => {
+                                    item.text_edit =
+                                        Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                            lsp::InsertReplaceEdit {
+                                                new_text: item.label.clone(),
+                                                insert: *insert,
+                                                replace: *replace,
+                                            },
+                                        ))
+                                }
+                            }
+                        }
+                    }
+                    if item.insert_text_format.is_none() && default_insert_text_format.is_some() {
+                        item.insert_text_format = default_insert_text_format.cloned()
+                    }
+                    if item.insert_text_mode.is_none() && default_insert_text_mode.is_some() {
+                        item.insert_text_mode = default_insert_text_mode.cloned()
                     }
                 }
             }

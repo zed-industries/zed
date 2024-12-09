@@ -156,9 +156,9 @@ pub struct Config {
     pub clickhouse_password: Option<String>,
     pub clickhouse_database: Option<String>,
     pub invite_link_prefix: String,
-    pub live_kit_server: Option<String>,
-    pub live_kit_key: Option<String>,
-    pub live_kit_secret: Option<String>,
+    pub livekit_server: Option<String>,
+    pub livekit_key: Option<String>,
+    pub livekit_secret: Option<String>,
     pub llm_database_url: Option<String>,
     pub llm_database_max_connections: Option<u32>,
     pub llm_database_migrations_path: Option<PathBuf>,
@@ -180,6 +180,9 @@ pub struct Config {
     pub anthropic_api_key: Option<Arc<str>>,
     pub anthropic_staff_api_key: Option<Arc<str>>,
     pub llm_closed_beta_model_name: Option<Arc<str>>,
+    pub prediction_api_url: Option<Arc<str>>,
+    pub prediction_api_key: Option<Arc<str>>,
+    pub prediction_model: Option<Arc<str>>,
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
@@ -210,9 +213,9 @@ impl Config {
             database_max_connections: 0,
             api_token: "".into(),
             invite_link_prefix: "".into(),
-            live_kit_server: None,
-            live_kit_key: None,
-            live_kit_secret: None,
+            livekit_server: None,
+            livekit_key: None,
+            livekit_secret: None,
             llm_database_url: None,
             llm_database_max_connections: None,
             llm_database_migrations_path: None,
@@ -230,6 +233,9 @@ impl Config {
             anthropic_api_key: None,
             anthropic_staff_api_key: None,
             llm_closed_beta_model_name: None,
+            prediction_api_url: None,
+            prediction_api_key: None,
+            prediction_model: None,
             clickhouse_url: None,
             clickhouse_user: None,
             clickhouse_password: None,
@@ -277,7 +283,7 @@ impl ServiceMode {
 pub struct AppState {
     pub db: Arc<Database>,
     pub llm_db: Option<Arc<LlmDatabase>>,
-    pub live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
+    pub livekit_client: Option<Arc<dyn livekit_server::api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub stripe_client: Option<Arc<stripe::Client>>,
     pub stripe_billing: Option<Arc<StripeBilling>>,
@@ -309,17 +315,17 @@ impl AppState {
             None
         };
 
-        let live_kit_client = if let Some(((server, key), secret)) = config
-            .live_kit_server
+        let livekit_client = if let Some(((server, key), secret)) = config
+            .livekit_server
             .as_ref()
-            .zip(config.live_kit_key.as_ref())
-            .zip(config.live_kit_secret.as_ref())
+            .zip(config.livekit_key.as_ref())
+            .zip(config.livekit_secret.as_ref())
         {
-            Some(Arc::new(live_kit_server::api::LiveKitClient::new(
+            Some(Arc::new(livekit_server::api::LiveKitClient::new(
                 server.clone(),
                 key.clone(),
                 secret.clone(),
-            )) as Arc<dyn live_kit_server::api::Client>)
+            )) as Arc<dyn livekit_server::api::Client>)
         } else {
             None
         };
@@ -329,7 +335,7 @@ impl AppState {
         let this = Self {
             db: db.clone(),
             llm_db,
-            live_kit_client,
+            livekit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
             stripe_billing: stripe_client
                 .clone()

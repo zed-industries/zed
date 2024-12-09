@@ -814,6 +814,23 @@ impl SyntaxSnapshot {
             buffer.as_rope(),
             self.layers_for_range(range, buffer, true),
             query,
+            TreeSitterOptions::default(),
+        )
+    }
+
+    pub fn matches_with_options<'a>(
+        &'a self,
+        range: Range<usize>,
+        buffer: &'a BufferSnapshot,
+        options: TreeSitterOptions,
+        query: fn(&Grammar) -> Option<&Query>,
+    ) -> SyntaxMapMatches<'a> {
+        SyntaxMapMatches::new(
+            range.clone(),
+            buffer.as_rope(),
+            self.layers_for_range(range, buffer, true),
+            query,
+            options,
         )
     }
 
@@ -1001,12 +1018,25 @@ impl<'a> SyntaxMapCaptures<'a> {
     }
 }
 
+#[derive(Default)]
+pub struct TreeSitterOptions {
+    max_start_depth: Option<u32>,
+}
+impl TreeSitterOptions {
+    pub fn max_start_depth(max_start_depth: u32) -> Self {
+        Self {
+            max_start_depth: Some(max_start_depth),
+        }
+    }
+}
+
 impl<'a> SyntaxMapMatches<'a> {
     fn new(
         range: Range<usize>,
         text: &'a Rope,
         layers: impl Iterator<Item = SyntaxLayer<'a>>,
         query: fn(&Grammar) -> Option<&Query>,
+        options: TreeSitterOptions,
     ) -> Self {
         let mut result = Self::default();
         for layer in layers {
@@ -1027,6 +1057,7 @@ impl<'a> SyntaxMapMatches<'a> {
                     query_cursor.deref_mut(),
                 )
             };
+            cursor.set_max_start_depth(options.max_start_depth);
 
             cursor.set_byte_range(range.clone());
             let matches = cursor.matches(query, layer.node(), TextProvider(text));

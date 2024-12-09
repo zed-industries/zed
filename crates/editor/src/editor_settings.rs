@@ -10,14 +10,12 @@ pub struct EditorSettings {
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub hover_popover_enabled: bool,
-    pub show_completions_on_input: bool,
-    pub show_completion_documentation: bool,
-    pub completion_documentation_secondary_query_debounce: u64,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
     pub scroll_beyond_last_line: ScrollBeyondLastLine,
     pub vertical_scroll_margin: f32,
+    pub autoscroll_on_clicks: bool,
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
@@ -193,21 +191,6 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub hover_popover_enabled: Option<bool>,
 
-    /// Whether to pop the completions menu while typing in an editor without
-    /// explicitly requesting it.
-    ///
-    /// Default: true
-    pub show_completions_on_input: Option<bool>,
-    /// Whether to display inline and alongside documentation for items in the
-    /// completions menu.
-    ///
-    /// Default: true
-    pub show_completion_documentation: Option<bool>,
-    /// The debounce delay before re-querying the language server for completion
-    /// documentation when not included in original completion list.
-    ///
-    /// Default: 300 ms
-    pub completion_documentation_secondary_query_debounce: Option<u64>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -222,6 +205,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 3.
     pub vertical_scroll_margin: Option<f32>,
+    /// Whether to scroll when clicking near the edge of the visible text area.
+    ///
+    /// Default: false
+    pub autoscroll_on_clicks: Option<bool>,
     /// Scroll sensitivity multiplier. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling.
     ///
