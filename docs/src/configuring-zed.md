@@ -994,6 +994,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
   "**/.git",
   "**/.svn",
   "**/.hg",
+  "**/.jj"
   "**/CVS",
   "**/.DS_Store",
   "**/Thumbs.db",
