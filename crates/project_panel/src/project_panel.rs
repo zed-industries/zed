@@ -3524,26 +3524,25 @@ impl ProjectPanel {
                                         }
                                     })
                                 }
-                            })
-                        }
-                        .ml_1(),
-                    )
-                    .on_secondary_mouse_down(cx.listener(
-                        move |this, event: &MouseDownEvent, cx| {
-                            // Stop propagation to prevent the catch-all context menu for the project
-                            // panel from being deployed.
-                            cx.stop_propagation();
-                            // Some context menu actions apply to all marked entries. If the user
-                            // right-clicks on an entry that is not marked, they may not realize the
-                            // action applies to multiple entries. To avoid inadvertent changes, all
-                            // entries are unmarked.
-                            if !this.marked_entries.contains(&selection) {
-                                this.marked_entries.clear();
-                            }
-                            this.deploy_context_menu(event.position, entry_id, cx);
-                        },
-                    ))
-                    .overflow_x(),
+                                .ml_1(),
+                            )
+                            .on_secondary_mouse_down(cx.listener(
+                                move |this, event: &MouseDownEvent, cx| {
+                                    // Stop propagation to prevent the catch-all context menu for the project
+                                    // panel from being deployed.
+                                    cx.stop_propagation();
+                                    // Some context menu actions apply to all marked entries. If the user
+                                    // right-clicks on an entry that is not marked, they may not realize the
+                                    // action applies to multiple entries. To avoid inadvertent changes, all
+                                    // entries are unmarked.
+                                    if !this.marked_entries.contains(&selection) {
+                                        this.marked_entries.clear();
+                                    }
+                                    this.deploy_context_menu(event.position, entry_id, cx);
+                                },
+                            ))
+                            .overflow_x(),
+                    ),
             )
             .border_1()
             .border_r_2()
