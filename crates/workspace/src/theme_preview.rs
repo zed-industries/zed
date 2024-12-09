@@ -1,12 +1,13 @@
 #![allow(unused, dead_code)]
+use component_preview::{get_all_component_previews, ComponentPreview as _};
 use gpui::{actions, hsla, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
-    component_registry::get_all_component_previews, element_cell, prelude::*, string_cell,
-    utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar, AvatarAudioStatusIndicator,
-    AvatarAvailabilityIndicator, ButtonLike, Checkbox, CheckboxWithLabel, ContentGroup,
-    DecoratedIcon, ElevationIndex, Facepile, IconDecoration, Indicator, Table, TintColor, Tooltip,
+    element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus,
+    Availability, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
+    Checkbox, CheckboxWithLabel, ContentGroup, DecoratedIcon, ElevationIndex, Facepile,
+    IconDecoration, Indicator, Table, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -511,26 +512,21 @@ impl ThemePreview {
             .overflow_scroll()
             .size_full()
             .gap_2()
-            // .child(ContentGroup::render_component_previews(cx))
-            // .child(IconDecoration::render_component_previews(cx))
-            // .child(DecoratedIcon::render_component_previews(cx))
-            // .child(Checkbox::render_component_previews(cx))
-            // .child(CheckboxWithLabel::render_component_previews(cx))
-            // .child(Facepile::render_component_previews(cx))
-            .children(all_previews.iter().map(|(scope, previews)| {
+            .children(all_previews.into_iter().map(|preview_name| {
+                let id = ElementId::Name(format!("{}-preview", preview_name).into());
                 v_flex()
                     .gap_4()
-                    .child(Headline::new(scope.to_string().clone()).size(HeadlineSize::Small))
-                    .children(previews.iter().map(|(name, preview)| {
-                        let id = ElementId::Name(format!("{}-preview", name).into());
-                        div().id(id).child(preview(cx))
-                    }))
+                    .child(Headline::new(preview_name).size(HeadlineSize::Small))
+                    .child(
+                        div().id(id).child(match preview_name {
+                            "Avatar" => Avatar::preview(cx),
+                            // Add other component preview matches here
+                            _ => div()
+                                .child(format!("Preview not implemented for {}", preview_name))
+                                .into_any_element(),
+                        }),
+                    )
             }))
-            // .child(Indicator::render_component_previews(cx))
-            // .child(Icon::render_component_previews(cx))
-            // .child(Table::render_component_previews(cx))
-            .child(self.render_avatars(cx))
-            .child(self.render_buttons(layer, cx))
     }
 
     fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {

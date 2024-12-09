@@ -15636,6 +15636,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "component_preview",
  "db",
  "derive_more",
  "env_logger 0.11.5",

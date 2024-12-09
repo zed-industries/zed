@@ -45,7 +45,6 @@ use std::path::PathBuf;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::ActiveTheme;
-use ui::component_registry::init_component_registry;
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
@@ -92,8 +91,6 @@ pub fn init(cx: &mut AppContext) {
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
     }
-
-    init_component_registry();
 }
 
 pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> WindowOptions {

@@ -323,6 +323,7 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
     notifications::init(cx);
+    component_preview::init();
     theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);

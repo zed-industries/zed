@@ -56,25 +56,31 @@ pub fn derive_into_component(input: TokenStream) -> TokenStream {
                 #scope_expr
             }
 
+            fn name() -> &'static str {
+                stringify!(#name)
+            }
+
             #description_impl
         }
 
         #[linkme::distributed_slice(component_preview::__ALL_COMPONENTS)]
-        fn register_component() {
+        fn __register_component() {
             component_preview::COMPONENTS
                 .lock()
                 .unwrap()
-                .push((<#name as component_preview::Component>::scope(), <#name as component_preview::Component>::name(), <#name as component_preview::Component>::description()));
+                .push((
+                    <#name as component_preview::Component>::scope(),
+                    <#name as component_preview::Component>::name(),
+                    <#name as component_preview::Component>::description()
+                ));
         }
 
         #[linkme::distributed_slice(component_preview::__ALL_PREVIEWS)]
-        fn register_preview() {
-            if let Some(p) = <#name as component_preview::Component>::preview() {
-                component_preview::PREVIEWS.lock().unwrap().push(p);
-            } else {
-                let _ = <#name as component_preview::ComponentPreview>::preview as fn() -> &'static str;
-                component_preview::PREVIEWS.lock().unwrap().push(<#name as component_preview::ComponentPreview>::preview());
-            }
+        fn __register_preview() {
+            component_preview::PREVIEWS
+                .lock()
+                .unwrap()
+                .push(<#name as component_preview::Component>::name());
         }
     };
 
