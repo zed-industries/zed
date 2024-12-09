@@ -3496,6 +3496,9 @@ impl ProjectPanel {
                             // Stop propagation to prevent the catch-all context menu for the project
                             // panel from being deployed.
                             cx.stop_propagation();
+                            if !this.marked_entries.contains(&selection) {
+                                this.marked_entries.clear();
+                            }
                             this.deploy_context_menu(event.position, entry_id, cx);
                         },
                     ))
