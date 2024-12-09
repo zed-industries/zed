@@ -102,6 +102,9 @@ async fn update_billing_preferences(
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
+    let max_monthly_llm_usage_spending_in_cents =
+        body.max_monthly_llm_usage_spending_in_cents.max(0);
+
     let billing_preferences =
         if let Some(_billing_preferences) = app.db.get_billing_preferences(user.id).await? {
             app.db
@@ -109,7 +112,7 @@ async fn update_billing_preferences(
                     user.id,
                     &UpdateBillingPreferencesParams {
                         max_monthly_llm_usage_spending_in_cents: ActiveValue::set(
-                            body.max_monthly_llm_usage_spending_in_cents,
+                            max_monthly_llm_usage_spending_in_cents,
                         ),
                     },
                 )
@@ -119,8 +122,7 @@ async fn update_billing_preferences(
                 .create_billing_preferences(
                     user.id,
                     &crate::db::CreateBillingPreferencesParams {
-                        max_monthly_llm_usage_spending_in_cents: body
-                            .max_monthly_llm_usage_spending_in_cents,
+                        max_monthly_llm_usage_spending_in_cents,
                     },
                 )
                 .await?
