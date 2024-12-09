@@ -1,11 +1,12 @@
 use crate::{
     prelude::*,
-    register_components,
     utils::{component_preview, component_preview_group},
     Indicator,
 };
 
+use component_preview::ComponentPreview;
 use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
+use ui_macros::IntoComponent;
 
 /// An element that renders a user avatar with customizable appearance options.
 ///
@@ -19,7 +20,8 @@ use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
 ///     .grayscale(true)
 ///     .border_color(gpui::red());
 /// ```
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
+#[component(scope = "user")]
 pub struct Avatar {
     image: Img,
     size: Option<AbsoluteLength>,
@@ -102,45 +104,34 @@ impl RenderOnce for Avatar {
     }
 }
 
-register_components!(user, [Avatar]);
-
-impl ComponentElement for Avatar {
-    fn scope() -> &'static str {
-        "user"
-    }
-
-    fn preview(cx: &WindowContext) -> Option<AnyElement> {
+impl ComponentPreview for Avatar {
+    fn preview(cx: &WindowContext) -> AnyElement {
         let avatar_1 = "https://avatars.githubusercontent.com/u/1789?s=70&v=4";
         let avatar_2 = "https://avatars.githubusercontent.com/u/482957?s=70&v=4";
         let avatar_3 = "https://avatars.githubusercontent.com/u/326587?s=70&v=4";
 
-        Some(
-            v_flex()
-                .gap_4()
-                .child(
-                    component_preview_group()
-                        .child(component_preview("Default").child(Avatar::new(avatar_1)))
-                        .child(
-                            component_preview("Custom Size")
-                                .child(Avatar::new(avatar_2).size(px(48.))),
-                        )
-                        .child(
-                            component_preview("Grayscale")
-                                .child(Avatar::new(avatar_3).grayscale(true)),
-                        ),
-                )
-                .child(
-                    component_preview_group()
-                        .child(
-                            component_preview("With Border").child(
-                                Avatar::new(avatar_1).border_color(cx.theme().colors().border),
-                            ),
-                        )
-                        .child(component_preview("With Indicator").child(
-                            Avatar::new(avatar_2).indicator(Indicator::dot().color(Color::Success)),
-                        )),
-                )
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_4()
+            .child(
+                component_preview_group()
+                    .child(component_preview("Default").child(Avatar::new(avatar_1)))
+                    .child(
+                        component_preview("Custom Size").child(Avatar::new(avatar_2).size(px(48.))),
+                    )
+                    .child(
+                        component_preview("Grayscale").child(Avatar::new(avatar_3).grayscale(true)),
+                    ),
+            )
+            .child(
+                component_preview_group()
+                    .child(
+                        component_preview("With Border")
+                            .child(Avatar::new(avatar_1).border_color(cx.theme().colors().border)),
+                    )
+                    .child(component_preview("With Indicator").child(
+                        Avatar::new(avatar_2).indicator(Indicator::dot().color(Color::Success)),
+                    )),
+            )
+            .into_any_element()
     }
 }

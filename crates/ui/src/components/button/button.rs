@@ -3,8 +3,7 @@ use gpui::{AnyElement, AnyView, DefiniteLength};
 
 use crate::traits::component::ComponentElement;
 use crate::{
-    prelude::*, register_components, Color, DynamicSpacing, ElevationIndex, IconPosition,
-    KeyBinding, TintColor,
+    prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding, TintColor,
 };
 use crate::{
     ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label, LineHeightStyle,
@@ -442,87 +441,87 @@ impl RenderOnce for Button {
     }
 }
 
-register_components!(input, [Button]);
+// register_components!(input, [Button]);
 
-impl ComponentElement for Button {
-    fn scope() -> &'static str {
-        "input"
-    }
+// impl ComponentElement for Button {
+//     fn scope() -> &'static str {
+//         "input"
+//     }
 
-    fn description() -> impl Into<Option<&'static str>> {
-        "A button allows users to take actions, and make choices, with a single tap."
-    }
+//     fn description() -> impl Into<Option<&'static str>> {
+//         "A button allows users to take actions, and make choices, with a single tap."
+//     }
 
-    fn preview(_cx: &WindowContext) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_4()
-                .child(
-                    h_flex()
-                        .gap_4()
-                        .child(Button::new("default", "Default"))
-                        .child(Button::new("filled", "Filled").style(ButtonStyle::Filled))
-                        .child(Button::new("subtle", "Subtle").style(ButtonStyle::Subtle))
-                        .child(
-                            Button::new("transparent", "Transparent")
-                                .style(ButtonStyle::Transparent),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .gap_4()
-                        .child(
-                            Button::new("tinted_accent", "Accent")
-                                .style(ButtonStyle::Tinted(TintColor::Accent)),
-                        )
-                        .child(
-                            Button::new("tinted_negative", "Negative")
-                                .style(ButtonStyle::Tinted(TintColor::Negative)),
-                        )
-                        .child(
-                            Button::new("tinted_warning", "Warning")
-                                .style(ButtonStyle::Tinted(TintColor::Warning)),
-                        )
-                        .child(
-                            Button::new("tinted_positive", "Positive")
-                                .style(ButtonStyle::Tinted(TintColor::Positive)),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .gap_4()
-                        .child(Button::new("default_state", "Default"))
-                        .child(Button::new("disabled", "Disabled").disabled(true))
-                        .child(Button::new("selected", "Selected").selected(true)),
-                )
-                .child(
-                    h_flex()
-                        .gap_4()
-                        .child(
-                            Button::new("icon_start", "Icon Start")
-                                .icon(IconName::Check)
-                                .icon_position(IconPosition::Start),
-                        )
-                        .child(
-                            Button::new("icon_end", "Icon End")
-                                .icon(IconName::Check)
-                                .icon_position(IconPosition::End),
-                        )
-                        .child(
-                            Button::new("icon_color", "Icon Color")
-                                .icon(IconName::Check)
-                                .icon_color(Color::Accent),
-                        )
-                        .child(
-                            Button::new("icon_color", "Delete")
-                                .style(ButtonStyle::Tinted(TintColor::Negative))
-                                .color(Color::Error)
-                                .icon_color(Color::Error)
-                                .icon(IconName::Trash)
-                                .icon_position(IconPosition::Start),
-                        ),
-                )
-                .into_any_element(),
-        )
-    }
-}
+//     fn preview(_cx: &WindowContext) -> Option<AnyElement> {
+//         Some(
+//             v_flex()
+//                 .gap_4()
+//                 .child(
+//                     h_flex()
+//                         .gap_4()
+//                         .child(Button::new("default", "Default"))
+//                         .child(Button::new("filled", "Filled").style(ButtonStyle::Filled))
+//                         .child(Button::new("subtle", "Subtle").style(ButtonStyle::Subtle))
+//                         .child(
+//                             Button::new("transparent", "Transparent")
+//                                 .style(ButtonStyle::Transparent),
+//                         ),
+//                 )
+//                 .child(
+//                     h_flex()
+//                         .gap_4()
+//                         .child(
+//                             Button::new("tinted_accent", "Accent")
+//                                 .style(ButtonStyle::Tinted(TintColor::Accent)),
+//                         )
+//                         .child(
+//                             Button::new("tinted_negative", "Negative")
+//                                 .style(ButtonStyle::Tinted(TintColor::Negative)),
+//                         )
+//                         .child(
+//                             Button::new("tinted_warning", "Warning")
+//                                 .style(ButtonStyle::Tinted(TintColor::Warning)),
+//                         )
+//                         .child(
+//                             Button::new("tinted_positive", "Positive")
+//                                 .style(ButtonStyle::Tinted(TintColor::Positive)),
+//                         ),
+//                 )
+//                 .child(
+//                     h_flex()
+//                         .gap_4()
+//                         .child(Button::new("default_state", "Default"))
+//                         .child(Button::new("disabled", "Disabled").disabled(true))
+//                         .child(Button::new("selected", "Selected").selected(true)),
+//                 )
+//                 .child(
+//                     h_flex()
+//                         .gap_4()
+//                         .child(
+//                             Button::new("icon_start", "Icon Start")
+//                                 .icon(IconName::Check)
+//                                 .icon_position(IconPosition::Start),
+//                         )
+//                         .child(
+//                             Button::new("icon_end", "Icon End")
+//                                 .icon(IconName::Check)
+//                                 .icon_position(IconPosition::End),
+//                         )
+//                         .child(
+//                             Button::new("icon_color", "Icon Color")
+//                                 .icon(IconName::Check)
+//                                 .icon_color(Color::Accent),
+//                         )
+//                         .child(
+//                             Button::new("icon_color", "Delete")
+//                                 .style(ButtonStyle::Tinted(TintColor::Negative))
+//                                 .color(Color::Error)
+//                                 .icon_color(Color::Error)
+//                                 .icon(IconName::Trash)
+//                                 .icon_position(IconPosition::Start),
+//                         ),
+//                 )
+//                 .into_any_element(),
+//         )
+//     }
+// }

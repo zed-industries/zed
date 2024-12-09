@@ -10,8 +10,6 @@
 //! - [`ui_input`] - the single line input component
 //!
 
-/// The registry of all components
-pub mod component_registry;
 mod components;
 pub mod prelude;
 mod styles;

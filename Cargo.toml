@@ -21,6 +21,7 @@ members = [
     "crates/collab",
     "crates/collab_ui",
     "crates/collections",
+    "crates/component_preview",
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/context_server",
@@ -207,6 +208,7 @@ clock = { path = "crates/clock" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
+component_preview = { path = "crates/component_preview" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 context_server = { path = "crates/context_server" }

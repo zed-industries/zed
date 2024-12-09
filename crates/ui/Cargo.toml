@@ -19,8 +19,8 @@ gpui.workspace = true
 itertools = { workspace = true, optional = true }
 lazy_static.workspace = true
 linkme.workspace = true
-menu.workspace = true
 once_cell.workspace = true
+menu.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
@@ -28,6 +28,7 @@ story = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 ui_macros.workspace = true
+component_preview.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

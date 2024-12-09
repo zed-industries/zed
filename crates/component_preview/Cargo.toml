@@ -1,0 +1,21 @@
+[package]
+name = "component_preview"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/component_preview.rs"
+
+[dependencies]
+gpui.workspace = true
+lazy_static.workspace = true
+linkme.workspace = true
+once_cell.workspace = true
+
+[features]
+default = []

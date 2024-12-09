@@ -2863,6 +2863,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "component_preview"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "lazy_static",
+ "linkme",
+ "once_cell",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13810,6 +13820,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "collections",
+ "component_preview",
  "gpui",
  "itertools 0.13.0",
  "lazy_static",
@@ -13841,6 +13852,7 @@ dependencies = [
 name = "ui_macros"
 version = "0.1.0"
 dependencies = [
+ "component_preview",
  "convert_case 0.6.0",
  "proc-macro2",
  "quote",
