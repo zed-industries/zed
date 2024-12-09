@@ -963,7 +963,7 @@ mod tests {
             "/test",
             json!({
                 ".env": "SECRET=something\n",
-                "README.md": "hello\n"
+                "README.md": "hello\nworld\nhow\nare\nyou\ntoday"
             }),
         )
         .await;
@@ -995,7 +995,7 @@ mod tests {
             multibuffer.push_excerpts(
                 public_buffer.clone(),
                 [ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(1, 0),
+                    context: Point::new(0, 0)..Point::new(6, 0),
                     primary: None,
                 }],
                 cx,
@@ -1038,7 +1038,7 @@ mod tests {
 
         _ = editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
+                s.select_ranges([Point::new(5, 0)..Point::new(5, 0)])
             });
             editor.refresh_inline_completion(true, false, cx);
         });
