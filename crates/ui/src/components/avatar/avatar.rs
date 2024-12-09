@@ -1,4 +1,9 @@
-use crate::{prelude::*, register_components, Indicator};
+use crate::{
+    prelude::*,
+    register_components,
+    utils::{component_preview, component_preview_group},
+    Indicator,
+};
 
 use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
 
@@ -113,19 +118,27 @@ impl ComponentElement for Avatar {
             v_flex()
                 .gap_4()
                 .child(
-                    h_flex()
-                        .gap_4()
-                        .child(Avatar::new(avatar_1))
-                        .child(Avatar::new(avatar_2).size(px(48.)))
-                        .child(Avatar::new(avatar_3).grayscale(true)),
+                    component_preview_group()
+                        .child(component_preview("Default").child(Avatar::new(avatar_1)))
+                        .child(
+                            component_preview("Custom Size")
+                                .child(Avatar::new(avatar_2).size(px(48.))),
+                        )
+                        .child(
+                            component_preview("Grayscale")
+                                .child(Avatar::new(avatar_3).grayscale(true)),
+                        ),
                 )
                 .child(
-                    h_flex()
-                        .gap_4()
-                        .child(Avatar::new(avatar_1).border_color(cx.theme().colors().border))
+                    component_preview_group()
                         .child(
+                            component_preview("With Border").child(
+                                Avatar::new(avatar_1).border_color(cx.theme().colors().border),
+                            ),
+                        )
+                        .child(component_preview("With Indicator").child(
                             Avatar::new(avatar_2).indicator(Indicator::dot().color(Color::Success)),
-                        ),
+                        )),
                 )
                 .into_any_element(),
         )
