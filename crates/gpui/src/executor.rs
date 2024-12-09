@@ -328,6 +328,9 @@ impl BackgroundExecutor {
     /// Depending on other concurrent tasks the elapsed duration may be longer
     /// than requested.
     pub fn timer(&self, duration: Duration) -> Task<()> {
+        if duration.is_zero() {
+            return Task::ready(());
+        }
         let (runnable, task) = async_task::spawn(async move {}, {
             let dispatcher = self.dispatcher.clone();
             move |runnable| dispatcher.dispatch_after(duration, runnable)
