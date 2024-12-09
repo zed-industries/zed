@@ -174,6 +174,9 @@
   ">>"
   "|"
   "~"
+] @operator
+
+[
   "and"
   "in"
   "is"
@@ -181,7 +184,7 @@
   "or"
   "is not"
   "not in"
-] @operator
+] @keyword.operator
 
 [
   "as"
