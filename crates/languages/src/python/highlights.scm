@@ -40,9 +40,10 @@
   "@" @punctuation.special
   [
     (identifier) @function.decorator
+    (attribute attribute: (identifier) @function.decorator)
     (call function: (identifier) @function.decorator.call)
+    (call (attribute attribute: (identifier) @function.decorator.call))
   ])
-
 
 ; Function and class definitions
 
