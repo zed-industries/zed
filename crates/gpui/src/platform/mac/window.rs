@@ -152,10 +152,6 @@ unsafe fn build_classes() {
             sel!(flagsChanged:),
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
-        decl.add_method(
-            sel!(cancelOperation:),
-            cancel_operation as extern "C" fn(&Object, Sel, id),
-        );
 
         decl.add_method(
             sel!(makeBackingLayer),
@@ -1111,10 +1107,16 @@ impl PlatformWindow for MacWindow {
     }
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
-        unsafe {
-            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
-            let _: () = msg_send![input_context, invalidateCharacterCoordinates];
-        }
+        let executor = self.0.lock().executor.clone();
+        executor
+            .spawn(async move {
+                unsafe {
+                    let input_context: id =
+                        msg_send![class!(NSTextInputContext), currentInputContext];
+                    let _: () = msg_send![input_context, invalidateCharacterCoordinates];
+                }
+            })
+            .detach()
     }
 }
 
@@ -1253,7 +1255,10 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     // otherwise we only send to the input handler if we don't have a matching binding.
     // The input handler may call `do_command_by_selector` if it doesn't know how to handle
     // a key. If it does so, it will return YES so we won't send the key twice.
-    if is_composing || event.keystroke.key_char.is_none() {
+    // We also do this for non-printing keys (like arrow keys and escape) as the IME menu
+    // may need them even if there is no marked text;
+    // however we skip keys with control or the input handler adds control-characters to the buffer.
+    if is_composing || (event.keystroke.key_char.is_none() && !event.keystroke.modifiers.control) {
         {
             let mut lock = window_state.as_ref().lock();
             lock.keystroke_for_do_command = Some(event.keystroke.clone());
@@ -1443,29 +1448,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             callback(event);
             window_state.lock().event_callback = Some(callback);
         }
-    }
-}
-
-// Allows us to receive `cmd-.` (the shortcut for closing a dialog)
-// https://bugs.eclipse.org/bugs/show_bug.cgi?id=300620#c6
-extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-
-    let keystroke = Keystroke {
-        modifiers: Default::default(),
-        key: ".".into(),
-        key_char: None,
-    };
-    let event = PlatformInput::KeyDown(KeyDownEvent {
-        keystroke: keystroke.clone(),
-        is_held: false,
-    });
-
-    if let Some(mut callback) = lock.event_callback.take() {
-        drop(lock);
-        callback(event);
-        window_state.lock().event_callback = Some(callback);
     }
 }
 

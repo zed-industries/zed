@@ -167,9 +167,16 @@ pub struct InitializeResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesReadResponse {
-    pub contents: Vec<ResourceContents>,
+    pub contents: Vec<ResourceContentsType>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum ResourceContentsType {
+    Text(TextResourceContents),
+    Blob(BlobResourceContents),
 }
 
 #[derive(Debug, Deserialize)]
@@ -181,11 +188,41 @@ pub struct ResourcesListResponse {
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SamplingMessage {
     pub role: Role,
     pub content: MessageContent,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMessageRequest {
+    pub messages: Vec<SamplingMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_preferences: Option<ModelPreferences>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    pub max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMessageResult {
+    pub role: Role,
+    pub content: MessageContent,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -206,11 +243,33 @@ pub enum Role {
 #[serde(tag = "type")]
 pub enum MessageContent {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        annotations: Option<MessageAnnotations>,
+    },
     #[serde(rename = "image")]
-    Image { data: String, mime_type: String },
+    Image {
+        data: String,
+        mime_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        annotations: Option<MessageAnnotations>,
+    },
     #[serde(rename = "resource")]
-    Resource { resource: ResourceContents },
+    Resource {
+        resource: ResourceContents,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        annotations: Option<MessageAnnotations>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageAnnotations {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audience: Option<Vec<Role>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -460,6 +519,11 @@ pub enum ClientNotification {
     Initialized,
     Progress(ProgressParams),
     RootsListChanged,
+    Cancelled {
+        request_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -526,6 +590,16 @@ pub enum ToolResponseContent {
 #[serde(rename_all = "camelCase")]
 pub struct ListToolsResponse {
     pub tools: Vec<Tool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListResourceTemplatesResponse {
+    pub resource_templates: Vec<ResourceTemplate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]

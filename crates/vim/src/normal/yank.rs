@@ -4,13 +4,14 @@ use crate::{
     motion::Motion,
     object::Object,
     state::{Mode, Register},
-    Vim,
+    Vim, VimSettings,
 };
 use collections::HashMap;
 use editor::{ClipboardSelection, Editor};
 use gpui::ViewContext;
 use language::Point;
 use multi_buffer::MultiBufferRow;
+use settings::Settings;
 
 struct HighlightOnYank;
 
@@ -154,9 +155,9 @@ impl Vim {
                 // contains a newline (so that delete works as expected). We undo that change
                 // here.
                 let is_last_line = linewise
-                    && end.row == buffer.max_buffer_row().0
+                    && end.row == buffer.max_row().0
                     && buffer.max_point().column > 0
-                    && start.row < buffer.max_buffer_row().0
+                    && start.row < buffer.max_row().0
                     && start == Point::new(start.row, buffer.line_len(MultiBufferRow(start.row)));
 
                 if is_last_line {
@@ -195,7 +196,8 @@ impl Vim {
             )
         });
 
-        if !is_yank || self.mode == Mode::Visual {
+        let highlight_duration = VimSettings::get_global(cx).highlight_on_yank_duration;
+        if !is_yank || self.mode == Mode::Visual || highlight_duration == 0 {
             return;
         }
 
@@ -206,7 +208,7 @@ impl Vim {
         );
         cx.spawn(|this, mut cx| async move {
             cx.background_executor()
-                .timer(Duration::from_millis(200))
+                .timer(Duration::from_millis(highlight_duration))
                 .await;
             this.update(&mut cx, |editor, cx| {
                 editor.clear_background_highlights::<HighlightOnYank>(cx)

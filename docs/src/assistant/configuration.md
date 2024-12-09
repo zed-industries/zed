@@ -192,6 +192,30 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 
 You must provide the model's Context Window in the `max_tokens` parameter, this can be found [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the assistant panel.
 
+### OpenAI API Compatible
+
+Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
+
+#### X.ai Grok
+
+Example configuration for using X.ai Grok with Zed:
+
+```json
+  "language_models": {
+    "openai": {
+      "api_url": "https://api.x.ai/v1",
+      "available_models": [
+        {
+          "name": "grok-beta",
+          "display_name": "X.ai Grok (Beta)",
+          "max_tokens": 131072
+        }
+      ],
+      "version": "1"
+    },
+  }
+```
+
 ### Advanced configuration {#advanced-configuration}
 
 #### Example Configuration

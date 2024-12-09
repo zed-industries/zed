@@ -648,7 +648,7 @@ impl FileFinderDelegate {
         cx.subscribe(project, |file_finder, _, event, cx| {
             match event {
                 project::Event::WorktreeUpdatedEntries(_, _)
-                | project::Event::WorktreeAdded
+                | project::Event::WorktreeAdded(_)
                 | project::Event::WorktreeRemoved(_) => file_finder
                     .picker
                     .update(cx, |picker, cx| picker.refresh(cx)),

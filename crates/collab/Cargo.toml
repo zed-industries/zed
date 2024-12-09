@@ -40,7 +40,7 @@ google_ai.workspace = true
 hex.workspace = true
 http_client.workspace = true
 jsonwebtoken.workspace = true
-live_kit_server.workspace = true
+livekit_server.workspace = true
 log.workspace = true
 nanoid.workspace = true
 open_ai.workspace = true
@@ -77,6 +77,12 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "re
 util.workspace = true
 uuid.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+livekit_client_macos = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+livekit_client = { workspace = true, features = ["test-support"] }
+
 [dev-dependencies]
 assistant = { workspace = true, features = ["test-support"] }
 assistant_tool.workspace = true
@@ -101,7 +107,6 @@ hyper.workspace = true
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
-live_kit_client = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 menu.workspace = true
 multi_buffer = { workspace = true, features = ["test-support"] }
@@ -124,6 +129,12 @@ unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+livekit_client_macos = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(not(target_os = "macos"))'.dev-dependencies]
+livekit_client =  {workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-machete]
 ignored = ["async-stripe"]
