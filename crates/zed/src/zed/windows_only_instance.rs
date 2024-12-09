@@ -1,30 +1,30 @@
+use gpui::{get_app_single_instance_mutex_identifier, register_app_identifier};
 use release_channel::ReleaseChannel;
 use windows::{
     core::HSTRING,
     Win32::{
         Foundation::{GetLastError, ERROR_ALREADY_EXISTS},
-        System::Threading::CreateEventW,
+        System::Threading::CreateMutexW,
     },
 };
 
-fn retrieve_app_instance_event_identifier() -> &'static str {
+pub fn register_zed_identifier() {
     match *release_channel::RELEASE_CHANNEL {
-        ReleaseChannel::Dev => "Local\\Zed-Editor-Dev-Instance-Event",
-        ReleaseChannel::Nightly => "Local\\Zed-Editor-Nightly-Instance-Event",
-        ReleaseChannel::Preview => "Local\\Zed-Editor-Preview-Instance-Event",
-        ReleaseChannel::Stable => "Local\\Zed-Editor-Stable-Instance-Event",
-    }
+        ReleaseChannel::Dev => register_app_identifier("Zed-Editor-Dev"),
+        ReleaseChannel::Nightly => register_app_identifier("Zed-Editor-Nightly"),
+        ReleaseChannel::Preview => register_app_identifier("Zed-Editor-Preview"),
+        ReleaseChannel::Stable => register_app_identifier("Zed-Editor-Stable"),
+    };
 }
 
 pub fn check_single_instance() -> bool {
     unsafe {
-        CreateEventW(
+        CreateMutexW(
             None,
-            false,
-            false,
-            &HSTRING::from(retrieve_app_instance_event_identifier()),
+            true,
+            &HSTRING::from(get_app_single_instance_mutex_identifier()),
         )
-        .expect("Unable to create instance sync event")
+        .expect("Unable to create instance mutex.")
     };
     let last_err = unsafe { GetLastError() };
     last_err != ERROR_ALREADY_EXISTS
