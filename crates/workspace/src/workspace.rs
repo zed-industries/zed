@@ -233,6 +233,7 @@ impl_actions!(
         CloseAllItemsAndPanes,
         CloseInactiveTabsAndPanes,
         MoveItemToPane,
+        MoveItemToPaneInDirection,
         OpenTerminal,
         Reload,
         Save,
@@ -2982,6 +2983,39 @@ impl Workspace {
         }
     }
 
+    pub fn move_item_to_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        cx: &mut WindowContext,
+    ) {
+        if let Some(target_pane) = self.find_pane_in_direction(direction, cx) {
+            let source_pane = self.active_pane.clone();
+            if target_pane == source_pane {
+                return;
+            }
+            let Some(active_item) = source_pane.read(cx).active_item() else {
+                return;
+            };
+            source_pane.update(cx, |pane, cx| {
+                let item_id = active_item.item_id();
+                pane.remove_item(item_id, false, false, cx);
+                target_pane.update(cx, |target_pane, cx| {
+                    target_pane.add_item(
+                        active_item,
+                        true,
+                        true,
+                        Some(target_pane.items_len()),
+                        cx,
+                    );
+                });
+                if pane.items_len() == 0 {
+                    // Should we close the pane if it becomes empty?
+                    let _ = self.center.remove(&source_pane);
+                }
+            });
+        }
+    }
+
     pub fn bounding_box_for_pane(&self, pane: &View<Pane>) -> Option<Bounds<Pixels>> {
         self.center.bounding_box_for_pane(pane)
     }
@@ -4472,6 +4506,11 @@ impl Workspace {
             .on_action(
                 cx.listener(|workspace, action: &ActivatePaneInDirection, cx| {
                     workspace.activate_pane_in_direction(action.0, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|workspace, action: &MoveItemToPaneInDirection, cx| {
+                    workspace.move_item_to_pane_in_direction(action.0, cx)
                 }),
             )
             .on_action(cx.listener(|workspace, action: &SwapPaneInDirection, cx| {
