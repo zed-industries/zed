@@ -6271,7 +6271,6 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "language",
- "text",
 ]
 
 [[package]]
@@ -16479,7 +16478,6 @@ dependencies = [
  "language_models",
  "log",
  "menu",
- "open_ai",
  "reqwest_client",
  "rpc",
  "serde_json",
