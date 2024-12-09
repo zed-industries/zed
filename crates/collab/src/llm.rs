@@ -468,14 +468,23 @@ async fn predict_edits(
         .prediction_model
         .as_ref()
         .context("no PREDICTION_MODEL configured on the server")?;
+    let prompt = include_str!("./llm/complete_prompt.md")
+        .replace("<events>", &params.input_events)
+        .replace("<excerpt>", &params.input_excerpt);
     let mut response = open_ai::complete_text(
         &state.http_client,
         api_url,
         api_key,
-        &params.prompt,
-        model,
-        Some(1024),
-        0.,
+        open_ai::CompletionRequest {
+            model: model.to_string(),
+            prompt: prompt.clone(),
+            max_tokens: 1024,
+            temperature: 0.,
+            prediction: Some(open_ai::Prediction::Content {
+                content: params.input_excerpt,
+            }),
+            rewrite_speculation: Some(true),
+        },
     )
     .await?;
     let choice = response

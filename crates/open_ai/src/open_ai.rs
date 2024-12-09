@@ -171,6 +171,18 @@ pub struct Request {
     pub tools: Vec<ToolDefinition>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CompletionRequest {
+    pub model: String,
+    pub prompt: String,
+    pub max_tokens: u32,
+    pub temperature: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prediction: Option<Prediction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite_speculation: Option<bool>,
+}
+
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Prediction {
@@ -382,10 +394,7 @@ pub async fn complete_text(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
-    prompt: &str,
-    model: &str,
-    max_tokens: Option<u32>,
-    temperature: f32,
+    request: CompletionRequest,
 ) -> Result<CompletionResponse> {
     let uri = format!("{api_url}/completions");
     let request_builder = HttpRequest::builder()
@@ -394,14 +403,7 @@ pub async fn complete_text(
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key));
 
-    let request_body = serde_json::json!({
-        "model": model,
-        "prompt": prompt,
-        "max_tokens": max_tokens,
-        "temperature": temperature
-    });
-
-    let request = request_builder.body(AsyncBody::from(request_body.to_string()))?;
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
 
     if response.status().is_success() {

@@ -281,14 +281,13 @@ impl Zeta {
             }
             let input_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
 
-            let prompt = include_str!("./complete_prompt.md")
-                .replace("<events>", &input_events)
-                .replace("<excerpt>", &input_excerpt);
-
-            log::debug!("predicting edit:\n{}", prompt);
+            log::debug!("Events:\n{}\nExcerpt:\n{}", input_events, input_excerpt);
 
             let http_client = client.http_client();
-            let body = PredictEditsParams { prompt };
+            let body = PredictEditsParams {
+                input_events: input_events.clone(),
+                input_excerpt: input_excerpt.clone(),
+            };
             let request_builder = http_client::Request::builder();
             let request = request_builder
                 .method(Method::POST)

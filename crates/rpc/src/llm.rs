@@ -36,7 +36,8 @@ pub struct PerformCompletionParams {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PredictEditsParams {
-    pub prompt: String,
+    pub input_events: String,
+    pub input_excerpt: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
