@@ -3496,6 +3496,10 @@ impl ProjectPanel {
                             // Stop propagation to prevent the catch-all context menu for the project
                             // panel from being deployed.
                             cx.stop_propagation();
+                            // Some context menu actions apply to all marked entries. If the user
+                            // right-clicks on an entry that is not marked, they may not realize the
+                            // action applies to multiple entries. To avoid inadvertent changes, all
+                            // entries are unmarked.
                             if !this.marked_entries.contains(&selection) {
                                 this.marked_entries.clear();
                             }
