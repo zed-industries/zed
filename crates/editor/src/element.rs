@@ -1,5 +1,6 @@
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
+    code_context_menus::CodeActionsMenu,
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -16,8 +17,8 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, ChunkReplacement, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint,
-    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
+    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
+    DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
     LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
@@ -1680,7 +1681,7 @@ impl EditorElement {
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
             let active_task_indicator_row =
-                if let Some(crate::ContextMenu::CodeActions(CodeActionsMenu {
+                if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
                     deployed_from_indicator,
                     actions,
                     ..
@@ -1755,7 +1756,7 @@ impl EditorElement {
         let mut button = None;
         let row = newest_selection_head.row();
         self.editor.update(cx, |editor, cx| {
-            if let Some(crate::ContextMenu::CodeActions(CodeActionsMenu {
+            if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
                 deployed_from_indicator,
                 ..
             })) = editor.context_menu.read().as_ref()
