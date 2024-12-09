@@ -1,4 +1,5 @@
 use crate::{
+    dap_store::DapStore,
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     ProjectItem as _, ProjectPath,
@@ -77,6 +78,7 @@ struct RemoteBufferStore {
 struct LocalBufferStore {
     local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
+    dap_store: Model<DapStore>,
     worktree_store: Model<WorktreeStore>,
     _subscription: Subscription,
 }
@@ -898,11 +900,16 @@ impl BufferStore {
     }
 
     /// Creates a buffer store, optionally retaining its buffers.
-    pub fn local(worktree_store: Model<WorktreeStore>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn local(
+        worktree_store: Model<WorktreeStore>,
+        dap_store: Model<DapStore>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         Self {
             state: BufferStoreState::Local(LocalBufferStore {
                 local_buffer_ids_by_path: Default::default(),
                 local_buffer_ids_by_entry_id: Default::default(),
+                dap_store,
                 worktree_store: worktree_store.clone(),
                 _subscription: cx.subscribe(&worktree_store, |this, _, event, cx| {
                     if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
@@ -944,6 +951,26 @@ impl BufferStore {
         }
     }
 
+    pub fn dap_on_buffer_open(
+        &mut self,
+        project_path: &ProjectPath,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(local_store) = self.as_local_mut() {
+            local_store.dap_store.update(cx, |store, cx| {
+                store.on_open_buffer(&project_path, buffer, cx);
+            });
+        }
+    }
+
+    fn as_local(&self) -> Option<&LocalBufferStore> {
+        match &self.state {
+            BufferStoreState::Local(state) => Some(state),
+            _ => None,
+        }
+    }
+
     fn as_local_mut(&mut self) -> Option<&mut LocalBufferStore> {
         match &mut self.state {
             BufferStoreState::Local(state) => Some(state),
@@ -971,6 +998,8 @@ impl BufferStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
         if let Some(buffer) = self.get_by_path(&project_path, cx) {
+            self.dap_on_buffer_open(&project_path, &buffer, cx);
+
             return Task::ready(Ok(buffer));
         }
 
@@ -994,12 +1023,14 @@ impl BufferStore {
                     .insert(
                         cx.spawn(move |this, mut cx| async move {
                             let load_result = load_buffer.await;
-                            this.update(&mut cx, |this, _cx| {
+                            this.update(&mut cx, |this, cx| {
                                 // Record the fact that the buffer is no longer loading.
                                 this.loading_buffers.remove(&project_path);
-                            })
-                            .ok();
-                            load_result.map_err(Arc::new)
+
+                                let buffer = load_result.map_err(Arc::new)?;
+                                this.dap_on_buffer_open(&project_path, &buffer, cx);
+                                Ok(buffer)
+                            })?
                         })
                         .shared(),
                     )
@@ -1327,6 +1358,11 @@ impl BufferStore {
             let task = task.clone();
             (path, async move { task.await.map_err(|e| anyhow!("{e}")) })
         })
+    }
+
+    pub fn buffer_id_for_project_path(&self, project_path: &ProjectPath) -> Option<&BufferId> {
+        self.as_local()
+            .and_then(|state| state.local_buffer_ids_by_path.get(project_path))
     }
 
     pub fn get_by_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Model<Buffer>> {

@@ -1,0 +1,51 @@
+[package]
+name = "dap"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[features]
+test-support = [
+    "gpui/test-support",
+    "util/test-support",
+    "task/test-support",
+    "async-pipe",
+]
+
+[dependencies]
+anyhow.workspace = true
+async-compression.workspace = true
+async-pipe = { workspace = true, optional = true }
+async-tar.workspace = true
+async-trait.workspace = true
+collections.workspace = true
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "b95818130022bfc72bbcd639bdd0c0358c7549fc" }
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+http_client.workspace = true
+log.workspace = true
+node_runtime.workspace = true
+parking_lot.workspace = true
+paths.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+smallvec.workspace = true
+smol.workspace = true
+sysinfo.workspace = true
+task.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+async-pipe.workspace = true
+ctor.workspace = true
+env_logger.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+task = { workspace = true, features = ["test-support"] }

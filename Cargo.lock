@@ -3564,6 +3564,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "dap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-pipe",
+ "async-tar",
+ "async-trait",
+ "collections",
+ "ctor",
+ "dap-types",
+ "env_logger 0.11.5",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "log",
+ "node_runtime",
+ "parking_lot",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "smol",
+ "sysinfo",
+ "task",
+ "util",
+]
+
+[[package]]
+name = "dap-types"
+version = "0.0.1"
+source = "git+https://github.com/zed-industries/dap-types?rev=b95818130022bfc72bbcd639bdd0c0358c7549fc#b95818130022bfc72bbcd639bdd0c0358c7549fc"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "dap_adapters"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dap",
+ "paths",
+ "regex",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "task",
+ "util",
+]
+
+[[package]]
 name = "dashmap"
 version = "5.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3634,6 +3692,49 @@ dependencies = [
  "libc",
  "libdbus-sys",
  "winapi",
+]
+
+[[package]]
+name = "debugger_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dap",
+ "editor",
+ "futures 0.3.31",
+ "gpui",
+ "project",
+ "smol",
+ "workspace",
+]
+
+[[package]]
+name = "debugger_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "command_palette_hooks",
+ "dap",
+ "editor",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "language",
+ "menu",
+ "parking_lot",
+ "picker",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "sysinfo",
+ "task",
+ "tasks_ui",
+ "terminal_view",
+ "theme",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -3925,6 +4026,7 @@ dependencies = [
  "log",
  "lsp",
  "markdown",
+ "menu",
  "multi_buffer",
  "ordered-float 2.10.1",
  "parking_lot",
@@ -9563,6 +9665,8 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "dap",
+ "dap_adapters",
  "env_logger 0.11.5",
  "fancy-regex 0.14.0",
  "fs",
@@ -10143,6 +10247,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auto_update",
+ "dap",
  "editor",
  "extension_host",
  "file_finder",
@@ -11890,6 +11995,7 @@ dependencies = [
  "indoc",
  "libsqlite3-sys",
  "parking_lot",
+ "project",
  "smol",
  "sqlformat",
  "thread_local",
@@ -12644,6 +12750,7 @@ dependencies = [
  "parking_lot",
  "schemars",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "sha2",
  "shellexpand 2.1.2",
@@ -16055,6 +16162,8 @@ dependencies = [
  "command_palette_hooks",
  "copilot",
  "db",
+ "debugger_tools",
+ "debugger_ui",
  "diagnostics",
  "editor",
  "env_logger 0.11.5",

@@ -1,0 +1,404 @@
+use crate::{
+    adapters::{DebugAdapter, DebugAdapterBinary},
+    transport::{IoKind, LogKind, TransportDelegate},
+};
+use anyhow::{anyhow, Result};
+use dap_types::{
+    messages::{Message, Response},
+    requests::Request,
+};
+use futures::{channel::oneshot, select, FutureExt as _};
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor};
+use smol::channel::{Receiver, Sender};
+use std::{
+    hash::Hash,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
+};
+use task::{DebugAdapterConfig, DebugRequestType};
+
+const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ThreadStatus {
+    #[default]
+    Running,
+    Stopped,
+    Exited,
+    Ended,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct DebugAdapterClientId(pub usize);
+
+pub struct DebugAdapterClient {
+    id: DebugAdapterClientId,
+    sequence_count: AtomicU64,
+    binary: DebugAdapterBinary,
+    executor: BackgroundExecutor,
+    adapter: Arc<dyn DebugAdapter>,
+    transport_delegate: TransportDelegate,
+    config: Arc<Mutex<DebugAdapterConfig>>,
+}
+
+impl DebugAdapterClient {
+    pub fn new(
+        id: DebugAdapterClientId,
+        config: DebugAdapterConfig,
+        adapter: Arc<dyn DebugAdapter>,
+        binary: DebugAdapterBinary,
+        cx: &AsyncAppContext,
+    ) -> Self {
+        let transport_delegate = TransportDelegate::new(adapter.transport());
+
+        Self {
+            id,
+            binary,
+            adapter,
+            transport_delegate,
+            sequence_count: AtomicU64::new(1),
+            config: Arc::new(Mutex::new(config)),
+            executor: cx.background_executor().clone(),
+        }
+    }
+
+    pub async fn start<F>(&mut self, message_handler: F, cx: &mut AsyncAppContext) -> Result<()>
+    where
+        F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
+    {
+        let (server_rx, server_tx) = self.transport_delegate.start(&self.binary, cx).await?;
+        log::info!("Successfully connected to debug adapter");
+
+        // start handling events/reverse requests
+        cx.update(|cx| {
+            cx.spawn({
+                let server_tx = server_tx.clone();
+                |mut cx| async move {
+                    Self::handle_receive_messages(server_rx, server_tx, message_handler, &mut cx)
+                        .await
+                }
+            })
+            .detach_and_log_err(cx);
+        })
+    }
+
+    async fn handle_receive_messages<F>(
+        server_rx: Receiver<Message>,
+        client_tx: Sender<Message>,
+        mut event_handler: F,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()>
+    where
+        F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
+    {
+        let result = loop {
+            let message = match server_rx.recv().await {
+                Ok(message) => message,
+                Err(e) => break Err(e.into()),
+            };
+
+            if let Err(e) = match message {
+                Message::Event(ev) => cx.update(|cx| event_handler(Message::Event(ev), cx)),
+                Message::Request(req) => cx.update(|cx| event_handler(Message::Request(req), cx)),
+                Message::Response(_) => unreachable!(),
+            } {
+                break Err(e);
+            }
+
+            smol::future::yield_now().await;
+        };
+
+        drop(client_tx);
+
+        log::debug!("Handle receive messages dropped");
+
+        result
+    }
+
+    /// Send a request to an adapter and get a response back
+    /// Note: This function will block until a response is sent back from the adapter
+    pub async fn request<R: Request>(&self, arguments: R::Arguments) -> Result<R::Response> {
+        let serialized_arguments = serde_json::to_value(arguments)?;
+
+        let (callback_tx, callback_rx) = oneshot::channel::<Result<Response>>();
+
+        let sequence_id = self.next_sequence_id();
+
+        let request = crate::messages::Request {
+            seq: sequence_id,
+            command: R::COMMAND.to_string(),
+            arguments: Some(serialized_arguments),
+        };
+
+        self.transport_delegate
+            .add_pending_request(sequence_id, callback_tx)
+            .await;
+
+        log::debug!(
+            "Send `{}` request with sequence_id: {}",
+            R::COMMAND.to_string(),
+            sequence_id
+        );
+
+        self.send_message(Message::Request(request)).await?;
+
+        log::debug!(
+            "Start receiving response for: `{}` sequence_id: {}",
+            R::COMMAND.to_string(),
+            sequence_id
+        );
+
+        let mut timeout = self.executor.timer(DAP_REQUEST_TIMEOUT).fuse();
+        let command = R::COMMAND.to_string();
+
+        select! {
+            response = callback_rx.fuse() => {
+                log::debug!(
+                    "Received response for: `{}` sequence_id: {}",
+                    command,
+                    sequence_id
+                );
+
+                let response = response??;
+                match response.success {
+                    true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
+                    false => Err(anyhow!("Request failed")),
+                }
+            }
+
+            _ = timeout => {
+                self.transport_delegate.cancel_pending_request(&sequence_id).await;
+                log::error!("Cancelled DAP request for {command:?} id {sequence_id} which took over {DAP_REQUEST_TIMEOUT:?}");
+                anyhow::bail!("DAP request timeout");
+            }
+        }
+    }
+
+    pub async fn send_message(&self, message: Message) -> Result<()> {
+        self.transport_delegate.send_message(message).await
+    }
+
+    pub fn id(&self) -> DebugAdapterClientId {
+        self.id
+    }
+
+    pub fn config(&self) -> DebugAdapterConfig {
+        self.config.lock().unwrap().clone()
+    }
+
+    pub fn adapter(&self) -> &Arc<dyn DebugAdapter> {
+        &self.adapter
+    }
+
+    pub fn binary(&self) -> &DebugAdapterBinary {
+        &self.binary
+    }
+
+    pub fn adapter_id(&self) -> String {
+        self.adapter.name().to_string()
+    }
+
+    pub fn set_process_id(&self, process_id: u32) {
+        let mut config = self.config.lock().unwrap();
+
+        config.request = DebugRequestType::Attach(task::AttachConfig {
+            process_id: Some(process_id),
+        });
+    }
+
+    /// Get the next sequence id to be used in a request
+    pub fn next_sequence_id(&self) -> u64 {
+        self.sequence_count.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub async fn shutdown(&self) -> Result<()> {
+        self.transport_delegate.shutdown().await
+    }
+
+    pub fn has_adapter_logs(&self) -> bool {
+        self.transport_delegate.has_adapter_logs()
+    }
+
+    pub fn add_log_handler<F>(&self, f: F, kind: LogKind)
+    where
+        F: 'static + Send + FnMut(IoKind, &str),
+    {
+        self.transport_delegate.add_log_handler(f, kind);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn on_request<R: dap_types::requests::Request, F>(&self, handler: F)
+    where
+        F: 'static + Send + FnMut(u64, R::Arguments) -> Result<R::Response>,
+    {
+        let transport = self.transport_delegate.transport();
+
+        transport.as_fake().on_request::<R, F>(handler).await;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn fake_event(&self, event: dap_types::messages::Events) {
+        self.send_message(Message::Event(Box::new(event)))
+            .await
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{adapters::FakeAdapter, client::DebugAdapterClient};
+    use dap_types::{
+        messages::Events, requests::Initialize, Capabilities, InitializeRequestArguments,
+        InitializeRequestArgumentsPathFormat,
+    };
+    use gpui::TestAppContext;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use task::DebugAdapterConfig;
+
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
+
+    #[gpui::test]
+    pub async fn test_initialize_client(cx: &mut TestAppContext) {
+        let adapter = Arc::new(FakeAdapter::new());
+
+        let mut client = DebugAdapterClient::new(
+            crate::client::DebugAdapterClientId(1),
+            DebugAdapterConfig {
+                kind: task::DebugAdapterKind::Fake,
+                request: task::DebugRequestType::Launch,
+                program: None,
+                cwd: None,
+                initialize_args: None,
+            },
+            adapter,
+            DebugAdapterBinary {
+                command: "command".into(),
+                arguments: Default::default(),
+                envs: Default::default(),
+                cwd: None,
+            },
+            &mut cx.to_async(),
+        );
+
+        client
+            .on_request::<Initialize, _>(move |_, _| {
+                Ok(dap_types::Capabilities {
+                    supports_configuration_done_request: Some(true),
+                    ..Default::default()
+                })
+            })
+            .await;
+
+        client
+            .start(
+                |_, _| panic!("Did not expect to hit this code path"),
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let response = client
+            .request::<Initialize>(InitializeRequestArguments {
+                client_id: Some("zed".to_owned()),
+                client_name: Some("Zed".to_owned()),
+                adapter_id: "fake-adapter".to_owned(),
+                locale: Some("en-US".to_owned()),
+                path_format: Some(InitializeRequestArgumentsPathFormat::Path),
+                supports_variable_type: Some(true),
+                supports_variable_paging: Some(false),
+                supports_run_in_terminal_request: Some(true),
+                supports_memory_references: Some(true),
+                supports_progress_reporting: Some(false),
+                supports_invalidated_event: Some(false),
+                lines_start_at1: Some(true),
+                columns_start_at1: Some(true),
+                supports_memory_event: Some(false),
+                supports_args_can_be_interpreted_by_shell: Some(false),
+                supports_start_debugging_request: Some(true),
+            })
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            dap_types::Capabilities {
+                supports_configuration_done_request: Some(true),
+                ..Default::default()
+            },
+            response
+        );
+
+        client.shutdown().await.unwrap();
+    }
+
+    #[gpui::test]
+    pub async fn test_calls_event_handler(cx: &mut TestAppContext) {
+        let adapter = Arc::new(FakeAdapter::new());
+        let was_called = Arc::new(AtomicBool::new(false));
+        let was_called_clone = was_called.clone();
+
+        let mut client = DebugAdapterClient::new(
+            crate::client::DebugAdapterClientId(1),
+            DebugAdapterConfig {
+                kind: task::DebugAdapterKind::Fake,
+                request: task::DebugRequestType::Launch,
+                program: None,
+                cwd: None,
+                initialize_args: None,
+            },
+            adapter,
+            DebugAdapterBinary {
+                command: "command".into(),
+                arguments: Default::default(),
+                envs: Default::default(),
+                cwd: None,
+            },
+            &mut cx.to_async(),
+        );
+
+        client
+            .start(
+                move |event, _| {
+                    was_called_clone.store(true, Ordering::SeqCst);
+
+                    assert_eq!(
+                        Message::Event(Box::new(Events::Initialized(
+                            Some(Capabilities::default())
+                        ))),
+                        event
+                    );
+                },
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        client
+            .fake_event(Events::Initialized(Some(Capabilities::default())))
+            .await;
+
+        cx.run_until_parked();
+
+        assert!(
+            was_called.load(std::sync::atomic::Ordering::SeqCst),
+            "Event handler was not called"
+        );
+
+        client.shutdown().await.unwrap();
+    }
+}

@@ -364,6 +364,7 @@ gpui::actions!(
         SwitchSourceHeader,
         Tab,
         TabPrev,
+        ToggleBreakpoint,
         ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,

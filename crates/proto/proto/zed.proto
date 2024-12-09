@@ -304,7 +304,11 @@ message Envelope {
         InstallExtension install_extension = 287;
 
         GetStagedText get_staged_text = 288;
-        GetStagedTextResponse get_staged_text_response = 289; // current max
+        GetStagedTextResponse get_staged_text_response = 289;
+
+        SynchronizeBreakpoints Synchronize_breakpoints = 290;
+        SetActiveDebugLine set_active_debug_line = 291;
+        RemoveActiveDebugLine remove_active_debug_line = 292; // current max
     }
 
     reserved 87 to 88;
@@ -423,6 +427,7 @@ message RejoinedProject {
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
+    repeated SynchronizeBreakpoints breakpoints = 5;
 }
 
 message LeaveRoom {}
@@ -560,6 +565,7 @@ message JoinProjectResponse {
     repeated LanguageServer language_servers = 4;
     ChannelRole role = 6;
     reserved 7;
+    repeated SynchronizeBreakpoints breakpoints = 8;
 }
 
 message LeaveProject {
@@ -2397,6 +2403,37 @@ message GetLlmTokenResponse {
 }
 
 message RefreshLlmToken {}
+
+// Remote debugging
+
+enum BreakpointKind {
+    Standard = 0;
+    Log = 1;
+}
+
+message Breakpoint {
+    Anchor position = 1;
+    uint32 cached_position = 2;
+    BreakpointKind kind = 3;
+    optional string message = 4;
+}
+
+message SynchronizeBreakpoints {
+    uint64 project_id = 1;
+    ProjectPath project_path = 2;
+    repeated Breakpoint breakpoints = 3;
+}
+
+message SetActiveDebugLine {
+    uint64 project_id = 1;
+    ProjectPath project_path  = 2;
+    uint64 client_id = 3;
+    uint32 row = 4;
+}
+
+message RemoveActiveDebugLine {
+    uint64 project_id = 1;
+}
 
 // Remote FS
 

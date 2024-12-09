@@ -4,6 +4,7 @@ use gpui::{AppContext, Task as AsyncTask, ViewContext, WindowContext};
 use modal::TasksModal;
 use project::{Location, WorktreeId};
 use task::TaskId;
+use task::TaskModal;
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
 
@@ -79,7 +80,7 @@ pub fn init(cx: &mut AppContext) {
                             );
                         }
                     } else {
-                        toggle_modal(workspace, cx).detach();
+                        toggle_modal(workspace, TaskModal::ScriptModal, cx).detach();
                     };
                 });
         },
@@ -90,11 +91,15 @@ pub fn init(cx: &mut AppContext) {
 fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
     match &action.task_name {
         Some(name) => spawn_task_with_name(name.clone(), cx).detach_and_log_err(cx),
-        None => toggle_modal(workspace, cx).detach(),
+        None => toggle_modal(workspace, TaskModal::ScriptModal, cx).detach(),
     }
 }
 
-fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) -> AsyncTask<()> {
+pub fn toggle_modal(
+    workspace: &mut Workspace,
+    task_type: TaskModal,
+    cx: &mut ViewContext<'_, Workspace>,
+) -> AsyncTask<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
     let can_open_modal = workspace.project().update(cx, |project, cx| {
@@ -107,7 +112,13 @@ fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) 
             workspace
                 .update(&mut cx, |workspace, cx| {
                     workspace.toggle_modal(cx, |cx| {
-                        TasksModal::new(task_store.clone(), task_context, workspace_handle, cx)
+                        TasksModal::new(
+                            task_store.clone(),
+                            task_context,
+                            workspace_handle,
+                            task_type,
+                            cx,
+                        )
                     })
                 })
                 .ok();

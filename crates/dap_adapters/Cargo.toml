@@ -1,0 +1,36 @@
+[package]
+name = "dap_adapters"
+version = "0.1.0"
+edition =  "2021"
+publish =  false
+license = "GPL-3.0-or-later"
+
+[features]
+test-support = [
+    "util/test-support",
+    "task/test-support",
+    "dap/test-support",
+]
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/dap_adapters.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+dap.workspace = true
+paths.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sysinfo.workspace = true
+task.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+dap = { workspace = true, features = ["test-support"] }
+task = { workspace = true, features = ["test-support"] }

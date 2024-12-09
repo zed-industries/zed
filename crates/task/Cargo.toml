@@ -5,6 +5,12 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[features]
+test-support = [
+    "gpui/test-support",
+    "util/test-support"
+]
+
 [lints]
 workspace = true
 
@@ -17,6 +23,7 @@ hex.workspace = true
 parking_lot.workspace = true
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 serde_json_lenient.workspace = true
 sha2.workspace = true
 shellexpand.workspace = true
