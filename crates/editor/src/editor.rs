@@ -1005,7 +1005,7 @@ struct CompletionsMenu {
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
-    enable_completion_resolution: bool,
+    resolve_completions: bool,
     aside_was_displayed: Cell<bool>,
 }
 
@@ -1039,7 +1039,7 @@ impl CompletionsMenu {
             matches: Vec::new().into(),
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
-            enable_completion_resolution: true,
+            resolve_completions: true,
             aside_was_displayed: Cell::new(aside_was_displayed),
         }
     }
@@ -1093,7 +1093,7 @@ impl CompletionsMenu {
             matches,
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
-            enable_completion_resolution: false,
+            resolve_completions: false,
             aside_was_displayed: Cell::new(false),
         }
     }
@@ -1159,7 +1159,7 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        if !self.enable_completion_resolution {
+        if !self.resolve_completions {
             return;
         }
         let Some(provider) = provider else {
