@@ -39,6 +39,10 @@ impl RateCompletionModal {
         }
     }
 
+    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(DismissEvent);
+    }
+
     pub fn select_completion(
         &mut self,
         completion: Option<InlineCompletion>,
@@ -234,7 +238,9 @@ impl Render for RateCompletionModal {
             .rounded_lg()
             .shadow_lg()
             .p_2()
+            .key_context("RateCompletionModal")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::dismiss))
             .child(
                 div()
                     .id("completion_list")

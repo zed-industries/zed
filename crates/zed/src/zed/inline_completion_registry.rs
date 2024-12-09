@@ -4,6 +4,7 @@ use client::Client;
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
+use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, AppContext, Context, ViewContext, WeakView};
 use language::language_settings::all_language_settings;
 use settings::SettingsStore;
@@ -134,16 +135,18 @@ fn assign_inline_completion_provider(
             }
         }
         language::language_settings::InlineCompletionProvider::Zeta => {
-            let zeta = zeta::Zeta::register(client.clone(), cx);
-            if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                if buffer.read(cx).file().is_some() {
-                    zeta.update(cx, |zeta, cx| {
-                        zeta.register_buffer(&buffer, cx);
-                    });
+            if cx.is_staff() {
+                let zeta = zeta::Zeta::register(client.clone(), cx);
+                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                    if buffer.read(cx).file().is_some() {
+                        zeta.update(cx, |zeta, cx| {
+                            zeta.register_buffer(&buffer, cx);
+                        });
+                    }
                 }
+                let provider = cx.new_model(|_| zeta::ZetaInlineCompletionProvider::new(zeta));
+                editor.set_inline_completion_provider(Some(provider), cx);
             }
-            let provider = cx.new_model(|_| zeta::ZetaInlineCompletionProvider::new(zeta));
-            editor.set_inline_completion_provider(Some(provider), cx);
         }
     }
 }

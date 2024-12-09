@@ -1,6 +1,7 @@
 use anyhow::Result;
 use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{
     div, Action, AnchorCorner, AppContext, AsyncWindowContext, Entity, IntoElement, ParentElement,
@@ -197,18 +198,24 @@ impl Render for InlineCompletionButton {
                 );
             }
 
-            InlineCompletionProvider::Zeta => div().child(
-                Button::new("zeta", "Zeta")
-                    .label_size(LabelSize::Small)
-                    .on_click(cx.listener(|this, _, cx| {
-                        if let Some(workspace) = this.workspace.upgrade() {
-                            workspace.update(cx, |workspace, cx| {
-                                RateCompletionModal::toggle(workspace, cx)
-                            });
-                        }
-                    }))
-                    .tooltip(|cx| Tooltip::text("Rate Completions", cx)),
-            ),
+            InlineCompletionProvider::Zeta => {
+                if !cx.is_staff() {
+                    return div();
+                }
+
+                div().child(
+                    Button::new("zeta", "Zeta")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(|this, _, cx| {
+                            if let Some(workspace) = this.workspace.upgrade() {
+                                workspace.update(cx, |workspace, cx| {
+                                    RateCompletionModal::toggle(workspace, cx)
+                                });
+                            }
+                        }))
+                        .tooltip(|cx| Tooltip::text("Rate Completions", cx)),
+                )
+            }
         }
     }
 }
