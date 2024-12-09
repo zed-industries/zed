@@ -1,4 +1,3 @@
-use crate::cursor_position::LineIndicatorFormat;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
@@ -32,7 +31,6 @@ enum GoToLineRowHighlights {}
 impl GoToLine {
     pub fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         let handle = cx.view().downgrade();
-        dbg!("registering go to line");
         editor
             .register_action(move |_: &editor::actions::ToggleGoToLine, cx| {
                 let Some(editor) = handle.upgrade() else {
@@ -42,7 +40,6 @@ impl GoToLine {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    dbg!("ToggleGoToLine action triggered");
                     workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
                 })
             })

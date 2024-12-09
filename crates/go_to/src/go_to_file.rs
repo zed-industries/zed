@@ -1,12 +1,11 @@
 use editor::Editor;
 use gpui::{
-    actions, div, prelude::*, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Model, Render, Subscription, View, ViewContext, WeakView,
+    actions, div, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    Model, Render, Subscription, View, ViewContext,
 };
 use project::Project;
-use std::path::PathBuf;
-use ui::{prelude::*, ListItem};
-use workspace::{ModalLayer, ModalView, Workspace};
+use ui::{h_flex, rems, v_flex, ActiveTheme, Color, Label, LabelCommon, SharedString, StyledExt};
+use workspace::{ModalView, Workspace};
 
 actions!(go_to_file, [Toggle]);
 
@@ -28,16 +27,11 @@ impl FocusableView for GoToFile {
 impl EventEmitter<DismissEvent> for GoToFile {}
 
 impl GoToFile {
-    pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(move |workspace, _: &Toggle, cx| {
-            Self::toggle(workspace, cx);
+            let project = workspace.project().clone();
+            workspace.toggle_modal(cx, |cx| Self::new(project, cx));
         });
-    }
-
-    fn toggle(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Option<()> {
-        let project = workspace.project().clone();
-        workspace.toggle_modal(cx, |cx| Self::new(project, cx));
-        Some(())
     }
 
     pub fn new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
@@ -66,16 +60,8 @@ impl GoToFile {
     ) {
         match event {
             editor::EditorEvent::Blurred => cx.emit(DismissEvent),
-            editor::EditorEvent::BufferEdited { .. } => self.update_current_text(cx),
             _ => {}
         }
-    }
-
-    fn update_current_text(&mut self, cx: &mut ViewContext<Self>) {
-        let input = self.number_editor.read(cx).text(cx);
-        if let Ok(number) = input.trim().parse::<usize>() {}
-        self.current_text = format!("Enter a number between 1 and {}", 10).into();
-        cx.notify();
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -85,13 +71,10 @@ impl GoToFile {
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         let input = self.number_editor.read(cx).text(cx);
         if let Ok(file_number) = input.trim().parse::<usize>() {
-            // First emit to project
             self.project.update(cx, |_, cx| {
-                dbg!("Emitting open numbered file");
                 cx.emit(project::Event::OpenNumberedFile { file_number })
             });
         }
-        // Then dismiss the modal
         cx.emit(DismissEvent);
     }
 }

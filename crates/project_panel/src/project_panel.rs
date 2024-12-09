@@ -36,7 +36,6 @@ use project::{
     WorktreeId,
 };
 use project_panel_settings::{
-    FileLineNumberSettings, FileLineNumberSettingsContent, FileLineNumberStyle,
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
 };
 use serde::{Deserialize, Serialize};
@@ -62,7 +61,7 @@ use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
-    DraggedSelection, OpenInTerminal, PreviewTabsSettings, SelectedEntry, Workspace, WorkspaceId,
+    DraggedSelection, OpenInTerminal, PreviewTabsSettings, SelectedEntry, Workspace,
 };
 use worktree::CreatedEntry;
 
@@ -3852,7 +3851,6 @@ impl ProjectPanel {
     }
 
     fn go_to_numbered_file(&mut self, file_number: usize, cx: &mut ViewContext<Self>) {
-        dbg!("In go to numbered file", file_number);
         // Line numbers start at 1 in the UI
         if file_number == 0 {
             return;
@@ -3868,23 +3866,19 @@ impl ProjectPanel {
         if file_number > total_entries {
             return;
         }
-        dbg!("here?");
 
         // Get the entry at the specified index (subtract 1 because UI numbers start at 1)
-        if let Some((worktree_id, entry)) = self.entry_at_index(file_number - 1) {
+        if let Some((_, entry)) = self.entry_at_index(file_number - 1) {
             if entry.kind.is_file() {
                 // Open the file
-                dbg!("opening the file");
                 self.open_entry(entry.id, true, false, cx);
 
                 // Ensure the entry is visible in the project panel
                 self.autoscroll(cx);
                 cx.notify();
             } else {
-                dbg!("not a file");
             }
         } else {
-            dbg!("didn't open file");
         }
     }
 }
