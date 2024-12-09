@@ -2,6 +2,7 @@
 
 use crate::prelude::*;
 use crate::v_flex;
+use gpui::Size;
 use gpui::{
     div, AnyElement, Element, IntoElement, ParentElement, RenderOnce, Styled, WindowContext,
 };
@@ -38,6 +39,7 @@ use smallvec::SmallVec;
 pub struct Popover {
     children: SmallVec<[AnyElement; 2]>,
     aside: Option<AnyElement>,
+    aside_size: Option<Size<Pixels>>,
 }
 
 impl RenderOnce for Popover {
@@ -47,13 +49,15 @@ impl RenderOnce for Popover {
             .gap_1()
             .child(v_flex().elevation_2(cx).py_1().children(self.children))
             .when_some(self.aside, |this, aside| {
-                this.child(
-                    v_flex()
-                        .elevation_2(cx)
-                        .bg(cx.theme().colors().surface_background)
-                        .px_1()
-                        .child(aside),
-                )
+                let elevated_aside = v_flex()
+                    .elevation_2(cx)
+                    .bg(cx.theme().colors().surface_background)
+                    .px_1()
+                    .child(aside);
+                this.child(match self.aside_size {
+                    Some(size) => div().w(size.width).h(size.height).child(elevated_aside),
+                    None => elevated_aside,
+                })
             })
     }
 }
@@ -69,6 +73,7 @@ impl Popover {
         Self {
             children: SmallVec::new(),
             aside: None,
+            aside_size: None,
         }
     }
 
@@ -77,6 +82,14 @@ impl Popover {
         Self: Sized,
     {
         self.aside = Some(aside.into_element().into_any());
+        self
+    }
+
+    pub fn aside_size(mut self, size: Size<Pixels>) -> Self
+    where
+        Self: Sized,
+    {
+        self.aside_size = Some(size);
         self
     }
 }
