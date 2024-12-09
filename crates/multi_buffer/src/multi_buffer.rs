@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
-use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext, Task};
+use gpui::{AppContext, EntityId, EventEmitter, Model, Task};
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, LanguageSettings},
@@ -408,7 +408,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn clone(&self, new_cx: &mut ModelContext<Self>) -> Self {
+    pub fn clone(&self, model: &Model<Self>, new_cx: &mut AppContext) -> Self {
         let mut buffers = HashMap::default();
         for (buffer_id, buffer_state) in self.buffers.borrow().iter() {
             buffers.insert(
@@ -445,7 +445,7 @@ impl MultiBuffer {
         self.capability == Capability::ReadOnly
     }
 
-    pub fn singleton(buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn singleton(buffer: Model<Buffer>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let mut this = Self::new(buffer.read(cx).capability());
         this.singleton = true;
         this.push_excerpts(
@@ -530,7 +530,8 @@ impl MultiBuffer {
         &self,
         edits: I,
         autoindent_mode: Option<AutoindentMode>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) where
         I: IntoIterator<Item = (Range<S>, T)>,
         S: ToOffset,
@@ -556,7 +557,8 @@ impl MultiBuffer {
             snapshot: Ref<MultiBufferSnapshot>,
             edits: Vec<(Range<usize>, Arc<str>)>,
             mut autoindent_mode: Option<AutoindentMode>,
-            cx: &mut ModelContext<MultiBuffer>,
+            model: &Model<MultiBuffer>,
+            cx: &mut AppContext,
         ) {
             if this.read_only() || this.buffers.borrow().is_empty() {
                 return;
@@ -763,7 +765,7 @@ impl MultiBuffer {
         (buffer_edits, edited_excerpt_ids)
     }
 
-    pub fn autoindent_ranges<I, S>(&self, ranges: I, cx: &mut ModelContext<Self>)
+    pub fn autoindent_ranges<I, S>(&self, ranges: I, model: &Model<Self>, cx: &mut AppContext)
     where
         I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
@@ -787,7 +789,8 @@ impl MultiBuffer {
             this: &MultiBuffer,
             snapshot: Ref<MultiBufferSnapshot>,
             edits: Vec<(Range<usize>, Arc<str>)>,
-            cx: &mut ModelContext<MultiBuffer>,
+            model: &Model<MultiBuffer>,
+            cx: &mut AppContext,
         ) {
             if this.read_only() || this.buffers.borrow().is_empty() {
                 return;
@@ -842,7 +845,8 @@ impl MultiBuffer {
         position: impl ToPoint,
         space_above: bool,
         space_below: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Point {
         let multibuffer_point = position.to_point(&self.read(cx));
         if let Some(buffer) = self.as_singleton() {
@@ -861,14 +865,19 @@ impl MultiBuffer {
         }
     }
 
-    pub fn start_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+    pub fn start_transaction(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<TransactionId> {
         self.start_transaction_at(Instant::now(), cx)
     }
 
     pub fn start_transaction_at(
         &mut self,
         now: Instant,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<TransactionId> {
         if let Some(buffer) = self.as_singleton() {
             return buffer.update(cx, |buffer, _| buffer.start_transaction_at(now));
@@ -880,14 +889,19 @@ impl MultiBuffer {
         self.history.start_transaction(now)
     }
 
-    pub fn end_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+    pub fn end_transaction(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<TransactionId> {
         self.end_transaction_at(Instant::now(), cx)
     }
 
     pub fn end_transaction_at(
         &mut self,
         now: Instant,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<TransactionId> {
         if let Some(buffer) = self.as_singleton() {
             return buffer.update(cx, |buffer, cx| buffer.end_transaction_at(now, cx));
@@ -976,7 +990,8 @@ impl MultiBuffer {
         &mut self,
         transaction: TransactionId,
         destination: TransactionId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(buffer) = self.as_singleton() {
             buffer.update(cx, |buffer, _| {
@@ -1006,7 +1021,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn finalize_last_transaction(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn finalize_last_transaction(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.history.finalize_last_transaction();
         for BufferState { buffer, .. } in self.buffers.borrow().values() {
             buffer.update(cx, |buffer, _| {
@@ -1015,8 +1030,12 @@ impl MultiBuffer {
         }
     }
 
-    pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T, cx: &ModelContext<Self>)
-    where
+    pub fn push_transaction<'a, T>(
+        &mut self,
+        buffer_transactions: T,
+        model: &Model<Self>,
+        cx: &AppContext,
+    ) where
         T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {
         self.history
@@ -1027,7 +1046,8 @@ impl MultiBuffer {
     pub fn group_until_transaction(
         &mut self,
         transaction_id: TransactionId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(buffer) = self.as_singleton() {
             buffer.update(cx, |buffer, _| {
@@ -1043,7 +1063,8 @@ impl MultiBuffer {
         selections: &[Selection<Anchor>],
         line_mode: bool,
         cursor_shape: CursorShape,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let mut selections_by_buffer: HashMap<BufferId, Vec<Selection<text::Anchor>>> =
             Default::default();
@@ -1115,7 +1136,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn remove_active_selections(&self, cx: &mut ModelContext<Self>) {
+    pub fn remove_active_selections(&self, model: &Model<Self>, cx: &mut AppContext) {
         for buffer in self.buffers.borrow().values() {
             buffer
                 .buffer
@@ -1123,7 +1144,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+    pub fn undo(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Option<TransactionId> {
         let mut transaction_id = None;
         if let Some(buffer) = self.as_singleton() {
             transaction_id = buffer.update(cx, |buffer, cx| buffer.undo(cx));
@@ -1156,7 +1177,7 @@ impl MultiBuffer {
         transaction_id
     }
 
-    pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+    pub fn redo(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Option<TransactionId> {
         if let Some(buffer) = self.as_singleton() {
             return buffer.update(cx, |buffer, cx| buffer.redo(cx));
         }
@@ -1183,7 +1204,12 @@ impl MultiBuffer {
         None
     }
 
-    pub fn undo_transaction(&mut self, transaction_id: TransactionId, cx: &mut ModelContext<Self>) {
+    pub fn undo_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         if let Some(buffer) = self.as_singleton() {
             buffer.update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
         } else if let Some(transaction) = self.history.remove_from_undo(transaction_id) {
@@ -1200,7 +1226,8 @@ impl MultiBuffer {
     pub fn forget_transaction(
         &mut self,
         transaction_id: TransactionId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(buffer) = self.as_singleton() {
             buffer.update(cx, |buffer, _| {
@@ -1221,7 +1248,8 @@ impl MultiBuffer {
         &mut self,
         buffer: Model<Buffer>,
         ranges: impl IntoIterator<Item = ExcerptRange<O>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Vec<ExcerptId>
     where
         O: text::ToOffset,
@@ -1234,7 +1262,8 @@ impl MultiBuffer {
         buffer: Model<Buffer>,
         ranges: Vec<Range<O>>,
         context_line_count: u32,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Vec<Range<Anchor>>
     where
         O: text::ToPoint + text::ToOffset,
@@ -1270,7 +1299,8 @@ impl MultiBuffer {
         &self,
         buffers_with_ranges: Vec<(Model<Buffer>, Vec<Range<text::Anchor>>)>,
         context_line_count: u32,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Vec<Range<Anchor>>> {
         use futures::StreamExt;
 
@@ -1356,7 +1386,8 @@ impl MultiBuffer {
         prev_excerpt_id: ExcerptId,
         buffer: Model<Buffer>,
         ranges: impl IntoIterator<Item = ExcerptRange<O>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Vec<ExcerptId>
     where
         O: text::ToOffset,
@@ -1386,7 +1417,8 @@ impl MultiBuffer {
         prev_excerpt_id: ExcerptId,
         buffer: Model<Buffer>,
         ranges: impl IntoIterator<Item = (ExcerptId, ExcerptRange<O>)>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) where
         O: text::ToOffset,
     {
@@ -1494,7 +1526,7 @@ impl MultiBuffer {
         cx.notify();
     }
 
-    pub fn clear(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn clear(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.sync(cx);
         let ids = self.excerpt_ids();
         self.buffers.borrow_mut().clear();
@@ -1673,7 +1705,8 @@ impl MultiBuffer {
     pub fn remove_excerpts(
         &mut self,
         excerpt_ids: impl IntoIterator<Item = ExcerptId>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.sync(cx);
         let ids = excerpt_ids.into_iter().collect::<Vec<_>>();
@@ -1761,7 +1794,8 @@ impl MultiBuffer {
     pub fn wait_for_anchors<'a>(
         &self,
         anchors: impl 'a + Iterator<Item = Anchor>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> impl 'static + Future<Output = Result<()>> {
         let borrow = self.buffers.borrow();
         let mut error = None;
@@ -1811,7 +1845,8 @@ impl MultiBuffer {
         &mut self,
         buffer: Model<Buffer>,
         event: &language::BufferEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         cx.emit(match event {
             language::BufferEvent::Edited => Event::Edited {
@@ -1894,13 +1929,13 @@ impl MultiBuffer {
         "untitled".into()
     }
 
-    pub fn set_title(&mut self, title: String, cx: &mut ModelContext<Self>) {
+    pub fn set_title(&mut self, title: String, model: &Model<Self>, cx: &mut AppContext) {
         self.title = Some(title);
         cx.notify();
     }
 
     /// Preserve preview tabs containing this multibuffer until additional edits occur.
-    pub fn refresh_preview(&self, cx: &mut ModelContext<Self>) {
+    pub fn refresh_preview(&self, model: &Model<Self>, cx: &mut AppContext) {
         for buffer_state in self.buffers.borrow().values() {
             buffer_state
                 .buffer
@@ -1925,7 +1960,8 @@ impl MultiBuffer {
         &mut self,
         id: ExcerptId,
         range: Range<text::Anchor>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.sync(cx);
 
@@ -1989,7 +2025,8 @@ impl MultiBuffer {
         ids: impl IntoIterator<Item = ExcerptId>,
         line_count: u32,
         direction: ExpandExcerptDirection,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if line_count == 0 {
             return;
@@ -2226,7 +2263,8 @@ impl MultiBuffer {
         &mut self,
         rng: &mut impl rand::Rng,
         edit_count: usize,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         use util::RandomCharIter;
 
@@ -2263,7 +2301,8 @@ impl MultiBuffer {
         &mut self,
         rng: &mut impl rand::Rng,
         mutation_count: usize,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         use rand::prelude::*;
         use std::env;
@@ -2365,7 +2404,8 @@ impl MultiBuffer {
         &mut self,
         rng: &mut impl rand::Rng,
         mutation_count: usize,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         use rand::prelude::*;
 
@@ -2395,7 +2435,7 @@ impl MultiBuffer {
         self.check_invariants(cx);
     }
 
-    fn check_invariants(&self, cx: &mut ModelContext<Self>) {
+    fn check_invariants(&self, model: &Model<Self>, cx: &mut AppContext) {
         let snapshot = self.read(cx);
         let excerpts = snapshot.excerpts.items(&());
         let excerpt_ids = snapshot.excerpt_ids.items(&());
@@ -4291,7 +4331,8 @@ impl History {
         &mut self,
         buffer_transactions: T,
         now: Instant,
-        cx: &ModelContext<MultiBuffer>,
+        model: &Model<MultiBuffer>,
+        cx: &AppContext,
     ) where
         T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {

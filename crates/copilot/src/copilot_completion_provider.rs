@@ -1,7 +1,7 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
 use client::telemetry::Telemetry;
-use gpui::{AppContext, EntityId, Model, ModelContext, Task};
+use gpui::{AppContext, EntityId, Model, Task};
 use inline_completion::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
@@ -85,7 +85,8 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         buffer: Model<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let copilot = self.copilot.clone();
         self.pending_refresh = cx.spawn(|this, mut cx| async move {
@@ -133,7 +134,8 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         buffer: Model<Buffer>,
         cursor_position: language::Anchor,
         direction: Direction,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if self.cycled {
             match direction {
@@ -185,7 +187,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         }
     }
 
-    fn accept(&mut self, cx: &mut ModelContext<Self>) {
+    fn accept(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(completion) = self.active_completion() {
             self.copilot
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
@@ -205,7 +207,8 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
     fn discard(
         &mut self,
         should_report_inline_completion_event: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let settings = AllLanguageSettings::get_global(cx);
 

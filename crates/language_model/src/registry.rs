@@ -3,7 +3,7 @@ use crate::{
     LanguageModelProviderState,
 };
 use collections::BTreeMap;
-use gpui::{AppContext, EventEmitter, Global, Model, ModelContext};
+use gpui::{AppContext, EventEmitter, Global, Model};
 use std::sync::Arc;
 use ui::Context;
 
@@ -63,7 +63,8 @@ impl LanguageModelRegistry {
     pub fn register_provider<T: LanguageModelProvider + LanguageModelProviderState>(
         &mut self,
         provider: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let id = provider.id();
 
@@ -81,7 +82,8 @@ impl LanguageModelRegistry {
     pub fn unregister_provider(
         &mut self,
         id: LanguageModelProviderId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if self.providers.remove(&id).is_some() {
             cx.emit(Event::RemovedProvider(id));
@@ -121,7 +123,8 @@ impl LanguageModelRegistry {
         &mut self,
         provider: &LanguageModelProviderId,
         model_id: &LanguageModelId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let Some(provider) = self.provider(provider) else {
             return;
@@ -136,7 +139,8 @@ impl LanguageModelRegistry {
     pub fn set_active_provider(
         &mut self,
         provider: Option<Arc<dyn LanguageModelProvider>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.active_model = provider.map(|provider| ActiveModel {
             provider,
@@ -148,7 +152,8 @@ impl LanguageModelRegistry {
     pub fn set_active_model(
         &mut self,
         model: Option<Arc<dyn LanguageModel>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(model) = model {
             let provider_id = model.provider_id();
@@ -180,7 +185,8 @@ impl LanguageModelRegistry {
     pub fn select_inline_alternative_models(
         &mut self,
         alternatives: impl IntoIterator<Item = (LanguageModelProviderId, LanguageModelId)>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let mut selected_alternatives = Vec::new();
 

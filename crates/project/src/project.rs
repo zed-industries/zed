@@ -42,7 +42,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context as _, EventEmitter, Hsla,
-    Model, ModelContext, SharedString, Task, WeakModel,
+    Model, SharedString, Task, WeakModel,
 };
 use itertools::Itertools;
 use language::{
@@ -608,7 +608,7 @@ impl Project {
         env: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        cx.new_model(|cx: &mut ModelContext<Self>| {
+        cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
@@ -728,7 +728,7 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        cx.new_model(|cx: &mut ModelContext<Self>| {
+        cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
@@ -1273,7 +1273,8 @@ impl Project {
 
     pub fn remove_environment_error(
         &mut self,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
         worktree_id: WorktreeId,
     ) {
         self.environment.update(cx, |environment, _| {
@@ -1463,7 +1464,8 @@ impl Project {
         &mut self,
         project_path: impl Into<ProjectPath>,
         is_directory: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<CreatedEntry>> {
         let project_path = project_path.into();
         let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) else {
@@ -1481,7 +1483,8 @@ impl Project {
         entry_id: ProjectEntryId,
         relative_worktree_source_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Option<Entry>>> {
         let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
             return Task::ready(Ok(None));
@@ -1495,7 +1498,8 @@ impl Project {
         &mut self,
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<CreatedEntry>> {
         let worktree_store = self.worktree_store.read(cx);
         let new_path = new_path.into();
@@ -1543,7 +1547,8 @@ impl Project {
         &mut self,
         entry_id: ProjectEntryId,
         trash: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
@@ -1556,13 +1561,19 @@ impl Project {
         &mut self,
         worktree_id: WorktreeId,
         entry_id: ProjectEntryId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_id(worktree_id, cx)?;
         worktree.update(cx, |worktree, cx| worktree.expand_entry(entry_id, cx))
     }
 
-    pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Result<()> {
+    pub fn shared(
+        &mut self,
+        project_id: u64,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Result<()> {
         if !matches!(self.client_state, ProjectClientState::Local) {
             return Err(anyhow!("project was already shared"));
         }
@@ -1613,7 +1624,8 @@ impl Project {
     pub fn reshared(
         &mut self,
         message: proto::ResharedProject,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         self.buffer_store
             .update(cx, |buffer_store, _| buffer_store.forget_shared_buffers());
@@ -1631,7 +1643,8 @@ impl Project {
         &mut self,
         message: proto::RejoinedProject,
         message_id: u32,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             self.worktree_store.update(cx, |worktree_store, cx| {
@@ -1656,7 +1669,7 @@ impl Project {
         Ok(())
     }
 
-    pub fn unshare(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+    pub fn unshare(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Result<()> {
         self.unshare_internal(cx)?;
         cx.notify();
         Ok(())
@@ -1696,7 +1709,7 @@ impl Project {
         }
     }
 
-    pub fn disconnected_from_host(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn disconnected_from_host(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if self.is_disconnected(cx) {
             return;
         }
@@ -1705,7 +1718,7 @@ impl Project {
         cx.notify();
     }
 
-    pub fn set_role(&mut self, role: proto::ChannelRole, cx: &mut ModelContext<Self>) {
+    pub fn set_role(&mut self, role: proto::ChannelRole, model: &Model<Self>, cx: &mut AppContext) {
         let new_capability =
             if role == proto::ChannelRole::Member || role == proto::ChannelRole::Admin {
                 Capability::ReadWrite
@@ -1743,7 +1756,7 @@ impl Project {
         }
     }
 
-    pub fn close(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn close(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         cx.emit(Event::Closed);
     }
 
@@ -1801,7 +1814,11 @@ impl Project {
         }
     }
 
-    pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Model<Buffer>>> {
+    pub fn create_buffer(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Model<Buffer>>> {
         self.buffer_store
             .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx))
     }
@@ -1810,7 +1827,8 @@ impl Project {
         &mut self,
         text: &str,
         language: Option<Arc<Language>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Model<Buffer> {
         if self.is_via_collab() || self.is_via_ssh() {
             panic!("called create_local_buffer on a remote project")
@@ -1823,7 +1841,8 @@ impl Project {
     pub fn open_path(
         &mut self,
         path: ProjectPath,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<(Option<ProjectEntryId>, AnyModel)>> {
         let task = self.open_buffer(path.clone(), cx);
         cx.spawn(move |_, cx| async move {
@@ -1840,7 +1859,8 @@ impl Project {
     pub fn open_local_buffer(
         &mut self,
         abs_path: impl AsRef<Path>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
             self.open_buffer((worktree.read(cx).id(), relative_path), cx)
@@ -1852,7 +1872,8 @@ impl Project {
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
@@ -1866,7 +1887,8 @@ impl Project {
     pub fn open_unstaged_changes(
         &mut self,
         buffer: Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<BufferChangeSet>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
@@ -1880,7 +1902,8 @@ impl Project {
     pub fn open_buffer_by_id(
         &mut self,
         id: BufferId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         if let Some(buffer) = self.buffer_for_id(id, cx) {
             Task::ready(Ok(buffer))
@@ -1906,7 +1929,8 @@ impl Project {
     pub fn save_buffers(
         &self,
         buffers: HashSet<Model<Buffer>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         cx.spawn(move |this, mut cx| async move {
             let save_tasks = buffers.into_iter().filter_map(|buffer| {
@@ -1921,7 +1945,8 @@ impl Project {
     pub fn save_buffer(
         &self,
         buffer: Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         self.buffer_store
             .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
@@ -1931,7 +1956,8 @@ impl Project {
         &mut self,
         buffer: Model<Buffer>,
         path: ProjectPath,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.save_buffer_as(buffer.clone(), path, cx)
@@ -1945,7 +1971,8 @@ impl Project {
     fn register_buffer(
         &mut self,
         buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         {
             let mut remotely_created_models = self.remotely_created_models.lock();
@@ -1967,7 +1994,8 @@ impl Project {
     pub fn open_image(
         &mut self,
         path: impl Into<ProjectPath>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<ImageItem>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
@@ -2090,7 +2118,8 @@ impl Project {
         &mut self,
         _: Model<BufferStore>,
         event: &BufferStoreEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
@@ -2116,7 +2145,8 @@ impl Project {
         &mut self,
         _: Model<ImageStore>,
         event: &ImageStoreEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             ImageStoreEvent::ImageAdded(image) => {
@@ -2132,7 +2162,8 @@ impl Project {
         &mut self,
         _: Model<LspStore>,
         event: &LspStoreEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             LspStoreEvent::DiagnosticsUpdated {
@@ -2208,7 +2239,8 @@ impl Project {
         &mut self,
         _: Model<SshRemoteClient>,
         event: &remote::SshRemoteEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             remote::SshRemoteEvent::Disconnected => {
@@ -2232,7 +2264,8 @@ impl Project {
         &mut self,
         _: Model<SettingsObserver>,
         event: &SettingsObserverEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             SettingsObserverEvent::LocalSettingsUpdated(result) => match result {
@@ -2256,7 +2289,8 @@ impl Project {
         &mut self,
         _: Model<WorktreeStore>,
         event: &WorktreeStoreEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             WorktreeStoreEvent::WorktreeAdded(worktree) => {
@@ -2274,7 +2308,12 @@ impl Project {
         }
     }
 
-    fn on_worktree_added(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
+    fn on_worktree_added(
+        &mut self,
+        worktree: &Model<Worktree>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         {
             let mut remotely_created_models = self.remotely_created_models.lock();
             if remotely_created_models.retain_count > 0 {
@@ -2306,7 +2345,12 @@ impl Project {
         cx.notify();
     }
 
-    fn on_worktree_released(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+    fn on_worktree_released(
+        &mut self,
+        id_to_remove: WorktreeId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         if let Some(ssh) = &self.ssh_client {
             ssh.read(cx)
                 .proto_client()
@@ -2323,7 +2367,8 @@ impl Project {
         &mut self,
         buffer: Model<Buffer>,
         event: &BufferEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<()> {
         if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
             self.request_buffer_diff_recalculation(&buffer, cx);
@@ -2371,7 +2416,8 @@ impl Project {
         &mut self,
         image: Model<ImageItem>,
         event: &ImageItemEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<()> {
         match event {
             ImageItemEvent::ReloadNeeded => {
@@ -2389,7 +2435,8 @@ impl Project {
     fn request_buffer_diff_recalculation(
         &mut self,
         buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.buffers_needing_diff.insert(buffer.downgrade());
         let first_insertion = self.buffers_needing_diff.len() == 1;
@@ -2421,7 +2468,7 @@ impl Project {
             });
     }
 
-    fn recalculate_buffer_diffs(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
+    fn recalculate_buffer_diffs(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<()> {
         cx.spawn(move |this, mut cx| async move {
             loop {
                 let task = this
@@ -2455,7 +2502,8 @@ impl Project {
         &mut self,
         buffer: &Model<Buffer>,
         new_language: Arc<Language>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.set_language_for_buffer(buffer, new_language, cx)
@@ -2465,7 +2513,8 @@ impl Project {
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: impl IntoIterator<Item = Model<Buffer>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.restart_language_servers_for_buffers(buffers, cx)
@@ -2475,7 +2524,8 @@ impl Project {
     pub fn cancel_language_server_work_for_buffers(
         &mut self,
         buffers: impl IntoIterator<Item = Model<Buffer>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.cancel_language_server_work_for_buffers(buffers, cx)
@@ -2486,7 +2536,8 @@ impl Project {
         &mut self,
         server_id: LanguageServerId,
         token_to_cancel: Option<String>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.cancel_language_server_work(server_id, token_to_cancel, cx)
@@ -2579,7 +2630,8 @@ impl Project {
         language_server_id: LanguageServerId,
         params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &[String],
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.update_diagnostics(language_server_id, params, disk_based_sources, cx)
@@ -2592,7 +2644,8 @@ impl Project {
         abs_path: PathBuf,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
-        cx: &mut ModelContext<Project>,
+        model: &Model<Project>,
+        cx: &mut AppContext,
     ) -> Result<(), anyhow::Error> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.update_diagnostic_entries(server_id, abs_path, version, diagnostics, cx)
@@ -2603,7 +2656,8 @@ impl Project {
         &self,
         buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<ProjectTransaction>> {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.reload_buffers(buffers, push_to_history, cx)
@@ -2613,7 +2667,8 @@ impl Project {
     pub fn reload_images(
         &self,
         images: HashSet<Model<ImageItem>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         self.image_store
             .update(cx, |image_store, cx| image_store.reload_images(images, cx))
@@ -2625,7 +2680,8 @@ impl Project {
         push_to_history: bool,
         trigger: lsp_store::FormatTrigger,
         target: lsp_store::FormatTarget,
-        cx: &mut ModelContext<Project>,
+        model: &Model<Project>,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.format(buffers, push_to_history, trigger, target, cx)
@@ -2637,7 +2693,8 @@ impl Project {
         &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<LocationLink>>> {
         self.request_lsp(
             buffer.clone(),
@@ -2650,7 +2707,8 @@ impl Project {
         &mut self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.definition_impl(buffer, position, cx)
@@ -2660,7 +2718,8 @@ impl Project {
         &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<LocationLink>>> {
         self.request_lsp(
             buffer.clone(),
@@ -2674,7 +2733,8 @@ impl Project {
         &mut self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.declaration_impl(buffer, position, cx)
@@ -2684,7 +2744,8 @@ impl Project {
         &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<LocationLink>>> {
         self.request_lsp(
             buffer.clone(),
@@ -2698,7 +2759,8 @@ impl Project {
         &mut self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.type_definition_impl(buffer, position, cx)
@@ -2708,7 +2770,8 @@ impl Project {
         &mut self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
@@ -2723,7 +2786,8 @@ impl Project {
         &mut self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<Location>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
@@ -2738,7 +2802,8 @@ impl Project {
         &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         self.request_lsp(
             buffer.clone(),
@@ -2752,13 +2817,19 @@ impl Project {
         &mut self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.document_highlights_impl(buffer, position, cx)
     }
 
-    pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
+    pub fn symbols(
+        &self,
+        query: &str,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<Symbol>>> {
         self.lsp_store
             .update(cx, |lsp_store, cx| lsp_store.symbols(query, cx))
     }
@@ -2766,7 +2837,8 @@ impl Project {
     pub fn open_buffer_for_symbol(
         &mut self,
         symbol: &Symbol,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.open_buffer_for_symbol(symbol, cx)
@@ -2775,7 +2847,8 @@ impl Project {
 
     pub fn open_server_settings(
         &mut self,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         let guard = self.retain_remotely_created_models(cx);
         let Some(ssh_client) = self.ssh_client.as_ref() else {
@@ -2807,7 +2880,8 @@ impl Project {
         abs_path: lsp::Url,
         language_server_id: LanguageServerId,
         language_server_name: LanguageServerName,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.open_local_buffer_via_lsp(
@@ -2823,7 +2897,8 @@ impl Project {
         &self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Vec<SignatureHelp>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.signature_help(buffer, position, cx)
@@ -2834,7 +2909,8 @@ impl Project {
         &self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Vec<Hover>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store
@@ -2845,7 +2921,8 @@ impl Project {
         &self,
         buffer: &Model<Buffer>,
         position: Anchor,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<Range<Anchor>>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.linked_edit(buffer, position, cx)
@@ -2857,7 +2934,8 @@ impl Project {
         buffer: &Model<Buffer>,
         position: T,
         context: CompletionContext,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<Completion>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store.update(cx, |lsp_store, cx| {
@@ -2870,7 +2948,8 @@ impl Project {
         buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<bool>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.resolve_completions(buffer, completion_indices, completions, cx)
@@ -2882,7 +2961,8 @@ impl Project {
         buffer_handle: Model<Buffer>,
         completion: Completion,
         push_to_history: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Option<Transaction>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.apply_additional_edits_for_completion(
@@ -2899,7 +2979,8 @@ impl Project {
         buffer_handle: &Model<Buffer>,
         range: Range<T>,
         kinds: Option<Vec<CodeActionKind>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<CodeAction>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
@@ -2913,7 +2994,8 @@ impl Project {
         buffer_handle: Model<Buffer>,
         action: CodeAction,
         push_to_history: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<ProjectTransaction>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.apply_code_action(buffer_handle, action, push_to_history, cx)
@@ -2924,7 +3006,8 @@ impl Project {
         &mut self,
         buffer: Model<Buffer>,
         position: PointUtf16,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Option<Range<Anchor>>>> {
         self.request_lsp(
             buffer,
@@ -2937,7 +3020,8 @@ impl Project {
         &mut self,
         buffer: Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Option<Range<Anchor>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.prepare_rename_impl(buffer, position, cx)
@@ -2949,7 +3033,8 @@ impl Project {
         position: PointUtf16,
         new_name: String,
         push_to_history: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<ProjectTransaction>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
@@ -2969,7 +3054,8 @@ impl Project {
         buffer: Model<Buffer>,
         position: T,
         new_name: String,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<ProjectTransaction>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.perform_rename_impl(buffer, position, new_name, true, cx)
@@ -2981,7 +3067,8 @@ impl Project {
         position: T,
         trigger: String,
         push_to_history: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Option<Transaction>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.on_type_format(buffer, position, trigger, push_to_history, cx)
@@ -2992,7 +3079,8 @@ impl Project {
         &mut self,
         buffer_handle: Model<Buffer>,
         range: Range<T>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
@@ -3006,7 +3094,8 @@ impl Project {
         hint: InlayHint,
         buffer_handle: Model<Buffer>,
         server_id: LanguageServerId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<InlayHint>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
@@ -3016,7 +3105,8 @@ impl Project {
     pub fn search(
         &mut self,
         query: SearchQuery,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Receiver<SearchResult> {
         let (result_tx, result_rx) = smol::channel::unbounded();
 
@@ -3090,7 +3180,8 @@ impl Project {
         &mut self,
         query: &SearchQuery,
         limit: usize,
-        cx: &mut ModelContext<Project>,
+        model: &Model<Project>,
+        cx: &mut AppContext,
     ) -> Receiver<Model<Buffer>> {
         if self.is_local() {
             let fs = self.fs.clone();
@@ -3105,7 +3196,8 @@ impl Project {
     fn sort_search_candidates(
         &mut self,
         search_query: &SearchQuery,
-        cx: &mut ModelContext<Project>,
+        model: &Model<Project>,
+        cx: &mut AppContext,
     ) -> Receiver<Model<Buffer>> {
         let worktree_store = self.worktree_store.read(cx);
         let mut buffers = search_query
@@ -3148,7 +3240,8 @@ impl Project {
         &mut self,
         query: &SearchQuery,
         limit: usize,
-        cx: &mut ModelContext<Project>,
+        model: &Model<Project>,
+        cx: &mut AppContext,
     ) -> Receiver<Model<Buffer>> {
         let (tx, rx) = smol::channel::unbounded();
 
@@ -3191,7 +3284,8 @@ impl Project {
         buffer_handle: Model<Buffer>,
         server: LanguageServerToQuery,
         request: R,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<R::Response>>
     where
         <R::LspRequest as lsp::request::Request>::Result: Send,
@@ -3227,7 +3321,8 @@ impl Project {
         &mut self,
         source: WorktreeId,
         destination: WorktreeId,
-        cx: &mut ModelContext<'_, Self>,
+        model: &Model<_>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.move_worktree(source, destination, cx)
@@ -3238,7 +3333,8 @@ impl Project {
         &mut self,
         abs_path: impl AsRef<Path>,
         visible: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.find_or_create_worktree(abs_path, visible, cx)
@@ -3268,7 +3364,8 @@ impl Project {
         &self,
         path: &str,
         buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Option<ResolvedPath>> {
         let path_buf = PathBuf::from(path);
         if path_buf.is_absolute() || path.starts_with("~") {
@@ -3281,7 +3378,8 @@ impl Project {
     pub fn resolve_abs_file_path(
         &self,
         path: &str,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Option<ResolvedPath>> {
         let resolve_task = self.resolve_abs_path(path, cx);
         cx.background_executor().spawn(async move {
@@ -3293,7 +3391,8 @@ impl Project {
     pub fn resolve_abs_path(
         &self,
         path: &str,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Option<ResolvedPath>> {
         if self.is_local() {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
@@ -3335,7 +3434,8 @@ impl Project {
         &self,
         path: PathBuf,
         buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Option<ResolvedPath>> {
         let mut candidates = vec![path.clone()];
 
@@ -3384,7 +3484,8 @@ impl Project {
     pub fn list_directory(
         &self,
         query: String,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<PathBuf>>> {
         if self.is_local() {
             DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
@@ -3408,26 +3509,42 @@ impl Project {
         &mut self,
         abs_path: impl AsRef<Path>,
         visible: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Worktree>>> {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.create_worktree(abs_path, visible, cx)
         })
     }
 
-    pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+    pub fn remove_worktree(
+        &mut self,
+        id_to_remove: WorktreeId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.remove_worktree(id_to_remove, cx);
         });
     }
 
-    fn add_worktree(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
+    fn add_worktree(
+        &mut self,
+        worktree: &Model<Worktree>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.add(worktree, cx);
         });
     }
 
-    pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut ModelContext<Self>) {
+    pub fn set_active_path(
+        &mut self,
+        entry: Option<ProjectPath>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let new_active_entry = entry.and_then(|project_path| {
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
             let entry = worktree.read(cx).entry_for_path(project_path.path)?;
@@ -3861,7 +3978,8 @@ impl Project {
 
     fn retain_remotely_created_models(
         &mut self,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> RemotelyCreatedModelGuard {
         {
             let mut remotely_create_models = self.remotely_created_models.lock();
@@ -4025,14 +4143,19 @@ impl Project {
     fn wait_for_remote_buffer(
         &mut self,
         id: BufferId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.wait_for_remote_buffer(id, cx)
         })
     }
 
-    fn synchronize_remote_buffers(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn synchronize_remote_buffers(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Task<Result<()>> {
         let project_id = match self.client_state {
             ProjectClientState::Remote {
                 sharing_has_stopped,
@@ -4142,7 +4265,8 @@ impl Project {
     fn set_worktrees_from_proto(
         &mut self,
         worktrees: Vec<proto::WorktreeMetadata>,
-        cx: &mut ModelContext<Project>,
+        model: &Model<Project>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         cx.notify();
         self.worktree_store.update(cx, |worktree_store, cx| {
@@ -4153,7 +4277,8 @@ impl Project {
     fn set_collaborators_from_proto(
         &mut self,
         messages: Vec<proto::Collaborator>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         let mut collaborators = HashMap::default();
         for message in messages {

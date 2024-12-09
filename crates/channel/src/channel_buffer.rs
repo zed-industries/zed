@@ -2,7 +2,7 @@ use crate::{Channel, ChannelStore};
 use anyhow::Result;
 use client::{ChannelId, Client, Collaborator, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashMap;
-use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
+use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, Task};
 use language::proto::serialize_version;
 use rpc::{
     proto::{self, PeerId},
@@ -114,7 +114,8 @@ impl ChannelBuffer {
     pub(crate) fn replace_collaborators(
         &mut self,
         collaborators: Vec<proto::Collaborator>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let mut new_collaborators = HashMap::default();
         for collaborator in collaborators {
@@ -172,7 +173,8 @@ impl ChannelBuffer {
         &mut self,
         _: Model<language::Buffer>,
         event: &language::BufferEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             language::BufferEvent::Operation {
@@ -201,7 +203,7 @@ impl ChannelBuffer {
         }
     }
 
-    pub fn acknowledge_buffer_version(&mut self, cx: &mut ModelContext<'_, ChannelBuffer>) {
+    pub fn acknowledge_buffer_version(&mut self, model: &Model<_>, cx: &mut AppContext) {
         let buffer = self.buffer.read(cx);
         let version = buffer.version();
         let buffer_id = buffer.remote_id().into();
@@ -242,7 +244,7 @@ impl ChannelBuffer {
             .cloned()
     }
 
-    pub(crate) fn disconnect(&mut self, cx: &mut ModelContext<Self>) {
+    pub(crate) fn disconnect(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         log::info!("channel buffer {} disconnected", self.channel_id);
         if self.connected {
             self.connected = false;
@@ -252,7 +254,7 @@ impl ChannelBuffer {
         }
     }
 
-    pub(crate) fn channel_changed(&mut self, cx: &mut ModelContext<Self>) {
+    pub(crate) fn channel_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         cx.emit(ChannelBufferEvent::ChannelChanged);
         cx.notify()
     }

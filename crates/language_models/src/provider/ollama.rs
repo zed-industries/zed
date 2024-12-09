@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, ModelContext, Subscription, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, Subscription, Task};
 use http_client::HttpClient;
 use language_model::LanguageModelCompletionEvent;
 use language_model::{
@@ -63,7 +63,7 @@ impl State {
         !self.available_models.is_empty()
     }
 
-    fn fetch_models(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn fetch_models(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         let settings = &AllLanguageModelSettings::get_global(cx).ollama;
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
@@ -90,12 +90,12 @@ impl State {
         })
     }
 
-    fn restart_fetch_models_task(&mut self, cx: &mut ModelContext<Self>) {
+    fn restart_fetch_models_task(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let task = self.fetch_models(cx);
         self.fetch_model_task.replace(task);
     }
 
-    fn authenticate(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn authenticate(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         if self.is_authenticated() {
             Task::ready(Ok(()))
         } else {

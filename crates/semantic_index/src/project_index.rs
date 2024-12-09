@@ -7,9 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use fs::Fs;
 use futures::{stream::StreamExt, FutureExt};
-use gpui::{
-    AppContext, Entity, EntityId, EventEmitter, Model, ModelContext, Subscription, Task, WeakModel,
-};
+use gpui::{AppContext, Entity, EntityId, EventEmitter, Model, Subscription, Task, WeakModel};
 use language::LanguageRegistry;
 use log;
 use project::{Project, Worktree, WorktreeId};
@@ -76,7 +74,8 @@ impl ProjectIndex {
         project: Model<Project>,
         db_connection: heed::Env,
         embedding_provider: Arc<dyn EmbeddingProvider>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let fs = project.read(cx).fs().clone();
@@ -122,7 +121,8 @@ impl ProjectIndex {
         &mut self,
         _: Model<Project>,
         event: &project::Event,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
@@ -132,7 +132,7 @@ impl ProjectIndex {
         }
     }
 
-    fn update_worktree_indices(&mut self, cx: &mut ModelContext<Self>) {
+    fn update_worktree_indices(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let Some(project) = self.project.upgrade() else {
             return;
         };
@@ -198,7 +198,7 @@ impl ProjectIndex {
         self.update_status(cx);
     }
 
-    fn update_status(&mut self, cx: &mut ModelContext<Self>) {
+    fn update_status(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let mut indexing_count = 0;
         let mut any_loading = false;
 
@@ -540,7 +540,7 @@ impl ProjectIndex {
         })
     }
 
-    pub fn remaining_summaries(&self, cx: &mut ModelContext<Self>) -> usize {
+    pub fn remaining_summaries(&self, model: &Model<Self>, cx: &mut AppContext) -> usize {
         self.worktree_indices(cx)
             .iter()
             .map(|index| index.read(cx).summary_index().backlog_len())

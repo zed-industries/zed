@@ -971,7 +971,7 @@ impl LspAdapter for PyLspAdapter {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{BorrowAppContext, Context, ModelContext, TestAppContext};
+    use gpui::{BorrowAppContext, Context, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
@@ -993,10 +993,11 @@ mod tests {
 
         cx.new_model(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
-            let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
-                let ix = buffer.len();
-                buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
-            };
+            let append =
+                |buffer: &mut Buffer, text: &str, model: &Model<Buffer>, cx: &mut AppContext| {
+                    let ix = buffer.len();
+                    buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
+                };
 
             // indent after "def():"
             append(&mut buffer, "def a():\n", cx);

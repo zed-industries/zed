@@ -40,9 +40,9 @@ use fs::Fs;
 use futures::FutureExt;
 use gpui::{
     canvas, div, img, percentage, point, prelude::*, pulsating_between, size, Action, Animation,
-    AnimationExt, AnyElement, AnyView, AppContext, Asy ClipboardEntry, ClipboardItem,
-    CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
-    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
+    AnimationExt, AnyElement, AnyView, AppContext, ClipboardEntry, ClipboardItem, CursorStyle,
+    Empty, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView, FontWeight,
+    InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
     SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
     UpdateGlobal, View, WeakModel, WeakView,
 };

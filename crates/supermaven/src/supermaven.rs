@@ -9,9 +9,7 @@ use client::{proto, Client};
 use collections::BTreeMap;
 
 use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
-use gpui::{
-    actions, AppContext, AsyncAppContext, EntityId, Global, Model, ModelContext, Task, WeakModel,
-};
+use gpui::{actions, AppContext, AsyncAppContext, EntityId, Global, Model, Task, WeakModel};
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, ToOffset,
 };
@@ -87,7 +85,7 @@ impl Supermaven {
         cx.set_global(SupermavenGlobal(supermaven));
     }
 
-    pub fn start(&mut self, client: Arc<Client>, cx: &mut ModelContext<Self>) {
+    pub fn start(&mut self, client: Arc<Client>, model: &Model<Self>, cx: &mut AppContext) {
         if let Self::Starting = self {
             cx.spawn(|this, mut cx| async move {
                 let binary_path =
@@ -267,7 +265,8 @@ impl SupermavenAgent {
     fn new(
         binary_path: PathBuf,
         client: Arc<Client>,
-        cx: &mut ModelContext<Supermaven>,
+        model: &Model<Supermaven>,
+        cx: &mut AppContext,
     ) -> Result<Self> {
         let mut process = util::command::new_smol_command(&binary_path)
             .arg("stdio")

@@ -18,7 +18,7 @@ use futures::{
 };
 use gpui::{
     AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Global, Model,
-    ModelContext, SemanticVersion, Task, WeakModel,
+    SemanticVersion, Task, WeakModel,
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -626,7 +626,7 @@ impl SshRemoteClient {
         })
     }
 
-    fn reconnect(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+    fn reconnect(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Result<()> {
         let mut lock = self.state.lock();
 
         let can_reconnect = lock
@@ -883,7 +883,8 @@ impl SshRemoteClient {
     fn handle_heartbeat_result(
         &mut self,
         missed_heartbeats: usize,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> ControlFlow<()> {
         let state = self.state.lock().take().unwrap();
         let next_state = if missed_heartbeats > 0 {
@@ -953,7 +954,8 @@ impl SshRemoteClient {
 
     fn try_set_state(
         &self,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
         map: impl FnOnce(&State) -> Option<State>,
     ) {
         let mut lock = self.state.lock();
@@ -965,7 +967,7 @@ impl SshRemoteClient {
         }
     }
 
-    fn set_state(&self, state: State, cx: &mut ModelContext<Self>) {
+    fn set_state(&self, state: State, model: &Model<Self>, cx: &mut AppContext) {
         log::info!("setting state to '{}'", &state);
 
         let is_reconnect_exhausted = state.is_reconnect_exhausted();

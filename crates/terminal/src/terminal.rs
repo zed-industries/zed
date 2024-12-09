@@ -59,8 +59,8 @@ use thiserror::Error;
 
 use gpui::{
     actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
-    Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -479,7 +479,7 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(mut self, cx: &ModelContext<Terminal>) -> Terminal {
+    pub fn subscribe(mut self, model: &Model<Terminal>, cx: &AppContext) -> Terminal {
         //Event loop
         cx.spawn(|terminal, mut cx| async move {
             while let Some(event) = self.events_rx.next().await {
@@ -670,7 +670,7 @@ impl TaskStatus {
 }
 
 impl Terminal {
-    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut ModelContext<Self>) {
+    fn process_event(&mut self, event: &AlacTermEvent, model: &Model<Self>, cx: &mut AppContext) {
         match event {
             AlacTermEvent::Title(title) => {
                 self.breadcrumb_text = title.to_string();
@@ -744,7 +744,8 @@ impl Terminal {
         &mut self,
         event: &InternalEvent,
         term: &mut Term<ZedListener>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             InternalEvent::Resize(mut new_size) => {
@@ -988,7 +989,8 @@ impl Terminal {
         word_match: RangeInclusive<AlacPoint>,
         word: String,
         is_url: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(prev_word) = prev_word {
             if prev_word.word == word && prev_word.word_match == word_match {
@@ -1297,7 +1299,7 @@ impl Terminal {
         self.input(paste_text);
     }
 
-    pub fn sync(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn sync(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let term = self.term.clone();
         let mut terminal = term.lock_unfair();
         //Note that the ordering of events matters for event processing
@@ -1473,7 +1475,8 @@ impl Terminal {
         &mut self,
         e: &MouseDownEvent,
         origin: Point<Pixels>,
-        _cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        _cx: &mut AppContext,
     ) {
         let position = e.position - origin;
         let point = grid_point(
@@ -1526,7 +1529,13 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_up(&mut self, e: &MouseUpEvent, origin: Point<Pixels>, cx: &ModelContext<Self>) {
+    pub fn mouse_up(
+        &mut self,
+        e: &MouseUpEvent,
+        origin: Point<Pixels>,
+        model: &Model<Self>,
+        cx: &AppContext,
+    ) {
         let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - origin;
@@ -1630,7 +1639,8 @@ impl Terminal {
     pub fn find_matches(
         &self,
         mut searcher: RegexSearch,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Vec<RangeInclusive<AlacPoint>>> {
         let term = self.term.clone();
         cx.background_executor().spawn(async move {
@@ -1737,7 +1747,8 @@ impl Terminal {
     fn register_task_finished(
         &mut self,
         error_code: Option<i32>,
-        cx: &mut ModelContext<'_, Terminal>,
+        model: &Model<_>,
+        cx: &mut AppContext,
     ) {
         self.completion_tx.try_send(()).ok();
         let task = match &mut self.task {

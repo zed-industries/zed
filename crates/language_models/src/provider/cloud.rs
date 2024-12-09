@@ -13,7 +13,7 @@ use futures::{
 };
 use gpui::{
     AnyElement, AnyView, AppContext, AsyncAppContext, EventEmitter, FontWeight, Global, Model,
-    ModelContext, ReadGlobal, Subscription, Task,
+    ReadGlobal, Subscription, Task,
 };
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
@@ -118,7 +118,7 @@ impl RefreshLlmTokenListener {
         GlobalRefreshLlmTokenListener::global(cx).0.clone()
     }
 
-    fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+    fn new(client: Arc<Client>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         Self {
             _llm_token_subscription: client
                 .add_message_handler(cx.weak_model(), Self::handle_refresh_llm_token),
@@ -155,7 +155,8 @@ impl State {
         client: Arc<Client>,
         user_store: Model<UserStore>,
         status: client::Status,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
 
@@ -187,7 +188,7 @@ impl State {
         self.status.is_signed_out()
     }
 
-    fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn authenticate(&self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(move |this, mut cx| async move {
             client.authenticate_and_connect(true, &cx).await?;
@@ -202,7 +203,7 @@ impl State {
             .unwrap_or(false)
     }
 
-    fn accept_terms_of_service(&mut self, cx: &mut ModelContext<Self>) {
+    fn accept_terms_of_service(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let user_store = self.user_store.clone();
         self.accept_terms = Some(cx.spawn(move |this, mut cx| async move {
             let _ = user_store

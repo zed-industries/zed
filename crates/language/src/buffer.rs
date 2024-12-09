@@ -25,8 +25,8 @@ use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
-    AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
-    Pixels, Task, TaskLabel,
+    AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, Pixels, Task,
+    TaskLabel,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -611,7 +611,7 @@ impl IndentGuide {
 
 impl Buffer {
     /// Create a new buffer with the given base text.
-    pub fn local<T: Into<String>>(base_text: T, cx: &ModelContext<Self>) -> Self {
+    pub fn local<T: Into<String>>(base_text: T, model: &Model<Self>, cx: &AppContext) -> Self {
         Self::build(
             TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
             None,
@@ -623,7 +623,8 @@ impl Buffer {
     pub fn local_normalized(
         base_text_normalized: Rope,
         line_ending: LineEnding,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Self {
         Self::build(
             TextBuffer::new_normalized(
@@ -735,7 +736,12 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer, returning the buffer.
-    pub fn with_language(mut self, language: Arc<Language>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn with_language(
+        mut self,
+        language: Arc<Language>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Self {
         self.set_language(Some(language), cx);
         self
     }
@@ -806,7 +812,7 @@ impl Buffer {
         }
     }
 
-    pub fn branch(&mut self, cx: &mut ModelContext<Self>) -> Model<Self> {
+    pub fn branch(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Model<Self> {
         let this = cx.handle();
         cx.new_model(|cx| {
             let mut branch = Self {
@@ -836,7 +842,12 @@ impl Buffer {
     ///
     /// If `ranges` is empty, then all changes will be applied. This buffer must
     /// be a branch buffer to call this method.
-    pub fn merge_into_base(&mut self, ranges: Vec<Range<usize>>, cx: &mut ModelContext<Self>) {
+    pub fn merge_into_base(
+        &mut self,
+        ranges: Vec<Range<usize>>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let Some(base_buffer) = self.base_buffer() else {
             debug_panic!("not a branch buffer");
             return;
@@ -891,7 +902,8 @@ impl Buffer {
         &mut self,
         _: Model<Buffer>,
         event: &BufferEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let BufferEvent::Operation { operation, .. } = event else {
             return;
@@ -946,7 +958,12 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer.
-    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
+    pub fn set_language(
+        &mut self,
+        language: Option<Arc<Language>>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
         self.language = language;
@@ -967,7 +984,12 @@ impl Buffer {
     }
 
     /// Assign the buffer a new [`Capability`].
-    pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
+    pub fn set_capability(
+        &mut self,
+        capability: Capability,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.capability = capability;
         cx.emit(BufferEvent::CapabilityChanged)
     }
@@ -977,7 +999,8 @@ impl Buffer {
         &mut self,
         version: clock::Global,
         mtime: Option<MTime>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.saved_version = version;
         self.has_unsaved_edits
@@ -989,13 +1012,17 @@ impl Buffer {
     }
 
     /// This method is called to signal that the buffer has been discarded.
-    pub fn discarded(&self, cx: &mut ModelContext<Self>) {
+    pub fn discarded(&self, model: &Model<Self>, cx: &mut AppContext) {
         cx.emit(BufferEvent::Discarded);
         cx.notify();
     }
 
     /// Reloads the contents of the buffer from disk.
-    pub fn reload(&mut self, cx: &ModelContext<Self>) -> oneshot::Receiver<Option<Transaction>> {
+    pub fn reload(
+        &mut self,
+        model: &Model<Self>,
+        cx: &AppContext,
+    ) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(|this, mut cx| async move {
@@ -1043,7 +1070,8 @@ impl Buffer {
         version: clock::Global,
         line_ending: LineEnding,
         mtime: Option<MTime>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.saved_version = version;
         self.has_unsaved_edits
@@ -1056,7 +1084,12 @@ impl Buffer {
 
     /// Updates the [`File`] backing this buffer. This should be called when
     /// the file has changed or has been deleted.
-    pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
+    pub fn file_updated(
+        &mut self,
+        new_file: Arc<dyn File>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let was_dirty = self.is_dirty();
         let mut file_changed = false;
 
@@ -1154,7 +1187,7 @@ impl Buffer {
     /// initiate an additional reparse recursively. To avoid concurrent parses
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
-    pub fn reparse(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn reparse(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if self.parsing_in_background {
             return;
         }
@@ -1220,7 +1253,12 @@ impl Buffer {
         }
     }
 
-    fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut ModelContext<Self>) {
+    fn did_finish_parsing(
+        &mut self,
+        syntax_snapshot: SyntaxSnapshot,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
@@ -1238,7 +1276,8 @@ impl Buffer {
         &mut self,
         server_id: LanguageServerId,
         diagnostics: DiagnosticSet,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
         let op = Operation::UpdateDiagnostics {
@@ -1250,7 +1289,7 @@ impl Buffer {
         self.send_operation(op, true, cx);
     }
 
-    fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
+    fn request_autoindent(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(indent_sizes) = self.compute_autoindents() {
             let indent_sizes = cx.background_executor().spawn(indent_sizes);
             match cx
@@ -1446,7 +1485,8 @@ impl Buffer {
     fn apply_autoindents(
         &mut self,
         indent_sizes: BTreeMap<u32, IndentSize>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.autoindent_requests.clear();
 
@@ -1597,7 +1637,7 @@ impl Buffer {
 
     /// Ensures that the buffer ends with a single newline character, and
     /// no other whitespace.
-    pub fn ensure_final_newline(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn ensure_final_newline(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let len = self.len();
         let mut offset = len;
         for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
@@ -1619,7 +1659,12 @@ impl Buffer {
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was
     /// calculated, then adjust the diff to account for those changes, and discard any
     /// parts of the diff that conflict with those changes.
-    pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+    pub fn apply_diff(
+        &mut self,
+        diff: Diff,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<TransactionId> {
         // Check for any edits to the buffer that have occurred since this diff
         // was computed.
         let snapshot = self.snapshot();
@@ -1725,7 +1770,11 @@ impl Buffer {
     }
 
     /// Terminates the current transaction, if this is the outermost transaction.
-    pub fn end_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+    pub fn end_transaction(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<TransactionId> {
         self.end_transaction_at(Instant::now(), cx)
     }
 
@@ -1735,7 +1784,8 @@ impl Buffer {
     pub fn end_transaction_at(
         &mut self,
         now: Instant,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<TransactionId> {
         assert!(self.transaction_depth > 0);
         self.transaction_depth -= 1;
@@ -1811,7 +1861,8 @@ impl Buffer {
         selections: Arc<[Selection<Anchor>]>,
         line_mode: bool,
         cursor_shape: CursorShape,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
         self.remote_selections.insert(
@@ -1839,7 +1890,7 @@ impl Buffer {
 
     /// Clears the selections, so that other replicas of the buffer do not see any selections for
     /// this replica.
-    pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn remove_active_selections(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if self
             .remote_selections
             .get(&self.text.replica_id())
@@ -1850,7 +1901,12 @@ impl Buffer {
     }
 
     /// Replaces the buffer's entire text.
-    pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Lamport>
+    pub fn set_text<T>(
+        &mut self,
+        text: T,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<clock::Lamport>
     where
         T: Into<Arc<str>>,
     {
@@ -1871,7 +1927,8 @@ impl Buffer {
         &mut self,
         edits_iter: I,
         autoindent_mode: Option<AutoindentMode>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<clock::Lamport>
     where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -1997,7 +2054,8 @@ impl Buffer {
         &mut self,
         old_version: &clock::Global,
         was_dirty: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if self.edits_since::<usize>(old_version).next().is_none() {
             return;
@@ -2012,7 +2070,7 @@ impl Buffer {
         cx.notify();
     }
 
-    pub fn autoindent_ranges<I, T>(&mut self, ranges: I, cx: &mut ModelContext<Self>)
+    pub fn autoindent_ranges<I, T>(&mut self, ranges: I, model: &Model<Self>, cx: &mut AppContext)
     where
         I: IntoIterator<Item = Range<T>>,
         T: ToOffset + Copy,
@@ -2043,7 +2101,8 @@ impl Buffer {
         position: impl ToPoint,
         space_above: bool,
         space_below: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Point {
         let mut position = position.to_point(self);
 
@@ -2095,7 +2154,8 @@ impl Buffer {
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
         &mut self,
         ops: I,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.pending_autoindent.take();
         let was_dirty = self.is_dirty();
@@ -2127,7 +2187,7 @@ impl Buffer {
         cx.notify();
     }
 
-    fn flush_deferred_ops(&mut self, cx: &mut ModelContext<Self>) {
+    fn flush_deferred_ops(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let mut deferred_ops = Vec::new();
         for op in self.deferred_ops.drain().iter().cloned() {
             if self.can_apply_op(&op) {
@@ -2162,7 +2222,7 @@ impl Buffer {
         }
     }
 
-    fn apply_op(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
+    fn apply_op(&mut self, operation: Operation, model: &Model<Self>, cx: &mut AppContext) {
         match operation {
             Operation::Buffer(_) => {
                 unreachable!("buffer operations should never be applied at this layer")
@@ -2232,7 +2292,8 @@ impl Buffer {
         server_id: LanguageServerId,
         diagnostics: DiagnosticSet,
         lamport_timestamp: clock::Lamport,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
             let ix = self.diagnostics.binary_search_by_key(&server_id, |e| e.0);
@@ -2254,7 +2315,13 @@ impl Buffer {
         }
     }
 
-    fn send_operation(&self, operation: Operation, is_local: bool, cx: &mut ModelContext<Self>) {
+    fn send_operation(
+        &self,
+        operation: Operation,
+        is_local: bool,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         cx.emit(BufferEvent::Operation {
             operation,
             is_local,
@@ -2262,13 +2329,13 @@ impl Buffer {
     }
 
     /// Removes the selections for a given peer.
-    pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
+    pub fn remove_peer(&mut self, replica_id: ReplicaId, model: &Model<Self>, cx: &mut AppContext) {
         self.remote_selections.remove(&replica_id);
         cx.notify();
     }
 
     /// Undoes the most recent transaction.
-    pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+    pub fn undo(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
@@ -2285,7 +2352,8 @@ impl Buffer {
     pub fn undo_transaction(
         &mut self,
         transaction_id: TransactionId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> bool {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -2302,7 +2370,8 @@ impl Buffer {
     pub fn undo_to_transaction(
         &mut self,
         transaction_id: TransactionId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> bool {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -2321,7 +2390,8 @@ impl Buffer {
     pub fn undo_operations(
         &mut self,
         counts: HashMap<Lamport, u32>,
-        cx: &mut ModelContext<Buffer>,
+        model: &Model<Buffer>,
+        cx: &mut AppContext,
     ) {
         let was_dirty = self.is_dirty();
         let operation = self.text.undo_operations(counts);
@@ -2331,7 +2401,7 @@ impl Buffer {
     }
 
     /// Manually redoes a specific transaction in the buffer's redo history.
-    pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+    pub fn redo(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
@@ -2348,7 +2418,8 @@ impl Buffer {
     pub fn redo_to_transaction(
         &mut self,
         transaction_id: TransactionId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> bool {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -2369,7 +2440,8 @@ impl Buffer {
         &mut self,
         server_id: LanguageServerId,
         triggers: BTreeSet<String>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.completion_triggers_timestamp = self.text.lamport_clock.tick();
         if triggers.is_empty() {
@@ -2423,7 +2495,8 @@ impl Buffer {
         &mut self,
         marked_string: &str,
         autoindent_mode: Option<AutoindentMode>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let edits = self.edits_for_marked_text(marked_string);
         self.edit(edits, autoindent_mode, cx);
@@ -2437,7 +2510,8 @@ impl Buffer {
         &mut self,
         rng: &mut T,
         old_range_count: usize,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) where
         T: rand::Rng,
     {
@@ -2464,7 +2538,12 @@ impl Buffer {
         self.edit(edits, None, cx);
     }
 
-    pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng, cx: &mut ModelContext<Self>) {
+    pub fn randomly_undo_redo(
+        &mut self,
+        rng: &mut impl rand::Rng,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 

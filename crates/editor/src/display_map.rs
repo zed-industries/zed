@@ -37,9 +37,7 @@ use collections::{HashMap, HashSet};
 pub use crease_map::*;
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
-use gpui::{
-    AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
-};
+use gpui::{AnyElement, Font, HighlightStyle, LineLayout, Model, Pixels, UnderlineStyle};
 pub(crate) use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
@@ -127,7 +125,8 @@ impl DisplayMap {
         excerpt_header_height: u32,
         excerpt_footer_height: u32,
         fold_placeholder: FoldPlaceholder,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
 
@@ -165,7 +164,7 @@ impl DisplayMap {
         }
     }
 
-    pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> DisplaySnapshot {
+    pub fn snapshot(&mut self, model: &Model<Self>, cx: &mut AppContext) -> DisplaySnapshot {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (inlay_snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
@@ -193,7 +192,7 @@ impl DisplayMap {
         }
     }
 
-    pub fn set_state(&mut self, other: &DisplaySnapshot, cx: &mut ModelContext<Self>) {
+    pub fn set_state(&mut self, other: &DisplaySnapshot, model: &Model<Self>, cx: &mut AppContext) {
         self.fold(
             other
                 .folds_in_range(0..other.buffer_snapshot.len())
@@ -212,7 +211,8 @@ impl DisplayMap {
     pub fn fold<T: Clone + ToOffset>(
         &mut self,
         creases: Vec<Crease<T>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -285,7 +285,8 @@ impl DisplayMap {
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         type_id: TypeId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -310,7 +311,8 @@ impl DisplayMap {
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let offset_ranges = ranges
@@ -340,7 +342,8 @@ impl DisplayMap {
     pub fn insert_creases(
         &mut self,
         creases: impl IntoIterator<Item = Crease<Anchor>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Vec<CreaseId> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         self.crease_map.insert(creases, &snapshot)
@@ -349,7 +352,8 @@ impl DisplayMap {
     pub fn remove_creases(
         &mut self,
         crease_ids: impl IntoIterator<Item = CreaseId>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         self.crease_map.remove(crease_ids, &snapshot)
@@ -358,7 +362,8 @@ impl DisplayMap {
     pub fn insert_blocks(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Vec<CustomBlockId> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -376,7 +381,8 @@ impl DisplayMap {
     pub fn resize_blocks(
         &mut self,
         heights: HashMap<CustomBlockId, u32>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -395,7 +401,12 @@ impl DisplayMap {
         self.block_map.replace_blocks(renderers);
     }
 
-    pub fn remove_blocks(&mut self, ids: HashSet<CustomBlockId>, cx: &mut ModelContext<Self>) {
+    pub fn remove_blocks(
+        &mut self,
+        ids: HashSet<CustomBlockId>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -412,7 +423,8 @@ impl DisplayMap {
     pub fn row_for_block(
         &mut self,
         block_id: CustomBlockId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<DisplayRow> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -467,12 +479,23 @@ impl DisplayMap {
         cleared
     }
 
-    pub fn set_font(&self, font: Font, font_size: Pixels, cx: &mut ModelContext<Self>) -> bool {
+    pub fn set_font(
+        &self,
+        font: Font,
+        font_size: Pixels,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_font_with_size(font, font_size, cx))
     }
 
-    pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut ModelContext<Self>) -> bool {
+    pub fn set_wrap_width(
+        &self,
+        width: Option<Pixels>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
@@ -485,7 +508,8 @@ impl DisplayMap {
         &mut self,
         to_remove: Vec<InlayId>,
         to_insert: Vec<Inlay>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if to_remove.is_empty() && to_insert.is_empty() {
             return;
@@ -510,7 +534,11 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    fn tab_size(buffer: &Model<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
+    fn tab_size(
+        buffer: &Model<MultiBuffer>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> NonZeroU32 {
         let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
         let language = buffer
             .and_then(|buffer| buffer.language())

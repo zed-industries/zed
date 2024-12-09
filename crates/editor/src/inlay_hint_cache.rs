@@ -19,7 +19,7 @@ use crate::{
 use anyhow::Context;
 use clock::Global;
 use futures::future;
-use gpui::{AsyncA, ModelContext, Task, ViewContext};
+use gpui::{AsyncA, Task, ViewContext};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
@@ -727,7 +727,8 @@ fn determine_query_ranges(
     excerpt_id: ExcerptId,
     excerpt_buffer: &Model<Buffer>,
     excerpt_visible_range: Range<usize>,
-    cx: &mut ModelContext<'_, MultiBuffer>,
+    model: &Model<_>,
+    cx: &mut AppContext,
 ) -> Option<QueryRanges> {
     let full_excerpt_range = multi_buffer
         .excerpts_for_buffer(excerpt_buffer, cx)

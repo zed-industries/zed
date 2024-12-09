@@ -262,8 +262,9 @@ pub trait LanguageModelProviderState: 'static {
 
     fn subscribe<T: 'static>(
         &self,
-        cx: &mut gpui::ModelContext<T>,
-        callback: impl Fn(&mut T, &mut gpui::ModelContext<T>) + 'static,
+        model: &Model<T>,
+        cx: &mut AppContext,
+        callback: impl Fn(&mut T, &Model<T>, &mut AppContext) + 'static,
     ) -> Option<gpui::Subscription> {
         let entity = self.observable_entity()?;
         Some(cx.observe(&entity, move |this, _, cx| {

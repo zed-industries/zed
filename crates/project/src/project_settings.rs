@@ -1,7 +1,7 @@
 use anyhow::Context;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
+use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model};
 use lsp::LanguageServerName;
 use paths::{
     local_settings_file_relative_path, local_tasks_file_relative_path,
@@ -247,7 +247,8 @@ impl SettingsObserver {
         fs: Arc<dyn Fs>,
         worktree_store: Model<WorktreeStore>,
         task_store: Model<TaskStore>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
@@ -264,7 +265,8 @@ impl SettingsObserver {
     pub fn new_remote(
         worktree_store: Model<WorktreeStore>,
         task_store: Model<TaskStore>,
-        _: &mut ModelContext<Self>,
+        _: &Model<Self>,
+        _: &mut AppContext,
     ) -> Self {
         Self {
             worktree_store,
@@ -279,7 +281,8 @@ impl SettingsObserver {
         &mut self,
         project_id: u64,
         downstream_client: AnyProtoClient,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.project_id = project_id;
         self.downstream_client = Some(downstream_client.clone());
@@ -316,7 +319,7 @@ impl SettingsObserver {
         }
     }
 
-    pub fn unshared(&mut self, _: &mut ModelContext<Self>) {
+    pub fn unshared(&mut self, _: &Model<Self>, _: &mut AppContext) {
         self.downstream_client = None;
     }
 
@@ -357,7 +360,8 @@ impl SettingsObserver {
         &mut self,
         _: Model<WorktreeStore>,
         event: &WorktreeStoreEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
             cx.subscribe(worktree, |this, worktree, event, cx| {
@@ -373,7 +377,8 @@ impl SettingsObserver {
         &mut self,
         worktree: &Model<Worktree>,
         changes: &UpdatedEntriesSet,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let SettingsObserverMode::Local(fs) = &self.mode else {
             return;
@@ -495,7 +500,8 @@ impl SettingsObserver {
         &mut self,
         worktree: Model<Worktree>,
         settings_contents: impl IntoIterator<Item = (Arc<Path>, LocalSettingsKind, Option<String>)>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();

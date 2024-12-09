@@ -3,9 +3,7 @@ use channel::{ChannelMessage, ChannelMessageId, ChannelStore};
 use client::{ChannelId, Client, UserStore};
 use collections::HashMap;
 use db::smol::stream::StreamExt;
-use gpui::{
-    AppContext, AsyncAppContext, Context as _, EventEmitter, Global, Model, ModelContext, Task,
-};
+use gpui::{AppContext, AsyncAppContext, Context as _, EventEmitter, Global, Model, Task};
 use rpc::{proto, Notification, TypedEnvelope};
 use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
@@ -79,7 +77,8 @@ impl NotificationStore {
     pub fn new(
         client: Arc<Client>,
         user_store: Model<UserStore>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let mut connection_status = client.status();
         let watch_connection_status = cx.spawn(|this, mut cx| async move {
@@ -155,7 +154,8 @@ impl NotificationStore {
     pub fn load_more_notifications(
         &self,
         clear_old: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         if self.loaded_all_notifications && !clear_old {
             return None;
@@ -191,14 +191,18 @@ impl NotificationStore {
         }))
     }
 
-    fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<Result<()>>> {
+    fn handle_connect(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<()>>> {
         self.notifications = Default::default();
         self.channel_messages = Default::default();
         cx.notify();
         self.load_more_notifications(true, cx)
     }
 
-    fn handle_disconnect(&mut self, cx: &mut ModelContext<Self>) {
+    fn handle_disconnect(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         cx.notify()
     }
 
@@ -366,7 +370,8 @@ impl NotificationStore {
         &mut self,
         notifications: impl IntoIterator<Item = (u64, Option<NotificationEntry>)>,
         is_new: bool,
-        cx: &mut ModelContext<'_, NotificationStore>,
+        model: &Model<_>,
+        cx: &mut AppContext,
     ) {
         let mut cursor = self.notifications.cursor::<(NotificationId, Count)>(&());
         let mut new_notifications = SumTree::default();
@@ -425,7 +430,8 @@ impl NotificationStore {
         &mut self,
         notification: Notification,
         response: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match notification {
             Notification::ContactRequest { sender_id } => {

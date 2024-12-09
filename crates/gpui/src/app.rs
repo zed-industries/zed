@@ -41,7 +41,7 @@ mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
 
-/// The duration for which futures returned from [AppContext::on_app_context] or [ModelContext::on_app_quit] can run before the application fully quits.
+/// The duration for which futures returned from [AppContext::on_app_context] or [Model::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Temporary(?) wrapper around [`RefCell<AppContext>`] to help us debug any double borrows.
@@ -345,7 +345,7 @@ impl AppContext {
         app
     }
 
-    /// Quit the application gracefully. Handlers registered with [`ModelContext::on_app_quit`]
+    /// Quit the application gracefully. Handlers registered with [`Model::on_app_quit`]
     /// will be given 100ms to complete before exiting.
     pub fn shutdown(&mut self) {
         let mut futures = Vec::new();
@@ -1401,9 +1401,10 @@ impl AppContext {
 impl Context for AppContext {
     type Result<T> = T;
 
-    /// Build an entity that is owned by the application. The given function will be invoked with
-    /// a `ModelContext` and must return an object representing the entity. A `Model` handle will be returned,
-    /// which can be used to access the entity in a context.
+    /// Build an entity that is owned by the application. The given function
+    /// will be invoked with a `Model` and `AppContext` and must return an
+    /// object representing the entity. A `Model` handle will be returned, which
+    /// can be used to access the entity in a context.
     fn new_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&Model<T>, &mut AppContext) -> T,
@@ -1445,7 +1446,7 @@ impl Context for AppContext {
     }
 
     /// Updates the entity referenced by the given model. The function is passed a mutable reference to the
-    /// entity along with a `ModelContext` for the entity.
+    /// entity along with a `Model` handle to the entity and an `AppContext`.
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,

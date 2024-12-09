@@ -5,8 +5,7 @@ use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, Future, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, EventEmitter, Model, ModelContext, SharedString, SharedUri, Task,
-    WeakModel,
+    AppContext, AsyncAppContext, EventEmitter, Model, SharedString, SharedUri, Task, WeakModel,
 };
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
@@ -136,7 +135,7 @@ enum UpdateContacts {
 }
 
 impl UserStore {
-    pub fn new(client: Arc<Client>, cx: &ModelContext<Self>) -> Self {
+    pub fn new(client: Arc<Client>, model: &Model<Self>, cx: &AppContext) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
@@ -308,7 +307,8 @@ impl UserStore {
     fn update_contacts(
         &mut self,
         message: UpdateContacts,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Result<()>> {
         match message {
             UpdateContacts::Wait(barrier) => {
@@ -483,7 +483,8 @@ impl UserStore {
     pub fn request_contact(
         &mut self,
         responder_id: u64,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         self.perform_contact_request(responder_id, proto::RequestContact { responder_id }, cx)
     }
@@ -491,7 +492,8 @@ impl UserStore {
     pub fn remove_contact(
         &mut self,
         user_id: u64,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         self.perform_contact_request(user_id, proto::RemoveContact { user_id }, cx)
     }
@@ -506,7 +508,8 @@ impl UserStore {
         &mut self,
         requester_id: u64,
         accept: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         self.perform_contact_request(
             requester_id,
@@ -525,7 +528,8 @@ impl UserStore {
     pub fn dismiss_contact_request(
         &self,
         requester_id: u64,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Result<()>> {
         let client = self.client.upgrade();
         cx.spawn(move |_, _| async move {
@@ -544,7 +548,8 @@ impl UserStore {
         &mut self,
         user_id: u64,
         request: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let client = self.client.upgrade();
         *self.pending_contact_requests.entry(user_id).or_insert(0) += 1;
@@ -594,7 +599,8 @@ impl UserStore {
     pub fn get_users(
         &self,
         user_ids: Vec<u64>,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Result<Vec<Arc<User>>>> {
         let mut user_ids_to_fetch = user_ids.clone();
         user_ids_to_fetch.retain(|id| !self.users.contains_key(id));
@@ -629,7 +635,8 @@ impl UserStore {
     pub fn fuzzy_search_users(
         &self,
         query: String,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Result<Vec<Arc<User>>>> {
         self.load_users(proto::FuzzySearchUsers { query }, cx)
     }
@@ -638,7 +645,12 @@ impl UserStore {
         self.users.get(&user_id).cloned()
     }
 
-    pub fn get_user_optimistic(&self, user_id: u64, cx: &ModelContext<Self>) -> Option<Arc<User>> {
+    pub fn get_user_optimistic(
+        &self,
+        user_id: u64,
+        model: &Model<Self>,
+        cx: &AppContext,
+    ) -> Option<Arc<User>> {
         if let Some(user) = self.users.get(&user_id).cloned() {
             return Some(user);
         }
@@ -647,7 +659,12 @@ impl UserStore {
         None
     }
 
-    pub fn get_user(&self, user_id: u64, cx: &ModelContext<Self>) -> Task<Result<Arc<User>>> {
+    pub fn get_user(
+        &self,
+        user_id: u64,
+        model: &Model<Self>,
+        cx: &AppContext,
+    ) -> Task<Result<Arc<User>>> {
         if let Some(user) = self.users.get(&user_id).cloned() {
             return Task::ready(Ok(user));
         }
@@ -687,7 +704,11 @@ impl UserStore {
             .map(|accepted_tos_at| accepted_tos_at.is_some())
     }
 
-    pub fn accept_terms_of_service(&self, cx: &ModelContext<Self>) -> Task<Result<()>> {
+    pub fn accept_terms_of_service(
+        &self,
+        model: &Model<Self>,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
         if self.current_user().is_none() {
             return Task::ready(Err(anyhow!("no current user")));
         };
@@ -718,7 +739,8 @@ impl UserStore {
     fn load_users(
         &self,
         request: impl RequestMessage<Response = UsersResponse>,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Result<Vec<Arc<User>>>> {
         let client = self.client.clone();
         cx.spawn(|this, mut cx| async move {
@@ -752,7 +774,8 @@ impl UserStore {
     pub fn set_participant_indices(
         &mut self,
         participant_indices: HashMap<u64, ParticipantIndex>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if participant_indices != self.participant_indices {
             self.participant_indices = participant_indices;

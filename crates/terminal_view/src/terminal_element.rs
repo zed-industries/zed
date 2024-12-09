@@ -3,9 +3,9 @@ use gpui::{
     div, fill, point, px, relative, size, AnyElement, AvailableSpace, Bounds, ContentMask,
     DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId,
     HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
-    Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle, View, WeakView, WhiteSpace, WindowTextSystem,
+    LayoutId, Model, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UTF16Selection,
+    UnderlineStyle, View, WeakView, WhiteSpace, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -419,7 +419,7 @@ impl TerminalElement {
         connection: Model<Terminal>,
         origin: Point<Pixels>,
         focus_handle: FocusHandle,
-        f: impl Fn(&mut Terminal, Point<Pixels>, &E, &mut ModelContext<Terminal>),
+        f: impl Fn(&mut Terminal, Point<Pixels>, &E, &Model<Terminal>, &mut AppContext),
     ) -> impl Fn(&E, &mut gpui::Window, &mut gpui::AppContext) {
         move |event, cx| {
             cx.focus(&focus_handle);

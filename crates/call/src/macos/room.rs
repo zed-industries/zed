@@ -11,9 +11,7 @@ use client::{
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
-use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
-};
+use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, Task, WeakModel};
 use language::LanguageRegistry;
 use livekit_client_macos::{LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RoomUpdate};
 use postage::{sink::Sink, stream::Stream, watch};
@@ -110,7 +108,8 @@ impl Room {
         live_kit_connection_info: Option<proto::LiveKitConnectionInfo>,
         client: Arc<Client>,
         user_store: Model<UserStore>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let live_kit_room = if let Some(connection_info) = live_kit_connection_info {
             let room = livekit_client_macos::Room::new();
@@ -310,7 +309,11 @@ impl Room {
         }
     }
 
-    fn app_will_quit(&mut self, cx: &mut ModelContext<Self>) -> impl Future<Output = ()> {
+    fn app_will_quit(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> impl Future<Output = ()> {
         let task = if self.status.is_online() {
             let leave = self.leave_internal(cx);
             Some(cx.background_executor().spawn(async move {
@@ -364,7 +367,7 @@ impl Room {
             && self.pending_call_count == 0
     }
 
-    pub(crate) fn leave(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub(crate) fn leave(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         cx.notify();
         self.leave_internal(cx)
     }
@@ -500,7 +503,7 @@ impl Room {
         ))
     }
 
-    fn rejoin(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn rejoin(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         let mut projects = HashMap::default();
         let mut reshared_projects = Vec::new();
         let mut rejoined_projects = Vec::new();
@@ -626,7 +629,8 @@ impl Room {
         &mut self,
         user_id: u64,
         role: proto::ChannelRole,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         let room_id = self.id;
@@ -709,7 +713,8 @@ impl Room {
     fn apply_room_update(
         &mut self,
         mut room: proto::Room,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         // Filter ourselves out from the room's participants.
         let local_participant_ix = room
@@ -979,7 +984,8 @@ impl Room {
     fn live_kit_room_updated(
         &mut self,
         update: RoomUpdate,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         match update {
             RoomUpdate::SubscribedToRemoteVideoTrack(track) => {
@@ -1132,7 +1138,8 @@ impl Room {
         &mut self,
         called_user_id: u64,
         initial_project_id: Option<u64>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
@@ -1166,7 +1173,8 @@ impl Room {
         id: u64,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
@@ -1192,7 +1200,8 @@ impl Room {
     pub fn share_project(
         &mut self,
         project: Model<Project>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<u64>> {
         if let Some(project_id) = project.read(cx).remote_id() {
             return Task::ready(Ok(project_id));
@@ -1230,7 +1239,8 @@ impl Room {
     pub(crate) fn unshare_project(
         &mut self,
         project: Model<Project>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         let project_id = match project.read(cx).remote_id() {
             Some(project_id) => project_id,
@@ -1249,7 +1259,8 @@ impl Room {
     pub(crate) fn set_location(
         &mut self,
         project: Option<&Model<Project>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
@@ -1334,7 +1345,11 @@ impl Room {
     }
 
     #[track_caller]
-    pub fn share_microphone(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn share_microphone(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         }
@@ -1410,7 +1425,7 @@ impl Room {
         })
     }
 
-    pub fn share_screen(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn share_screen(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         } else if self.is_screen_sharing() {
@@ -1491,7 +1506,7 @@ impl Room {
         })
     }
 
-    pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn toggle_mute(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(live_kit) = self.live_kit.as_mut() {
             // When unmuting, undeafen if the user was deafened before.
             let was_deafened = live_kit.deafened;
@@ -1519,7 +1534,7 @@ impl Room {
         }
     }
 
-    pub fn toggle_deafen(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn toggle_deafen(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(live_kit) = self.live_kit.as_mut() {
             // When deafening, mute the microphone if it was not already muted.
             // When un-deafening, unmute the microphone, unless it was explicitly muted.
@@ -1539,7 +1554,7 @@ impl Room {
         }
     }
 
-    pub fn unshare_screen(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+    pub fn unshare_screen(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Result<()> {
         if self.status.is_offline() {
             return Err(anyhow!("room is offline"));
         }
@@ -1569,7 +1584,8 @@ impl Room {
     fn set_deafened(
         &mut self,
         deafened: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         let live_kit = self.live_kit.as_mut()?;
         cx.notify();
@@ -1603,7 +1619,8 @@ impl Room {
     fn set_mute(
         &mut self,
         should_mute: bool,
-        cx: &mut ModelContext<Room>,
+        model: &Model<Room>,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         let live_kit = self.live_kit.as_mut()?;
         cx.notify();
@@ -1654,7 +1671,7 @@ struct LiveKitRoom {
 }
 
 impl LiveKitRoom {
-    fn stop_publishing(&mut self, cx: &mut ModelContext<Room>) {
+    fn stop_publishing(&mut self, model: &Model<Room>, cx: &mut AppContext) {
         if let LocalTrack::Published {
             track_publication, ..
         } = mem::replace(&mut self.microphone_track, LocalTrack::None)

@@ -6,8 +6,8 @@ use collections::BTreeMap;
 use futures::Future;
 use git::diff::DiffHunkStatus;
 use gpui::{
-    AnyWindowHandle, AppContext, Keystroke, ModelContext, Pixels, Point, View, ViewContext,
-    VisualTestContext, WindowHandle,
+    AnyWindowHandle, AppContext, Keystroke, Pixels, Point, View, ViewContext, VisualTestContext,
+    WindowHandle,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
@@ -164,7 +164,7 @@ impl EditorTestContext {
 
     pub fn update_multibuffer<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut MultiBuffer, &mut ModelContext<MultiBuffer>) -> T,
+        F: FnOnce(&mut MultiBuffer, &Model<MultiBuffer>, &mut AppContext) -> T,
     {
         self.update_editor(|editor, cx| editor.buffer().update(cx, update))
     }
@@ -201,7 +201,7 @@ impl EditorTestContext {
 
     pub fn update_buffer<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Buffer, &mut ModelContext<Buffer>) -> T,
+        F: FnOnce(&mut Buffer, &Model<Buffer>, &mut AppContext) -> T,
     {
         self.update_multibuffer(|multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap();

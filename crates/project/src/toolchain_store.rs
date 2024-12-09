@@ -5,8 +5,7 @@ use anyhow::{bail, Result};
 use async_trait::async_trait;
 use collections::BTreeMap;
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Subscription, Task,
-    WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, Subscription, Task, WeakModel,
 };
 use language::{LanguageName, LanguageRegistry, LanguageToolchainStore, Toolchain, ToolchainList};
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
@@ -33,7 +32,8 @@ impl ToolchainStore {
         languages: Arc<LanguageRegistry>,
         worktree_store: Model<WorktreeStore>,
         project_environment: Model<ProjectEnvironment>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let model = cx.new_model(|_| LocalToolchainStore {
             languages,
@@ -273,7 +273,8 @@ impl LocalToolchainStore {
         &self,
         worktree_id: WorktreeId,
         toolchain: Toolchain,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Option<()>> {
         cx.spawn(move |this, mut cx| async move {
             this.update(&mut cx, |this, cx| {

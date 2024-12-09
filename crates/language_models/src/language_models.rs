@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use client::{Client, UserStore};
 use fs::Fs;
-use gpui::{AppContext, Model, ModelContext};
+use gpui::{AppContext, Model};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 
 mod logging;
@@ -35,7 +35,8 @@ fn register_language_model_providers(
     registry: &mut LanguageModelRegistry,
     user_store: Model<UserStore>,
     client: Arc<Client>,
-    cx: &mut ModelContext<LanguageModelRegistry>,
+    model: &Model<LanguageModelRegistry>,
+    cx: &mut AppContext,
 ) {
     use feature_flags::FeatureFlagAppExt;
 

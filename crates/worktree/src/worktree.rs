@@ -24,10 +24,7 @@ use git::{
     status::GitStatus,
     COOKIES, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE,
 };
-use gpui::{
-    AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter, Model, ModelContext,
-    Task,
-};
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter, Model, Task};
 use ignore::IgnoreStack;
 use language::DiskState;
 use parking_lot::Mutex;
@@ -400,7 +397,7 @@ impl Worktree {
 
         let root_file_handle = fs.open_handle(&abs_path).await.log_err();
 
-        cx.new_model(move |cx: &mut ModelContext<Worktree>| {
+        cx.new_model(move |model: &Model<Worktree>, cx: &mut AppContext| {
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
@@ -473,7 +470,7 @@ impl Worktree {
         client: AnyProtoClient,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        cx.new_model(|cx: &mut ModelContext<Self>| {
+        cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
             let snapshot = Snapshot::new(
                 worktree.id,
                 worktree.root_name,
@@ -600,7 +597,7 @@ impl Worktree {
         !self.is_local()
     }
 
-    pub fn settings_location(&self, _: &ModelContext<Self>) -> SettingsLocation<'static> {
+    pub fn settings_location(&self, _&Model<Self>, : &AppContext) -> SettingsLocation<'static> {
         SettingsLocation {
             worktree_id: self.id(),
             path: Path::new(EMPTY_PATH),
@@ -658,7 +655,7 @@ impl Worktree {
         }
     }
 
-    pub fn root_file(&self, cx: &ModelContext<Self>) -> Option<Arc<File>> {
+    pub fn root_file(&self, model: &Model<Self>, cx: &AppContext) -> Option<Arc<File>> {
         let entry = self.root_entry()?;
         Some(File::for_entry(entry.clone(), cx.handle()))
     }
@@ -666,7 +663,8 @@ impl Worktree {
     pub fn observe_updates<F, Fut>(
         &mut self,
         project_id: u64,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
         callback: F,
     ) where
         F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
@@ -697,7 +695,12 @@ impl Worktree {
         }
     }
 
-    pub fn load_file(&self, path: &Path, cx: &ModelContext<Worktree>) -> Task<Result<LoadedFile>> {
+    pub fn load_file(
+        &self,
+        path: &Path,
+        model: &Model<Worktree>,
+        cx: &AppContext,
+    ) -> Task<Result<LoadedFile>> {
         match self {
             Worktree::Local(this) => this.load_file(path, cx),
             Worktree::Remote(_) => {
@@ -733,7 +736,8 @@ impl Worktree {
     pub fn load_binary_file(
         &self,
         path: &Path,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<LoadedBinaryFile>> {
         match self {
             Worktree::Local(this) => this.load_binary_file(path, cx),
@@ -748,7 +752,8 @@ impl Worktree {
         path: &Path,
         text: Rope,
         line_ending: LineEnding,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<Arc<File>>> {
         match self {
             Worktree::Local(this) => this.write_file(path, text, line_ending, cx),
@@ -762,7 +767,8 @@ impl Worktree {
         &mut self,
         path: impl Into<Arc<Path>>,
         is_directory: bool,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<CreatedEntry>> {
         let path = path.into();
         let worktree_id = self.id();
@@ -807,7 +813,8 @@ impl Worktree {
         &mut self,
         entry_id: ProjectEntryId,
         trash: bool,
-        cx: &mut ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         let task = match self {
             Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
@@ -842,7 +849,8 @@ impl Worktree {
         &mut self,
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Result<CreatedEntry>> {
         let new_path = new_path.into();
         match self {
@@ -856,7 +864,8 @@ impl Worktree {
         entry_id: ProjectEntryId,
         relative_worktree_source_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Result<Option<Entry>>> {
         let new_path = new_path.into();
         match self {
@@ -899,7 +908,8 @@ impl Worktree {
         target_directory: PathBuf,
         paths: Vec<Arc<Path>>,
         overwrite_existing_files: bool,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<Vec<ProjectEntryId>>> {
         match self {
             Worktree::Local(this) => {
@@ -914,7 +924,8 @@ impl Worktree {
     pub fn expand_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Option<Task<Result<()>>> {
         match self {
             Worktree::Local(this) => this.expand_entry(entry_id, cx),
@@ -1057,7 +1068,7 @@ impl LocalWorktree {
         !self.share_private_files && self.settings.is_path_private(path)
     }
 
-    fn restart_background_scanners(&mut self, cx: &ModelContext<Worktree>) {
+    fn restart_background_scanners(&mut self, model: &Model<Worktree>, cx: &AppContext) {
         let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
         let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
         self.scan_requests_tx = scan_requests_tx;
@@ -1079,7 +1090,8 @@ impl LocalWorktree {
         &mut self,
         scan_requests_rx: channel::Receiver<ScanRequest>,
         path_prefixes_to_scan_rx: channel::Receiver<Arc<Path>>,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) {
         let snapshot = self.snapshot();
         let share_private_files = self.share_private_files;
@@ -1180,7 +1192,8 @@ impl LocalWorktree {
         &mut self,
         new_snapshot: LocalSnapshot,
         entry_changes: UpdatedEntriesSet,
-        cx: &mut ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &mut AppContext,
     ) {
         let repo_changes = self.changed_repos(&self.snapshot, &new_snapshot);
         self.snapshot = new_snapshot;
@@ -1333,7 +1346,8 @@ impl LocalWorktree {
     fn load_binary_file(
         &self,
         path: &Path,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<LoadedBinaryFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
@@ -1378,7 +1392,12 @@ impl LocalWorktree {
         })
     }
 
-    fn load_file(&self, path: &Path, cx: &ModelContext<Worktree>) -> Task<Result<LoadedFile>> {
+    fn load_file(
+        &self,
+        path: &Path,
+        model: &Model<Worktree>,
+        cx: &AppContext,
+    ) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
@@ -1438,7 +1457,8 @@ impl LocalWorktree {
         &self,
         path: impl Into<Arc<Path>>,
         is_dir: bool,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<CreatedEntry>> {
         let path = path.into();
         let abs_path = match self.absolutize(&path) {
@@ -1503,7 +1523,8 @@ impl LocalWorktree {
         path: impl Into<Arc<Path>>,
         text: Rope,
         line_ending: LineEnding,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<Arc<File>>> {
         let path = path.into();
         let fs = self.fs.clone();
@@ -1558,7 +1579,8 @@ impl LocalWorktree {
         &self,
         entry_id: ProjectEntryId,
         trash: bool,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Option<Task<Result<()>>> {
         let entry = self.entry_for_id(entry_id)?.clone();
         let abs_path = self.absolutize(&entry.path);
@@ -1610,7 +1632,8 @@ impl LocalWorktree {
         &self,
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<CreatedEntry>> {
         let old_path = match self.entry_for_id(entry_id) {
             Some(entry) => entry.path.clone(),
@@ -1668,7 +1691,8 @@ impl LocalWorktree {
         entry_id: ProjectEntryId,
         relative_worktree_source_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<Option<Entry>>> {
         let old_path = match self.entry_for_id(entry_id) {
             Some(entry) => entry.path.clone(),
@@ -1709,7 +1733,8 @@ impl LocalWorktree {
         target_directory: PathBuf,
         paths: Vec<Arc<Path>>,
         overwrite_existing_files: bool,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<Vec<ProjectEntryId>>> {
         let worktree_path = self.abs_path().clone();
         let fs = self.fs.clone();
@@ -1788,7 +1813,8 @@ impl LocalWorktree {
     fn expand_entry(
         &self,
         entry_id: ProjectEntryId,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Option<Task<Result<()>>> {
         let path = self.entry_for_id(entry_id)?.path.clone();
         let mut refresh = self.refresh_entries_for_paths(vec![path]);
@@ -1817,7 +1843,8 @@ impl LocalWorktree {
         &self,
         path: Arc<Path>,
         old_path: Option<Arc<Path>>,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<Option<Entry>>> {
         if self.settings.is_path_excluded(&path) {
             return Task::ready(Ok(None));
@@ -1841,8 +1868,13 @@ impl LocalWorktree {
         })
     }
 
-    fn observe_updates<F, Fut>(&mut self, project_id: u64, cx: &ModelContext<Worktree>, callback: F)
-    where
+    fn observe_updates<F, Fut>(
+        &mut self,
+        project_id: u64,
+        model: &Model<Worktree>,
+        cx: &AppContext,
+        callback: F,
+    ) where
         F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
         Fut: Send + Future<Output = bool>,
     {
@@ -1896,7 +1928,7 @@ impl LocalWorktree {
         });
     }
 
-    pub fn share_private_files(&mut self, cx: &ModelContext<Worktree>) {
+    pub fn share_private_files(&mut self, model: &Model<Worktree>, cx: &AppContext) {
         self.share_private_files = true;
         self.restart_background_scanners(cx);
     }
@@ -1925,8 +1957,13 @@ impl RemoteWorktree {
         }
     }
 
-    fn observe_updates<F, Fut>(&mut self, project_id: u64, cx: &ModelContext<Worktree>, callback: F)
-    where
+    fn observe_updates<F, Fut>(
+        &mut self,
+        project_id: u64,
+        model: &Model<Worktree>,
+        cx: &AppContext,
+        callback: F,
+    ) where
         F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
         Fut: 'static + Send + Future<Output = bool>,
     {
@@ -1991,7 +2028,8 @@ impl RemoteWorktree {
         &mut self,
         entry: proto::Entry,
         scan_id: usize,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<Entry>> {
         let wait_for_snapshot = self.wait_for_snapshot(scan_id);
         cx.spawn(|this, mut cx| async move {
@@ -2010,7 +2048,8 @@ impl RemoteWorktree {
         &self,
         entry_id: ProjectEntryId,
         trash: bool,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Option<Task<Result<()>>> {
         let response = self.client.request(proto::DeleteProjectEntry {
             project_id: self.project_id,
@@ -2039,7 +2078,8 @@ impl RemoteWorktree {
         &self,
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
-        cx: &ModelContext<Worktree>,
+        model: &Model<Worktree>,
+        cx: &AppContext,
     ) -> Task<Result<CreatedEntry>> {
         let new_path = new_path.into();
         let response = self.client.request(proto::RenameProjectEntry {

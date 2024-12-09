@@ -15,8 +15,8 @@ use futures::StreamExt;
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
     FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement, KeyContext, Model,
-    ModelContext, ParentElement, Point, Render, SharedString, Styled, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WeakView,
+    ParentElement, Point, Render, SharedString, Styled, Subscription, Task, TextStyle,
+    UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WeakView,
 };
 use language::Buffer;
 use menu::Confirm;
@@ -175,7 +175,7 @@ pub struct ProjectSearchBar {
 }
 
 impl ProjectSearch {
-    pub fn new(project: Model<Project>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(project: Model<Project>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let capability = project.read(cx).capability();
 
         Self {
@@ -194,7 +194,7 @@ impl ProjectSearch {
         }
     }
 
-    fn clone(&self, cx: &mut ModelContext<Self>) -> Model<Self> {
+    fn clone(&self, model: &Model<Self>, cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|cx| Self {
             project: self.project.clone(),
             excerpts: self
@@ -227,7 +227,7 @@ impl ProjectSearch {
         }
     }
 
-    fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
+    fn search(&mut self, query: SearchQuery, model: &Model<Self>, cx: &mut AppContext) {
         let search = self.project.update(cx, |project, cx| {
             project
                 .search_history_mut(SearchInputKind::Query)

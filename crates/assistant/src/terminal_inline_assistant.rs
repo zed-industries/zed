@@ -13,8 +13,8 @@ use editor::{
 use fs::Fs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
-    AppContext, Context, EventEmitter, FocusHandle, FocusableView, Global, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
+    AppContext, Context, EventEmitter, FocusHandle, FocusableView, Global, Model, Subscription,
+    Task, TextStyle, UpdateGlobal, View, WeakView,
 };
 use language::Buffer;
 use language_model::{
@@ -91,7 +91,8 @@ impl TerminalInlineAssistant {
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
         initial_prompt: Option<String>,
-        window: &mut gpui::Window, cx: &mut gpui::AppContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
@@ -135,7 +136,12 @@ impl TerminalInlineAssistant {
         self.focus_assist(assist_id, cx);
     }
 
-    fn focus_assist(&mut self, assist_id: TerminalInlineAssistId, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
+    fn focus_assist(
+        &mut self,
+        assist_id: TerminalInlineAssistId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let assist = &self.assists[&assist_id];
         if let Some(prompt_editor) = assist.prompt_editor.as_ref() {
             prompt_editor.update(cx, |this, cx| {
@@ -151,7 +157,8 @@ impl TerminalInlineAssistant {
         &mut self,
         prompt_editor: View<PromptEditor>,
         event: &PromptEditorEvent,
-        window: &mut gpui::Window, cx: &mut gpui::AppContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         let assist_id = prompt_editor.read(cx).id;
         match event {
@@ -176,7 +183,12 @@ impl TerminalInlineAssistant {
         }
     }
 
-    fn start_assist(&mut self, assist_id: TerminalInlineAssistId, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
+    fn start_assist(
+        &mut self,
+        assist_id: TerminalInlineAssistId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -214,7 +226,12 @@ impl TerminalInlineAssistant {
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
     }
 
-    fn stop_assist(&mut self, assist_id: TerminalInlineAssistId, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
+    fn stop_assist(
+        &mut self,
+        assist_id: TerminalInlineAssistId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
+    ) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -227,7 +244,8 @@ impl TerminalInlineAssistant {
     fn request_for_inline_assist(
         &self,
         assist_id: TerminalInlineAssistId,
-        window: &mut gpui::Window, cx: &mut gpui::AppContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Result<LanguageModelRequest> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
@@ -297,7 +315,8 @@ impl TerminalInlineAssistant {
         assist_id: TerminalInlineAssistId,
         undo: bool,
         execute: bool,
-        window: &mut gpui::Window, cx: &mut gpui::AppContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         self.dismiss_assist(assist_id, cx);
 
@@ -349,7 +368,8 @@ impl TerminalInlineAssistant {
     fn dismiss_assist(
         &mut self,
         assist_id: TerminalInlineAssistId,
-        window: &mut gpui::Window, cx: &mut gpui::AppContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> bool {
         let Some(assist) = self.assists.get_mut(&assist_id) else {
             return false;
@@ -371,7 +391,8 @@ impl TerminalInlineAssistant {
         &mut self,
         assist_id: TerminalInlineAssistId,
         height: u8,
-        window: &mut gpui::Window, cx: &mut gpui::AppContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) {
         if let Some(assist) = self.assists.get_mut(&assist_id) {
             if let Some(prompt_editor) = assist.prompt_editor.as_ref().cloned() {
@@ -407,7 +428,8 @@ impl TerminalInlineAssist {
         include_context: bool,
         prompt_editor: View<PromptEditor>,
         workspace: Option<WeakView<Workspace>>,
-        window: &mut gpui::Window, cx: &mut gpui::AppContext,
+        window: &mut gpui::Window,
+        cx: &mut gpui::AppContext,
     ) -> Self {
         let codegen = prompt_editor.read(cx).codegen.clone();
         Self {
@@ -1079,7 +1101,7 @@ impl Codegen {
         }
     }
 
-    pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
+    pub fn start(&mut self, prompt: LanguageModelRequest, model: &Model<Self>, cx: &mut AppContext) {
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
         };
@@ -1179,20 +1201,20 @@ impl Codegen {
         cx.notify();
     }
 
-    pub fn stop(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn stop(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.status = CodegenStatus::Done;
         self.generation = Task::ready(());
         cx.emit(CodegenEvent::Finished);
         cx.notify();
     }
 
-    pub fn complete(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn complete(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(transaction) = self.transaction.take() {
             transaction.complete(cx);
         }
     }
 
-    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn undo(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(transaction) = self.transaction.take() {
             transaction.undo(cx);
         }

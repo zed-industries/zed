@@ -6,7 +6,7 @@ use git::{
     blame::{Blame, BlameEntry},
     parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
 };
-use gpui::{Model, ModelContext, Subscription, Task};
+use gpui::{Model, Subscription, Task};
 use http_client::HttpClient;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
 use multi_buffer::MultiBufferRow;
@@ -118,7 +118,8 @@ impl GitBlame {
         project: Model<Project>,
         user_triggered: bool,
         focused: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let entries = SumTree::from_item(
             GitBlameEntry {
@@ -195,7 +196,8 @@ impl GitBlame {
     pub fn blame_for_rows<'a>(
         &'a mut self,
         rows: impl 'a + IntoIterator<Item = Option<MultiBufferRow>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
 
@@ -207,7 +209,7 @@ impl GitBlame {
         })
     }
 
-    pub fn max_author_length(&mut self, cx: &mut ModelContext<Self>) -> usize {
+    pub fn max_author_length(&mut self, model: &Model<Self>, cx: &mut AppContext) -> usize {
         self.sync(cx);
 
         let mut max_author_length = 0;
@@ -228,11 +230,11 @@ impl GitBlame {
         max_author_length
     }
 
-    pub fn blur(&mut self, _: &mut ModelContext<Self>) {
+    pub fn blur(&mut self, _: &Model<Self>, _: &mut AppContext) {
         self.focused = false;
     }
 
-    pub fn focus(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn focus(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.focused = true;
         if self.changed_while_blurred {
             self.changed_while_blurred = false;
@@ -240,7 +242,7 @@ impl GitBlame {
         }
     }
 
-    fn sync(&mut self, cx: &mut ModelContext<Self>) {
+    fn sync(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let edits = self.buffer_edits.consume();
         let new_snapshot = self.buffer.read(cx).snapshot();
 
@@ -343,7 +345,7 @@ impl GitBlame {
     }
 
     #[cfg(test)]
-    fn check_invariants(&mut self, cx: &mut ModelContext<Self>) {
+    fn check_invariants(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.sync(cx);
         assert_eq!(
             self.entries.summary().rows,
@@ -351,7 +353,7 @@ impl GitBlame {
         );
     }
 
-    fn generate(&mut self, cx: &mut ModelContext<Self>) {
+    fn generate(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if !self.focused {
             self.changed_while_blurred = true;
             return;
@@ -423,7 +425,7 @@ impl GitBlame {
         });
     }
 
-    fn regenerate_on_edit(&mut self, cx: &mut ModelContext<Self>) {
+    fn regenerate_on_edit(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.regenerate_on_edit_task = cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)

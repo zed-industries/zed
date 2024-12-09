@@ -4,8 +4,8 @@ use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use google_ai::stream_generate_content;
 use gpui::{
-    AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
-    View, WhiteSpace,
+    AnyView, AppContext, AsyncAppContext, FontStyle, Subscription, Task, TextStyle, View,
+    WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::LanguageModelCompletionEvent;
@@ -59,7 +59,7 @@ impl State {
         self.api_key.is_some()
     }
 
-    fn reset_api_key(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn reset_api_key(&self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         let delete_credentials =
             cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).google.api_url);
         cx.spawn(|this, mut cx| async move {
@@ -72,7 +72,12 @@ impl State {
         })
     }
 
-    fn set_api_key(&mut self, api_key: String, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn set_api_key(
+        &mut self,
+        api_key: String,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Task<Result<()>> {
         let settings = &AllLanguageModelSettings::get_global(cx).google;
         let write_credentials =
             cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
@@ -86,7 +91,7 @@ impl State {
         })
     }
 
-    fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn authenticate(&self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         if self.is_authenticated() {
             Task::ready(Ok(()))
         } else {

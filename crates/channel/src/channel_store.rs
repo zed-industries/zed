@@ -7,8 +7,8 @@ use client::{ChannelId, Client, ClientSettings, Subscription, User, UserId, User
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, SharedString,
-    Task, WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, SharedString, Task,
+    WeakModel,
 };
 use language::Capability;
 use rpc::{
@@ -160,7 +160,8 @@ impl ChannelStore {
     pub fn new(
         client: Arc<Client>,
         user_store: Model<UserStore>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let rpc_subscriptions = [
             client.add_message_handler(cx.weak_model(), Self::handle_update_channels),
@@ -307,7 +308,8 @@ impl ChannelStore {
     pub fn open_channel_buffer(
         &mut self,
         channel_id: ChannelId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<ChannelBuffer>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
@@ -323,7 +325,8 @@ impl ChannelStore {
     pub fn fetch_channel_messages(
         &self,
         message_ids: Vec<u64>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<ChannelMessage>>> {
         let request = if message_ids.is_empty() {
             None
@@ -384,7 +387,8 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         message_id: u64,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.channel_states
             .entry(channel_id)
@@ -397,7 +401,8 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         message_id: u64,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.channel_states
             .entry(channel_id)
@@ -411,7 +416,8 @@ impl ChannelStore {
         channel_id: ChannelId,
         epoch: u64,
         version: &clock::Global,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.channel_states
             .entry(channel_id)
@@ -425,7 +431,8 @@ impl ChannelStore {
         channel_id: ChannelId,
         epoch: u64,
         version: &clock::Global,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.channel_states
             .entry(channel_id)
@@ -437,7 +444,8 @@ impl ChannelStore {
     pub fn open_channel_chat(
         &mut self,
         channel_id: ChannelId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<ChannelChat>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
@@ -460,7 +468,8 @@ impl ChannelStore {
         channel_id: ChannelId,
         get_map: fn(&mut Self) -> &mut HashMap<ChannelId, OpenedModelHandle<T>>,
         load: F,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<T>>>
     where
         F: 'static + FnOnce(Arc<Channel>, AsyncAppContext) -> Fut,
@@ -572,7 +581,8 @@ impl ChannelStore {
         &self,
         name: &str,
         parent_id: Option<ChannelId>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<ChannelId>> {
         let client = self.client.clone();
         let name = name.trim_start_matches('#').to_owned();
@@ -614,7 +624,8 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         to: ChannelId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(move |_, _| async move {
@@ -633,7 +644,8 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         visibility: ChannelVisibility,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(move |_, _| async move {
@@ -653,7 +665,8 @@ impl ChannelStore {
         channel_id: ChannelId,
         user_id: UserId,
         role: proto::ChannelRole,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         if !self.outgoing_invites.insert((channel_id, user_id)) {
             return Task::ready(Err(anyhow!("invite request already in progress")));
@@ -685,7 +698,8 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         user_id: u64,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         if !self.outgoing_invites.insert((channel_id, user_id)) {
             return Task::ready(Err(anyhow!("invite request already in progress")));
@@ -715,7 +729,8 @@ impl ChannelStore {
         channel_id: ChannelId,
         user_id: UserId,
         role: proto::ChannelRole,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         if !self.outgoing_invites.insert((channel_id, user_id)) {
             return Task::ready(Err(anyhow!("member request already in progress")));
@@ -746,7 +761,8 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         new_name: &str,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         let name = new_name.to_string();
@@ -783,7 +799,8 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         accept: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.background_executor().spawn(async move {
@@ -801,7 +818,8 @@ impl ChannelStore {
         channel_id: ChannelId,
         query: String,
         limit: u16,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<ChannelMembership>>> {
         let client = self.client.clone();
         let user_store = self.user_store.downgrade();
@@ -896,7 +914,7 @@ impl ChannelStore {
         })
     }
 
-    fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn handle_connect(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         self.channel_index.clear();
         self.channel_invitations.clear();
         self.channel_participants.clear();
@@ -1011,7 +1029,12 @@ impl ChannelStore {
         })
     }
 
-    fn handle_disconnect(&mut self, wait_for_reconnect: bool, cx: &mut ModelContext<Self>) {
+    fn handle_disconnect(
+        &mut self,
+        wait_for_reconnect: bool,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         cx.notify();
         self.did_subscribe = false;
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {
@@ -1039,7 +1062,8 @@ impl ChannelStore {
     pub(crate) fn update_channels(
         &mut self,
         payload: proto::UpdateChannels,
-        cx: &mut ModelContext<ChannelStore>,
+        model: &Model<ChannelStore>,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         if !payload.remove_channel_invitations.is_empty() {
             self.channel_invitations

@@ -12,7 +12,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
     actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
-    ModelContext, Task, WeakModel,
+    Task, WeakModel,
 };
 use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
@@ -210,7 +210,8 @@ impl RegisteredBuffer {
     fn report_changes(
         &mut self,
         buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Copilot>,
+        model: &Model<Copilot>,
+        cx: &mut AppContext,
     ) -> oneshot::Receiver<(i32, BufferSnapshot)> {
         let (done_tx, done_rx) = oneshot::channel();
 
@@ -335,7 +336,8 @@ impl Copilot {
         new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let mut this = Self {
             server_id: new_server_id,
@@ -353,7 +355,8 @@ impl Copilot {
 
     fn shutdown_language_server(
         &mut self,
-        _cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        _cx: &mut AppContext,
     ) -> impl Future<Output = ()> {
         let shutdown = match mem::replace(&mut self.server, CopilotServer::Disabled) {
             CopilotServer::Running(server) => Some(Box::pin(async move { server.lsp.shutdown() })),
@@ -367,7 +370,7 @@ impl Copilot {
         }
     }
 
-    fn enable_or_disable_copilot(&mut self, cx: &mut ModelContext<Self>) {
+    fn enable_or_disable_copilot(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
@@ -506,7 +509,7 @@ impl Copilot {
         .ok();
     }
 
-    pub fn sign_in(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn sign_in(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
                 SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
@@ -591,7 +594,7 @@ impl Copilot {
         }
     }
 
-    pub fn sign_out(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn sign_out(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
             let server = server.clone();
@@ -606,7 +609,7 @@ impl Copilot {
         }
     }
 
-    pub fn reinstall(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
+    pub fn reinstall(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<()> {
         let start_task = cx
             .spawn({
                 let http = self.http.clone();
@@ -636,7 +639,12 @@ impl Copilot {
         }
     }
 
-    pub fn register_buffer(&mut self, buffer: &Model<Buffer>, cx: &mut ModelContext<Self>) {
+    pub fn register_buffer(
+        &mut self,
+        buffer: &Model<Buffer>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let weak_buffer = buffer.downgrade();
         self.buffers.insert(weak_buffer.clone());
 
@@ -694,7 +702,8 @@ impl Copilot {
         &mut self,
         buffer: Model<Buffer>,
         event: &language::BufferEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         if let Ok(server) = self.server.as_running() {
             if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.entity_id())
@@ -772,7 +781,8 @@ impl Copilot {
         &mut self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<Completion>>>
     where
         T: ToPointUtf16,
@@ -784,7 +794,8 @@ impl Copilot {
         &mut self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<Completion>>>
     where
         T: ToPointUtf16,
@@ -795,7 +806,8 @@ impl Copilot {
     pub fn accept_completion(
         &mut self,
         completion: &Completion,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
@@ -816,7 +828,8 @@ impl Copilot {
     pub fn discard_completions(
         &mut self,
         completions: &[Completion],
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
@@ -841,7 +854,8 @@ impl Copilot {
         &mut self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<Completion>>>
     where
         R: 'static
@@ -933,7 +947,8 @@ impl Copilot {
     fn update_sign_in_status(
         &mut self,
         lsp_status: request::SignInStatus,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.buffers.retain(|buffer| buffer.is_upgradable());
 

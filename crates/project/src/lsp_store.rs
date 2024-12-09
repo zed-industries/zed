@@ -25,8 +25,7 @@ use futures::{
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
-    AppContext, AsyncAppContext, Entity, EventEmitter, Model, ModelContext, PromptLevel, Task,
-    WeakModel,
+    AppContext, AsyncAppContext, Entity, EventEmitter, Model, PromptLevel, Task, WeakModel,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -155,7 +154,8 @@ pub struct LocalLspStore {
 impl LocalLspStore {
     fn shutdown_language_servers(
         &mut self,
-        _cx: &mut ModelContext<LspStore>,
+        model: &Model<LspStore>,
+        _cx: &mut AppContext,
     ) -> impl Future<Output = ()> {
         let shutdown_futures = self
             .language_servers
@@ -878,7 +878,8 @@ impl LspStore {
         languages: Arc<LanguageRegistry>,
         http_client: Arc<dyn HttpClient>,
         fs: Arc<dyn Fs>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let yarn = YarnPathStore::new(fs.clone(), cx);
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
@@ -941,7 +942,8 @@ impl LspStore {
         client: AnyProtoClient,
         upstream_project_id: u64,
         request: R,
-        cx: &mut ModelContext<'_, LspStore>,
+        model: &Model<_>,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<<R as LspCommand>::Response>> {
         let message = request.to_proto(upstream_project_id, buffer.read(cx));
         cx.spawn(move |this, cx| async move {
@@ -960,7 +962,8 @@ impl LspStore {
         languages: Arc<LanguageRegistry>,
         upstream_client: AnyProtoClient,
         project_id: u64,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
             .detach();
@@ -997,7 +1000,8 @@ impl LspStore {
     fn worktree_for_id(
         &self,
         worktree_id: WorktreeId,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Result<Model<Worktree>> {
         self.worktree_store
             .read(cx)
@@ -1009,7 +1013,8 @@ impl LspStore {
         &mut self,
         _: Model<BufferStore>,
         event: &BufferStoreEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
@@ -1030,7 +1035,8 @@ impl LspStore {
         &mut self,
         _: Model<WorktreeStore>,
         event: &WorktreeStoreEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             WorktreeStoreEvent::WorktreeAdded(worktree) => {
@@ -1059,7 +1065,8 @@ impl LspStore {
         &mut self,
         _: Model<PrettierStore>,
         event: &PrettierStoreEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             PrettierStoreEvent::LanguageServerRemoved(prettier_server_id) => {
@@ -1084,7 +1091,8 @@ impl LspStore {
         &mut self,
         _: Model<ToolchainStore>,
         event: &ToolchainStoreEvent,
-        _: &mut ModelContext<Self>,
+        _: &Model<Self>,
+        _: &mut AppContext,
     ) {
         match event {
             ToolchainStoreEvent::ToolchainActivated { .. } => {
@@ -1105,7 +1113,8 @@ impl LspStore {
         &mut self,
         buffer: Model<Buffer>,
         event: &language::BufferEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             language::BufferEvent::Edited { .. } => {
@@ -1123,7 +1132,8 @@ impl LspStore {
     fn register_buffer(
         &mut self,
         buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         buffer.update(cx, |buffer, _| {
             buffer.set_language_registry(self.languages.clone())
@@ -1159,7 +1169,8 @@ impl LspStore {
 
     fn maintain_buffer_languages(
         languages: Arc<LanguageRegistry>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<()> {
         let mut subscription = languages.subscribe();
         let mut prev_reload_count = languages.reload_count();
@@ -1218,7 +1229,8 @@ impl LspStore {
     fn detect_language_for_buffer(
         &mut self,
         buffer_handle: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<language::AvailableLanguage> {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
@@ -1248,7 +1260,8 @@ impl LspStore {
         &mut self,
         buffer: &Model<Buffer>,
         new_language: Arc<Language>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         buffer.update(cx, |buffer, cx| {
             if buffer.language().map_or(true, |old_language| {
@@ -1325,7 +1338,8 @@ impl LspStore {
         buffer_handle: Model<Buffer>,
         server: LanguageServerToQuery,
         request: R,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<R::Response>>
     where
         <R::LspRequest as lsp::request::Request>::Result: Send,
@@ -1428,7 +1442,7 @@ impl LspStore {
         Task::ready(Ok(Default::default()))
     }
 
-    fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
+    fn on_settings_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let mut language_servers_to_start = Vec::new();
         let mut language_formatters_to_check = Vec::new();
         for buffer in self.buffer_store.read(cx).buffers() {
@@ -1621,7 +1635,8 @@ impl LspStore {
         buffer_handle: Model<Buffer>,
         mut action: CodeAction,
         push_to_history: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<ProjectTransaction>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = proto::ApplyCodeAction {
@@ -1707,7 +1722,8 @@ impl LspStore {
         hint: InlayHint,
         buffer_handle: Model<Buffer>,
         server_id: LanguageServerId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<InlayHint>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = proto::ResolveInlayHint {
@@ -1766,7 +1782,8 @@ impl LspStore {
         &self,
         buffer: &Model<Buffer>,
         position: Anchor,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<Range<Anchor>>>> {
         let snapshot = buffer.read(cx).snapshot();
         let scope = snapshot.language_scope_at(position);
@@ -1817,7 +1834,8 @@ impl LspStore {
         buffer: Model<Buffer>,
         position: Anchor,
         trigger: String,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Option<Transaction>>> {
         if let Some((client, project_id)) = self.upstream_client() {
             let request = proto::OnTypeFormatting {
@@ -1874,7 +1892,8 @@ impl LspStore {
         position: T,
         trigger: String,
         push_to_history: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Option<Transaction>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.on_type_format_impl(buffer, position, trigger, push_to_history, cx)
@@ -1886,7 +1905,8 @@ impl LspStore {
         position: PointUtf16,
         trigger: String,
         push_to_history: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Option<Transaction>>> {
         let options = buffer.update(cx, |buffer, cx| {
             lsp_command::lsp_formatting_options(
@@ -2020,7 +2040,8 @@ impl LspStore {
         buffer_handle: &Model<Buffer>,
         range: Range<Anchor>,
         kinds: Option<Vec<CodeActionKind>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<CodeAction>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request_task = upstream_client.request(proto::MultiLspQuery {
@@ -2100,7 +2121,8 @@ impl LspStore {
         buffer: &Model<Buffer>,
         position: PointUtf16,
         context: CompletionContext,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<Completion>>> {
         let language_registry = self.languages.clone();
 
@@ -2200,7 +2222,8 @@ impl LspStore {
         buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<bool>> {
         let client = self.upstream_client();
         let language_registry = self.languages.clone();
@@ -2433,7 +2456,8 @@ impl LspStore {
         buffer_handle: Model<Buffer>,
         completion: Completion,
         push_to_history: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Option<Transaction>>> {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
@@ -2545,7 +2569,8 @@ impl LspStore {
         &mut self,
         buffer_handle: Model<Buffer>,
         range: Range<Anchor>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let buffer = buffer_handle.read(cx);
         let range_start = range.start;
@@ -2599,7 +2624,8 @@ impl LspStore {
         &self,
         buffer: &Model<Buffer>,
         position: T,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Vec<SignatureHelp>> {
         let position = position.to_point_utf16(buffer.read(cx));
 
@@ -2673,7 +2699,8 @@ impl LspStore {
         &self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Vec<Hover>> {
         if let Some((client, upstream_project_id)) = self.upstream_client() {
             let request_task = client.request(proto::MultiLspQuery {
@@ -2746,7 +2773,12 @@ impl LspStore {
         }
     }
 
-    pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
+    pub fn symbols(
+        &self,
+        query: &str,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<Symbol>>> {
         let language_registry = self.languages.clone();
 
         if let Some((upstream_client, project_id)) = self.upstream_client().as_ref() {
@@ -2972,7 +3004,8 @@ impl LspStore {
     pub fn on_buffer_edited(
         &mut self,
         buffer: Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<()> {
         let buffer = buffer.read(cx);
         let file = File::from_dyn(buffer.file())?;
@@ -3071,7 +3104,8 @@ impl LspStore {
     pub fn on_buffer_saved(
         &mut self,
         buffer: Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<()> {
         let file = File::from_dyn(buffer.read(cx).file())?;
         let worktree_id = file.worktree_id(cx);
@@ -3165,7 +3199,8 @@ impl LspStore {
     }
     fn maintain_workspace_config(
         external_refresh_requests: watch::Receiver<()>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
         let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
@@ -3225,7 +3260,12 @@ impl LspStore {
             })
     }
 
-    fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+    fn remove_worktree(
+        &mut self,
+        id_to_remove: WorktreeId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.diagnostics.remove(&id_to_remove);
         self.diagnostic_summaries.remove(&id_to_remove);
 
@@ -3268,7 +3308,8 @@ impl LspStore {
         &mut self,
         project_id: u64,
         downstream_client: AnyProtoClient,
-        _: &mut ModelContext<Self>,
+        _: &Model<Self>,
+        _: &mut AppContext,
     ) {
         self.downstream_client = Some((downstream_client.clone(), project_id));
 
@@ -3333,7 +3374,8 @@ impl LspStore {
     pub(crate) fn register_buffer_with_language_servers(
         &mut self,
         buffer_handle: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let available_language = self.detect_language_for_buffer(buffer_handle, cx);
 
@@ -3468,7 +3510,8 @@ impl LspStore {
         abs_path: PathBuf,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<(), anyhow::Error> {
         let Some((worktree, relative_path)) =
             self.worktree_store.read(cx).find_worktree(&abs_path, cx)
@@ -3510,7 +3553,7 @@ impl LspStore {
         server_id: LanguageServerId,
         worktree_path: Arc<Path>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
-        _: &mut ModelContext<Worktree>,
+        _: &Model<Worktree>, &mut AppContext,
     ) -> Result<bool> {
         let summaries_for_tree = self.diagnostic_summaries.entry(worktree_id).or_default();
         let diagnostics_for_tree = self.diagnostics.entry(worktree_id).or_default();
@@ -3568,7 +3611,8 @@ impl LspStore {
     pub fn open_buffer_for_symbol(
         &mut self,
         symbol: &Symbol,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         if let Some((client, project_id)) = self.upstream_client() {
             let request = client.request(proto::OpenBufferForSymbol {
@@ -3625,7 +3669,8 @@ impl LspStore {
         mut abs_path: lsp::Url,
         language_server_id: LanguageServerId,
         language_server_name: LanguageServerName,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         cx.spawn(move |lsp_store, mut cx| async move {
             // Escape percent-encoded string.
@@ -3713,7 +3758,8 @@ impl LspStore {
         server_id: LanguageServerId,
         version: Option<i32>,
         mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
             Ordering::Equal
@@ -3785,7 +3831,8 @@ impl LspStore {
         buffer: &Model<Buffer>,
         position: Option<P>,
         request: R,
-        cx: &mut ModelContext<'_, Self>,
+        model: &Model<_>,
+        cx: &mut AppContext,
     ) -> Task<Vec<R::Response>>
     where
         P: ToOffset,
@@ -4237,7 +4284,8 @@ impl LspStore {
     pub fn disk_based_diagnostics_started(
         &mut self,
         language_server_id: LanguageServerId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(language_server_status) =
             self.language_server_statuses.get_mut(&language_server_id)
@@ -4257,7 +4305,8 @@ impl LspStore {
     pub fn disk_based_diagnostics_finished(
         &mut self,
         language_server_id: LanguageServerId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(language_server_status) =
             self.language_server_statuses.get_mut(&language_server_id)
@@ -4282,7 +4331,8 @@ impl LspStore {
     fn simulate_disk_based_diagnostics_events_if_needed(
         &mut self,
         language_server_id: LanguageServerId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         const DISK_BASED_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_secs(1);
 
@@ -4477,7 +4527,8 @@ impl LspStore {
     fn rebuild_watched_paths(
         &mut self,
         language_server_id: LanguageServerId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let Some(watchers) = self.as_local().and_then(|local| {
             local
@@ -4503,7 +4554,8 @@ impl LspStore {
         &'a self,
         language_server_id: LanguageServerId,
         watchers: impl Iterator<Item = &'a FileSystemWatcher>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> LanguageServerWatchedPathsBuilder {
         let worktrees = self
             .worktree_store
@@ -4736,7 +4788,8 @@ impl LspStore {
         progress: lsp::ProgressParams,
         language_server_id: LanguageServerId,
         disk_based_diagnostics_progress_token: Option<String>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let token = match progress.token {
             lsp::NumberOrString::String(token) => token,
@@ -4825,7 +4878,8 @@ impl LspStore {
         language_server_id: LanguageServerId,
         token: String,
         progress: LanguageServerProgress,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             status.pending_work.insert(token.clone(), progress.clone());
@@ -4848,7 +4902,8 @@ impl LspStore {
         language_server_id: LanguageServerId,
         token: String,
         progress: LanguageServerProgress,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> bool {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             match status.pending_work.entry(token) {
@@ -4886,7 +4941,8 @@ impl LspStore {
         &mut self,
         language_server_id: LanguageServerId,
         token: String,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             if let Some(work) = status.pending_work.remove(&token) {
@@ -4908,7 +4964,8 @@ impl LspStore {
         language_server_id: LanguageServerId,
         registration_id: &str,
         params: DidChangeWatchedFilesRegistrationOptions,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(local) = self.as_local_mut() {
             let registrations = local
@@ -4926,7 +4983,8 @@ impl LspStore {
         &mut self,
         language_server_id: LanguageServerId,
         registration_id: &str,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(local) = self.as_local_mut() {
             let registrations = local
@@ -4959,7 +5017,8 @@ impl LspStore {
         lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
         server_id: LanguageServerId,
         version: Option<i32>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx);
         cx.background_executor().spawn(async move {
@@ -5376,7 +5435,8 @@ impl LspStore {
     fn buffer_ids_to_buffers(
         &mut self,
         buffer_ids: impl Iterator<Item = u64>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Vec<Model<Buffer>> {
         buffer_ids
             .into_iter()
@@ -5445,7 +5505,8 @@ impl LspStore {
     pub fn environment_for_buffer(
         &self,
         buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         let worktree_id = buffer.read(cx).file().map(|file| file.worktree_id(cx));
         let worktree_abs_path = worktree_id.and_then(|worktree_id| {
@@ -5470,7 +5531,8 @@ impl LspStore {
         push_to_history: bool,
         trigger: FormatTrigger,
         target: FormatTarget,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         if let Some(_) = self.as_local() {
             let buffers_with_paths = buffers
@@ -5588,7 +5650,8 @@ impl LspStore {
         &mut self,
         worktree: &Model<Worktree>,
         language: LanguageName,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let root_file = worktree
             .update(cx, |tree, cx| tree.root_file(cx))
@@ -5652,7 +5715,8 @@ impl LspStore {
         adapter: Arc<CachedLspAdapter>,
         delegate: Arc<dyn LspAdapterDelegate>,
         allow_binary_download: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<LanguageServerBinary>> {
         let settings = ProjectSettings::get(
             Some(SettingsLocation {
@@ -5718,7 +5782,8 @@ impl LspStore {
         worktree_handle: &Model<Worktree>,
         adapter: Arc<CachedLspAdapter>,
         language: LanguageName,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if self.mode.is_remote() {
             return;
@@ -5947,7 +6012,8 @@ impl LspStore {
         &mut self,
         worktree_id: WorktreeId,
         adapter_name: LanguageServerName,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Vec<WorktreeId>> {
         let key = (worktree_id, adapter_name);
         if self.mode.is_local() {
@@ -6043,7 +6109,8 @@ impl LspStore {
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: impl IntoIterator<Item = Model<Buffer>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some((client, project_id)) = self.upstream_client() {
             let request = client.request(proto::RestartLanguageServers {
@@ -6081,7 +6148,8 @@ impl LspStore {
         &mut self,
         worktree: Model<Worktree>,
         language: LanguageName,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let worktree_id = worktree.read(cx).id();
 
@@ -6623,7 +6691,8 @@ impl LspStore {
         language_server_id: LanguageServerId,
         mut params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &[String],
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         let abs_path = params
             .uri
@@ -6747,7 +6816,8 @@ impl LspStore {
         language_server: Arc<LanguageServer>,
         server_id: LanguageServerId,
         key: (WorktreeId, LanguageServerName),
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         // If the language server for this key doesn't match the server id, don't store the
         // server. Which will cause it to be dropped, killing the process
@@ -6967,7 +7037,8 @@ impl LspStore {
     pub(crate) fn cancel_language_server_work_for_buffers(
         &mut self,
         buffers: impl IntoIterator<Item = Model<Buffer>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some((client, project_id)) = self.upstream_client() {
             let request = client.request(proto::CancelLanguageServerWork {
@@ -7003,7 +7074,8 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         token_to_cancel: Option<String>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(local) = self.as_local() {
             let status = self.language_server_statuses.get(&server_id);
@@ -7070,7 +7142,8 @@ impl LspStore {
         id: LanguageServerId,
         name: LanguageServerName,
         server: Arc<LanguageServer>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(local) = self.as_local_mut() {
             local
@@ -7083,7 +7156,8 @@ impl LspStore {
     fn unregister_supplementary_language_server(
         &mut self,
         id: LanguageServerId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(local) = self.as_local_mut() {
             local.supplementary_language_servers.remove(&id);
@@ -7118,7 +7192,8 @@ impl LspStore {
         &mut self,
         worktree_handle: &Model<Worktree>,
         changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if changes.is_empty() {
             return;
@@ -7185,7 +7260,8 @@ impl LspStore {
     pub fn wait_for_remote_buffer(
         &mut self,
         id: BufferId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.wait_for_remote_buffer(id, cx)
@@ -7755,7 +7831,8 @@ impl LanguageServerWatchedPathsBuilder {
         self,
         fs: Arc<dyn Fs>,
         language_server_id: LanguageServerId,
-        cx: &mut ModelContext<LspStore>,
+        model: &Model<LspStore>,
+        cx: &mut AppContext,
     ) -> LanguageServerWatchedPaths {
         let project = cx.weak_model();
 
@@ -8102,7 +8179,8 @@ impl LocalLspAdapterDelegate {
     fn for_local(
         lsp_store: &LspStore,
         worktree: &Model<Worktree>,
-        cx: &mut ModelContext<LspStore>,
+        model: &Model<LspStore>,
+        cx: &mut AppContext,
     ) -> Arc<Self> {
         let local = lsp_store
             .as_local()
@@ -8118,7 +8196,8 @@ impl LocalLspAdapterDelegate {
         worktree: &Model<Worktree>,
         http_client: Arc<dyn HttpClient>,
         fs: Arc<dyn Fs>,
-        cx: &mut ModelContext<LspStore>,
+        model: &Model<LspStore>,
+        cx: &mut AppContext,
     ) -> Arc<Self> {
         let worktree_id = worktree.read(cx).id();
         let worktree_abs_path = worktree.read(cx).abs_path();

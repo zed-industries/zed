@@ -1,4 +1,4 @@
-use gpui::{AppContext, Model, ModelContext};
+use gpui::{AppContext, Model};
 use language::Buffer;
 use std::ops::Range;
 use text::{Anchor, Rope};
@@ -37,17 +37,24 @@ pub trait InlineCompletionProvider: 'static + Sized {
         buffer: Model<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     );
     fn cycle(
         &mut self,
         buffer: Model<Buffer>,
         cursor_position: language::Anchor,
         direction: Direction,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     );
-    fn accept(&mut self, cx: &mut ModelContext<Self>);
-    fn discard(&mut self, should_report_inline_completion_event: bool, cx: &mut ModelContext<Self>);
+    fn accept(&mut self, model: &Model<Self>, cx: &mut AppContext);
+    fn discard(
+        &mut self,
+        should_report_inline_completion_event: bool,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    );
     fn active_completion_text<'a>(
         &'a self,
         buffer: &Model<Buffer>,

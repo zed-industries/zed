@@ -5,7 +5,7 @@ use crate::{
 };
 use gpui::{
     px, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    IntoElement, Render, Subscription,
+    IntoElement, Render, Subscription, Window,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use std::{rc::Rc, time::Duration};
@@ -20,13 +20,13 @@ enum ContextMenuItem {
         label: SharedString,
         icon: Option<IconName>,
         icon_size: IconSize,
-        handler: Rc<dyn Fn(Option<&FocusHandle>, &mut gpui::Window, &mut gpui::AppContext)>,
+        handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut gpui::AppContext)>,
         action: Option<Box<dyn Action>>,
         disabled: bool,
     },
     CustomEntry {
-        entry_render: Box<dyn Fn(&mut gpui::Window, &mut gpui::AppContext) -> AnyElement>,
-        handler: Rc<dyn Fn(Option<&FocusHandle>, &mut gpui::Window, &mut gpui::AppContext)>,
+        entry_render: Box<dyn Fn(&mut Window, &mut gpui::AppContext) -> AnyElement>,
+        handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut gpui::AppContext)>,
         selectable: bool,
     },
 }
@@ -53,9 +53,9 @@ impl FluentBuilder for ContextMenu {}
 
 impl ContextMenu {
     pub fn build(
-        window: &mut gpui::Window,
+        window: &mut Window,
         cx: &mut gpui::AppContext,
-        f: impl FnOnce(Self, &mut gpui::Window, &mut gpui::ModelContext<Self>) -> Self,
+        f: impl FnOnce(Self, &mut Window, &Model<Self>, &mut AppContext) -> Self,
     ) -> gpui::Model<Self> {
         cx.new_model(|cx| {
             let focus_handle = window.focus_handle();
@@ -101,7 +101,7 @@ impl ContextMenu {
         mut self,
         label: impl Into<SharedString>,
         action: Option<Box<dyn Action>>,
-        handler: impl Fn(&mut gpui::Window, &mut gpui::AppContext) + 'static,
+        handler: impl Fn(&mut Window, &mut gpui::AppContext) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry {
             toggle: None,
@@ -121,7 +121,7 @@ impl ContextMenu {
         toggled: bool,
         position: IconPosition,
         action: Option<Box<dyn Action>>,
-        handler: impl Fn(&mut gpui::Window, &mut gpui::AppContext) + 'static,
+        handler: impl Fn(&mut Window, &mut gpui::AppContext) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry {
             toggle: Some((position, toggled)),
@@ -137,7 +137,7 @@ impl ContextMenu {
 
     pub fn custom_row(
         mut self,
-        entry_render: impl Fn(&mut gpui::Window, &mut gpui::AppContext) -> AnyElement + 'static,
+        entry_render: impl Fn(&mut Window, &mut gpui::AppContext) -> AnyElement + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::CustomEntry {
             entry_render: Box::new(entry_render),
@@ -149,8 +149,8 @@ impl ContextMenu {
 
     pub fn custom_entry(
         mut self,
-        entry_render: impl Fn(&mut gpui::Window, &mut gpui::AppContext) -> AnyElement + 'static,
-        handler: impl Fn(&mut gpui::Window, &mut gpui::AppContext) + 'static,
+        entry_render: impl Fn(&mut Window, &mut gpui::AppContext) -> AnyElement + 'static,
+        handler: impl Fn(&mut Window, &mut gpui::AppContext) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::CustomEntry {
             entry_render: Box::new(entry_render),
@@ -224,8 +224,9 @@ impl ContextMenu {
     pub fn confirm(
         &mut self,
         _: &menu::Confirm,
-        window: &mut gpui::Window,
-        cx: &mut gpui::ModelContext<Self>,
+        window: &mut Window,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let context = self.action_context.as_ref();
         if let Some(
@@ -247,7 +248,8 @@ impl ContextMenu {
         &mut self,
         _: &menu::Cancel,
         _window: &mut Window,
-        cx: &mut gpui::ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         cx.emit(DismissEvent);
         cx.emit(DismissEvent);
@@ -256,8 +258,9 @@ impl ContextMenu {
     fn select_first(
         &mut self,
         _: &SelectFirst,
-        window: &mut gpui::Window,
-        cx: &mut gpui::ModelContext<Self>,
+        window: &mut Window,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.selected_index = self.items.iter().position(|item| item.is_selectable());
         cx.notify();
@@ -276,8 +279,9 @@ impl ContextMenu {
     fn handle_select_last(
         &mut self,
         _: &SelectLast,
-        window: &mut gpui::Window,
-        cx: &mut gpui::ModelContext<Self>,
+        window: &mut Window,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if self.select_last().is_some() {
             cx.notify();
@@ -287,8 +291,9 @@ impl ContextMenu {
     fn select_next(
         &mut self,
         _: &SelectNext,
-        window: &mut gpui::Window,
-        cx: &mut gpui::ModelContext<Self>,
+        window: &mut Window,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(ix) = self.selected_index {
             let next_index = ix + 1;
@@ -311,8 +316,9 @@ impl ContextMenu {
     pub fn select_prev(
         &mut self,
         _: &SelectPrev,
-        window: &mut gpui::Window,
-        cx: &mut gpui::ModelContext<Self>,
+        window: &mut Window,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(ix) = self.selected_index {
             if ix == 0 {
@@ -334,8 +340,9 @@ impl ContextMenu {
     pub fn on_action_dispatch(
         &mut self,
         dispatched: &dyn Action,
-        window: &mut gpui::Window,
-        cx: &mut gpui::ModelContext<Self>,
+        window: &mut Window,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if self.clicked {
             cx.propagate();
@@ -397,8 +404,9 @@ impl ContextMenuItem {
 impl Render for ContextMenu {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
-        cx: &mut gpui::ModelContext<Self>,
+        window: &mut Window,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> impl IntoElement {
         use settings::Settings;
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;

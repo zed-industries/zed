@@ -6,9 +6,7 @@ use anyhow::Result;
 use feature_flags::{AutoCommand, FeatureFlagAppExt};
 use fs::Fs;
 use futures::future::Shared;
-use gpui::{
-    AppContext, AsyncAppContext, Context, Model, ModelContext, Subscription, Task, WeakModel,
-};
+use gpui::{AppContext, AsyncAppContext, Context, Model, Subscription, Task, WeakModel};
 use language::LanguageRegistry;
 use log;
 use project::{UpdatedEntriesSet, Worktree};
@@ -126,7 +124,8 @@ impl WorktreeIndex {
         embedding_index: EmbeddingIndex,
         summary_index: SummaryIndex,
         entry_ids_being_indexed: Arc<IndexingEntrySet>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let (updated_entries_tx, updated_entries_rx) = channel::unbounded();
         let _subscription = cx.subscribe(&worktree, move |_this, _worktree, event, _cx| {

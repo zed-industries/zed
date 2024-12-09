@@ -3,8 +3,7 @@ use client::{Client, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
-    SemanticVersion, Task,
+    actions, AppContext, AsyncAppContext, Context as _, Global, Model, SemanticVersion, Task,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -249,7 +248,7 @@ impl AutoUpdater {
         }
     }
 
-    pub fn start_polling(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn start_polling(&self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         cx.spawn(|this, mut cx| async move {
             loop {
                 this.update(&mut cx, |this, cx| this.poll(cx))?;
@@ -258,7 +257,7 @@ impl AutoUpdater {
         })
     }
 
-    pub fn poll(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn poll(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if self.pending_poll.is_some() || self.status.is_updated() {
             return;
         }
@@ -287,7 +286,7 @@ impl AutoUpdater {
         self.status.clone()
     }
 
-    pub fn dismiss_error(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn dismiss_error(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.status = AutoUpdateStatus::Idle;
         cx.notify();
     }

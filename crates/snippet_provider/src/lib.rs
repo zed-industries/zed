@@ -13,7 +13,7 @@ use collections::{BTreeMap, BTreeSet, HashMap};
 use format::VSSnippetsFile;
 use fs::Fs;
 use futures::stream::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
+use gpui::{AppContext, AsyncAppContext, Context, Model, Task, WeakModel};
 pub use registry::*;
 use util::ResultExt;
 
@@ -181,7 +181,7 @@ impl SnippetProvider {
     }
 
     /// Add directory to be watched for content changes
-    fn watch_directory(&mut self, path: &Path, cx: &ModelContext<Self>) {
+    fn watch_directory(&mut self, path: &Path, model: &Model<Self>, cx: &AppContext) {
         let path: Arc<Path> = Arc::from(path);
 
         self.watch_tasks.push(cx.spawn(|this, mut cx| async move {

@@ -10,9 +10,7 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, SinkExt,
 };
-use gpui::{
-    AppContext, AsyncAppContext, EntityId, EventEmitter, Model, ModelContext, Task, WeakModel,
-};
+use gpui::{AppContext, AsyncAppContext, EntityId, EventEmitter, Model, Task, WeakModel};
 use postage::oneshot;
 use rpc::{
     proto::{self, SSH_PROJECT_ID},
@@ -162,7 +160,8 @@ impl WorktreeStore {
         &mut self,
         abs_path: impl AsRef<Path>,
         visible: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
         let abs_path = abs_path.as_ref();
         if let Some((tree, relative_path)) = self.find_worktree(abs_path, cx) {
@@ -207,7 +206,8 @@ impl WorktreeStore {
         &mut self,
         abs_path: impl Into<SanitizedPath>,
         visible: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Worktree>>> {
         let abs_path: SanitizedPath = abs_path.into();
         if !self.loading_worktrees.contains_key(&abs_path) {
@@ -251,7 +251,8 @@ impl WorktreeStore {
         client: AnyProtoClient,
         abs_path: impl Into<SanitizedPath>,
         visible: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
         let mut abs_path = Into::<SanitizedPath>::into(abs_path).to_string();
         // If we start with `/~` that means the ssh path was something like `ssh://user@host/~/home-dir-folder/`
@@ -313,7 +314,8 @@ impl WorktreeStore {
         fs: Arc<dyn Fs>,
         abs_path: impl Into<SanitizedPath>,
         visible: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
         let next_entry_id = self.next_entry_id.clone();
         let path: SanitizedPath = abs_path.into();
@@ -335,7 +337,7 @@ impl WorktreeStore {
         })
     }
 
-    pub fn add(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
+    pub fn add(&mut self, worktree: &Model<Worktree>, model: &Model<Self>, cx: &mut AppContext) {
         let worktree_id = worktree.read(cx).id();
         debug_assert!(self.worktrees().all(|w| w.read(cx).id() != worktree_id));
 
@@ -376,7 +378,12 @@ impl WorktreeStore {
         .detach();
     }
 
-    pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+    pub fn remove_worktree(
+        &mut self,
+        id_to_remove: WorktreeId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade() {
                 if worktree.read(cx).id() == id_to_remove {
@@ -414,7 +421,8 @@ impl WorktreeStore {
         &mut self,
         worktrees: Vec<proto::WorktreeMetadata>,
         replica_id: ReplicaId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         let mut old_worktrees_by_id = self
             .worktrees
@@ -458,7 +466,8 @@ impl WorktreeStore {
         &mut self,
         source: WorktreeId,
         destination: WorktreeId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         if source == destination {
             return Ok(());
@@ -512,7 +521,7 @@ impl WorktreeStore {
         }
     }
 
-    pub fn send_project_updates(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn send_project_updates(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let Some((downstream_client, project_id)) = self.downstream_client.clone() else {
             return;
         };
@@ -584,7 +593,8 @@ impl WorktreeStore {
         &mut self,
         remote_id: u64,
         downsteam_client: AnyProtoClient,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.retain_worktrees = true;
         self.downstream_client = Some((downsteam_client, remote_id));
@@ -603,7 +613,7 @@ impl WorktreeStore {
         self.send_project_updates(cx);
     }
 
-    pub fn unshared(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn unshared(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.retain_worktrees = false;
         self.downstream_client.take();
 
@@ -628,7 +638,8 @@ impl WorktreeStore {
         limit: usize,
         open_entries: HashSet<ProjectEntryId>,
         fs: Arc<dyn Fs>,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Receiver<ProjectPath> {
         let snapshots = self
             .visible_worktrees(cx)

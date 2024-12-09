@@ -3,7 +3,7 @@ use anyhow::Result;
 use client::Client;
 use collections::{HashMap, HashSet};
 use futures::{FutureExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, WeakModel};
+use gpui::{AppContext, AsyncAppContext, Context, Global, Model, Task, WeakModel};
 use postage::stream::Stream;
 use rpc::proto;
 use std::{sync::Arc, time::Duration};
@@ -37,7 +37,8 @@ impl Manager {
     pub fn maintain_project_connection(
         &mut self,
         project: &Model<Project>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let manager = cx.weak_model();
         project.update(cx, |_, cx| {
@@ -70,7 +71,7 @@ impl Manager {
         }
     }
 
-    fn reconnected(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn reconnected(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         let mut projects = HashMap::default();
 
         let request = self.client.request_envelope(proto::RejoinRemoteProjects {
@@ -118,7 +119,7 @@ impl Manager {
         })
     }
 
-    fn connection_lost(&mut self, cx: &mut ModelContext<Self>) {
+    fn connection_lost(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         for project in self.projects.drain() {
             if let Some(project) = project.upgrade() {
                 project.update(cx, |project, cx| {

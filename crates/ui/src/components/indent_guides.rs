@@ -49,7 +49,7 @@ pub fn indent_guides<V: Render>(
     view: gpui::Model<V>,
     indent_size: Pixels,
     colors: IndentGuideColors,
-    compute_indents_fn: impl Fn(&mut V, Range<usize>, &mut gpui::ModelContext<V>) -> SmallVec<[usize; 64]>
+    compute_indents_fn: impl Fn(&mut V, Range<usize>, &Model<V>, &mut AppContext) -> SmallVec<[usize; 64]>
         + 'static,
 ) -> IndentGuides {
     let compute_indents_fn = Box::new(

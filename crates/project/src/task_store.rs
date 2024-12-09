@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use collections::HashMap;
 use fs::Fs;
 use futures::StreamExt as _;
-use gpui::{AppContext, AsyncAppContext, EventEmitter, Model, ModelContext, Task, WeakModel};
+use gpui::{AppContext, AsyncAppContext, EventEmitter, Model, Task, WeakModel};
 use language::{
     proto::{deserialize_anchor, serialize_anchor},
     ContextProvider as _, LanguageToolchainStore, Location,
@@ -159,7 +159,8 @@ impl TaskStore {
         worktree_store: Model<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         environment: Model<ProjectEnvironment>,
-        cx: &mut ModelContext<'_, Self>,
+        model: &Model<_>,
+        cx: &mut AppContext,
     ) -> Self {
         Self::Functional(StoreState {
             mode: StoreMode::Local {
@@ -181,7 +182,8 @@ impl TaskStore {
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         upstream_client: AnyProtoClient,
         project_id: u64,
-        cx: &mut ModelContext<'_, Self>,
+        model: &Model<_>,
+        cx: &mut AppContext,
     ) -> Self {
         Self::Functional(StoreState {
             mode: StoreMode::Remote {
@@ -253,7 +255,7 @@ impl TaskStore {
         }
     }
 
-    pub fn unshared(&mut self, _: &mut ModelContext<Self>) {
+    pub fn unshared(&mut self, _: &Model<Self>, _: &mut AppContext) {
         if let Self::Functional(StoreState {
             mode: StoreMode::Local {
                 downstream_client, ..
@@ -269,7 +271,8 @@ impl TaskStore {
         &self,
         location: Option<SettingsLocation<'_>>,
         raw_tasks_json: Option<&str>,
-        cx: &mut ModelContext<'_, Self>,
+        model: &Model<_>,
+        cx: &mut AppContext,
     ) -> anyhow::Result<()> {
         let task_inventory = match self {
             TaskStore::Functional(state) => &state.task_inventory,
@@ -286,7 +289,8 @@ impl TaskStore {
 
     fn subscribe_to_global_task_file_changes(
         fs: Arc<dyn Fs>,
-        cx: &mut ModelContext<'_, Self>,
+        model: &Model<_>,
+        cx: &mut AppContext,
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(&cx.background_executor(), fs, paths::tasks_file().clone());

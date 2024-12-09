@@ -7,9 +7,7 @@ use client::{
 };
 use collections::HashSet;
 use futures::lock::Mutex;
-use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
-};
+use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, Task, WeakModel};
 use rand::prelude::*;
 use rpc::AnyProtoClient;
 use std::{
@@ -171,7 +169,7 @@ impl ChannelChat {
     pub fn send_message(
         &mut self,
         message: MessageParams,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Result<Task<Result<u64>>> {
         if message.text.trim().is_empty() {
             Err(anyhow!("message body can't be empty"))?;
@@ -231,7 +229,7 @@ impl ChannelChat {
         }))
     }
 
-    pub fn remove_message(&mut self, id: u64, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn remove_message(&mut self, id: u64, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         let response = self.rpc.request(proto::RemoveChannelMessage {
             channel_id: self.channel_id.0,
             message_id: id,
@@ -249,7 +247,7 @@ impl ChannelChat {
         &mut self,
         id: u64,
         message: MessageParams,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Result<Task<Result<()>>> {
         self.message_update(
             ChannelMessageId::Saved(id),
@@ -274,7 +272,7 @@ impl ChannelChat {
         }))
     }
 
-    pub fn load_more_messages(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<Option<()>>> {
+    pub fn load_more_messages(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Option<Task<Option<()>>> {
         if self.loaded_all_messages {
             return None;
         }
@@ -357,7 +355,7 @@ impl ChannelChat {
         }
     }
 
-    pub fn acknowledge_last_message(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn acknowledge_last_message(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let ChannelMessageId::Saved(latest_message_id) = self.messages.summary().max_id {
             if self
                 .last_acknowledged_id
@@ -437,7 +435,7 @@ impl ChannelChat {
         Ok(())
     }
 
-    pub fn rejoin(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn rejoin(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
         let channel_id = self.channel_id;
@@ -586,7 +584,7 @@ impl ChannelChat {
         Ok(())
     }
 
-    fn insert_messages(&mut self, messages: SumTree<ChannelMessage>, cx: &mut ModelContext<Self>) {
+    fn insert_messages(&mut self, messages: SumTree<ChannelMessage>, model: &Model<Self>, cx: &mut AppContext) {
         if let Some((first_message, last_message)) = messages.first().zip(messages.last()) {
             let nonces = messages
                 .cursor::<()>(&())
@@ -645,7 +643,7 @@ impl ChannelChat {
         }
     }
 
-    fn message_removed(&mut self, id: u64, cx: &mut ModelContext<Self>) {
+    fn message_removed(&mut self, id: u64, model: &Model<Self>, cx: &mut AppContext) {
         let mut cursor = self.messages.cursor::<ChannelMessageId>(&());
         let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left, &());
         if let Some(item) = cursor.item() {
@@ -683,7 +681,7 @@ impl ChannelChat {
         body: String,
         mentions: Vec<(Range<usize>, u64)>,
         edited_at: Option<OffsetDateTime>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         let mut cursor = self.messages.cursor::<ChannelMessageId>(&());
         let mut messages = cursor.slice(&id, Bias::Left, &());

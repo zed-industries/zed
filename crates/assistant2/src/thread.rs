@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use collections::HashMap;
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
-use gpui::{AppContext, EventEmitter, ModelContext, SharedString, Task};
+use gpui::{AppContext, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
@@ -71,7 +71,7 @@ pub struct Thread {
 }
 
 impl Thread {
-    pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(tools: Arc<ToolWorkingSet>, model: &Model<Self>, _cx: &mut AppContext) -> Self {
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
@@ -108,7 +108,12 @@ impl Thread {
         self.summary.clone()
     }
 
-    pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut ModelContext<Self>) {
+    pub fn set_summary(
+        &mut self,
+        summary: impl Into<SharedString>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.summary = Some(summary.into());
         cx.emit(ThreadEvent::SummaryChanged);
     }
@@ -129,7 +134,12 @@ impl Thread {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn insert_user_message(&mut self, text: impl Into<String>, cx: &mut ModelContext<Self>) {
+    pub fn insert_user_message(
+        &mut self,
+        text: impl Into<String>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.insert_message(Role::User, text, cx)
     }
 
@@ -137,7 +147,8 @@ impl Thread {
         &mut self,
         role: Role,
         text: impl Into<String>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let id = self.next_message_id.post_inc();
         self.messages.push(Message {
@@ -200,7 +211,8 @@ impl Thread {
         &mut self,
         request: LanguageModelRequest,
         model: Arc<dyn LanguageModel>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
 
@@ -316,7 +328,7 @@ impl Thread {
         });
     }
 
-    pub fn summarize(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn summarize(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
             return;
         };
@@ -374,7 +386,8 @@ impl Thread {
         assistant_message_id: MessageId,
         tool_use_id: LanguageModelToolUseId,
         output: Task<Result<String>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let insert_output_task = cx.spawn(|thread, mut cx| {
             let tool_use_id = tool_use_id.clone();

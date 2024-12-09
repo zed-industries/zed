@@ -8,7 +8,7 @@ use extension::{
     ExtensionManifest,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
+use gpui::{AppContext, AsyncAppContext, Context, Model, Task, WeakModel};
 use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
@@ -63,7 +63,8 @@ impl HeadlessExtensionStore {
     pub fn sync_extensions(
         &mut self,
         extensions: Vec<ExtensionVersion>,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Result<Vec<ExtensionVersion>>> {
         let on_client = HashSet::from_iter(extensions.iter().map(|e| e.id.as_str()));
         let to_remove: Vec<Arc<str>> = self
@@ -198,7 +199,8 @@ impl HeadlessExtensionStore {
     fn uninstall_extension(
         &mut self,
         extension_id: &Arc<str>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         self.loaded_extensions.remove(extension_id);
 
@@ -235,7 +237,8 @@ impl HeadlessExtensionStore {
         &mut self,
         extension: ExtensionVersion,
         tmp_path: PathBuf,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let path = self.extension_dir.join(&extension.id);
         let fs = self.fs.clone();

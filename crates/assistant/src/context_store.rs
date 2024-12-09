@@ -14,9 +14,7 @@ use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
-use gpui::{
-    AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel,
-};
+use gpui::{AppContext, AsyncAppContext, Context as _, EventEmitter, Model, Task, WeakModel};
 use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
@@ -109,7 +107,7 @@ impl ContextStore {
             const CONTEXT_WATCH_DURATION: Duration = Duration::from_millis(100);
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
-            let this = cx.new_model(|cx: &mut ModelContext<Self>| {
+            let this = cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
                 let context_server_factory_registry =
                     ContextServerFactoryRegistry::default_global(cx);
                 let context_server_manager = cx.new_model(|cx| {
@@ -298,7 +296,12 @@ impl ContextStore {
         })?
     }
 
-    fn handle_project_changed(&mut self, _: Model<Project>, cx: &mut ModelContext<Self>) {
+    fn handle_project_changed(
+        &mut self,
+        _: Model<Project>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let is_shared = self.project.read(cx).is_shared();
         let was_shared = mem::replace(&mut self.project_is_shared, is_shared);
         if is_shared == was_shared {
@@ -330,7 +333,8 @@ impl ContextStore {
         &mut self,
         _: Model<Project>,
         event: &project::Event,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             project::Event::Reshared => {
@@ -360,7 +364,7 @@ impl ContextStore {
         }
     }
 
-    pub fn create(&mut self, cx: &mut ModelContext<Self>) -> Model<Context> {
+    pub fn create(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Model<Context> {
         let context = cx.new_model(|cx| {
             Context::local(
                 self.languages.clone(),
@@ -378,7 +382,8 @@ impl ContextStore {
 
     pub fn create_remote_context(
         &mut self,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Context>>> {
         let project = self.project.read(cx);
         let Some(project_id) = project.remote_id() else {
@@ -438,7 +443,8 @@ impl ContextStore {
     pub fn open_local_context(
         &mut self,
         path: PathBuf,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Result<Model<Context>>> {
         if let Some(existing_context) = self.loaded_context_for_path(&path, cx) {
             return Task::ready(Ok(existing_context));
@@ -514,7 +520,8 @@ impl ContextStore {
     pub fn open_remote_context(
         &mut self,
         context_id: ContextId,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Context>>> {
         let project = self.project.read(cx);
         let Some(project_id) = project.remote_id() else {
@@ -577,7 +584,12 @@ impl ContextStore {
         })
     }
 
-    fn register_context(&mut self, context: &Model<Context>, cx: &mut ModelContext<Self>) {
+    fn register_context(
+        &mut self,
+        context: &Model<Context>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let handle = if self.project_is_shared {
             ContextHandle::Strong(context.clone())
         } else {
@@ -592,7 +604,8 @@ impl ContextStore {
         &mut self,
         context: Model<Context>,
         event: &ContextEvent,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let Some(project_id) = self.project.read(cx).remote_id() else {
             return;
@@ -651,7 +664,7 @@ impl ContextStore {
             .ok();
     }
 
-    fn synchronize_contexts(&mut self, cx: &mut ModelContext<Self>) {
+    fn synchronize_contexts(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let Some(project_id) = self.project.read(cx).remote_id() else {
             return;
         };
@@ -740,7 +753,7 @@ impl ContextStore {
         &self.host_contexts
     }
 
-    fn reload(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn reload(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
             fs.create_dir(contexts_dir()).await?;
@@ -785,7 +798,7 @@ impl ContextStore {
         })
     }
 
-    pub fn restart_context_servers(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn restart_context_servers(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         cx.update_model(
             &self.context_server_manager,
             |context_server_manager, cx| {
@@ -798,7 +811,7 @@ impl ContextStore {
         );
     }
 
-    fn register_context_server_handlers(&self, cx: &mut ModelContext<Self>) {
+    fn register_context_server_handlers(&self, model: &Model<Self>, cx: &mut AppContext) {
         cx.subscribe(
             &self.context_server_manager.clone(),
             Self::handle_context_server_event,
@@ -810,7 +823,8 @@ impl ContextStore {
         &mut self,
         context_server_manager: Model<ContextServerManager>,
         event: &context_server::manager::Event,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let slash_command_working_set = self.slash_commands.clone();
         let tool_working_set = self.tools.clone();

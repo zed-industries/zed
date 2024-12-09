@@ -1,7 +1,7 @@
 use crate::Project;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::{AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, Task, WeakModel};
+use gpui::{AnyWindowHandle, AppContext, Context, Entity, Model, Task, WeakModel};
 use itertools::Itertools;
 use language::LanguageName;
 use settings::{Settings, SettingsLocation};
@@ -88,7 +88,8 @@ impl Project {
         &mut self,
         kind: TerminalKind,
         window: AnyWindowHandle,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Terminal>>> {
         let path: Option<Arc<Path>> = match &kind {
             TerminalKind::Shell(path) => path.as_ref().map(|path| Arc::from(path.as_ref())),
@@ -297,7 +298,8 @@ impl Project {
         &self,
         abs_path: Arc<Path>,
         venv_settings: VenvSettings,
-        cx: &ModelContext<Project>,
+        model: &Model<Project>,
+        cx: &AppContext,
     ) -> Task<Option<PathBuf>> {
         cx.spawn(move |this, mut cx| async move {
             if let Some((worktree, _)) = this
@@ -424,7 +426,8 @@ impl Project {
         &self,
         command: String,
         terminal_handle: &Model<Terminal>,
-        cx: &mut ModelContext<Project>,
+        model: &Model<Project>,
+        cx: &mut AppContext,
     ) {
         terminal_handle.update(cx, |this, _| this.input_bytes(command.into_bytes()));
     }

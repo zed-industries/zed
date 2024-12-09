@@ -14,7 +14,7 @@ use std::{
 use anyhow::Result;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, Context, Model, ModelContext, Task};
+use gpui::{AppContext, Context, Model, Task};
 use util::ResultExt;
 
 pub(crate) struct YarnPathStore {
@@ -67,7 +67,8 @@ impl YarnPathStore {
         &mut self,
         path: &Path,
         protocol: &str,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Option<(Arc<Path>, Arc<Path>)>> {
         let mut is_zip = protocol.eq("zip");
 

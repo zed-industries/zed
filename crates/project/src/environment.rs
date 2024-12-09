@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use util::ResultExt;
 
 use collections::HashMap;
-use gpui::{AppContext, Context, Model, ModelContext, Task};
+use gpui::{AppContext, Context, Model, Task};
 use settings::Settings as _;
 use worktree::WorktreeId;
 
@@ -89,7 +89,8 @@ impl ProjectEnvironment {
         &mut self,
         worktree_id: Option<WorktreeId>,
         worktree_abs_path: Option<Arc<Path>>,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if let Some(task) = self.get_environment_task.as_ref() {
             task.clone()
@@ -107,7 +108,8 @@ impl ProjectEnvironment {
         &mut self,
         worktree_id: Option<WorktreeId>,
         worktree_abs_path: Option<Arc<Path>>,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Option<HashMap<String, String>>> {
         let worktree = worktree_id.zip(worktree_abs_path);
 
@@ -135,7 +137,8 @@ impl ProjectEnvironment {
         &mut self,
         worktree_id: WorktreeId,
         worktree_abs_path: Arc<Path>,
-        cx: &ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &AppContext,
     ) -> Task<Option<HashMap<String, String>>> {
         let cached_env = self.cached_shell_environments.get(&worktree_id).cloned();
         if let Some(env) = cached_env {

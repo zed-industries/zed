@@ -4,8 +4,8 @@ use editor::{actions::MoveToEnd, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     actions, div, AnchorCorner, AppContext, Context, EventEmitter, FocusHandle, FocusableView,
-    IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakModel,
+    IntoElement, Model, ParentElement, Render, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakModel,
 };
 use language::LanguageServerId;
 use lsp::{
@@ -234,7 +234,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl LogStore {
-    pub fn new(cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(model: &Model<Self>, cx: &mut AppContext) -> Self {
         let (io_tx, mut io_rx) = mpsc::unbounded();
 
         let copilot_subscription = Copilot::global(cx).map(|copilot| {
@@ -295,7 +295,12 @@ impl LogStore {
         this
     }
 
-    pub fn add_project(&mut self, project: &Model<Project>, cx: &mut ModelContext<Self>) {
+    pub fn add_project(
+        &mut self,
+        project: &Model<Project>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let weak_project = project.downgrade();
         self.projects.insert(
             project.downgrade(),
@@ -364,7 +369,8 @@ impl LogStore {
         name: Option<LanguageServerName>,
         worktree_id: Option<WorktreeId>,
         server: Option<Arc<LanguageServer>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<&mut LanguageServerState> {
         let server_state = self.language_servers.entry(server_id).or_insert_with(|| {
             cx.notify();
@@ -414,7 +420,8 @@ impl LogStore {
         id: LanguageServerId,
         typ: MessageType,
         message: &str,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<()> {
         let language_server_state = self.get_language_server_state(id)?;
 
@@ -437,7 +444,8 @@ impl LogStore {
         &mut self,
         id: LanguageServerId,
         message: &str,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<()> {
         let language_server_state = self.get_language_server_state(id)?;
 
@@ -461,7 +469,8 @@ impl LogStore {
         message: T,
         current_severity: <T as Message>::Level,
         kind: LogKind,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         while log_lines.len() >= MAX_STORED_LOG_ENTRIES {
             log_lines.pop_front();
@@ -477,7 +486,12 @@ impl LogStore {
         }
     }
 
-    fn remove_language_server(&mut self, id: LanguageServerId, cx: &mut ModelContext<Self>) {
+    fn remove_language_server(
+        &mut self,
+        id: LanguageServerId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.language_servers.remove(&id);
         cx.notify();
     }
@@ -540,7 +554,8 @@ impl LogStore {
         language_server_id: LanguageServerId,
         io_kind: IoKind,
         message: &str,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<()> {
         let is_received = match io_kind {
             IoKind::StdOut => true,

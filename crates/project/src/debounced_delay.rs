@@ -1,5 +1,5 @@
 use futures::{channel::oneshot, FutureExt};
-use gpui::{ModelContext, Task};
+use gpui::Task;
 use std::{marker::PhantomData, time::Duration};
 
 pub struct DebouncedDelay<E: 'static> {
@@ -23,9 +23,9 @@ impl<E: 'static> DebouncedDelay<E> {
         }
     }
 
-    pub fn fire_new<F>(&mut self, delay: Duration, cx: &mut ModelContext<E>, func: F)
+    pub fn fire_new<F>(&mut self, delay: Duration, model: &Model<E>, cx: &mut AppContext, func: F)
     where
-        F: 'static + Send + FnOnce(&mut E, &mut ModelContext<E>) -> Task<()>,
+        F: 'static + Send + FnOnce(&mut E, &Model<E>, &mut AppContext) -> Task<()>,
     {
         if let Some(channel) = self.cancel_channel.take() {
             _ = channel.send(());

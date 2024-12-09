@@ -25,8 +25,8 @@ use futures::{
 };
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
+    FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, Subscription, Task,
+    TextStyle, UpdateGlobal, View, ViewContext, WeakView,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -2469,7 +2469,8 @@ impl Codegen {
         initial_transaction_id: Option<TransactionId>,
         telemetry: Arc<Telemetry>,
         builder: Arc<PromptBuilder>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let codegen = cx.new_model(|cx| {
             CodegenAlternative::new(
@@ -2497,7 +2498,7 @@ impl Codegen {
         this
     }
 
-    fn subscribe_to_alternative(&mut self, cx: &mut ModelContext<Self>) {
+    fn subscribe_to_alternative(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let codegen = self.active_alternative().clone();
         self.subscriptions.clear();
         self.subscriptions
@@ -2521,7 +2522,7 @@ impl Codegen {
             + 1
     }
 
-    pub fn cycle_prev(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn cycle_prev(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let next_active_ix = if self.active_alternative == 0 {
             self.alternatives.len() - 1
         } else {
@@ -2530,12 +2531,12 @@ impl Codegen {
         self.activate(next_active_ix, cx);
     }
 
-    pub fn cycle_next(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn cycle_next(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let next_active_ix = (self.active_alternative + 1) % self.alternatives.len();
         self.activate(next_active_ix, cx);
     }
 
-    fn activate(&mut self, index: usize, cx: &mut ModelContext<Self>) {
+    fn activate(&mut self, index: usize, model: &Model<Self>, cx: &mut AppContext) {
         self.active_alternative()
             .update(cx, |codegen, cx| codegen.set_active(false, cx));
         self.seen_alternatives.insert(index);
@@ -2550,7 +2551,8 @@ impl Codegen {
         &mut self,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         let alternative_models = LanguageModelRegistry::read_global(cx)
             .inline_alternative_models()
@@ -2595,13 +2597,13 @@ impl Codegen {
         Ok(())
     }
 
-    pub fn stop(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn stop(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         for codegen in &self.alternatives {
             codegen.update(cx, |codegen, cx| codegen.stop(cx));
         }
     }
 
-    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn undo(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.active_alternative()
             .update(cx, |codegen, cx| codegen.undo(cx));
 
@@ -2702,7 +2704,8 @@ impl CodegenAlternative {
         active: bool,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
 
@@ -2750,7 +2753,7 @@ impl CodegenAlternative {
         }
     }
 
-    fn set_active(&mut self, active: bool, cx: &mut ModelContext<Self>) {
+    fn set_active(&mut self, active: bool, model: &Model<Self>, cx: &mut AppContext) {
         if active != self.active {
             self.active = active;
 
@@ -2776,7 +2779,8 @@ impl CodegenAlternative {
         &mut self,
         _buffer: Model<MultiBuffer>,
         event: &multi_buffer::Event,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let multi_buffer::Event::TransactionUndone { transaction_id } = event {
             if self.transformation_transaction_id == Some(*transaction_id) {
@@ -2826,7 +2830,8 @@ impl CodegenAlternative {
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         model: Arc<dyn LanguageModel>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Result<()> {
         if let Some(transformation_transaction_id) = self.transformation_transaction_id.take() {
             self.buffer.update(cx, |buffer, cx| {
@@ -2916,7 +2921,8 @@ impl CodegenAlternative {
         model_provider_id: String,
         model_api_key: Option<String>,
         stream: impl 'static + Future<Output = Result<LanguageModelTextStream>>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let start_time = Instant::now();
         let snapshot = self.snapshot.clone();
@@ -3173,7 +3179,7 @@ impl CodegenAlternative {
         cx.notify();
     }
 
-    pub fn stop(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn stop(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.last_equal_ranges.clear();
         if self.diff.is_empty() {
             self.status = CodegenStatus::Idle;
@@ -3185,7 +3191,7 @@ impl CodegenAlternative {
         cx.notify();
     }
 
-    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn undo(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.buffer.update(cx, |buffer, cx| {
             if let Some(transaction_id) = self.transformation_transaction_id.take() {
                 buffer.undo_transaction(transaction_id, cx);
@@ -3197,7 +3203,7 @@ impl CodegenAlternative {
     fn apply_edits(
         &mut self,
         edits: impl IntoIterator<Item = (Range<Anchor>, String)>,
-        cx: &mut ModelContext<CodegenAlternative>,
+        model: &Model<CodegenAlternative>, cx: &mut AppContext,
     ) {
         let transaction = self.buffer.update(cx, |buffer, cx| {
             // Avoid grouping assistant edits with user edits.
@@ -3224,7 +3230,8 @@ impl CodegenAlternative {
     fn reapply_line_based_diff(
         &mut self,
         line_operations: impl IntoIterator<Item = LineOperation>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let old_snapshot = self.snapshot.clone();
         let old_range = self.range.to_point(&old_snapshot);
@@ -3280,7 +3287,7 @@ impl CodegenAlternative {
         }
     }
 
-    fn reapply_batch_diff(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
+    fn reapply_batch_diff(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<()> {
         let old_snapshot = self.snapshot.clone();
         let old_range = self.range.to_point(&old_snapshot);
         let new_snapshot = self.buffer.read(cx).snapshot(cx);

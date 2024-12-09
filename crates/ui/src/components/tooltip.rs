@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use gpui::{Action, AnyElement, AnyView, FocusHandle, IntoElement, ModelContext, Render};
+use gpui::{Action, AnyElement, AnyView, FocusHandle, IntoElement, Render};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -95,7 +95,8 @@ impl Render for Tooltip {
     fn render(
         &mut self,
         window: &mut gpui::Window,
-        cx: &mut gpui::ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> impl IntoElement {
         tooltip_container(window, cx, |el, _| {
             el.child(
@@ -115,8 +116,9 @@ impl Render for Tooltip {
 
 pub fn tooltip_container<V>(
     window: &mut Window,
-    cx: &mut ModelContext<V>,
-    f: impl FnOnce(Div, &mut ModelContext<V>) -> Div,
+    model: &Model<V>,
+    cx: &mut AppContext,
+    f: impl FnOnce(Div, &Model<V>, &mut AppContext) -> Div,
 ) -> impl IntoElement {
     let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
@@ -161,7 +163,8 @@ impl Render for LinkPreview {
     fn render(
         &mut self,
         window: &mut gpui::Window,
-        cx: &mut gpui::ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> impl IntoElement {
         tooltip_container(window, cx, |el, _| {
             el.child(

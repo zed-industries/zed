@@ -3,8 +3,8 @@ use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, ModelContext,
-    Pixels, Subscription, Window,
+    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
+    Subscription, Window,
 };
 use refineable::Refineable;
 use schemars::{
@@ -491,8 +491,9 @@ impl ThemeSettings {
 
 /// Observe changes to the adjusted buffer font size.
 pub fn observe_buffer_font_size_adjustment<T: 'static>(
-    cx: &mut ModelContext<T>,
-    f: impl 'static + Fn(&mut T, &mut ModelContext<T>),
+    model: &Model<T>,
+    cx: &mut AppContext,
+    f: impl 'static + Fn(&mut T, &Model<T>, &mut AppContext),
 ) -> Subscription {
     cx.observe_global::<AdjustedBufferFontSize>(f)
 }

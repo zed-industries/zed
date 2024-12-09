@@ -4,9 +4,7 @@ use anyhow::Result;
 use client::telemetry::Telemetry;
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{
-    prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
-};
+use gpui::{prelude::*, AppContext, EntityId, Global, Model, Subscription, Task, View};
 use jupyter_websocket_client::RemoteServer;
 use language::Language;
 use project::{Fs, Project, WorktreeId};
@@ -49,7 +47,7 @@ impl ReplStore {
         cx.global::<GlobalReplStore>().0.clone()
     }
 
-    pub fn new(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let subscriptions = vec![cx.observe_global::<SettingsStore>(move |this, cx| {
             this.set_enabled(JupyterSettings::enabled(cx), cx);
         })];
@@ -99,7 +97,7 @@ impl ReplStore {
         self.sessions.values()
     }
 
-    fn set_enabled(&mut self, enabled: bool, cx: &mut ModelContext<Self>) {
+    fn set_enabled(&mut self, enabled: bool, model: &Model<Self>, cx: &mut AppContext) {
         if self.enabled == enabled {
             return;
         }
@@ -108,7 +106,7 @@ impl ReplStore {
         self.on_enabled_changed(cx);
     }
 
-    fn on_enabled_changed(&self, cx: &mut ModelContext<Self>) {
+    fn on_enabled_changed(&self, model: &Model<Self>, cx: &mut AppContext) {
         if !self.enabled {
             CommandPaletteFilter::update_global(cx, |filter, _cx| {
                 filter.hide_namespace(Self::NAMESPACE);
@@ -128,7 +126,8 @@ impl ReplStore {
         &mut self,
         worktree_id: WorktreeId,
         project: &Model<Project>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let kernel_specifications = python_env_kernel_specifications(project, worktree_id, cx);
         cx.spawn(move |this, mut cx| async move {
@@ -146,7 +145,8 @@ impl ReplStore {
 
     fn get_remote_kernel_specifications(
         &self,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<Vec<KernelSpecification>>>> {
         match (
             std::env::var("JUPYTER_SERVER"),
@@ -168,7 +168,7 @@ impl ReplStore {
         }
     }
 
-    pub fn refresh_kernelspecs(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn refresh_kernelspecs(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
         let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
 
         let remote_kernel_specifications = self.get_remote_kernel_specifications(cx);
@@ -197,7 +197,8 @@ impl ReplStore {
         &mut self,
         worktree_id: WorktreeId,
         kernelspec: KernelSpecification,
-        _cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        _cx: &mut AppContext,
     ) {
         self.selected_kernel_for_worktree
             .insert(worktree_id, kernelspec);

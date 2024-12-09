@@ -2,7 +2,7 @@ use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
 use client::telemetry::Telemetry;
 use futures::StreamExt as _;
-use gpui::{AppContext, EntityId, Model, ModelContext, Task};
+use gpui::{AppContext, EntityId, Model, Task};
 use inline_completion::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
 use std::{
@@ -129,7 +129,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         buffer_handle: Model<Buffer>,
         cursor_position: Anchor,
         debounce: bool,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         let Some(mut completion) = self.supermaven.update(cx, |supermaven, cx| {
             supermaven.complete(&buffer_handle, cursor_position, cx)
@@ -166,11 +166,11 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         _buffer: Model<Buffer>,
         _cursor_position: Anchor,
         _direction: Direction,
-        _cx: &mut ModelContext<Self>,
+        model: &Model<Self>, _cx: &mut AppContext,
     ) {
     }
 
-    fn accept(&mut self, _cx: &mut ModelContext<Self>) {
+    fn accept(&mut self, model: &Model<Self>, _cx: &mut AppContext) {
         if self.completion_id.is_some() {
             if let Some(telemetry) = self.telemetry.as_ref() {
                 telemetry.report_inline_completion_event(
@@ -187,7 +187,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
     fn discard(
         &mut self,
         should_report_inline_completion_event: bool,
-        _cx: &mut ModelContext<Self>,
+        model: &Model<Self>, _cx: &mut AppContext,
     ) {
         if should_report_inline_completion_event && self.completion_id.is_some() {
             if let Some(telemetry) = self.telemetry.as_ref() {

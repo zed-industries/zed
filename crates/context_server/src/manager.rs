@@ -20,7 +20,7 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, Subscription, Task, WeakModel};
+use gpui::{AsyncAppContext, EventEmitter, Model, Subscription, Task, WeakModel};
 use log;
 use parking_lot::RwLock;
 use project::Project;
@@ -122,7 +122,8 @@ impl ContextServerManager {
     pub fn new(
         registry: Model<ContextServerFactoryRegistry>,
         project: Model<Project>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let mut this = Self {
             _subscriptions: vec![
@@ -143,7 +144,7 @@ impl ContextServerManager {
         this
     }
 
-    fn available_context_servers_changed(&mut self, cx: &mut ModelContext<Self>) {
+    fn available_context_servers_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if self.update_servers_task.is_some() {
             self.needs_server_update = true;
         } else {
@@ -183,7 +184,8 @@ impl ContextServerManager {
     pub fn restart_server(
         &mut self,
         id: &Arc<str>,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<()>> {
         let id = id.clone();
         cx.spawn(|this, mut cx| async move {

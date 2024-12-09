@@ -75,7 +75,7 @@ use gpui::{
     AppContext, Asy AvailableSpace, BackgroundExecutor, Bounds, ClipboardEntry,
     ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusOutEvent,
     FocusableView, FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    ListSizingBehavior, Model, ModelContext, MouseButton, PaintQuad, ParentElement, Pixels, Render,
+    ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
     ScrollStrategy, SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task,
     TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, View,
     ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle, WeakView,
@@ -11366,7 +11366,7 @@ impl Editor {
         ranges: &[Range<T>],
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
-        update: impl FnOnce(&mut DisplayMap, &mut ModelContext<DisplayMap>),
+        update: impl FnOnce(&mut DisplayMap, &Model<DisplayMap>, &mut AppContext),
     ) {
         if ranges.is_empty() {
             return;

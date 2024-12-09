@@ -35,8 +35,8 @@ use gpui::{
     transparent_black, Action, AnyView, AnyWeakView, AppContext, AsyncAppContext, Bounds,
     CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId, EventEmitter, Flatten,
     FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, ManagedView, Model,
-    ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size,
-    Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds, WindowHandle, WindowId,
+    MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful,
+    Subscription, Task, Tiling, View, WeakView, WindowBounds, WindowHandle, WindowId,
     WindowOptions,
 };
 pub use item::{
@@ -95,7 +95,7 @@ pub use ui;
 use ui::{
     div, h_flex, px, BorrowAppContext, Context as _, Div, FluentBuilder, InteractiveElement as _,
     IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
-    VisualContext as _, 
+    VisualContext as _,
 };
 use util::{paths::SanitizedPath, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -5066,7 +5066,7 @@ fn resize_left_dock(
 }
 
 impl WorkspaceStore {
-    pub fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(client: Arc<Client>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         Self {
             workspaces: Default::default(),
             _subscriptions: vec![

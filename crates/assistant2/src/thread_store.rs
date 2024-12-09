@@ -5,7 +5,7 @@ use assistant_tool::{ToolId, ToolWorkingSet};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
-use gpui::{prelude::*, AppContext, Model, ModelContext, Task};
+use gpui::{prelude::*, AppContext, Model, Task};
 use project::Project;
 use unindent::Unindent;
 use util::ResultExt as _;
@@ -28,7 +28,7 @@ impl ThreadStore {
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         cx.spawn(|mut cx| async move {
-            let this = cx.new_model(|cx: &mut ModelContext<Self>| {
+            let this = cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
                 let context_server_factory_registry =
                     ContextServerFactoryRegistry::default_global(cx);
                 let context_server_manager = cx.new_model(|cx| {
@@ -52,7 +52,7 @@ impl ThreadStore {
         })
     }
 
-    pub fn threads(&self, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
+    pub fn threads(&self, model: &Model<Self>, cx: &AppContext) -> Vec<Model<Thread>> {
         let mut threads = self
             .threads
             .iter()
@@ -63,28 +63,38 @@ impl ThreadStore {
         threads
     }
 
-    pub fn recent_threads(&self, limit: usize, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
+    pub fn recent_threads(
+        &self,
+        limit: usize,
+        model: &Model<Self>,
+        cx: &AppContext,
+    ) -> Vec<Model<Thread>> {
         self.threads(cx).into_iter().take(limit).collect()
     }
 
-    pub fn create_thread(&mut self, cx: &mut ModelContext<Self>) -> Model<Thread> {
+    pub fn create_thread(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Model<Thread> {
         let thread = cx.new_model(|cx| Thread::new(self.tools.clone(), cx));
         self.threads.push(thread.clone());
         thread
     }
 
-    pub fn open_thread(&self, id: &ThreadId, cx: &mut ModelContext<Self>) -> Option<Model<Thread>> {
+    pub fn open_thread(
+        &self,
+        id: &ThreadId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<Model<Thread>> {
         self.threads
             .iter()
             .find(|thread| thread.read(cx).id() == id)
             .cloned()
     }
 
-    pub fn delete_thread(&mut self, id: &ThreadId, cx: &mut ModelContext<Self>) {
+    pub fn delete_thread(&mut self, id: &ThreadId, model: &Model<Self>, cx: &mut AppContext) {
         self.threads.retain(|thread| thread.read(cx).id() != id);
     }
 
-    fn register_context_server_handlers(&self, cx: &mut ModelContext<Self>) {
+    fn register_context_server_handlers(&self, model: &Model<Self>, cx: &mut AppContext) {
         cx.subscribe(
             &self.context_server_manager.clone(),
             Self::handle_context_server_event,
@@ -96,7 +106,8 @@ impl ThreadStore {
         &mut self,
         context_server_manager: Model<ContextServerManager>,
         event: &context_server::manager::Event,
-        cx: &mut ModelContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let tool_working_set = self.tools.clone();
         match event {
@@ -153,7 +164,7 @@ impl ThreadStore {
 
 impl ThreadStore {
     /// Creates some mocked recent threads for testing purposes.
-    fn mock_recent_threads(&mut self, cx: &mut ModelContext<Self>) {
+    fn mock_recent_threads(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         use language_model::Role;
 
         self.threads.push(cx.new_model(|cx| {
