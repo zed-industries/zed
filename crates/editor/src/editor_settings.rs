@@ -10,8 +10,6 @@ pub struct EditorSettings {
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub hover_popover_enabled: bool,
-    pub show_completions_on_input: bool,
-    pub show_completion_documentation: bool,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
@@ -193,16 +191,6 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub hover_popover_enabled: Option<bool>,
 
-    /// Whether to pop the completions menu while typing in an editor without
-    /// explicitly requesting it.
-    ///
-    /// Default: true
-    pub show_completions_on_input: Option<bool>,
-    /// Whether to display inline and alongside documentation for items in the
-    /// completions menu.
-    ///
-    /// Default: true
-    pub show_completion_documentation: Option<bool>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings

@@ -138,6 +138,12 @@ pub struct LanguageSettings {
     pub linked_edits: bool,
     /// Task configuration for this language.
     pub tasks: LanguageTaskConfig,
+    /// Whether to pop the completions menu while typing in an editor without
+    /// explicitly requesting it.
+    pub show_completions_on_input: bool,
+    /// Whether to display inline and alongside documentation for items in the
+    /// completions menu.
+    pub show_completion_documentation: bool,
 }
 
 impl LanguageSettings {
@@ -382,6 +388,16 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: {}
     pub tasks: Option<LanguageTaskConfig>,
+    /// Whether to pop the completions menu while typing in an editor without
+    /// explicitly requesting it.
+    ///
+    /// Default: true
+    pub show_completions_on_input: Option<bool>,
+    /// Whether to display inline and alongside documentation for items in the
+    /// completions menu.
+    ///
+    /// Default: true
+    pub show_completion_documentation: Option<bool>,
 }
 
 /// The contents of the inline completion settings.
@@ -1186,6 +1202,14 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.extend_comment_on_newline,
     );
     merge(&mut settings.inlay_hints, src.inlay_hints);
+    merge(
+        &mut settings.show_completions_on_input,
+        src.show_completions_on_input,
+    );
+    merge(
+        &mut settings.show_completion_documentation,
+        src.show_completion_documentation,
+    );
 }
 
 /// Allows to enable/disable formatting with Prettier
