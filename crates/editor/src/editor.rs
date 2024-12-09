@@ -1006,12 +1006,14 @@ struct CompletionsMenu {
     scroll_handle: UniformListScrollHandle,
     resolve_completions: bool,
     aside_was_displayed: Cell<bool>,
+    show_completion_documentation: bool,
 }
 
 impl CompletionsMenu {
     fn new(
         id: CompletionId,
         sort_completions: bool,
+        show_completion_documentation: bool,
         initial_position: Anchor,
         buffer: Model<Buffer>,
         completions: Box<[Completion]>,
@@ -1040,6 +1042,7 @@ impl CompletionsMenu {
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
             aside_was_displayed: Cell::new(aside_was_displayed),
+            show_completion_documentation: show_completion_documentation,
         }
     }
 
@@ -1094,6 +1097,7 @@ impl CompletionsMenu {
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: false,
             aside_was_displayed: Cell::new(false),
+            show_completion_documentation: false,
         }
     }
 
@@ -1192,9 +1196,7 @@ impl CompletionsMenu {
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
-        let settings = EditorSettings::get_global(cx);
-        let show_completion_documentation = settings.show_completion_documentation;
-
+        let show_completion_documentation = self.show_completion_documentation;
         let widest_completion_ix = self
             .matches
             .iter()
@@ -4459,6 +4461,11 @@ impl Editor {
             } else {
                 return;
             };
+        let show_completion_documentation = buffer
+            .read(cx)
+            .snapshot()
+            .settings_at(buffer_position, cx)
+            .show_completion_documentation;
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
 
@@ -4496,6 +4503,7 @@ impl Editor {
                     let mut menu = CompletionsMenu::new(
                         id,
                         sort_completions,
+                        show_completion_documentation,
                         position,
                         buffer.clone(),
                         completions.into(),
@@ -14174,10 +14182,6 @@ impl CompletionProvider for Model<Project> {
         trigger_in_words: bool,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
-        if !EditorSettings::get_global(cx).show_completions_on_input {
-            return false;
-        }
-
         let mut chars = text.chars();
         let char = if let Some(char) = chars.next() {
             char
@@ -14189,10 +14193,11 @@ impl CompletionProvider for Model<Project> {
         }
 
         let buffer = buffer.read(cx);
-        let classifier = buffer
-            .snapshot()
-            .char_classifier_at(position)
-            .for_completion(true);
+        let snapshot = buffer.snapshot();
+        if !snapshot.settings_at(position, cx).show_completions_on_input {
+            return false;
+        }
+        let classifier = snapshot.char_classifier_at(position).for_completion(true);
         if trigger_in_words && classifier.is_word(char) {
             return true;
         }
