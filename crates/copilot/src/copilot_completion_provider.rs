@@ -1,6 +1,5 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
-use client::telemetry::Telemetry;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
 use language::{
@@ -8,7 +7,7 @@ use language::{
     Buffer, OffsetRangeExt, ToOffset,
 };
 use settings::Settings;
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{path::Path, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -21,7 +20,6 @@ pub struct CopilotCompletionProvider {
     pending_refresh: Task<Result<()>>,
     pending_cycling_refresh: Task<Result<()>>,
     copilot: Model<Copilot>,
-    telemetry: Option<Arc<Telemetry>>,
 }
 
 impl CopilotCompletionProvider {
@@ -35,13 +33,7 @@ impl CopilotCompletionProvider {
             pending_refresh: Task::ready(Ok(())),
             pending_cycling_refresh: Task::ready(Ok(())),
             copilot,
-            telemetry: None,
         }
-    }
-
-    pub fn with_telemetry(mut self, telemetry: Arc<Telemetry>) -> Self {
-        self.telemetry = Some(telemetry);
-        self
     }
 
     fn active_completion(&self) -> Option<&Completion> {
@@ -190,23 +182,10 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             self.copilot
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                 .detach_and_log_err(cx);
-            if self.active_completion().is_some() {
-                if let Some(telemetry) = self.telemetry.as_ref() {
-                    telemetry.report_inline_completion_event(
-                        Self::name().to_string(),
-                        true,
-                        self.file_extension.clone(),
-                    );
-                }
-            }
         }
     }
 
-    fn discard(
-        &mut self,
-        should_report_inline_completion_event: bool,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn discard(&mut self, cx: &mut ModelContext<Self>) {
         let settings = AllLanguageSettings::get_global(cx);
 
         let copilot_enabled = settings.inline_completions_enabled(None, None, cx);
@@ -220,16 +199,6 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 copilot.discard_completions(&self.completions, cx)
             })
             .detach_and_log_err(cx);
-
-        if should_report_inline_completion_event && self.active_completion().is_some() {
-            if let Some(telemetry) = self.telemetry.as_ref() {
-                telemetry.report_inline_completion_event(
-                    Self::name().to_string(),
-                    false,
-                    self.file_extension.clone(),
-                );
-            }
-        }
     }
 
     fn suggest(

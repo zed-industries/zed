@@ -1,6 +1,5 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
-use client::telemetry::Telemetry;
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
@@ -8,7 +7,6 @@ use language::{language_settings::all_language_settings, Anchor, Buffer, BufferS
 use std::{
     ops::{AddAssign, Range},
     path::Path,
-    sync::Arc,
     time::Duration,
 };
 use text::{ToOffset, ToPoint};
@@ -22,7 +20,6 @@ pub struct SupermavenCompletionProvider {
     completion_id: Option<SupermavenCompletionStateId>,
     file_extension: Option<String>,
     pending_refresh: Task<Result<()>>,
-    telemetry: Option<Arc<Telemetry>>,
 }
 
 impl SupermavenCompletionProvider {
@@ -33,13 +30,7 @@ impl SupermavenCompletionProvider {
             completion_id: None,
             file_extension: None,
             pending_refresh: Task::ready(Ok(())),
-            telemetry: None,
         }
-    }
-
-    pub fn with_telemetry(mut self, telemetry: Arc<Telemetry>) -> Self {
-        self.telemetry = Some(telemetry);
-        self
     }
 }
 
@@ -166,34 +157,11 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
     }
 
     fn accept(&mut self, _cx: &mut ModelContext<Self>) {
-        if self.completion_id.is_some() {
-            if let Some(telemetry) = self.telemetry.as_ref() {
-                telemetry.report_inline_completion_event(
-                    Self::name().to_string(),
-                    true,
-                    self.file_extension.clone(),
-                );
-            }
-        }
         self.pending_refresh = Task::ready(Ok(()));
         self.completion_id = None;
     }
 
-    fn discard(
-        &mut self,
-        should_report_inline_completion_event: bool,
-        _cx: &mut ModelContext<Self>,
-    ) {
-        if should_report_inline_completion_event && self.completion_id.is_some() {
-            if let Some(telemetry) = self.telemetry.as_ref() {
-                telemetry.report_inline_completion_event(
-                    Self::name().to_string(),
-                    false,
-                    self.file_extension.clone(),
-                );
-            }
-        }
-
+    fn discard(&mut self, _cx: &mut ModelContext<Self>) {
         self.pending_refresh = Task::ready(Ok(()));
         self.completion_id = None;
     }

@@ -5337,6 +5337,8 @@ impl Editor {
             return;
         };
 
+        self.report_inline_completion_event(true, cx);
+
         match &active_inline_completion.completion {
             InlineCompletion::Move(position) => {
                 let position = *position;
@@ -5424,11 +5426,42 @@ impl Editor {
         should_report_inline_completion_event: bool,
         cx: &mut ViewContext<Self>,
     ) -> bool {
+        if should_report_inline_completion_event {
+            self.report_inline_completion_event(false, cx);
+        }
+
         if let Some(provider) = self.inline_completion_provider() {
-            provider.discard(should_report_inline_completion_event, cx);
+            provider.discard(cx);
         }
 
         self.take_active_inline_completion(cx).is_some()
+    }
+
+    fn report_inline_completion_event(&self, accepted: bool, cx: &AppContext) {
+        let Some(provider) = self.inline_completion_provider() else {
+            return;
+        };
+        let Some(project) = self.project.as_ref() else {
+            return;
+        };
+        let Some((_, buffer, _)) = self
+            .buffer
+            .read(cx)
+            .excerpt_containing(self.selections.newest_anchor().head(), cx)
+        else {
+            return;
+        };
+
+        let project = project.read(cx);
+        let extension = buffer
+            .read(cx)
+            .file()
+            .and_then(|file| Some(file.path().extension()?.to_string_lossy().to_string()));
+        project.client().telemetry().report_inline_completion_event(
+            provider.name().into(),
+            accepted,
+            extension,
+        );
     }
 
     pub fn has_active_inline_completion(&self) -> bool {

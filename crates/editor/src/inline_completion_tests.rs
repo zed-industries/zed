@@ -347,12 +347,7 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
 
     fn accept(&mut self, _cx: &mut gpui::ModelContext<Self>) {}
 
-    fn discard(
-        &mut self,
-        _should_report_inline_completion_event: bool,
-        _cx: &mut gpui::ModelContext<Self>,
-    ) {
-    }
+    fn discard(&mut self, _cx: &mut gpui::ModelContext<Self>) {}
 
     fn suggest<'a>(
         &mut self,

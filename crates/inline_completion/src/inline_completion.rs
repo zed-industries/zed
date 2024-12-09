@@ -40,7 +40,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
         cx: &mut ModelContext<Self>,
     );
     fn accept(&mut self, cx: &mut ModelContext<Self>);
-    fn discard(&mut self, should_report_inline_completion_event: bool, cx: &mut ModelContext<Self>);
+    fn discard(&mut self, cx: &mut ModelContext<Self>);
     fn suggest(
         &mut self,
         buffer: &Model<Buffer>,
@@ -50,6 +50,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
 }
 
 pub trait InlineCompletionProviderHandle {
+    fn name(&self) -> &'static str;
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -71,7 +72,7 @@ pub trait InlineCompletionProviderHandle {
         cx: &mut AppContext,
     );
     fn accept(&self, cx: &mut AppContext);
-    fn discard(&self, should_report_inline_completion_event: bool, cx: &mut AppContext);
+    fn discard(&self, cx: &mut AppContext);
     fn suggest(
         &self,
         buffer: &Model<Buffer>,
@@ -84,6 +85,10 @@ impl<T> InlineCompletionProviderHandle for Model<T>
 where
     T: InlineCompletionProvider,
 {
+    fn name(&self) -> &'static str {
+        T::name()
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -121,10 +126,8 @@ where
         self.update(cx, |this, cx| this.accept(cx))
     }
 
-    fn discard(&self, should_report_inline_completion_event: bool, cx: &mut AppContext) {
-        self.update(cx, |this, cx| {
-            this.discard(should_report_inline_completion_event, cx)
-        })
+    fn discard(&self, cx: &mut AppContext) {
+        self.update(cx, |this, cx| this.discard(cx))
     }
 
     fn suggest(

@@ -689,11 +689,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn accept(&mut self, _cx: &mut ModelContext<Self>) {}
 
-    fn discard(
-        &mut self,
-        _should_report_inline_completion_event: bool,
-        _cx: &mut ModelContext<Self>,
-    ) {
+    fn discard(&mut self, _cx: &mut ModelContext<Self>) {
         self.current_completion.take();
     }
 
@@ -707,7 +703,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         let buffer = buffer.read(cx);
         let Some(edits) = completion.interpolate(buffer.snapshot()) else {
-            self.discard(false, cx);
+            self.current_completion.take();
             return None;
         };
 

@@ -118,19 +118,13 @@ fn assign_inline_completion_provider(
                         });
                     }
                 }
-                let provider = cx.new_model(|_| {
-                    CopilotCompletionProvider::new(copilot)
-                        .with_telemetry(client.telemetry().clone())
-                });
+                let provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
                 editor.set_inline_completion_provider(Some(provider), cx);
             }
         }
         language::language_settings::InlineCompletionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
-                let provider = cx.new_model(|_| {
-                    SupermavenCompletionProvider::new(supermaven)
-                        .with_telemetry(client.telemetry().clone())
-                });
+                let provider = cx.new_model(|_| SupermavenCompletionProvider::new(supermaven));
                 editor.set_inline_completion_provider(Some(provider), cx);
             }
         }
