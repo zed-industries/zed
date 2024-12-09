@@ -25,6 +25,9 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+project.workspace = true
+project_panel.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

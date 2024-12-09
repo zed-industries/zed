@@ -271,6 +271,9 @@ pub enum Event {
     Rejoined,
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
+    OpenNumberedFile {
+        file_number: usize,
+    },
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
 }
 

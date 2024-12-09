@@ -5095,6 +5095,7 @@ dependencies = [
  "language",
  "menu",
  "project",
+ "project_panel",
  "rope",
  "schemars",
  "serde",
@@ -5107,6 +5108,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]

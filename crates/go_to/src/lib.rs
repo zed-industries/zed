@@ -9,6 +9,6 @@ use settings::Settings;
 
 pub fn init(cx: &mut AppContext) {
     LineIndicatorFormat::register(cx);
-    cx.observe_new_views(GoToLine::register).detach();
     cx.observe_new_views(GoToFile::register).detach();
+    cx.observe_new_views(GoToLine::register).detach();
 }

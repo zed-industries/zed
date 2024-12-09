@@ -166,13 +166,7 @@ struct Trash {
     pub skip_prompt: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
-struct OpenNumberedFile {
-    #[serde(default)]
-    pub file_number: usize,
-}
-
-impl_actions!(project_panel, [Delete, Trash, OpenNumberedFile]);
+impl_actions!(project_panel, [Delete, Trash]);
 
 actions!(
     project_panel,
@@ -293,6 +287,9 @@ impl ProjectPanel {
                 project::Event::RevealInProjectPanel(entry_id) => {
                     this.reveal_entry(project, *entry_id, false, cx);
                     cx.emit(PanelEvent::Activate);
+                }
+                project::Event::OpenNumberedFile { file_number } => {
+                    this.go_to_numbered_file(*file_number, cx);
                 }
                 project::Event::ActivateProjectPanel => {
                     cx.emit(PanelEvent::Activate);
@@ -3442,11 +3439,10 @@ impl ProjectPanel {
         }
     }
 
-    fn open_numbered_file(&mut self, action: &OpenNumberedFile, cx: &mut ViewContext<Self>) {
-        let number = action.file_number;
-
+    fn go_to_numbered_file(&mut self, file_number: usize, cx: &mut ViewContext<Self>) {
+        dbg!("In go to numbered file", file_number);
         // Line numbers start at 1 in the UI
-        if number == 0 {
+        if file_number == 0 {
             return;
         }
 
@@ -3457,22 +3453,26 @@ impl ProjectPanel {
             .map(|(_, entries, _)| entries.len())
             .sum();
 
-        if number > total_entries {
+        if file_number > total_entries {
             return;
         }
+        dbg!("here?");
 
         // Get the entry at the specified index (subtract 1 because UI numbers start at 1)
-        if let Some((worktree_id, entry)) = self.entry_at_index(number - 1) {
+        if let Some((worktree_id, entry)) = self.entry_at_index(file_number - 1) {
             if entry.kind.is_file() {
                 // Open the file
+                dbg!("opening the file");
                 self.open_entry(entry.id, true, false, cx);
 
                 // Ensure the entry is visible in the project panel
                 self.autoscroll(cx);
                 cx.notify();
             } else {
+                dbg!("not a file");
             }
         } else {
+            dbg!("didn't open file");
         }
     }
 }
@@ -3593,7 +3593,6 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
-                .on_action(cx.listener(Self::open_numbered_file))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))

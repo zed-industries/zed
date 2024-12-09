@@ -35,7 +35,8 @@
       "cmd-h": "zed::Hide",
       "alt-cmd-h": "zed::HideOthers",
       "cmd-m": "zed::Minimize",
-      "ctrl-cmd-f": "zed::ToggleFullScreen"
+      "ctrl-cmd-f": "zed::ToggleFullScreen",
+      "ctrl-r": "go_to_file::Toggle"
     }
   },
   {
@@ -386,7 +387,8 @@
     "context": "Editor && mode == full",
     "bindings": {
       "cmd-shift-o": "outline::Toggle",
-      "ctrl-g": "go_to::Toggle"
+      "ctrl-g": "go_to_line::Toggle",
+      "ctrl-r": "go_to_file::Toggle"
     }
   },
   {
@@ -415,6 +417,7 @@
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
       "alt-cmd-o": "projects::OpenRecent",
       "ctrl-cmd-o": "projects::OpenRemote",
+      "cmd-[": "go_to_file::Toggle",
       "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
