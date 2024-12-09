@@ -116,7 +116,8 @@ impl super::LspAdapter for GoLspAdapter {
         let go_version_output = util::command::new_smol_command(&go)
             .args(["version"])
             .output()
-            .await?;
+            .await
+            .context("failed to get go version via `go version` command`")?;
         let go_version = parse_version_output(&go_version_output)?;
         let version = version.downcast::<Option<String>>().unwrap();
         let this = *self;
