@@ -3432,10 +3432,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
+ "async-pipe",
  "async-tar",
  "async-trait",
  "collections",
+ "ctor",
  "dap-types",
+ "env_logger 0.11.5",
  "fs",
  "futures 0.3.31",
  "gpui",

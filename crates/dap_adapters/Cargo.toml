@@ -5,6 +5,13 @@ edition =  "2021"
 publish =  false
 license = "GPL-3.0-or-later"
 
+[features]
+test-support = [
+    "util/test-support",
+    "task/test-support",
+    "dap/test-support",
+]
+
 [lints]
 workspace = true
 
@@ -23,3 +30,7 @@ serde_json.workspace = true
 sysinfo.workspace = true
 task.workspace = true
 util.workspace = true
+
+[dev-dependencies]
+dap = { workspace = true, features = ["test-support"] }
+task = { workspace = true, features = ["test-support"] }

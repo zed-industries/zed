@@ -1,4 +1,4 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
 use dap::transport::{StdioTransport, TcpTransport, Transport};
 use serde_json::Value;
@@ -8,7 +8,7 @@ use crate::*;
 
 pub(crate) struct CustomDebugAdapter {
     custom_args: CustomArgs,
-    transport: Box<dyn Transport>,
+    transport: Arc<dyn Transport>,
 }
 
 impl CustomDebugAdapter {
@@ -17,12 +17,12 @@ impl CustomDebugAdapter {
     pub(crate) async fn new(custom_args: CustomArgs) -> Result<Self> {
         Ok(CustomDebugAdapter {
             transport: match &custom_args.connection {
-                DebugConnectionType::TCP(host) => Box::new(TcpTransport::new(
+                DebugConnectionType::TCP(host) => Arc::new(TcpTransport::new(
                     host.host(),
                     TcpTransport::port(&host).await?,
                     host.timeout,
                 )),
-                DebugConnectionType::STDIO => Box::new(StdioTransport::new()),
+                DebugConnectionType::STDIO => Arc::new(StdioTransport::new()),
             },
             custom_args,
         })
@@ -35,8 +35,8 @@ impl DebugAdapter for CustomDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn transport(&self) -> Box<dyn Transport> {
-        self.transport.clone_box()
+    fn transport(&self) -> Arc<dyn Transport> {
+        self.transport.clone()
     }
 
     async fn get_binary(

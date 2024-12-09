@@ -1,6 +1,6 @@
 use adapters::latest_github_release;
 use dap::transport::{TcpTransport, Transport};
-use std::{net::Ipv4Addr, path::PathBuf};
+use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use crate::*;
 
@@ -29,8 +29,8 @@ impl DebugAdapter for PhpDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn transport(&self) -> Box<dyn Transport> {
-        Box::new(TcpTransport::new(self.host, self.port, self.timeout))
+    fn transport(&self) -> Arc<dyn Transport> {
+        Arc::new(TcpTransport::new(self.host, self.port, self.timeout))
     }
 
     async fn fetch_latest_adapter_version(

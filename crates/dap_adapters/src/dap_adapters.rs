@@ -7,6 +7,8 @@ mod lldb;
 mod php;
 mod python;
 
+use std::sync::Arc;
+
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use custom::CustomDebugAdapter;
@@ -24,19 +26,24 @@ use python::PythonDebugAdapter;
 use serde_json::{json, Value};
 use task::{CustomArgs, DebugAdapterConfig, DebugAdapterKind, DebugConnectionType, TCPHost};
 
-pub async fn build_adapter(kind: &DebugAdapterKind) -> Result<Box<dyn DebugAdapter>> {
-    match &kind {
+pub async fn build_adapter(kind: &DebugAdapterKind) -> Result<Arc<dyn DebugAdapter>> {
+    match kind {
         DebugAdapterKind::Custom(start_args) => {
-            Ok(Box::new(CustomDebugAdapter::new(start_args.clone()).await?))
+            Ok(Arc::new(CustomDebugAdapter::new(start_args.clone()).await?))
         }
-        DebugAdapterKind::Python(host) => Ok(Box::new(PythonDebugAdapter::new(host).await?)),
-        DebugAdapterKind::Php(host) => Ok(Box::new(PhpDebugAdapter::new(host.clone()).await?)),
+        DebugAdapterKind::Python(host) => Ok(Arc::new(PythonDebugAdapter::new(host).await?)),
+        DebugAdapterKind::Php(host) => Ok(Arc::new(PhpDebugAdapter::new(host.clone()).await?)),
         DebugAdapterKind::Javascript(host) => {
-            Ok(Box::new(JsDebugAdapter::new(host.clone()).await?))
+            Ok(Arc::new(JsDebugAdapter::new(host.clone()).await?))
         }
-        DebugAdapterKind::Lldb => Ok(Box::new(LldbDebugAdapter::new())),
-        DebugAdapterKind::Go(host) => Ok(Box::new(GoDebugAdapter::new(host).await?)),
+        DebugAdapterKind::Lldb => Ok(Arc::new(LldbDebugAdapter::new())),
+        DebugAdapterKind::Go(host) => Ok(Arc::new(GoDebugAdapter::new(host).await?)),
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        DebugAdapterKind::Gdb => Ok(Box::new(GdbDebugAdapter::new())),
+        DebugAdapterKind::Gdb => Ok(Arc::new(GdbDebugAdapter::new())),
+        #[cfg(any(test, feature = "test-support"))]
+        DebugAdapterKind::Fake => Ok(Arc::new(dap::adapters::FakeAdapter::new())),
+        #[cfg(not(any(test, feature = "test-support")))]
+        #[allow(unreachable_patterns)]
+        _ => unreachable!("Fake variant only exists with test-support feature"),
     }
 }

@@ -23,8 +23,8 @@ impl DebugAdapter for GdbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn transport(&self) -> Box<dyn Transport> {
-        Box::new(StdioTransport::new())
+    fn transport(&self) -> Arc<dyn Transport> {
+        Arc::new(StdioTransport::new())
     }
 
     async fn get_binary(

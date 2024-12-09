@@ -1,4 +1,4 @@
-use std::{ffi::OsStr, path::PathBuf};
+use std::{ffi::OsStr, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -23,8 +23,8 @@ impl DebugAdapter for LldbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn transport(&self) -> Box<dyn Transport> {
-        Box::new(StdioTransport::new())
+    fn transport(&self) -> Arc<dyn Transport> {
+        Arc::new(StdioTransport::new())
     }
 
     async fn get_binary(

@@ -76,6 +76,9 @@ pub enum DebugAdapterKind {
     /// Use GDB's built-in DAP support
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     Gdb,
+    /// Used for integration tests
+    #[cfg(any(test, feature = "test-support"))]
+    Fake,
 }
 
 impl DebugAdapterKind {
@@ -90,6 +93,8 @@ impl DebugAdapterKind {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             Self::Gdb => "GDB",
             Self::Go(_) => "Go",
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fake => "Fake",
         }
     }
 }

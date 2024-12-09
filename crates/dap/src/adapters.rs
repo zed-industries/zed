@@ -1,3 +1,5 @@
+#[cfg(any(test, feature = "test-support"))]
+use crate::transport::FakeTransport;
 use crate::transport::Transport;
 use ::fs::Fs;
 use anyhow::{anyhow, Context as _, Result};
@@ -260,7 +262,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
             .await
     }
 
-    fn transport(&self) -> Box<dyn Transport>;
+    fn transport(&self) -> Arc<dyn Transport>;
 
     async fn fetch_latest_adapter_version(
         &self,
@@ -298,5 +300,73 @@ pub trait DebugAdapter: 'static + Send + Sync {
         _: &'a HashMap<Pid, Process>,
     ) -> Option<Vec<(&'a Pid, &'a Process)>> {
         None
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct FakeAdapter {}
+
+#[cfg(any(test, feature = "test-support"))]
+impl FakeAdapter {
+    const ADAPTER_NAME: &'static str = "fake-adapter";
+
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[async_trait(?Send)]
+impl DebugAdapter for FakeAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn transport(&self) -> Arc<dyn Transport> {
+        Arc::new(FakeTransport::new())
+    }
+
+    async fn get_binary(
+        &self,
+        _delegate: &dyn DapDelegate,
+        _config: &DebugAdapterConfig,
+        _user_installed_path: Option<PathBuf>,
+    ) -> Result<DebugAdapterBinary> {
+        Ok(DebugAdapterBinary {
+            command: "command".into(),
+            arguments: None,
+            envs: None,
+            cwd: None,
+        })
+    }
+
+    async fn fetch_latest_adapter_version(
+        &self,
+        _delegate: &dyn DapDelegate,
+    ) -> Result<AdapterVersion> {
+        unimplemented!("fetch latest adapter version");
+    }
+
+    async fn install_binary(
+        &self,
+        _version: AdapterVersion,
+        _delegate: &dyn DapDelegate,
+    ) -> Result<()> {
+        unimplemented!("install binary");
+    }
+
+    async fn get_installed_binary(
+        &self,
+        _delegate: &dyn DapDelegate,
+        _config: &DebugAdapterConfig,
+        _user_installed_path: Option<PathBuf>,
+    ) -> Result<DebugAdapterBinary> {
+        unimplemented!("get installed binary");
+    }
+
+    fn request_args(&self, _config: &DebugAdapterConfig) -> Value {
+        use serde_json::json;
+
+        json!({})
     }
 }

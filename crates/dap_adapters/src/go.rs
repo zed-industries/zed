@@ -1,5 +1,5 @@
 use dap::transport::{TcpTransport, Transport};
-use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf};
+use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use crate::*;
 
@@ -28,8 +28,8 @@ impl DebugAdapter for GoDebugAdapter {
         DebugAdapterName(Self::_ADAPTER_NAME.into())
     }
 
-    fn transport(&self) -> Box<dyn Transport> {
-        Box::new(TcpTransport::new(self.host, self.port, self.timeout))
+    fn transport(&self) -> Arc<dyn Transport> {
+        Arc::new(TcpTransport::new(self.host, self.port, self.timeout))
     }
 
     async fn get_binary(

@@ -4,9 +4,7 @@ use dap_types::{
     messages::{Message, Response},
     ErrorResponse,
 };
-use futures::{
-    channel::oneshot, select, AsyncBufRead, AsyncReadExt as _, AsyncWrite, FutureExt as _,
-};
+use futures::{channel::oneshot, select, AsyncRead, AsyncReadExt as _, AsyncWrite, FutureExt as _};
 use gpui::AsyncAppContext;
 use settings::Settings as _;
 use smallvec::SmallVec;
@@ -15,9 +13,10 @@ use smol::{
     io::{AsyncBufReadExt as _, AsyncWriteExt, BufReader},
     lock::Mutex,
     net::{TcpListener, TcpStream},
-    process::{self, Child, ChildStderr, ChildStdout},
+    process::{self, Child},
 };
 use std::{
+    any::Any,
     collections::HashMap,
     net::{Ipv4Addr, SocketAddrV4},
     process::Stdio,
@@ -43,22 +42,25 @@ pub enum IoKind {
     StdErr,
 }
 
-pub struct TransportParams {
-    input: Box<dyn AsyncWrite + Unpin + Send>,
-    output: Box<dyn AsyncBufRead + Unpin + Send>,
-    process: Child,
+pub struct TransportPipe {
+    input: Box<dyn AsyncWrite + Unpin + Send + 'static>,
+    output: Box<dyn AsyncRead + Unpin + Send + 'static>,
+    stdout: Option<Box<dyn AsyncRead + Unpin + Send + 'static>>,
+    stderr: Option<Box<dyn AsyncRead + Unpin + Send + 'static>>,
 }
 
-impl TransportParams {
+impl TransportPipe {
     pub fn new(
-        input: Box<dyn AsyncWrite + Unpin + Send>,
-        output: Box<dyn AsyncBufRead + Unpin + Send>,
-        process: Child,
+        input: Box<dyn AsyncWrite + Unpin + Send + 'static>,
+        output: Box<dyn AsyncRead + Unpin + Send + 'static>,
+        stdout: Option<Box<dyn AsyncRead + Unpin + Send + 'static>>,
+        stderr: Option<Box<dyn AsyncRead + Unpin + Send + 'static>>,
     ) -> Self {
-        TransportParams {
+        TransportPipe {
             input,
             output,
-            process,
+            stdout,
+            stderr,
         }
     }
 }
@@ -70,16 +72,14 @@ pub(crate) struct TransportDelegate {
     log_handlers: LogHandlers,
     current_requests: Requests,
     pending_requests: Requests,
-    transport: Box<dyn Transport>,
-    process: Arc<Mutex<Option<Child>>>,
+    transport: Arc<dyn Transport>,
     server_tx: Arc<Mutex<Option<Sender<Message>>>>,
 }
 
 impl TransportDelegate {
-    pub fn new(transport: Box<dyn Transport>) -> Self {
+    pub fn new(transport: Arc<dyn Transport>) -> Self {
         Self {
             transport,
-            process: Default::default(),
             server_tx: Default::default(),
             log_handlers: Default::default(),
             current_requests: Default::default(),
@@ -98,7 +98,7 @@ impl TransportDelegate {
         let (server_tx, client_rx) = unbounded::<Message>();
 
         cx.update(|cx| {
-            if let Some(stdout) = params.process.stdout.take() {
+            if let Some(stdout) = params.stdout.take() {
                 cx.background_executor()
                     .spawn(Self::handle_adapter_log(stdout, self.log_handlers.clone()))
                     .detach_and_log_err(cx);
@@ -113,7 +113,7 @@ impl TransportDelegate {
                 ))
                 .detach_and_log_err(cx);
 
-            if let Some(stderr) = params.process.stderr.take() {
+            if let Some(stderr) = params.stderr.take() {
                 cx.background_executor()
                     .spawn(Self::handle_error(stderr, self.log_handlers.clone()))
                     .detach_and_log_err(cx);
@@ -131,9 +131,6 @@ impl TransportDelegate {
         })?;
 
         {
-            let mut lock = self.process.lock().await;
-            *lock = Some(params.process);
-
             let mut lock = self.server_tx.lock().await;
             *lock = Some(server_tx.clone());
         }
@@ -166,7 +163,10 @@ impl TransportDelegate {
         }
     }
 
-    async fn handle_adapter_log(stdout: ChildStdout, log_handlers: LogHandlers) -> Result<()> {
+    async fn handle_adapter_log<Stdout>(stdout: Stdout, log_handlers: LogHandlers) -> Result<()>
+    where
+        Stdout: AsyncRead + Unpin + Send + 'static,
+    {
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
 
@@ -196,13 +196,20 @@ impl TransportDelegate {
         result
     }
 
-    async fn handle_input(
-        mut server_stdin: Box<dyn AsyncWrite + Unpin + Send>,
+    fn build_rpc_message(message: String) -> String {
+        format!("Content-Length: {}\r\n\r\n{}", message.len(), message)
+    }
+
+    async fn handle_input<Stdin>(
+        mut server_stdin: Stdin,
         client_rx: Receiver<Message>,
         current_requests: Requests,
         pending_requests: Requests,
         log_handlers: LogHandlers,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        Stdin: AsyncWrite + Unpin + Send + 'static,
+    {
         let result = loop {
             match client_rx.recv().await {
                 Ok(message) => {
@@ -224,10 +231,7 @@ impl TransportDelegate {
                     }
 
                     if let Err(e) = server_stdin
-                        .write_all(
-                            format!("Content-Length: {}\r\n\r\n{}", message.len(), message)
-                                .as_bytes(),
-                        )
+                        .write_all(Self::build_rpc_message(message).as_bytes())
                         .await
                     {
                         break Err(e.into());
@@ -248,18 +252,21 @@ impl TransportDelegate {
         result
     }
 
-    async fn handle_output(
-        mut server_stdout: Box<dyn AsyncBufRead + Unpin + Send>,
+    async fn handle_output<Stdout>(
+        server_stdout: Stdout,
         client_tx: Sender<Message>,
         pending_requests: Requests,
         log_handlers: LogHandlers,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        Stdout: AsyncRead + Unpin + Send + 'static,
+    {
         let mut recv_buffer = String::new();
+        let mut reader = BufReader::new(server_stdout);
 
         let result = loop {
             let message =
-                Self::receive_server_message(&mut server_stdout, &mut recv_buffer, &log_handlers)
-                    .await;
+                Self::receive_server_message(&mut reader, &mut recv_buffer, &log_handlers).await;
 
             match message {
                 Ok(Message::Response(res)) => {
@@ -287,7 +294,10 @@ impl TransportDelegate {
         result
     }
 
-    async fn handle_error(stderr: ChildStderr, log_handlers: LogHandlers) -> Result<()> {
+    async fn handle_error<Stderr>(stderr: Stderr, log_handlers: LogHandlers) -> Result<()>
+    where
+        Stderr: AsyncRead + Unpin + Send + 'static,
+    {
         let mut buffer = String::new();
 
         let mut reader = BufReader::new(stderr);
@@ -331,11 +341,14 @@ impl TransportDelegate {
         }
     }
 
-    async fn receive_server_message(
-        reader: &mut Box<dyn AsyncBufRead + Unpin + Send>,
+    async fn receive_server_message<Stdout>(
+        reader: &mut BufReader<Stdout>,
         buffer: &mut String,
         log_handlers: &LogHandlers,
-    ) -> Result<Message> {
+    ) -> Result<Message>
+    where
+        Stdout: AsyncRead + Unpin + Send + 'static,
+    {
         let mut content_length = None;
         loop {
             buffer.truncate(0);
@@ -389,20 +402,16 @@ impl TransportDelegate {
             server_tx.close();
         }
 
-        let mut adapter = self.process.lock().await.take();
         let mut current_requests = self.current_requests.lock().await;
         let mut pending_requests = self.pending_requests.lock().await;
 
         current_requests.clear();
         pending_requests.clear();
 
-        if let Some(mut adapter) = adapter.take() {
-            let _ = adapter.kill().log_err();
-        }
+        let _ = self.transport.kill().await.log_err();
 
         drop(current_requests);
         drop(pending_requests);
-        drop(adapter);
 
         log::debug!("Shutdown client completed");
 
@@ -411,6 +420,11 @@ impl TransportDelegate {
 
     pub fn has_adapter_logs(&self) -> bool {
         self.transport.has_adapter_logs()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn transport(&self) -> &Arc<dyn Transport> {
+        &self.transport
     }
 
     pub fn add_log_handler<F>(&self, f: F, kind: LogKind)
@@ -423,23 +437,28 @@ impl TransportDelegate {
 }
 
 #[async_trait(?Send)]
-pub trait Transport: 'static + Send + Sync {
+pub trait Transport: 'static + Send + Sync + Any {
     async fn start(
-        &mut self,
+        &self,
         binary: &DebugAdapterBinary,
         cx: &mut AsyncAppContext,
-    ) -> Result<TransportParams>;
+    ) -> Result<TransportPipe>;
 
     fn has_adapter_logs(&self) -> bool;
 
-    fn clone_box(&self) -> Box<dyn Transport>;
+    async fn kill(&self) -> Result<()>;
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_fake(&self) -> &FakeTransport {
+        panic!("called as_fake on a real adapter");
+    }
 }
 
-#[derive(Clone)]
 pub struct TcpTransport {
     port: u16,
     host: Ipv4Addr,
     timeout: Option<u64>,
+    process: Arc<Mutex<Option<Child>>>,
 }
 
 impl TcpTransport {
@@ -448,6 +467,7 @@ impl TcpTransport {
             port,
             host,
             timeout,
+            process: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -467,10 +487,10 @@ impl TcpTransport {
 #[async_trait(?Send)]
 impl Transport for TcpTransport {
     async fn start(
-        &mut self,
+        &self,
         binary: &DebugAdapterBinary,
         cx: &mut AsyncAppContext,
-    ) -> Result<TransportParams> {
+    ) -> Result<TransportPipe> {
         let mut command = process::Command::new(&binary.command);
 
         if let Some(cwd) = &binary.cwd {
@@ -491,7 +511,7 @@ impl Transport for TcpTransport {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        let process = command
+        let mut process = command
             .spawn()
             .with_context(|| "failed to start debug adapter.")?;
 
@@ -523,10 +543,18 @@ impl Transport for TcpTransport {
             self.port
         );
 
-        Ok(TransportParams::new(
+        let stdout = process.stdout.take();
+        let stderr = process.stderr.take();
+
+        {
+            *self.process.lock().await = Some(process);
+        }
+
+        Ok(TransportPipe::new(
             Box::new(tx),
             Box::new(BufReader::new(rx)),
-            process,
+            stdout.map(|s| Box::new(s) as Box<dyn AsyncRead + Unpin + Send>),
+            stderr.map(|s| Box::new(s) as Box<dyn AsyncRead + Unpin + Send>),
         ))
     }
 
@@ -534,27 +562,34 @@ impl Transport for TcpTransport {
         true
     }
 
-    fn clone_box(&self) -> Box<dyn Transport> {
-        Box::new(self.clone())
+    async fn kill(&self) -> Result<()> {
+        if let Some(mut process) = self.process.lock().await.take() {
+            process.kill()?;
+        }
+
+        Ok(())
     }
 }
 
-#[derive(Clone)]
-pub struct StdioTransport {}
+pub struct StdioTransport {
+    process: Arc<Mutex<Option<Child>>>,
+}
 
 impl StdioTransport {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            process: Arc::new(Mutex::new(None)),
+        }
     }
 }
 
 #[async_trait(?Send)]
 impl Transport for StdioTransport {
     async fn start(
-        &mut self,
+        &self,
         binary: &DebugAdapterBinary,
         _: &mut AsyncAppContext,
-    ) -> Result<TransportParams> {
+    ) -> Result<TransportPipe> {
         let mut command = process::Command::new(&binary.command);
 
         if let Some(cwd) = &binary.cwd {
@@ -587,13 +622,22 @@ impl Transport for StdioTransport {
             .stdout
             .take()
             .ok_or_else(|| anyhow!("Failed to open stdout"))?;
+        let stderr = process
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("Failed to open stderr"))?;
 
         log::info!("Debug adapter has connected to stdio adapter");
 
-        Ok(TransportParams::new(
+        {
+            *self.process.lock().await = Some(process);
+        }
+
+        Ok(TransportPipe::new(
             Box::new(stdin),
             Box::new(BufReader::new(stdout)),
-            process,
+            None,
+            Some(Box::new(stderr) as Box<dyn AsyncRead + Unpin + Send>),
         ))
     }
 
@@ -601,7 +645,152 @@ impl Transport for StdioTransport {
         false
     }
 
-    fn clone_box(&self) -> Box<dyn Transport> {
-        Box::new(self.clone())
+    async fn kill(&self) -> Result<()> {
+        if let Some(mut process) = self.process.lock().await.take() {
+            process.kill()?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+type RequestHandler = Box<
+    dyn Send
+        + FnMut(
+            u64,
+            serde_json::Value,
+            Arc<Mutex<async_pipe::PipeWriter>>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
+>;
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct FakeTransport {
+    request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl FakeTransport {
+    pub fn new() -> Self {
+        Self {
+            request_handlers: Arc::new(Mutex::new(HashMap::default())),
+        }
+    }
+
+    pub async fn on_request<R: dap_types::requests::Request, F>(&self, mut handler: F)
+    where
+        F: 'static + Send + FnMut(u64, R::Arguments) -> Result<R::Response>,
+    {
+        self.request_handlers.lock().await.insert(
+            R::COMMAND,
+            Box::new(
+                move |seq, args, writer: Arc<Mutex<async_pipe::PipeWriter>>| {
+                    let response = handler(seq, serde_json::from_value(args).unwrap()).unwrap();
+
+                    let message = Message::Response(Response {
+                        seq: seq + 1,
+                        request_seq: seq,
+                        success: true,
+                        command: R::COMMAND.into(),
+                        body: Some(serde_json::to_value(response).unwrap()),
+                    });
+
+                    let message = serde_json::to_string(&message).unwrap();
+
+                    let writer = writer.clone();
+
+                    Box::pin(async move {
+                        let mut writer = writer.lock().await;
+                        writer
+                            .write_all(TransportDelegate::build_rpc_message(message).as_bytes())
+                            .await
+                            .unwrap();
+                        writer.flush().await.unwrap();
+                    })
+                },
+            ),
+        );
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[async_trait(?Send)]
+impl Transport for FakeTransport {
+    async fn start(
+        &self,
+        _binary: &DebugAdapterBinary,
+        cx: &mut AsyncAppContext,
+    ) -> Result<TransportPipe> {
+        let (stdin_writer, stdin_reader) = async_pipe::pipe();
+        let (stdout_writer, stdout_reader) = async_pipe::pipe();
+
+        let handlers = self.request_handlers.clone();
+        let stdout_writer = Arc::new(Mutex::new(stdout_writer));
+
+        cx.background_executor().spawn(async move {
+            let mut reader = BufReader::new(stdin_reader);
+            let mut buffer = String::new();
+
+            loop {
+                let message = TransportDelegate::receive_server_message(
+                    &mut reader,
+                    &mut buffer,
+                    &Default::default(),
+                )
+                .await;
+
+                match message {
+                    Err(error) => {
+                        break anyhow!(error);
+                    }
+                    Ok(Message::Request(request)) => {
+                        if let Some(mut handle) =
+                            handlers.lock().await.remove(request.command.as_str())
+                        {
+                            handle(
+                                request.seq,
+                                request.arguments.unwrap(),
+                                stdout_writer.clone(),
+                            )
+                            .await;
+                        } else {
+                            log::debug!("No handler for {}", request.command);
+                        }
+                    }
+                    Ok(Message::Event(event)) => {
+                        let message = serde_json::to_string(&Message::Event(event)).unwrap();
+
+                        let mut writer = stdout_writer.lock().await;
+                        writer
+                            .write_all(TransportDelegate::build_rpc_message(message).as_bytes())
+                            .await
+                            .unwrap();
+                        writer.flush().await.unwrap();
+                    }
+                    _ => unreachable!("You can only send a request and an event that is redirected to the ouput reader"),
+                }
+            }
+        })
+        .detach();
+
+        Ok(TransportPipe::new(
+            Box::new(stdin_writer),
+            Box::new(stdout_reader),
+            None,
+            None,
+        ))
+    }
+
+    fn has_adapter_logs(&self) -> bool {
+        false
+    }
+
+    async fn kill(&self) -> Result<()> {
+        Ok(())
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_fake(&self) -> &FakeTransport {
+        self
     }
 }
