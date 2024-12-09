@@ -2838,31 +2838,8 @@ impl EditorElement {
                     return None;
                 }
 
-                let mut text = String::new();
-                let mut offset =
-                    DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
-                let mut highlights = Vec::new();
-                for (old_range, new_text) in edits {
-                    let old_offset_range = old_range.to_offset(&editor_snapshot.buffer_snapshot);
-                    text.extend(
-                        editor_snapshot
-                            .buffer_snapshot
-                            .chunks(offset..old_offset_range.start, false)
-                            .map(|chunk| chunk.text),
-                    );
-                    offset = old_offset_range.end;
-
-                    let start = text.len();
-                    text.push_str(new_text);
-                    let end = text.len();
-                    highlights.push((
-                        start..end,
-                        HighlightStyle {
-                            background_color: Some(cx.theme().status().created_background),
-                            ..Default::default()
-                        },
-                    ));
-                }
+                let (text, highlights) =
+                    inline_completion_popover_text(edit_start, editor_snapshot, edits, cx);
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -4336,6 +4313,39 @@ impl EditorElement {
             + 1;
         self.column_pixels(digit_count, cx)
     }
+}
+
+fn inline_completion_popover_text(
+    edit_start: DisplayPoint,
+    editor_snapshot: &EditorSnapshot,
+    edits: &Vec<(Range<Anchor>, String)>,
+    cx: &WindowContext,
+) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
+    let mut text = String::new();
+    let mut offset = DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
+    let mut highlights = Vec::new();
+    for (old_range, new_text) in edits {
+        let old_offset_range = old_range.to_offset(&editor_snapshot.buffer_snapshot);
+        text.extend(
+            editor_snapshot
+                .buffer_snapshot
+                .chunks(offset..old_offset_range.start, false)
+                .map(|chunk| chunk.text),
+        );
+        offset = old_offset_range.end;
+
+        let start = text.len();
+        text.push_str(new_text);
+        let end = text.len();
+        highlights.push((
+            start..end,
+            HighlightStyle {
+                background_color: Some(cx.theme().status().created_background),
+                ..Default::default()
+            },
+        ));
+    }
+    (text, highlights)
 }
 
 fn all_edits_insertions_or_deletions(
@@ -7079,6 +7089,169 @@ mod tests {
 
                 editor_width += resize_step;
             }
+        }
+    }
+
+    #[gpui::test]
+    fn test_inline_completion_popover_text(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        // Test case 1: Simple insertion
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 6))
+                        ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
+                    let edit_start = DisplayPoint::new(DisplayRow(0), 6);
+                    let edits = vec![(edit_range, " beautiful".to_string())];
+
+                    let (text, highlights) =
+                        inline_completion_popover_text(edit_start, &snapshot, &edits, cx);
+
+                    assert_eq!(text, "Hello, beautiful");
+                    assert_eq!(highlights.len(), 1);
+                    assert_eq!(highlights[0].0, 6..16);
+                    assert_eq!(
+                        highlights[0].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                })
+                .unwrap();
+        }
+
+        // Test case 2: Replacement
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple("This is a test.", cx);
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edit_start = DisplayPoint::new(DisplayRow(0), 0);
+                    let edits = vec![(
+                        snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 4)),
+                        "That".to_string(),
+                    )];
+
+                    let (text, highlights) =
+                        inline_completion_popover_text(edit_start, &snapshot, &edits, cx);
+
+                    assert_eq!(text, "That");
+                    assert_eq!(highlights.len(), 1);
+                    assert_eq!(highlights[0].0, 0..4);
+                    assert_eq!(
+                        highlights[0].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                })
+                .unwrap();
+        }
+
+        // Test case 3: Multiple edits
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edit_start = DisplayPoint::new(DisplayRow(0), 0);
+                    let edits = vec![
+                        (
+                            snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 5)),
+                            "Greetings".into(),
+                        ),
+                        (
+                            snapshot.buffer_snapshot.anchor_after(Point::new(0, 12))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 13)),
+                            " and universe".into(),
+                        ),
+                    ];
+
+                    let (text, highlights) =
+                        inline_completion_popover_text(edit_start, &snapshot, &edits, cx);
+
+                    assert_eq!(text, "Greetings, world and universe");
+                    assert_eq!(highlights.len(), 2);
+                    assert_eq!(highlights[0].0, 0..9);
+                    assert_eq!(highlights[1].0, 16..29);
+                    assert_eq!(
+                        highlights[0].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                    assert_eq!(
+                        highlights[1].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                })
+                .unwrap();
+        }
+
+        // Test case 4: Multiple lines with edits
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple(
+                    "First line\nSecond line\nThird line\nFourth line",
+                    cx,
+                );
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edit_start = DisplayPoint::new(DisplayRow(1), 0);
+                    let edits = vec![
+                        (
+                            snapshot.buffer_snapshot.anchor_before(Point::new(1, 7))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(1, 11)),
+                            "modified".to_string(),
+                        ),
+                        (
+                            snapshot.buffer_snapshot.anchor_before(Point::new(2, 0))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(2, 10)),
+                            "New third line".to_string(),
+                        ),
+                        (
+                            snapshot.buffer_snapshot.anchor_before(Point::new(3, 6))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(3, 6)),
+                            " updated".to_string(),
+                        ),
+                    ];
+
+                    let (text, highlights) =
+                        inline_completion_popover_text(edit_start, &snapshot, &edits, cx);
+
+                    assert_eq!(text, "Second modified\nNew third line\nFourth updated");
+                    assert_eq!(highlights.len(), 3);
+                    assert_eq!(highlights[0].0, 7..15); // "modified"
+                    assert_eq!(highlights[1].0, 16..30); // "New third line"
+                    assert_eq!(highlights[2].0, 37..45); // " updated"
+
+                    for highlight in &highlights {
+                        assert_eq!(
+                            highlight.1.background_color,
+                            Some(cx.theme().status().created_background)
+                        );
+                    }
+                })
+                .unwrap();
         }
     }
 
