@@ -31,10 +31,21 @@ impl Blame {
         content: &Rope,
         remote_url: Option<String>,
         provider_registry: Arc<GitHostingProviderRegistry>,
+        author_display_replace: Option<&str>,
     ) -> Result<Self> {
         let output = run_git_blame(git_binary, working_directory, path, content)?;
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
+
+        if let Some(replacement) = author_display_replace {
+            if let Some(username) = get_git_user_name(git_binary, working_directory)? {
+                let new_author = replacement.replace("{}", &username);
+                entries
+                    .iter_mut()
+                    .filter(|e| e.author.as_deref() == Some(&username))
+                    .for_each(|e| e.author = Some(new_author.clone()));
+            }
+        }
 
         let mut permalinks = HashMap::default();
         let mut unique_shas = HashSet::default();
@@ -117,6 +128,21 @@ fn run_git_blame(
     }
 
     Ok(String::from_utf8(output.stdout)?)
+}
+
+fn get_git_user_name(git_binary: &Path, working_directory: &Path) -> Result<Option<String>> {
+    let output = std::process::Command::new(git_binary)
+        .current_dir(working_directory)
+        .arg("config")
+        .arg("user.name")
+        .output()?;
+
+    if output.status.success() {
+        let name = String::from_utf8(output.stdout)?;
+        Ok(Some(name.trim().to_string()))
+    } else {
+        Ok(None)
+    }
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
