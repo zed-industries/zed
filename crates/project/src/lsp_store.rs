@@ -3497,6 +3497,7 @@ impl LspStore {
                 let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
 
                 let id = lsp_request.id();
+
                 let _cleanup = if status.is_some() {
                     cx.update(|cx| {
                         this.update(cx, |this, cx| {
@@ -3536,11 +3537,19 @@ impl LspStore {
                 let result = lsp_request.await;
 
                 let response = result.map_err(|err| {
+                    cx.update(|cx| {
+                        this.update(cx, |_, cx| {
+                            cx.emit(LspStoreEvent::Notification(err.to_string()));
+                        })
+                    })
+                    .log_err();
+
                     log::warn!(
                         "Generic lsp request to {} failed: {}",
                         language_server.name(),
                         err
                     );
+
                     err
                 })?;
 
