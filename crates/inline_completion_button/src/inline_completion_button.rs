@@ -1,6 +1,7 @@
 use anyhow::Result;
 use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{
     div, Action, AnchorCorner, AppContext, AsyncWindowContext, Entity, IntoElement, ParentElement,
@@ -15,6 +16,7 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use supermaven::{AccountStatus, Supermaven};
+use ui::{Button, LabelSize};
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -25,6 +27,7 @@ use workspace::{
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
+use zeta::RateCompletionModal;
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 
@@ -36,6 +39,7 @@ pub struct InlineCompletionButton {
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
     fs: Arc<dyn Fs>,
+    workspace: WeakView<Workspace>,
 }
 
 enum SupermavenButtonStatus {
@@ -193,12 +197,35 @@ impl Render for InlineCompletionButton {
                         ),
                 );
             }
+
+            InlineCompletionProvider::Zeta => {
+                if !cx.is_staff() {
+                    return div();
+                }
+
+                div().child(
+                    Button::new("zeta", "Zeta")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(|this, _, cx| {
+                            if let Some(workspace) = this.workspace.upgrade() {
+                                workspace.update(cx, |workspace, cx| {
+                                    RateCompletionModal::toggle(workspace, cx)
+                                });
+                            }
+                        }))
+                        .tooltip(|cx| Tooltip::text("Rate Completions", cx)),
+                )
+            }
         }
     }
 }
 
 impl InlineCompletionButton {
-    pub fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        workspace: WeakView<Workspace>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
         }
@@ -211,6 +238,7 @@ impl InlineCompletionButton {
             editor_enabled: None,
             language: None,
             file: None,
+            workspace,
             fs,
         }
     }

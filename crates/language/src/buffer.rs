@@ -563,7 +563,7 @@ impl<'a, 'b> DerefMut for ChunkRendererContext<'a, 'b> {
 pub struct Diff {
     pub(crate) base_version: clock::Global,
     line_ending: LineEnding,
-    edits: Vec<(Range<usize>, Arc<str>)>,
+    pub edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
 #[derive(Clone, Copy)]

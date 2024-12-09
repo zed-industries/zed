@@ -149,6 +149,21 @@ spec:
                 secretKeyRef:
                   name: google-ai
                   key: api_key
+            - name: PREDICTION_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: prediction
+                  key: api_url
+            - name: PREDICTION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: prediction
+                  key: api_key
+            - name: PREDICTION_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: prediction
+                  key: model
             - name: BLOB_STORE_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

@@ -10,7 +10,9 @@ pub mod provider;
 mod settings;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
-use crate::provider::cloud::{CloudLanguageModelProvider, RefreshLlmTokenListener};
+use crate::provider::cloud::CloudLanguageModelProvider;
+pub use crate::provider::cloud::LlmApiToken;
+pub use crate::provider::cloud::RefreshLlmTokenListener;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
