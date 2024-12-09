@@ -1,4 +1,4 @@
-use crate::{prelude::*, Indicator};
+use crate::prelude::*;
 use gpui::{div, AnyElement, FontWeight, IntoElement, Length};
 
 /// A table component

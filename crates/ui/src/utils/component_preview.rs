@@ -1,4 +1,4 @@
-use crate::{content_group, prelude::*};
+use crate::prelude::*;
 use gpui::{AnyElement, Axis};
 use smallvec::SmallVec;
 

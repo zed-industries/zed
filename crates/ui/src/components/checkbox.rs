@@ -1,9 +1,14 @@
 #![allow(missing_docs)]
 
+use crate::{
+    prelude::*,
+    register_components,
+    utils::{component_preview, component_preview_group},
+};
 use gpui::{div, prelude::*, ElementId, IntoElement, Styled, WindowContext};
+use std::sync::Arc;
 
-use crate::prelude::*;
-use crate::{Color, Icon, IconName, Selection};
+register_components!(user, [Checkbox, CheckboxWithLabel]);
 
 /// # Checkbox
 ///
@@ -113,55 +118,38 @@ impl RenderOnce for Checkbox {
     }
 }
 
-// impl Component for Checkbox {
-//     fn description() -> impl Into<Option<&'static str>> {
-//         "A checkbox lets people choose between a pair of opposing states, like enabled and disabled, using a different appearance to indicate each state."
-//     }
+impl ComponentElement for Checkbox {
+    fn description() -> impl Into<Option<&'static str>> {
+        "A checkbox allows people to toggle between two states, typically representing on/off, or a pair of opposites."
+    }
 
-//     fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-//         vec![
-//             example_group_with_title(
-//                 "Default",
-//                 vec![
-//                     single_example(
-//                         "Unselected",
-//                         Checkbox::new("checkbox_unselected", Selection::Unselected),
-//                     ),
-//                     single_example(
-//                         "Indeterminate",
-//                         Checkbox::new("checkbox_indeterminate", Selection::Indeterminate),
-//                     ),
-//                     single_example(
-//                         "Selected",
-//                         Checkbox::new("checkbox_selected", Selection::Selected),
-//                     ),
-//                 ],
-//             ),
-//             example_group_with_title(
-//                 "Disabled",
-//                 vec![
-//                     single_example(
-//                         "Unselected",
-//                         Checkbox::new("checkbox_disabled_unselected", Selection::Unselected)
-//                             .disabled(true),
-//                     ),
-//                     single_example(
-//                         "Indeterminate",
-//                         Checkbox::new("checkbox_disabled_indeterminate", Selection::Indeterminate)
-//                             .disabled(true),
-//                     ),
-//                     single_example(
-//                         "Selected",
-//                         Checkbox::new("checkbox_disabled_selected", Selection::Selected)
-//                             .disabled(true),
-//                     ),
-//                 ],
-//             ),
-//         ]
-//     }
-// }
+    fn scope() -> &'static str {
+        "input"
+    }
 
-use std::sync::Arc;
+    fn preview(cx: &WindowContext) -> Option<gpui::AnyElement> {
+        Some(
+            component_preview_group()
+                .child(
+                    component_preview("Default")
+                        .child(Checkbox::new("checkbox-1", Selection::Unselected)),
+                )
+                .child(
+                    component_preview("Selected")
+                        .child(Checkbox::new("checkbox-2", Selection::Selected)),
+                )
+                .child(
+                    component_preview("Indeterminate")
+                        .child(Checkbox::new("checkbox-3", Selection::Indeterminate)),
+                )
+                .child(
+                    component_preview("Disabled")
+                        .child(Checkbox::new("checkbox-4", Selection::Selected).disabled(true)),
+                )
+                .into_any_element(),
+        )
+    }
+}
 
 /// A [`Checkbox`] that has a [`Label`].
 #[derive(IntoElement)]
@@ -209,40 +197,64 @@ impl RenderOnce for CheckboxWithLabel {
     }
 }
 
-// impl Component for CheckboxWithLabel {
-//     fn description() -> impl Into<Option<&'static str>> {
-//         "A checkbox with an associated label, allowing users to select an option while providing a descriptive text."
-//     }
+impl ComponentElement for CheckboxWithLabel {
+    fn description() -> impl Into<Option<&'static str>> {
+        "A checkbox with an associated label."
+    }
 
-//     fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-//         vec![example_group(vec![
-//             single_example(
-//                 "Unselected",
-//                 CheckboxWithLabel::new(
-//                     "checkbox_with_label_unselected",
-//                     Label::new("Always save on quit"),
-//                     Selection::Unselected,
-//                     |_, _| {},
-//                 ),
-//             ),
-//             single_example(
-//                 "Indeterminate",
-//                 CheckboxWithLabel::new(
-//                     "checkbox_with_label_indeterminate",
-//                     Label::new("Always save on quit"),
-//                     Selection::Indeterminate,
-//                     |_, _| {},
-//                 ),
-//             ),
-//             single_example(
-//                 "Selected",
-//                 CheckboxWithLabel::new(
-//                     "checkbox_with_label_selected",
-//                     Label::new("Always save on quit"),
-//                     Selection::Selected,
-//                     |_, _| {},
-//                 ),
-//             ),
-//         ])]
-//     }
-// }
+    fn scope() -> &'static str {
+        "input"
+    }
+
+    fn preview(_cx: &WindowContext) -> Option<gpui::AnyElement> {
+        Some(
+            v_flex()
+                .gap_3()
+                .child(
+                    component_preview_group()
+                        .child(component_preview("Default").child(CheckboxWithLabel::new(
+                            "checkbox-1",
+                            Label::new("Show Completions"),
+                            Selection::Unselected,
+                            |_, _| {},
+                        )))
+                        .child(component_preview("Selected").child(CheckboxWithLabel::new(
+                            "checkbox-2",
+                            Label::new("Show Completions"),
+                            Selection::Selected,
+                            |_, _| {},
+                        ))),
+                )
+                .child(
+                    component_preview_group().child(
+                        component_preview("Indeterminate").child(
+                            v_flex()
+                                .child(CheckboxWithLabel::new(
+                                    "checkbox-3",
+                                    Label::new("Show Completions"),
+                                    Selection::Indeterminate,
+                                    |_, _| {},
+                                ))
+                                .child(h_flex().child(div().w_5().h_full()).child(
+                                    CheckboxWithLabel::new(
+                                        "checkbox-4",
+                                        Label::new("Editor"),
+                                        Selection::Selected,
+                                        |_, _| {},
+                                    ),
+                                ))
+                                .child(h_flex().child(div().w_5().h_full()).child(
+                                    CheckboxWithLabel::new(
+                                        "checkbox-5",
+                                        Label::new("Assistant"),
+                                        Selection::Unselected,
+                                        |_, _| {},
+                                    ),
+                                )),
+                        ),
+                    ),
+                )
+                .into_any_element(),
+        )
+    }
+}

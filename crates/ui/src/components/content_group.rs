@@ -1,5 +1,5 @@
-use crate::{prelude::*, traits::component::ComponentElement};
-use gpui::{AnyElement, IntoElement, Length, ParentElement, StyleRefinement, Styled};
+use crate::prelude::*;
+use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
 
 /// Creates a new [ContentGroup].
