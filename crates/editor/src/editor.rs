@@ -16,7 +16,6 @@ pub mod actions;
 mod blame_entry_tooltip;
 mod blink_manager;
 mod clangd_ext;
-mod debounced_delay;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;
@@ -58,7 +57,6 @@ use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
-use debounced_delay::DebouncedDelay;
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{
@@ -123,7 +121,7 @@ use multi_buffer::{
     ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow, ToOffsetUtf16,
 };
 use ordered_float::OrderedFloat;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use project::{
     lsp_store::{FormatTarget, FormatTrigger},
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -1006,7 +1004,7 @@ struct CompletionsMenu {
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
-    selected_completion_resolve_debounce: Option<Arc<Mutex<DebouncedDelay>>>,
+    resolve_completions: bool,
     aside_was_displayed: Cell<bool>,
 }
 
@@ -1017,6 +1015,7 @@ impl CompletionsMenu {
         initial_position: Anchor,
         buffer: Model<Buffer>,
         completions: Box<[Completion]>,
+        aside_was_displayed: bool,
     ) -> Self {
         let match_candidates = completions
             .iter()
@@ -1039,8 +1038,8 @@ impl CompletionsMenu {
             matches: Vec::new().into(),
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
-            selected_completion_resolve_debounce: Some(Arc::new(Mutex::new(DebouncedDelay::new()))),
-            aside_was_displayed: Cell::new(false),
+            resolve_completions: true,
+            aside_was_displayed: Cell::new(aside_was_displayed),
         }
     }
 
@@ -1093,14 +1092,9 @@ impl CompletionsMenu {
             matches,
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
-            selected_completion_resolve_debounce: Some(Arc::new(Mutex::new(DebouncedDelay::new()))),
+            resolve_completions: false,
             aside_was_displayed: Cell::new(false),
         }
-    }
-
-    fn suppress_documentation_resolution(mut self) -> Self {
-        self.selected_completion_resolve_debounce.take();
-        self
     }
 
     fn select_first(
@@ -1164,14 +1158,14 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        let completion_index = self.matches[self.selected_item].candidate_id;
+        if !self.resolve_completions {
+            return;
+        }
         let Some(provider) = provider else {
             return;
         };
-        let Some(completion_resolve) = self.selected_completion_resolve_debounce.as_ref() else {
-            return;
-        };
 
+        let completion_index = self.matches[self.selected_item].candidate_id;
         let resolve_task = provider.resolve_completions(
             self.buffer.clone(),
             vec![completion_index],
@@ -1179,17 +1173,12 @@ impl CompletionsMenu {
             cx,
         );
 
-        let delay_ms =
-            EditorSettings::get_global(cx).completion_documentation_secondary_query_debounce;
-        let delay = Duration::from_millis(delay_ms);
-
-        completion_resolve.lock().fire_new(delay, cx, |_, cx| {
-            cx.spawn(move |editor, mut cx| async move {
-                if let Some(true) = resolve_task.await.log_err() {
-                    editor.update(&mut cx, |_, cx| cx.notify()).ok();
-                }
-            })
-        });
+        cx.spawn(move |editor, mut cx| async move {
+            if let Some(true) = resolve_task.await.log_err() {
+                editor.update(&mut cx, |_, cx| cx.notify()).ok();
+            }
+        })
+        .detach();
     }
 
     fn visible(&self) -> bool {
@@ -4472,12 +4461,9 @@ impl Editor {
             };
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
-        let is_followup_invoke = {
-            let context_menu_state = self.context_menu.read();
-            matches!(
-                context_menu_state.deref(),
-                Some(ContextMenu::Completions(_))
-            )
+        let (is_followup_invoke, aside_was_displayed) = match self.context_menu.read().deref() {
+            Some(ContextMenu::Completions(menu)) => (true, menu.aside_was_displayed.get()),
+            _ => (false, false),
         };
         let trigger_kind = match (&options.trigger, is_followup_invoke) {
             (_, true) => CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS,
@@ -4514,6 +4500,7 @@ impl Editor {
                         position,
                         buffer.clone(),
                         completions.into(),
+                        aside_was_displayed,
                     );
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
@@ -5858,8 +5845,7 @@ impl Editor {
 
         if let Some(buffer) = buffer {
             *self.context_menu.write() = Some(ContextMenu::Completions(
-                CompletionsMenu::new_snippet_choices(id, true, choices, selection, buffer)
-                    .suppress_documentation_resolution(),
+                CompletionsMenu::new_snippet_choices(id, true, choices, selection, buffer),
             ));
         }
     }

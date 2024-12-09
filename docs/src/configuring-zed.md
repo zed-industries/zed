@@ -1517,16 +1517,6 @@ Or to set a `socks5` proxy:
 
 `boolean` values
 
-## Completion Documentation Debounce Delay
-
-- Description: The debounce delay before re-querying the language server for completion documentation when not included in original completion list.
-- Setting: `completion_documentation_secondary_query_debounce`
-- Default: `300` ms
-
-**Options**
-
-`integer` values
-
 ## Show Inline Completions
 
 - Description: Whether to show inline completions as you type or manually by triggering `editor::ShowInlineCompletion`.
