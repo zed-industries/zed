@@ -5336,9 +5336,6 @@ impl Editor {
         let Some(active_inline_completion) = self.active_inline_completion.as_ref() else {
             return;
         };
-        if let Some(provider) = self.inline_completion_provider() {
-            provider.accept(cx);
-        }
 
         match &active_inline_completion.completion {
             InlineCompletion::Move(position) => {
@@ -5348,18 +5345,16 @@ impl Editor {
                 });
             }
             InlineCompletion::Edit(edits) => {
+                if let Some(provider) = self.inline_completion_provider() {
+                    provider.accept(cx);
+                }
+
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 let last_edit_end = edits.last().unwrap().0.end.bias_right(&snapshot);
 
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.edit(edits.iter().cloned(), None, cx)
                 });
-
-                // todo!("verify that this is needed")
-                // cx.emit(EditorEvent::InputHandled {
-                //     utf16_range_to_replace: None,
-                //     text: text.to_string().into(),
-                // });
 
                 self.change_selections(None, cx, |s| {
                     s.select_anchor_ranges([last_edit_end..last_edit_end])
