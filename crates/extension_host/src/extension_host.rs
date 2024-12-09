@@ -1398,27 +1398,31 @@ impl ExtensionStore {
         };
         let fs = self.fs.clone();
         cx.background_executor().spawn(async move {
+            const EXTENSION_TOML: &str = "extension.toml";
+            const EXTENSION_WASM: &str = "extension.wasm";
+            const CONFIG_TOML: &str = "config.toml";
+
             if is_dev {
                 let manifest_toml = toml::to_string(&loaded_extension.manifest)?;
                 fs.save(
-                    &tmp_dir.join("extension.toml"),
+                    &tmp_dir.join(EXTENSION_TOML),
                     &Rope::from(manifest_toml),
                     language::LineEnding::Unix,
                 )
                 .await?;
             } else {
                 fs.copy_file(
-                    &src_dir.join("extension.toml"),
-                    &tmp_dir.join("extension.toml"),
+                    &src_dir.join(EXTENSION_TOML),
+                    &tmp_dir.join(EXTENSION_TOML),
                     fs::CopyOptions::default(),
                 )
                 .await?
             }
 
-            if fs.is_file(&src_dir.join("extension.wasm")).await {
+            if fs.is_file(&src_dir.join(EXTENSION_WASM)).await {
                 fs.copy_file(
-                    &src_dir.join("extension.wasm"),
-                    &tmp_dir.join("extension.wasm"),
+                    &src_dir.join(EXTENSION_WASM),
+                    &tmp_dir.join(EXTENSION_WASM),
                     fs::CopyOptions::default(),
                 )
                 .await?
@@ -1426,13 +1430,13 @@ impl ExtensionStore {
 
             for language_path in loaded_extension.manifest.languages.iter() {
                 if fs
-                    .is_file(&src_dir.join(language_path).join("config.toml"))
+                    .is_file(&src_dir.join(language_path).join(CONFIG_TOML))
                     .await
                 {
                     fs.create_dir(&tmp_dir.join(language_path)).await?;
                     fs.copy_file(
-                        &src_dir.join(language_path).join("config.toml"),
-                        &tmp_dir.join(language_path).join("config.toml"),
+                        &src_dir.join(language_path).join(CONFIG_TOML),
+                        &tmp_dir.join(language_path).join(CONFIG_TOML),
                         fs::CopyOptions::default(),
                     )
                     .await?
