@@ -95,8 +95,8 @@ impl Item for ImageView {
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+        let project_path = self.image_item.read(cx).project_path(cx);
         let label_color = if ItemSettings::get_global(cx).git_status {
-            let project_path = self.image_item.read(cx).project_path(cx);
             self.project
                 .read(cx)
                 .entry_for_path(&project_path, cx)
@@ -108,10 +108,10 @@ impl Item for ImageView {
             params.text_color()
         };
 
-        let path = self.image_item.read(cx).file.path();
-        let title = path
+        let title = project_path
+            .path
             .file_name()
-            .unwrap_or_else(|| path.as_os_str())
+            .unwrap_or_else(|| project_path.path.as_os_str())
             .to_string_lossy()
             .to_string();
         Label::new(title)
