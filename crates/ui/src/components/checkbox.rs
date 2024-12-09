@@ -127,7 +127,7 @@ impl ComponentElement for Checkbox {
         "input"
     }
 
-    fn preview(cx: &WindowContext) -> Option<gpui::AnyElement> {
+    fn preview(_cx: &WindowContext) -> Option<gpui::AnyElement> {
         Some(
             component_preview_group()
                 .child(

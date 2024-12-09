@@ -487,26 +487,6 @@ impl RenderOnce for IconDecoration {
     }
 }
 
-// impl Component for IconDecoration {
-//     fn examples(cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-//         let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
-
-//         let examples = all_kinds
-//             .iter()
-//             .map(|kind| {
-//                 let name = format!("{:?}", kind).to_string();
-
-//                 single_example(
-//                     name,
-//                     IconDecoration::new(*kind, cx.theme().colors().surface_background, cx),
-//                 )
-//             })
-//             .collect();
-
-//         vec![example_group(examples)]
-//     }
-// }
-
 #[derive(IntoElement)]
 pub struct DecoratedIcon {
     icon: Icon,
