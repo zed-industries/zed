@@ -4461,16 +4461,15 @@ impl Editor {
             };
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
-        let (is_followup_invoke, aside_was_displayed) = match self.context_menu.read().deref() {
-            Some(ContextMenu::Completions(menu)) => (true, menu.aside_was_displayed.get()),
-            _ => (false, false),
+
+        let aside_was_displayed = match self.context_menu.read().deref() {
+            Some(ContextMenu::Completions(menu)) => menu.aside_was_displayed.get(),
+            _ => false,
         };
-        let trigger_kind = match (&options.trigger, is_followup_invoke) {
-            (_, true) => CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS,
-            (Some(trigger), _) if buffer.read(cx).completion_triggers().contains(trigger) => {
+        let trigger_kind = match &options.trigger {
+            Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
                 CompletionTriggerKind::TRIGGER_CHARACTER
             }
-
             _ => CompletionTriggerKind::INVOKED,
         };
         let completion_context = CompletionContext {
