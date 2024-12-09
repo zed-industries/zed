@@ -14179,7 +14179,6 @@ async fn test_multi_buffer_folding_with_fewer_excerpts(cx: &mut gpui::TestAppCon
         full_text,
     );
 
-    dbg!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
     multi_buffer_editor.update(cx, |editor, cx| {
         editor.fold_buffer(buffer_1.read(cx).remote_id(), cx)
     });
@@ -14189,14 +14188,10 @@ async fn test_multi_buffer_folding_with_fewer_excerpts(cx: &mut gpui::TestAppCon
         "After folding the first buffer, its text should not be displayed"
     );
 
-    // TODO kb remove
-    if true {
-        return;
-    }
-
     multi_buffer_editor.update(cx, |editor, cx| {
         editor.fold_buffer(buffer_2.read(cx).remote_id(), cx)
     });
+
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         "\n\n\n\n\n\n\n7777\n8888\n9999\n",
@@ -14212,37 +14207,32 @@ async fn test_multi_buffer_folding_with_fewer_excerpts(cx: &mut gpui::TestAppCon
         "After folding the third buffer, its text should not be displayed"
     );
 
-    // Emulate selection inside the fold logic, that should work
-    multi_buffer_editor.update(cx, |editor, cx| {
-        editor.snapshot(cx).next_line_boundary(Point::new(0, 4));
-    });
-
     multi_buffer_editor.update(cx, |editor, cx| {
         editor.unfold_buffer(buffer_2.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         "\n\n\n\n\n4444\n5555\n6666\n\n\n",
+        "After unfolding the second buffer, its text should be displayed"
     );
 
-    // TODO kb
-    // multi_buffer_editor.update(cx, |editor, cx| {
-    //     editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
-    // });
-    // assert_eq!(
-    //     multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-    //     "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n",
-    //     "After unfolding the first buffer, its text should be displayed"
-    // );
-    //
-    // // multi_buffer_editor.update(cx, |editor, cx| {
-    //     editor.unfold_buffer(buffer_2.read(cx).remote_id(), cx)
-    // });
-    // assert_eq!(
-    //     multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-    //     "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
-    //     "After unfolding the second buffer, all original text should be displayed"
-    // );
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\n1111\n2222\n3333\n\n\n\n\n4444\n5555\n6666\n\n\n",
+        "After unfolding the first buffer, its text should be displayed"
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_3.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        full_text,
+        "After unfolding all buffers, all original text should be displayed"
+    );
 }
 
 #[gpui::test]
