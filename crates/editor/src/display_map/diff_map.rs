@@ -4,7 +4,7 @@ use collections::HashMap;
 use git::diff::BufferDiff;
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{BufferChunks, BufferId, Chunk};
-use multi_buffer::{AnchorRangeExt, ExcerptId, MultiBuffer};
+use multi_buffer::{Anchor, AnchorRangeExt, ExcerptId, MultiBuffer};
 use project::buffer_store::BufferChangeSet;
 use std::{cmp::Ordering, mem, ops::Range};
 use sum_tree::{Cursor, SumTree, TreeMap};
@@ -73,6 +73,21 @@ struct DiffMapBufferRows<'a> {
 
 pub type DiffEdit = text::Edit<DiffOffset>;
 
+enum ExpandedHunkChange {
+    BufferDiffUpdated {
+        change_set: Model<BufferChangeSet>,
+    },
+    Edited {
+        edits: Vec<FoldEdit>,
+    },
+    ExpandHunks {
+        ranges: Vec<Range<multi_buffer::Anchor>>,
+    },
+    CollapseHunks {
+        ranges: Vec<Range<multi_buffer::Anchor>>,
+    },
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct DiffOffset(pub usize);
 
@@ -130,33 +145,7 @@ impl DiffMap {
         change_set: Model<BufferChangeSet>,
         cx: &mut ModelContext<Self>,
     ) {
-        let change_set = change_set.read(cx);
-        let buffer_id = change_set.buffer_id;
-        let diff = change_set.diff_to_buffer.clone();
-        let base_text = change_set
-            .base_text
-            .as_ref()
-            .map(|buffer| buffer.read(cx).snapshot());
-
-        if let Some(base_text) = base_text.clone() {
-            self.snapshot.diffs.insert(
-                buffer_id,
-                DiffSnapshot {
-                    diff: diff.clone(),
-                    base_text,
-                },
-            );
-        } else {
-            self.snapshot.diffs.remove(&buffer_id);
-        }
-
-        let multibuffer = self.multibuffer.read(cx);
-        let changed_ranges = multibuffer
-            .ranges_for_buffer(buffer_id, cx)
-            .into_iter()
-            .map(|(excerpt_id, range, buffer_range)| (excerpt_id, buffer_id, range, buffer_range))
-            .collect();
-        self.recompute_expanded_hunks(changed_ranges, cx);
+        self.recompute_expanded_hunks(ExpandedHunkChange::BufferDiffUpdated { change_set }, cx);
     }
 
     pub(super) fn expand_diff_hunks(
@@ -164,71 +153,102 @@ impl DiffMap {
         ranges: Vec<Range<multi_buffer::Anchor>>,
         cx: &mut ModelContext<Self>,
     ) {
-        let mut changed_ranges = Vec::new();
-        {
-            let multibuffer = self.multibuffer.read(cx);
-            let snapshot = multibuffer.read(cx);
-            for range in &ranges {
-                let multibuffer_range = range.to_point(&*snapshot);
-                for (buffer, buffer_range, excerpt_id) in
-                    multibuffer.range_to_buffer_ranges(range.clone(), cx)
-                {
-                    let buffer = buffer.read(cx);
-                    if let Some(excerpt_range) = snapshot.range_for_excerpt::<Point>(excerpt_id) {
-                        changed_ranges.push((
-                            excerpt_id,
-                            buffer.remote_id(),
-                            multibuffer_range.start.max(excerpt_range.start)
-                                ..multibuffer_range.end.min(excerpt_range.end),
-                            buffer.anchor_before(buffer_range.start)
-                                ..buffer.anchor_after(buffer_range.end),
-                        ));
-                    }
-                }
-            }
-        }
-
-        self.recompute_expanded_hunks(changed_ranges, cx);
+        self.recompute_expanded_hunks(ExpandedHunkChange::ExpandHunks { ranges }, cx);
     }
 
     pub(super) fn collapse_diff_hunks(
         &mut self,
-        multi_buffer_range: Range<usize>,
+        ranges: Vec<Range<multi_buffer::Anchor>>,
         cx: &mut ModelContext<Self>,
     ) {
+        self.recompute_expanded_hunks(ExpandedHunkChange::CollapseHunks { ranges }, cx);
     }
 
-    pub(super) fn set_all_hunks_expanded(&mut self, expand_all: bool, cx: &mut ModelContext<Self>) {
-        self.all_hunks_expanded = expand_all;
-        let changes = self
-            .multibuffer
-            .read(cx)
-            .read(cx)
-            .all_excerpts()
-            .map(|excerpt| {
-                (
-                    excerpt.id(),
-                    excerpt.buffer().remote_id(),
-                    excerpt.start_point()..excerpt.end_point(),
-                    excerpt.buffer_range(),
-                )
-            })
-            .collect();
-        self.recompute_expanded_hunks(changes, cx);
+    pub(super) fn set_all_hunks_expanded(&mut self, cx: &mut ModelContext<Self>) {
+        self.all_hunks_expanded = true;
+        self.recompute_expanded_hunks(
+            ExpandedHunkChange::ExpandHunks {
+                ranges: vec![Anchor::min()..Anchor::max()],
+            },
+            cx,
+        );
     }
 
     fn recompute_expanded_hunks(
         &mut self,
-        ranges: Vec<(ExcerptId, BufferId, Range<Point>, Range<text::Anchor>)>,
+        change: ExpandedHunkChange,
         cx: &mut ModelContext<DiffMap>,
     ) {
+        let multibuffer = self.multibuffer.read(cx);
+        let multibuffer_snapshot = multibuffer.snapshot(cx);
+
+        let affected_ranges: Vec<_> = match &change {
+            ExpandedHunkChange::BufferDiffUpdated { change_set } => {
+                let change_set = change_set.read(cx);
+                let buffer_id = change_set.buffer_id;
+                let diff = change_set.diff_to_buffer.clone();
+                let base_text = change_set
+                    .base_text
+                    .as_ref()
+                    .map(|buffer| buffer.read(cx).snapshot());
+
+                if let Some(base_text) = base_text.clone() {
+                    self.snapshot.diffs.insert(
+                        buffer_id,
+                        DiffSnapshot {
+                            diff: diff.clone(),
+                            base_text,
+                        },
+                    );
+                } else {
+                    self.snapshot.diffs.remove(&buffer_id);
+                }
+
+                let multibuffer = self.multibuffer.read(cx);
+                multibuffer
+                    .ranges_for_buffer(buffer_id, cx)
+                    .into_iter()
+                    .map(|(excerpt_id, range, buffer_range)| {
+                        (excerpt_id, buffer_id, range, buffer_range)
+                    })
+                    .collect()
+            }
+            ExpandedHunkChange::Edited { edits } => todo!(),
+            ExpandedHunkChange::ExpandHunks { ranges }
+            | ExpandedHunkChange::CollapseHunks { ranges } => {
+                let mut changed_ranges = Vec::new();
+                for range in ranges.iter() {
+                    let multibuffer_range = range.to_point(&multibuffer_snapshot);
+                    for (buffer, buffer_range, excerpt_id) in
+                        multibuffer.range_to_buffer_ranges(range.clone(), cx)
+                    {
+                        let buffer = buffer.read(cx);
+                        if let Some(excerpt_range) =
+                            multibuffer_snapshot.range_for_excerpt::<Point>(excerpt_id)
+                        {
+                            changed_ranges.push((
+                                excerpt_id,
+                                buffer.remote_id(),
+                                multibuffer_range.start.max(excerpt_range.start)
+                                    ..multibuffer_range.end.min(excerpt_range.end),
+                                buffer.anchor_before(buffer_range.start)
+                                    ..buffer.anchor_after(buffer_range.end),
+                            ));
+                        }
+                    }
+                }
+                changed_ranges
+            }
+        };
+
         let mut cursor = self
             .snapshot
             .transforms
             .cursor::<(FoldPoint, DiffOffset)>(&());
         let mut new_transforms = SumTree::default();
+        let mut edits = Patch::default();
 
-        for (excerpt_id, buffer_id, multibuffer_range, buffer_range) in ranges {
+        for (excerpt_id, buffer_id, multibuffer_range, buffer_range) in affected_ranges {
             let Some(buffer) = self.multibuffer.read(cx).buffer(buffer_id) else {
                 continue;
             };
@@ -241,21 +261,23 @@ impl DiffMap {
             let base_text = change_set_state.map(|state| state.base_text.clone());
 
             let hunks = diff.hunks_intersecting_range(buffer_range.clone(), buffer);
-            let mut start = self
+            let mut affected_range_start = self
                 .snapshot
                 .fold_snapshot
                 .make_fold_point(multibuffer_range.start, Bias::Left);
-            let end = self
+            let affected_range_end = self
                 .snapshot
                 .fold_snapshot
                 .make_fold_point(multibuffer_range.end, Bias::Right);
 
-            new_transforms.append(cursor.slice(&start, Bias::Left, &()), &());
-            start = FoldPoint(new_transforms.summary().input.lines);
+            new_transforms.append(cursor.slice(&affected_range_start, Bias::Left, &()), &());
+            affected_range_start = FoldPoint(new_transforms.summary().input.lines);
+
+            // let edit_old_start = ();
 
             let mut old_expanded_hunks =
                 HashMap::<multi_buffer::Anchor, Range<DiffOffset>>::default();
-            while cursor.start().0 < end {
+            while cursor.start().0 < affected_range_end {
                 let Some(item) = cursor.item() else {
                     break;
                 };
@@ -267,7 +289,6 @@ impl DiffMap {
             }
 
             let excerpt_start = buffer_range.start.to_point(buffer);
-            let mut new_hunk_edits = Patch::default();
 
             if let Some(base_text) = &base_text {
                 for hunk in hunks {
@@ -276,15 +297,41 @@ impl DiffMap {
                         buffer_id: Some(buffer_id),
                         text_anchor: hunk.buffer_range.start,
                     };
+                    let hunk_end_anchor = multi_buffer::Anchor {
+                        excerpt_id,
+                        buffer_id: Some(buffer_id),
+                        text_anchor: hunk.buffer_range.end,
+                    };
+
                     let was_previously_expanded =
-                        old_expanded_hunks.remove(&hunk_start_anchor).is_some();
-                    if !was_previously_expanded && !self.all_hunks_expanded {
+                        old_expanded_hunks.contains_key(&hunk_start_anchor);
+                    let mut should_expand_hunk = was_previously_expanded || self.all_hunks_expanded;
+
+                    match &change {
+                        ExpandedHunkChange::ExpandHunks { ranges } => {
+                            should_expand_hunk |= ranges.iter().any(|range| {
+                                range.overlaps(
+                                    &(hunk_start_anchor..hunk_end_anchor),
+                                    &multibuffer_snapshot,
+                                )
+                            })
+                        }
+                        ExpandedHunkChange::CollapseHunks { ranges } => {
+                            should_expand_hunk &= !ranges.iter().any(|range| {
+                                range.overlaps(
+                                    &(hunk_start_anchor..hunk_end_anchor),
+                                    &multibuffer_snapshot,
+                                )
+                            })
+                        }
+                        _ => {}
+                    };
+
+                    if !should_expand_hunk || hunk.diff_base_byte_range.len() == 0 {
                         continue;
                     }
 
-                    if hunk.diff_base_byte_range.len() == 0 {
-                        continue;
-                    }
+                    old_expanded_hunks.remove(&hunk_start_anchor);
                     let mut text_cursor = base_text.as_rope().cursor(0);
                     let base_text_start =
                         text_cursor.summary::<Point>(hunk.diff_base_byte_range.start);
@@ -299,24 +346,25 @@ impl DiffMap {
                         .fold_snapshot
                         .make_fold_point(hunk_start, Bias::Left);
 
-                    if hunk_start > start {
+                    if hunk_start > affected_range_start {
                         new_transforms.push(
                             DiffTransform::BufferContent {
                                 summary: self
                                     .snapshot
                                     .fold_snapshot
-                                    .text_summary_for_range(start..hunk_start),
+                                    .text_summary_for_range(affected_range_start..hunk_start),
                             },
                             &(),
                         );
                     }
 
-                    start = hunk_start;
+                    affected_range_start = hunk_start;
 
                     if !was_previously_expanded {
+                        let edit_old_start = cursor.start().1;
                         let edit_start = DiffOffset(new_transforms.summary().output.len);
 
-                        new_hunk_edits.push(DiffEdit {
+                        edits.push(DiffEdit {
                             old: edit_start..edit_start,
                             new: edit_start..(edit_start + DiffOffset(base_text_summary.len)),
                         });
@@ -333,32 +381,20 @@ impl DiffMap {
                 }
             }
 
-            let mut old_hunk_edits = old_expanded_hunks
-                .values()
-                .map(|range| Edit {
-                    old: range.clone(),
-                    new: range.start..range.start,
-                })
-                .collect::<Vec<_>>();
-            old_hunk_edits.sort_by(|a, b| a.old.start.cmp(&b.old.start));
-
-            self.edits_since_sync = self
-                .edits_since_sync
-                .compose(Patch::new(old_hunk_edits))
-                .compose(new_hunk_edits);
-
-            if end > start {
+            if affected_range_end > affected_range_start {
                 new_transforms.push(
                     DiffTransform::BufferContent {
                         summary: self
                             .snapshot
                             .fold_snapshot
-                            .text_summary_for_range(start..end),
+                            .text_summary_for_range(affected_range_start..affected_range_end),
                     },
                     &(),
                 );
             }
         }
+
+        self.edits_since_sync = self.edits_since_sync.compose(edits);
 
         new_transforms.append(cursor.suffix(&()), &());
         drop(cursor);
@@ -631,7 +667,7 @@ mod tests {
     use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap};
     use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
-    use multi_buffer::MultiBuffer;
+    use multi_buffer::{Anchor, MultiBuffer};
     use project::Project;
     use settings::SettingsStore;
 
@@ -693,7 +729,9 @@ mod tests {
             )
         );
 
-        diff_map.update(cx, |diff_map, cx| diff_map.set_all_hunks_expanded(true, cx));
+        diff_map.update(cx, |diff_map, cx| {
+            diff_map.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+        });
 
         let (snapshot2, edits) = diff_map.update(cx, |diff_map, _| {
             diff_map.sync(fold_snapshot.clone(), vec![])
@@ -718,7 +756,7 @@ mod tests {
         check_edits(&snapshot1, &snapshot2, &edits);
 
         diff_map.update(cx, |diff_map, cx| {
-            diff_map.set_all_hunks_expanded(false, cx)
+            diff_map.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
         });
 
         let (snapshot3, edits) = diff_map.update(cx, |diff_map, _| {
@@ -739,6 +777,7 @@ mod tests {
         check_edits(&snapshot2, &snapshot3, &edits);
     }
 
+    #[track_caller]
     fn check_edits(
         old_snapshot: &DiffMapSnapshot,
         new_snapshot: &DiffMapSnapshot,
