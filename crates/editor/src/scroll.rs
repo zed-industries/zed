@@ -2,7 +2,7 @@ mod actions;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
-use crate::editor_settings::ScrollBeyondLastLine;
+use crate::editor_settings::{ScrollBeyondLastLine, ScrollbarAxes};
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
@@ -83,6 +83,12 @@ pub fn axis_pair<T: Clone>(horizontal: T, vertical: T) -> AxisPair<T> {
 impl<T: Clone> AxisPair<T> {
     pub fn as_xy(&self) -> (&T, &T) {
         (&self.horizontal, &self.vertical)
+    }
+}
+
+impl From<ScrollbarAxes> for AxisPair<bool> {
+    fn from(value: ScrollbarAxes) -> Self {
+        axis_pair(value.horizontal, value.vertical)
     }
 }
 

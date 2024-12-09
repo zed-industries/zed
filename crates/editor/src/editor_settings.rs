@@ -107,7 +107,7 @@ pub struct Scrollbar {
     pub search_results: bool,
     pub diagnostics: bool,
     pub cursors: bool,
-    pub axis: ScrollbarAxis,
+    pub axes: ScrollbarAxes,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -135,18 +135,19 @@ pub enum ShowScrollbar {
     Never,
 }
 
-/// When the show option permits it, which axes should show scrollbars.
-///
-/// Default: xy
+/// Forcefully enable or disable the scrollbar for each axis
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum ScrollbarAxis {
-    /// Show both/either axes when applicable
-    XY,
-    /// Only show the horizotal scrollbar.
-    X,
-    /// Only show the vertical scrollbar.
-    Y,
+pub struct ScrollbarAxes {
+    /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+    ///
+    /// Default: true
+    pub horizontal: bool,
+
+    /// When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+    ///
+    /// Default: true
+    pub vertical: bool,
 }
 
 /// The key to use for adding multiple cursors
@@ -356,10 +357,22 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub cursors: Option<bool>,
-    /// When the show option permits it, which axes should show scrollbars.
+    /// Forcefully enable or disable the scrollbar for each axis
+    pub axes: Option<ScrollbarAxesContent>,
+}
+
+/// Forcefully enable or disable the scrollbar for each axis
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ScrollbarAxesContent {
+    /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
     ///
-    /// Default: xy
-    pub axis: Option<ScrollbarAxis>,
+    /// Default: true
+    horizontal: Option<bool>,
+
+    /// When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+    ///
+    /// Default: true
+    vertical: Option<bool>,
 }
 
 /// Gutter related settings

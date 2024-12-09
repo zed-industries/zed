@@ -253,8 +253,13 @@
     "selected_symbol": true,
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true,
-    /// When the show option permits it, which axes should show scrollbars.
-    "axis": "xy"
+    /// Forcefully enable or disable the scrollbar for each axis
+    "axes": {
+      /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+      "horizontal": false,
+      /// When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+      "vertical": true
+    }
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,

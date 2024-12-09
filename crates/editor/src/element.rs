@@ -5,7 +5,7 @@ use crate::{
     },
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
-        ScrollbarAxis, ShowScrollbar,
+        ShowScrollbar,
     },
     git::blame::{CommitDetails, GitBlame},
     hover_popover::{
@@ -1213,11 +1213,7 @@ impl EditorElement {
             ShowScrollbar::Never => false,
         };
 
-        let axes: AxisPair<bool> = match scrollbar_settings.axis {
-            ScrollbarAxis::XY => axis_pair(true, true),
-            ScrollbarAxis::X => axis_pair(true, false),
-            ScrollbarAxis::Y => axis_pair(false, true),
-        };
+        let axes: AxisPair<bool> = scrollbar_settings.axes.into();
 
         if snapshot.mode != EditorMode::Full {
             return axis_pair(None, None);

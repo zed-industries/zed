@@ -496,7 +496,11 @@ List of `string` values
   "git_diff": true,
   "search_results": true,
   "selected_symbol": true,
-  "diagnostics": true
+  "diagnostics": true,
+  "axes": {
+    "horizontal": true,
+    "vertical": true,
+  },
 },
 ```
 
@@ -590,37 +594,40 @@ List of `string` values
 
 `boolean` values
 
-### Axis
+### Axes
 
-- Description: When the show option permits it, which axes should show scrollbars.
-- Setting: `axis`
-- Default: `xy`
+- Description: Forcefully enable or disable the scrollbar for each axis
+- Setting: `axes`
+- Default:
+
+```json
+"scrollbar": {
+  "axes": {
+    "horizontal": true,
+    "vertical": true,
+  },
+}
+```
+
+#### Horizontal
+
+- Description: When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+- Setting: `horizontal`
+- Default: `true`
 
 **Options**
 
-1. Show both the horizontal and vertical scrollbars
+`boolean` values
 
-```json
-"scrollbar": {
-  "axis": "xy"
-}
-```
+#### Vertical
 
-2. Only show the vertical scrollbar
+- Description: When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+- Setting: `vertical`
+- Default: `true`
 
-```json
-"scrollbar": {
-  "axis": "y"
-}
-```
+**Options**
 
-3. Only show the horizontal scrollbar
-
-```json
-"scrollbar": {
-  "axis": "x"
-}
-```
+`boolean` values
 
 ## Editor Tab Bar
 
