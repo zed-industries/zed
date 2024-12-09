@@ -1,5 +1,5 @@
 use crate::{prelude::*, traits::component::ComponentElement};
-use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
+use gpui::{AnyElement, IntoElement, Length, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
 
 /// Creates a new [ContentGroup].
@@ -26,7 +26,9 @@ pub fn h_group() -> ContentGroup {
 pub struct ContentGroup {
     base: Div,
     border: bool,
+    padding: Pixels,
     fill: bool,
+    outset_amount: Option<AbsoluteLength>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -36,7 +38,9 @@ impl ContentGroup {
         Self {
             base: div(),
             border: true,
+            padding: px(8.),
             fill: true,
+            outset_amount: None,
             children: SmallVec::new(),
         }
     }
@@ -50,6 +54,25 @@ impl ContentGroup {
     /// Removes the background fill from the [ContentBox].
     pub fn unfilled(mut self) -> Self {
         self.fill = false;
+        self
+    }
+
+    /// Outset the [ContentBox] to create a visual "outset" effect.
+    ///
+    /// This sets a default outset amount which matches the width of the border and padding,
+    /// useful for lining up content with other elements.
+    pub fn outset(mut self) -> Self {
+        let border_width = if self.border { px(1.) } else { px(0.) };
+        let outset_amount = self.padding + border_width;
+        self.outset_amount = Some(outset_amount.into());
+        self
+    }
+
+    /// Sets the amount of outset to apply to the [ContentBox].
+    ///
+    /// This will add negative left and right margin to the [ContentBox] to create a visual "outset" effect.
+    pub fn outset_amount(mut self, amount: impl Into<AbsoluteLength>) -> Self {
+        self.outset_amount = Some(amount.into());
         self
     }
 }
@@ -81,7 +104,14 @@ impl RenderOnce for ContentGroup {
                 this.border_1().border_color(cx.theme().colors().border)
             })
             .rounded_md()
-            .p_2()
+            .p(self.padding)
+            .when_some(self.outset_amount, |this, amount| {
+                let outset_rems: Rems = match amount {
+                    AbsoluteLength::Pixels(p) => rems(p / cx.rem_size()),
+                    AbsoluteLength::Rems(r) => r,
+                };
+                this.mx(-outset_rems)
+            })
             .children(self.children)
     }
 }

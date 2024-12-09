@@ -1,26 +1,11 @@
 use crate::{content_group, prelude::*};
-use gpui::AnyElement;
+use gpui::{AnyElement, Axis};
 use smallvec::SmallVec;
-
-/// Specifies the side on which the preview label should be displayed.
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PreviewLabelSide {
-    /// Left side
-    Left,
-    /// Right side
-    Right,
-    /// Top side
-    Top,
-    #[default]
-    /// Bottom side
-    Bottom,
-}
 
 /// A component preview with a label and children.
 #[derive(IntoElement)]
 pub struct ComponentPreview {
     label: Option<SharedString>,
-    label_side: PreviewLabelSide,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -29,7 +14,6 @@ impl ComponentPreview {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: Some(label.into()),
-            label_side: PreviewLabelSide::default(),
             children: SmallVec::new(),
         }
     }
@@ -38,7 +22,6 @@ impl ComponentPreview {
     pub fn no_label() -> Self {
         Self {
             label: None,
-            label_side: PreviewLabelSide::default(),
             children: SmallVec::new(),
         }
     }
@@ -48,28 +31,23 @@ impl ComponentPreview {
         self.label = Some(label.into());
         self
     }
-
-    fn base(&self) -> Div {
-        div().flex().map(|this| match self.label_side {
-            PreviewLabelSide::Left => this.flex_row(),
-            PreviewLabelSide::Right => this.flex_row_reverse(),
-            PreviewLabelSide::Top => this.flex_col(),
-            PreviewLabelSide::Bottom => this.flex_col_reverse(),
-        })
-    }
 }
 
 impl RenderOnce for ComponentPreview {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let el_base = self.base();
-        let children_base = self.base();
-
-        el_base
-            .gap_1()
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        v_flex()
+            .flex_none()
+            .gap_3()
             .when_some(self.label, |this, label| {
                 this.child(Label::new(label).color(Color::Muted))
             })
-            .child(children_base.children(self.children))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .w_full()
+                    .flex_none()
+                    .children(self.children),
+            )
     }
 }
 
@@ -82,6 +60,7 @@ impl ParentElement for ComponentPreview {
 /// A group of component previews.
 #[derive(IntoElement)]
 pub struct ComponentPreviewGroup {
+    direction: Axis,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -89,8 +68,21 @@ impl ComponentPreviewGroup {
     /// Creates a new ComponentPreviewGroup.
     pub fn new() -> Self {
         Self {
+            direction: Axis::Horizontal,
             children: SmallVec::new(),
         }
+    }
+
+    /// Lay out the previews horizontally.
+    pub fn horizontal(mut self) -> Self {
+        self.direction = Axis::Horizontal;
+        self
+    }
+
+    /// Lay out the previews vertically.
+    pub fn vertical(mut self) -> Self {
+        self.direction = Axis::Vertical;
+        self
     }
 }
 
@@ -102,7 +94,17 @@ impl ParentElement for ComponentPreviewGroup {
 
 impl RenderOnce for ComponentPreviewGroup {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        content_group().size_full().children(self.children)
+        let group = match self.direction {
+            Axis::Horizontal => h_group(),
+            Axis::Vertical => v_group(),
+        };
+
+        group
+            .size_full()
+            .items_start()
+            .outset()
+            .gap_3()
+            .children(self.children)
     }
 }
 
