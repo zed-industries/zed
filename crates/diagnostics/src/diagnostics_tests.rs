@@ -822,6 +822,8 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                         .update_diagnostic_entries(server_id, path, None, diagnostics.clone(), cx)
                         .unwrap()
                 });
+                cx.executor()
+                    .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
                 cx.run_until_parked();
             }
@@ -842,10 +844,25 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
             cx,
         )
     });
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 
     let mutated_excerpts = get_diagnostics_excerpts(&mutated_view, cx);
     let reference_excerpts = get_diagnostics_excerpts(&reference_view, cx);
+
+    for ((path, language_server_id), diagnostics) in current_diagnostics {
+        for diagnostic in diagnostics {
+            let found_excerpt = reference_excerpts.iter().any(|info| {
+                let row_range = info.range.context.start.row..info.range.context.end.row;
+                info.path == path.strip_prefix("/test").unwrap()
+                    && info.language_server == language_server_id
+                    && row_range.contains(&diagnostic.range.start.0.row)
+            });
+            assert!(found_excerpt, "diagnostic not found in reference view");
+        }
+    }
+
     assert_eq!(mutated_excerpts, reference_excerpts);
 }
 
