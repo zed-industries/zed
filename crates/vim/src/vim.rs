@@ -1162,6 +1162,15 @@ impl Vim {
                 if self.mode == Mode::Replace {
                     self.multi_replace(text, cx)
                 }
+
+                if self.mode == Mode::Normal {
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.accept_inline_completion(
+                            &editor::actions::AcceptInlineCompletion {},
+                            cx,
+                        );
+                    });
+                }
             }
         }
     }
@@ -1174,7 +1183,10 @@ impl Vim {
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
-            editor.set_inline_completions_enabled(matches!(vim.mode, Mode::Insert | Mode::Replace));
+            editor.set_inline_completions_enabled(matches!(
+                vim.mode,
+                Mode::Insert | Mode::Normal | Mode::Replace
+            ));
         });
         cx.notify()
     }
