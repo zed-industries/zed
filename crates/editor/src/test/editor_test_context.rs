@@ -6,7 +6,7 @@ use collections::BTreeMap;
 use futures::Future;
 use git::diff::DiffHunkStatus;
 use gpui::{
-    AnyWindowHandle, AppContext, Keystroke, Pixels, Point, View, ViewContext, VisualTestContext,
+    AnyWindowHandle, AppContext, AppContext, Keystroke, Pixels, Point, View, VisualTestContext,
     WindowHandle,
 };
 use itertools::Itertools;
@@ -142,7 +142,7 @@ impl EditorTestContext {
     #[track_caller]
     pub fn editor<F, T>(&mut self, read: F) -> T
     where
-        F: FnOnce(&Editor, &ViewContext<Editor>) -> T,
+        F: FnOnce(&Editor, &Model<Editor>, AppContext) -> T,
     {
         self.editor.update(&mut self.cx, |this, cx| read(this, cx))
     }
@@ -150,7 +150,7 @@ impl EditorTestContext {
     #[track_caller]
     pub fn update_editor<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Editor, &mut ViewContext<Editor>) -> T,
+        F: FnOnce(&mut Editor, &Model<Editor>, &mut AppContext) -> T,
     {
         self.editor.update(&mut self.cx, update)
     }

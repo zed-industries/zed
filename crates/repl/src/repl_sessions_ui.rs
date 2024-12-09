@@ -29,7 +29,7 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
-        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace, model: &Model<>Workspace, _cx: &mut AppContext| {
             workspace.register_action(|workspace, _: &Sessions, cx| {
                 let existing = workspace
                     .active_pane()
@@ -55,7 +55,7 @@ pub fn init(cx: &mut AppContext) {
     )
     .detach();
 
-    cx.observe_new_views(move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
+    cx.observe_new_views(move |editor: &mut Editor, model: &Model<Editor>, cx: &mut AppContext| {
         if !editor.use_modal_editing() || !editor.buffer().read(cx).is_singleton() {
             return;
         }
@@ -126,8 +126,8 @@ pub struct ReplSessionsPage {
 }
 
 impl ReplSessionsPage {
-    pub fn new(cx: &mut ViewContext<Workspace>) -> View<Self> {
-        cx.new_view(|cx: &mut ViewContext<Self>| {
+    pub fn new(model: &Model<Workspace>, cx: &mut AppContext) -> View<Self> {
+        cx.new_view(|model: &Model<Self>, cx: &mut AppContext| {
             let focus_handle = cx.focus_handle();
 
             let subscriptions = vec![
@@ -169,7 +169,7 @@ impl Item for ReplSessionsPage {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _: &mut ViewContext<Self>,
+        _: &Model<Self>, _: &mut AppContext,
     ) -> Option<View<Self>> {
         None
     }
@@ -180,7 +180,7 @@ impl Item for ReplSessionsPage {
 }
 
 impl Render for ReplSessionsPage {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let store = ReplStore::global(cx);
 
         let (kernel_specifications, sessions) = store.update(cx, |store, _cx| {

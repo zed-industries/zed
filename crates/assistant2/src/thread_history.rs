@@ -19,7 +19,7 @@ impl ThreadHistory {
     pub(crate) fn new(
         assistant_panel: WeakView<AssistantPanel>,
         thread_store: Model<ThreadStore>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
@@ -37,7 +37,7 @@ impl FocusableView for ThreadHistory {
 }
 
 impl Render for ThreadHistory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
 
         v_flex()

@@ -5,16 +5,17 @@ use editor::{
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
+use gpui::{AppContext, Model};
 use language::{Point, Selection};
 use multi_buffer::MultiBufferRow;
-use ui::ViewContext;
 
 impl Vim {
     pub fn delete_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.stop_recording(cx);
         self.update_editor(cx, |vim, editor, cx| {
@@ -76,7 +77,13 @@ impl Vim {
         });
     }
 
-    pub fn delete_object(&mut self, object: Object, around: bool, cx: &mut ViewContext<Self>) {
+    pub fn delete_object(
+        &mut self,
+        object: Object,
+        around: bool,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.stop_recording(cx);
         self.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {

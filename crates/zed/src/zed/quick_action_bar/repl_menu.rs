@@ -32,7 +32,7 @@ struct ReplMenuState {
 }
 
 impl QuickActionBar {
-    pub fn render_repl_menu(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+    pub fn render_repl_menu(&self, model: &Model<Self>, cx: &mut AppContext) -> Option<AnyElement> {
         if !JupyterSettings::enabled(cx) {
             return None;
         }
@@ -256,7 +256,8 @@ impl QuickActionBar {
     pub fn render_repl_launch_menu(
         &self,
         kernel_specification: KernelSpecification,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<AnyElement> {
         let tooltip: SharedString =
             SharedString::from(format!("Start REPL for {}", kernel_specification.name()));
@@ -276,7 +277,11 @@ impl QuickActionBar {
         )
     }
 
-    pub fn render_kernel_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    pub fn render_kernel_selector(
+        &self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let editor = if let Some(editor) = self.active_editor() {
             editor
         } else {
@@ -348,7 +353,8 @@ impl QuickActionBar {
     pub fn render_repl_setup(
         &self,
         language: &str,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<AnyElement> {
         let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
         Some(

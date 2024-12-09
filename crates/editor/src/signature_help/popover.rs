@@ -1,7 +1,7 @@
 use crate::{Editor, EditorStyle};
 use gpui::{
     div, AnyElement, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Size,
-    StatefulInteractiveElement, Styled, ViewContext, WeakView,
+    StatefulInteractiveElement, Styled, AppContext, WeakView,
 };
 use language::ParsedMarkdown;
 use ui::StyledExt;
@@ -26,7 +26,7 @@ impl SignatureHelpPopover {
         style: &EditorStyle,
         max_size: Size<Pixels>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>, cx: &mut AppContext,
     ) -> AnyElement {
         div()
             .id("signature_help_popover")

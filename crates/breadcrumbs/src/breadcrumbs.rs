@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    Element, EventEmitter, FocusableView, IntoElement, ParentElement, Render, StyledText,
-    Subscription, ViewContext,
+    AppContext, Element, EventEmitter, FocusableView, IntoElement, Model, ParentElement, Render,
+    StyledText, Subscription,
 };
 use itertools::Itertools;
 use std::cmp;
@@ -37,7 +37,7 @@ impl Breadcrumbs {
 impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         const MAX_SEGMENTS: usize = 12;
         let element = h_flex().text_ui(cx);
         let Some(active_item) = self.active_item.as_ref() else {
@@ -128,7 +128,8 @@ impl ToolbarItemView for Breadcrumbs {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_item = None;
@@ -158,7 +159,7 @@ impl ToolbarItemView for Breadcrumbs {
         item.breadcrumb_location(cx)
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {
+    fn pane_focus_update(&mut self, pane_focused: bool, _: &Model<Self>, _: &mut AppContext) {
         self.pane_focused = pane_focused;
     }
 }

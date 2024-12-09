@@ -1,19 +1,24 @@
 use editor::{movement, scroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{actions, Action};
+use gpui::{AppContext, Model};
 use language::{CharClassifier, CharKind};
-use ui::ViewContext;
 
 use crate::{motion::Motion, state::Mode, Vim};
 
 actions!(vim, [HelixNormalAfter, HelixDelete]);
 
-pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
     Vim::action(editor, cx, Vim::helix_normal_after);
     Vim::action(editor, cx, Vim::helix_delete);
 }
 
 impl Vim {
-    pub fn helix_normal_after(&mut self, action: &HelixNormalAfter, cx: &mut ViewContext<Self>) {
+    pub fn helix_normal_after(
+        &mut self,
+        action: &HelixNormalAfter,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         if self.active_operator().is_some() {
             self.operator_stack.clear();
             self.sync_vim_settings(cx);
@@ -28,7 +33,8 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.helix_move_cursor(motion, times, cx);
     }
@@ -36,7 +42,8 @@ impl Vim {
     fn helix_find_range_forward(
         &mut self,
         times: Option<usize>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
         self.update_editor(cx, |_, editor, cx| {
@@ -88,7 +95,8 @@ impl Vim {
     fn helix_find_range_backward(
         &mut self,
         times: Option<usize>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
         self.update_editor(cx, |_, editor, cx| {
@@ -145,7 +153,8 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
@@ -172,7 +181,8 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match motion {
             Motion::NextWordStart { ignore_punctuation } => {
@@ -228,7 +238,7 @@ impl Vim {
         }
     }
 
-    pub fn helix_delete(&mut self, _: &HelixDelete, cx: &mut ViewContext<Self>) {
+    pub fn helix_delete(&mut self, _: &HelixDelete, model: &Model<Self>, cx: &mut AppContext) {
         self.store_visual_marks(cx);
         self.update_editor(cx, |vim, editor, cx| {
             // Fixup selections so they have helix's semantics.

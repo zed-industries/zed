@@ -54,7 +54,7 @@ impl ProposedChangesEditor {
         title: impl Into<SharedString>,
         locations: Vec<ProposedChangeLocation<T>>,
         project: Option<Model<Project>>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
@@ -145,7 +145,7 @@ impl ProposedChangesEditor {
         })
     }
 
-    pub fn set_title(&mut self, title: SharedString, cx: &mut ViewContext<Self>) {
+    pub fn set_title(&mut self, title: SharedString, model: &Model<Self>, cx: &mut AppContext) {
         self.title = title;
         cx.notify();
     }
@@ -153,7 +153,7 @@ impl ProposedChangesEditor {
     pub fn reset_locations<T: ToOffset>(
         &mut self,
         locations: Vec<ProposedChangeLocation<T>>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         // Undo all branch changes
         for entry in &self.buffer_entries {
@@ -244,7 +244,7 @@ impl ProposedChangesEditor {
         &mut self,
         buffer: Model<Buffer>,
         event: &BufferEvent,
-        _cx: &mut ViewContext<Self>,
+        model: &Model<>Self, _cx: &mut AppContext,
     ) {
         match event {
             BufferEvent::Operation { .. } => {
@@ -269,7 +269,7 @@ impl ProposedChangesEditor {
 }
 
 impl Render for ProposedChangesEditor {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         div()
             .size_full()
             .key_context("ProposedChangesEditor")
@@ -315,17 +315,17 @@ impl Item for ProposedChangesEditor {
         }
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, model: &Model<Self>, cx: &mut AppContext) {
         self.editor.update(cx, |editor, cx| {
             Item::added_to_workspace(editor, workspace, cx)
         });
     }
 
-    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+    fn deactivated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.editor.update(cx, Item::deactivated);
     }
 
-    fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
+    fn navigate(&mut self, data: Box<dyn std::any::Any>, model: &Model<Self>, cx: &mut AppContext) -> bool {
         self.editor
             .update(cx, |editor, cx| Item::navigate(editor, data, cx))
     }
@@ -333,7 +333,7 @@ impl Item for ProposedChangesEditor {
     fn set_nav_history(
         &mut self,
         nav_history: workspace::ItemNavHistory,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         self.editor.update(cx, |editor, cx| {
             Item::set_nav_history(editor, nav_history, cx)
@@ -348,7 +348,7 @@ impl Item for ProposedChangesEditor {
         &mut self,
         format: bool,
         project: Model<Project>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Task<gpui::Result<()>> {
         self.editor
             .update(cx, |editor, cx| Item::save(editor, format, project, cx))
@@ -372,7 +372,7 @@ impl ProposedChangesEditorToolbar {
 }
 
 impl Render for ProposedChangesEditorToolbar {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let button_like = ButtonLike::new("apply-changes").child(Label::new("Apply All"));
 
         match &self.current_editor {
@@ -396,7 +396,7 @@ impl ToolbarItemView for ProposedChangesEditorToolbar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn workspace::ItemHandle>,
-        _cx: &mut ViewContext<Self>,
+        model: &Model<>Self, _cx: &mut AppContext,
     ) -> workspace::ToolbarItemLocation {
         self.current_editor =
             active_pane_item.and_then(|item| item.downcast::<ProposedChangesEditor>());

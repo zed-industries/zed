@@ -9,7 +9,7 @@ use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
     point, size, Along, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, MouseButton,
-    Pixels, Point, StyleRefinement, View, ViewContext,
+    Pixels, Point, StyleRefinement, Model,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -130,7 +130,7 @@ impl PaneGroup {
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
-        cx: &mut ViewContext<Workspace>,
+        model: &Model<Workspace>, cx: &mut AppContext,
     ) -> impl IntoElement {
         self.root.render(
             project,
@@ -236,7 +236,7 @@ impl Member {
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
-        cx: &mut ViewContext<Workspace>,
+        model: &Model<Workspace>, cx: &mut AppContext,
     ) -> impl IntoElement {
         match self {
             Member::Pane(pane) => {
@@ -684,7 +684,7 @@ impl PaneAxis {
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
-        cx: &mut ViewContext<Workspace>,
+        model: &Model<Workspace>, cx: &mut AppContext,
     ) -> gpui::AnyElement {
         debug_assert!(self.members.len() == self.flexes.lock().len());
         let mut active_pane_ix = None;

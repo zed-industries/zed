@@ -39,7 +39,7 @@ use text::LineEnding;
 use theme::ThemeSettings;
 use ui::{
     div, prelude::*, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
-    SharedString, Styled, Tooltip, ViewContext, VisualContext,
+    SharedString, Styled, Tooltip, AppContext, VisualContext,
 };
 use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -174,7 +174,7 @@ impl PickerDelegate for PromptPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         self.selected_index = ix;
         if let Some(prompt) = self.matches.get(self.selected_index) {
             cx.emit(PromptPickerEvent::Selected {
@@ -187,7 +187,7 @@ impl PickerDelegate for PromptPickerDelegate {
         "Search...".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(&mut self, query: String, model: &Model<Picker>, cx: &mut AppContext) -> Task<()> {
         let search = self.store.search(query);
         let prev_prompt_id = self.matches.get(self.selected_index).map(|mat| mat.id);
         cx.spawn(|this, mut cx| async move {
@@ -214,7 +214,7 @@ impl PickerDelegate for PromptPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if let Some(prompt) = self.matches.get(self.selected_index) {
             cx.emit(PromptPickerEvent::Confirmed {
                 prompt_id: prompt.id,
@@ -222,13 +222,13 @@ impl PickerDelegate for PromptPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, model: &Model<>Picker, _cx: &mut AppContext) {}
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let prompt = self.matches.get(ix)?;
         let default = prompt.default;
@@ -300,7 +300,7 @@ impl PickerDelegate for PromptPickerDelegate {
         Some(element)
     }
 
-    fn render_editor(&self, editor: &View<Editor>, cx: &mut ViewContext<Picker<Self>>) -> Div {
+    fn render_editor(&self, editor: &View<Editor>, model: &Model<Picker>, cx: &mut AppContext) -> Div {
         h_flex()
             .bg(cx.theme().colors().editor_background)
             .rounded_md()
@@ -317,7 +317,7 @@ impl PromptLibrary {
     fn new(
         store: Arc<PromptStore>,
         language_registry: Arc<LanguageRegistry>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         let delegate = PromptPickerDelegate {
             store: store.clone(),
@@ -347,7 +347,7 @@ impl PromptLibrary {
         &mut self,
         _: View<Picker<PromptPickerDelegate>>,
         event: &PromptPickerEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         match event {
             PromptPickerEvent::Selected { prompt_id } => {
@@ -365,7 +365,7 @@ impl PromptLibrary {
         }
     }
 
-    pub fn new_prompt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn new_prompt(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         // If we already have an untitled prompt, use that instead
         // of creating a new one.
         if let Some(metadata) = self.store.first() {
@@ -385,7 +385,7 @@ impl PromptLibrary {
         .detach_and_log_err(cx);
     }
 
-    pub fn save_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+    pub fn save_prompt(&mut self, prompt_id: PromptId, model: &Model<Self>, cx: &mut AppContext) {
         const SAVE_THROTTLE: Duration = Duration::from_millis(500);
 
         if prompt_id.is_built_in() {
@@ -453,25 +453,25 @@ impl PromptLibrary {
         }
     }
 
-    pub fn delete_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn delete_active_prompt(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(active_prompt_id) = self.active_prompt_id {
             self.delete_prompt(active_prompt_id, cx);
         }
     }
 
-    pub fn duplicate_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_active_prompt(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(active_prompt_id) = self.active_prompt_id {
             self.duplicate_prompt(active_prompt_id, cx);
         }
     }
 
-    pub fn toggle_default_for_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn toggle_default_for_active_prompt(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(active_prompt_id) = self.active_prompt_id {
             self.toggle_default_for_prompt(active_prompt_id, cx);
         }
     }
 
-    pub fn toggle_default_for_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+    pub fn toggle_default_for_prompt(&mut self, prompt_id: PromptId, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
             self.store
                 .save_metadata(prompt_id, prompt_metadata.title, !prompt_metadata.default)
@@ -481,7 +481,7 @@ impl PromptLibrary {
         }
     }
 
-    pub fn load_prompt(&mut self, prompt_id: PromptId, focus: bool, cx: &mut ViewContext<Self>) {
+    pub fn load_prompt(&mut self, prompt_id: PromptId, focus: bool, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
             if focus {
                 prompt_editor
@@ -571,7 +571,7 @@ impl PromptLibrary {
         }
     }
 
-    fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, cx: &mut ViewContext<Self>) {
+    fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, model: &Model<Self>, cx: &mut AppContext) {
         self.active_prompt_id = prompt_id;
         self.picker.update(cx, |picker, cx| {
             if let Some(prompt_id) = prompt_id {
@@ -599,7 +599,7 @@ impl PromptLibrary {
         cx.notify();
     }
 
-    pub fn delete_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+    pub fn delete_prompt(&mut self, prompt_id: PromptId, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(metadata) = self.store.metadata(prompt_id) {
             let confirmation = cx.prompt(
                 PromptLevel::Warning,
@@ -629,7 +629,7 @@ impl PromptLibrary {
         }
     }
 
-    pub fn duplicate_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_prompt(&mut self, prompt_id: PromptId, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(prompt) = self.prompt_editors.get(&prompt_id) {
             const DUPLICATE_SUFFIX: &str = " copy";
             let title_to_duplicate = prompt.title_editor.read(cx).text(cx);
@@ -670,7 +670,7 @@ impl PromptLibrary {
         }
     }
 
-    fn focus_active_prompt(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+    fn focus_active_prompt(&mut self, _: &Tab, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(active_prompt) = self.active_prompt_id {
             self.prompt_editors[&active_prompt]
                 .body_editor
@@ -679,11 +679,11 @@ impl PromptLibrary {
         }
     }
 
-    fn focus_picker(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn focus_picker(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         self.picker.update(cx, |picker, cx| picker.focus(cx));
     }
 
-    pub fn inline_assist(&mut self, action: &InlineAssist, cx: &mut ViewContext<Self>) {
+    pub fn inline_assist(&mut self, action: &InlineAssist, model: &Model<Self>, cx: &mut AppContext) {
         let Some(active_prompt_id) = self.active_prompt_id else {
             cx.propagate();
             return;
@@ -717,7 +717,7 @@ impl PromptLibrary {
         }
     }
 
-    fn move_down_from_title(&mut self, _: &editor::actions::MoveDown, cx: &mut ViewContext<Self>) {
+    fn move_down_from_title(&mut self, _: &editor::actions::MoveDown, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(prompt_id) = self.active_prompt_id {
             if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
                 cx.focus_view(&prompt_editor.body_editor);
@@ -725,7 +725,7 @@ impl PromptLibrary {
         }
     }
 
-    fn move_up_from_body(&mut self, _: &editor::actions::MoveUp, cx: &mut ViewContext<Self>) {
+    fn move_up_from_body(&mut self, _: &editor::actions::MoveUp, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(prompt_id) = self.active_prompt_id {
             if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
                 cx.focus_view(&prompt_editor.title_editor);
@@ -738,7 +738,7 @@ impl PromptLibrary {
         prompt_id: PromptId,
         title_editor: View<Editor>,
         event: &EditorEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         match event {
             EditorEvent::BufferEdited => {
@@ -762,7 +762,7 @@ impl PromptLibrary {
         prompt_id: PromptId,
         body_editor: View<Editor>,
         event: &EditorEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         match event {
             EditorEvent::BufferEdited => {
@@ -781,7 +781,7 @@ impl PromptLibrary {
         }
     }
 
-    fn count_tokens(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+    fn count_tokens(&mut self, prompt_id: PromptId, model: &Model<Self>, cx: &mut AppContext) {
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
         };
@@ -823,7 +823,7 @@ impl PromptLibrary {
         }
     }
 
-    fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_prompt_list(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .id("prompt-list")
             .capture_action(cx.listener(Self::focus_active_prompt))
@@ -852,7 +852,7 @@ impl PromptLibrary {
             .child(div().flex_grow().child(self.picker.clone()))
     }
 
-    fn render_active_prompt(&mut self, cx: &mut ViewContext<PromptLibrary>) -> gpui::Stateful<Div> {
+    fn render_active_prompt(&mut self, model: &Model<PromptLibrary>, cx: &mut AppContext) -> gpui::Stateful<Div> {
         div()
             .w_2_3()
             .h_full()
@@ -1102,7 +1102,7 @@ impl PromptLibrary {
 }
 
 impl Render for PromptLibrary {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(cx);
         let theme = cx.theme().clone();
 

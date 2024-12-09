@@ -12,6 +12,7 @@ use anyhow::{Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, WeakModel};
+use gpui::{AppContext, Model};
 use language::LineEnding;
 use project::{Project, Worktree};
 use std::{
@@ -19,7 +20,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::ViewContext;
 use util::ResultExt as _;
 use workspace::Workspace;
 
@@ -58,7 +58,7 @@ impl SemanticDb {
 
         cx.update(|cx| {
             cx.observe_new_views(
-                |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
+                |workspace: &mut Workspace, model: &Model<Workspace>, cx: &mut AppContext| {
                     let project = workspace.project().clone();
 
                     if cx.has_global::<SemanticDb>() {

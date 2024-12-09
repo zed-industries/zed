@@ -412,7 +412,7 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(state: gpui::Model<State>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
             |this, mut cx| async move {
@@ -444,7 +444,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let ollama_intro = "Get up and running with Llama 3.2, Mistral, Gemma 2, and other large language models with Ollama.";

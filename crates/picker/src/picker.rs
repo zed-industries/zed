@@ -4,7 +4,7 @@ use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent,
     DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListSizingBehavior, ListState,
     MouseButton, MouseUpEvent, Render, ScrollStrategy, Task, UniformListScrollHandle, View,
-    ViewContext,
+    Model
 };
 use head::Head;
 use serde::Deserialize;
@@ -68,12 +68,12 @@ pub trait PickerDelegate: Sized + 'static {
     fn separators_after_indices(&self) -> Vec<usize> {
         Vec::new()
     }
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
+    fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext);
     // Allows binding some optional effect to when the selection changes.
     fn selected_index_changed(
         &self,
         _ix: usize,
-        _cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<>Picker, _cx: &mut AppContext,
     ) -> Option<Box<dyn Fn(&mut gpui::Window, &mut gpui::AppContext) + 'static>> {
         None
     }
@@ -85,7 +85,7 @@ pub trait PickerDelegate: Sized + 'static {
     ) -> SharedString {
         "No matches".into()
     }
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
+    fn update_matches(&mut self, query: String, model: &Model<Picker>, cx: &mut AppContext) -> Task<()>;
 
     // Delegates that support this method (e.g. the CommandPalette) can chose to block on any background
     // work for up to `duration` to try and get a result synchronously.
@@ -95,27 +95,27 @@ pub trait PickerDelegate: Sized + 'static {
         &mut self,
         _query: String,
         _duration: Duration,
-        _cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<>Picker, _cx: &mut AppContext,
     ) -> bool {
         false
     }
 
     /// Override if you want to have <enter> update the query instead of confirming.
-    fn confirm_update_query(&mut self, _cx: &mut ViewContext<Picker<Self>>) -> Option<String> {
+    fn confirm_update_query(&mut self, model: &Model<>Picker, _cx: &mut AppContext) -> Option<String> {
         None
     }
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
+    fn confirm(&mut self, secondary: bool, model: &Model<Picker>, cx: &mut AppContext);
     /// Instead of interacting with currently selected entry, treats editor input literally,
     /// performing some kind of action on it.
-    fn confirm_input(&mut self, _secondary: bool, _: &mut ViewContext<Picker<Self>>) {}
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
+    fn confirm_input(&mut self, _secondary: bool, _: &Model<Picker>, _: &mut AppContext) {}
+    fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext);
     fn should_dismiss(&self) -> bool {
         true
     }
     fn confirm_completion(
         &mut self,
         _query: String,
-        _: &mut ViewContext<Picker<Self>>,
+        _: &Model<Picker>, _: &mut AppContext,
     ) -> Option<String> {
         None
     }
@@ -124,7 +124,7 @@ pub trait PickerDelegate: Sized + 'static {
         PickerEditorPosition::default()
     }
 
-    fn render_editor(&self, editor: &View<Editor>, _cx: &mut ViewContext<Picker<Self>>) -> Div {
+    fn render_editor(&self, editor: &View<Editor>, model: &Model<>Picker, _cx: &mut AppContext) -> Div {
         v_flex()
             .when(
                 self.editor_position() == PickerEditorPosition::End,
@@ -148,12 +148,12 @@ pub trait PickerDelegate: Sized + 'static {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> Option<Self::ListItem>;
-    fn render_header(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+    fn render_header(&self, _: &Model<Picker>, _: &mut AppContext) -> Option<AnyElement> {
         None
     }
-    fn render_footer(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+    fn render_footer(&self, _: &Model<Picker>, _: &mut AppContext) -> Option<AnyElement> {
         None
     }
 }
@@ -177,7 +177,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
     /// The picker allows the user to perform search items by text.
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
-    pub fn uniform_list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
+    pub fn uniform_list(delegate: D, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let head = Head::editor(
             delegate.placeholder_text(cx),
             Self::on_input_editor_event,
@@ -189,7 +189,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
-    pub fn nonsearchable_uniform_list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
+    pub fn nonsearchable_uniform_list(delegate: D, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let head = Head::empty(Self::on_empty_head_blur, cx);
 
         Self::new(delegate, ContainerKind::UniformList, head, cx)
@@ -198,7 +198,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
     /// The picker allows the user to perform search items by text.
     /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
-    pub fn list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
+    pub fn list(delegate: D, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let head = Head::editor(
             delegate.placeholder_text(cx),
             Self::on_input_editor_event,
@@ -208,7 +208,7 @@ impl<D: PickerDelegate> Picker<D> {
         Self::new(delegate, ContainerKind::List, head, cx)
     }
 
-    fn new(delegate: D, container: ContainerKind, head: Head, cx: &mut ViewContext<Self>) -> Self {
+    fn new(delegate: D, container: ContainerKind, head: Head, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let mut this = Self {
             delegate,
             head,
@@ -228,7 +228,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn create_element_container(
         container: ContainerKind,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> ElementContainer {
         match container {
             ContainerKind::UniformList => {
@@ -281,7 +281,7 @@ impl<D: PickerDelegate> Picker<D> {
         &mut self,
         ix: usize,
         scroll_to_index: bool,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         let previous_index = self.delegate.selected_index();
         self.delegate.set_selected_index(ix, cx);
@@ -297,7 +297,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+    pub fn select_next(&mut self, _: &menu::SelectNext, model: &Model<Self>, cx: &mut AppContext) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -307,7 +307,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &menu::SelectPrev, model: &Model<Self>, cx: &mut AppContext) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -317,7 +317,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
+    fn select_first(&mut self, _: &menu::SelectFirst, model: &Model<Self>, cx: &mut AppContext) {
         let count = self.delegate.match_count();
         if count > 0 {
             self.set_selected_index(0, true, cx);
@@ -325,7 +325,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
+    fn select_last(&mut self, _: &menu::SelectLast, model: &Model<Self>, cx: &mut AppContext) {
         let count = self.delegate.match_count();
         if count > 0 {
             self.set_selected_index(count - 1, true, cx);
@@ -333,7 +333,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn cycle_selection(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn cycle_selection(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
@@ -341,14 +341,14 @@ impl<D: PickerDelegate> Picker<D> {
         cx.notify();
     }
 
-    pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    pub fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         if self.delegate.should_dismiss() {
             self.delegate.dismissed(cx);
             cx.emit(DismissEvent);
         }
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
         if self.pending_update_matches.is_some()
             && !self
                 .delegate
@@ -361,7 +361,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
+    fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, model: &Model<Self>, cx: &mut AppContext) {
         if self.pending_update_matches.is_some()
             && !self
                 .delegate
@@ -373,11 +373,11 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn confirm_input(&mut self, input: &ConfirmInput, cx: &mut ViewContext<Self>) {
+    fn confirm_input(&mut self, input: &ConfirmInput, model: &Model<Self>, cx: &mut AppContext) {
         self.delegate.confirm_input(input.secondary, cx);
     }
 
-    fn confirm_completion(&mut self, _: &ConfirmCompletion, cx: &mut ViewContext<Self>) {
+    fn confirm_completion(&mut self, _: &ConfirmCompletion, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), cx) {
             self.set_query(new_query, cx);
         } else {
@@ -385,14 +385,14 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn handle_click(&mut self, ix: usize, secondary: bool, cx: &mut ViewContext<Self>) {
+    fn handle_click(&mut self, ix: usize, secondary: bool, model: &Model<Self>, cx: &mut AppContext) {
         cx.stop_propagation();
         cx.prevent_default();
         self.set_selected_index(ix, false, cx);
         self.do_confirm(secondary, cx)
     }
 
-    fn do_confirm(&mut self, secondary: bool, cx: &mut ViewContext<Self>) {
+    fn do_confirm(&mut self, secondary: bool, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(update_query) = self.delegate.confirm_update_query(cx) {
             self.set_query(update_query, cx);
             self.delegate.set_selected_index(0, cx);
@@ -405,7 +405,7 @@ impl<D: PickerDelegate> Picker<D> {
         &mut self,
         _: View<Editor>,
         event: &editor::EditorEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         let Head::Editor(ref editor) = &self.head else {
             panic!("unexpected call");
@@ -422,7 +422,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn on_empty_head_blur(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_empty_head_blur(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let Head::Empty(_) = &self.head else {
             panic!("unexpected call");
         };
@@ -442,12 +442,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn refresh(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn refresh(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let query = self.query(cx);
         self.update_matches(query, cx);
     }
 
-    pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
+    pub fn update_matches(&mut self, query: String, model: &Model<Self>, cx: &mut AppContext) {
         let delegate_pending_update_matches = self.delegate.update_matches(query, cx);
 
         self.matches_updated(cx);
@@ -476,7 +476,7 @@ impl<D: PickerDelegate> Picker<D> {
         });
     }
 
-    fn matches_updated(&mut self, cx: &mut ViewContext<Self>) {
+    fn matches_updated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let ElementContainer::List(state) = &mut self.element_container {
             state.reset(self.delegate.match_count());
         }
@@ -523,7 +523,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn render_element(&self, cx: &mut ViewContext<Self>, ix: usize) -> impl IntoElement {
+    fn render_element(&self, model: &Model<Self>, cx: &mut AppContext, ix: usize) -> impl IntoElement {
         div()
             .id(("item", ix))
             .cursor_pointer()
@@ -557,7 +557,7 @@ impl<D: PickerDelegate> Picker<D> {
             )
     }
 
-    fn render_element_container(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_element_container(&self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let sizing_behavior = if self.max_height.is_some() {
             ListSizingBehavior::Infer
         } else {
@@ -602,7 +602,7 @@ impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
 impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let editor_position = self.delegate.editor_position();
 
         v_flex()

@@ -10,7 +10,7 @@ use editor::{
 use fuzzy::StringMatch;
 use gpui::{
     div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, HighlightStyle,
-    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, View, ViewContext,
+    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, Model,
     VisualContext, WeakView,
 };
 use language::{Outline, OutlineItem};
@@ -58,7 +58,7 @@ impl FocusableView for OutlineView {
 
 impl EventEmitter<DismissEvent> for OutlineView {}
 impl ModalView for OutlineView {
-    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> DismissDecision {
+    fn on_before_dismiss(&mut self, model: &Model<Self>, cx: &mut AppContext) -> DismissDecision {
         self.picker
             .update(cx, |picker, cx| picker.delegate.restore_active_editor(cx));
         DismissDecision::Dismiss(true)
@@ -66,13 +66,13 @@ impl ModalView for OutlineView {
 }
 
 impl Render for OutlineView {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
 
 impl OutlineView {
-    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+    fn register(editor: &mut Editor, model: &Model<Editor>, cx: &mut AppContext) {
         if editor.mode() == EditorMode::Full {
             let handle = cx.view().downgrade();
             editor
@@ -88,7 +88,7 @@ impl OutlineView {
     fn new(
         outline: Outline<Anchor>,
         editor: View<Editor>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> OutlineView {
         let delegate = OutlineViewDelegate::new(cx.view().downgrade(), outline, editor, cx);
         let picker =
@@ -114,7 +114,7 @@ impl OutlineViewDelegate {
         outline_view: WeakView<OutlineView>,
         outline: Outline<Anchor>,
         editor: View<Editor>,
-        cx: &mut ViewContext<OutlineView>,
+        model: &Model<OutlineView>, cx: &mut AppContext,
     ) -> Self {
         Self {
             outline_view,
@@ -140,7 +140,7 @@ impl OutlineViewDelegate {
         &mut self,
         ix: usize,
         navigate: bool,
-        cx: &mut ViewContext<Picker<OutlineViewDelegate>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) {
         self.selected_match_index = ix;
 
@@ -177,14 +177,14 @@ impl PickerDelegate for OutlineViewDelegate {
         self.selected_match_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<OutlineViewDelegate>>) {
+    fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         self.set_selected_index(ix, true, cx);
     }
 
     fn update_matches(
         &mut self,
         query: String,
-        cx: &mut ViewContext<Picker<OutlineViewDelegate>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> Task<()> {
         let selected_index;
         if query.is_empty() {
@@ -246,7 +246,7 @@ impl PickerDelegate for OutlineViewDelegate {
         Task::ready(())
     }
 
-    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<OutlineViewDelegate>>) {
+    fn confirm(&mut self, _: bool, model: &Model<Picker>, cx: &mut AppContext) {
         self.prev_scroll_position.take();
 
         self.active_editor.update(cx, |active_editor, cx| {
@@ -265,7 +265,7 @@ impl PickerDelegate for OutlineViewDelegate {
         self.dismissed(cx);
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<OutlineViewDelegate>>) {
+    fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.outline_view
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
@@ -276,7 +276,7 @@ impl PickerDelegate for OutlineViewDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let mat = self.matches.get(ix)?;
         let outline_item = self.outline.items.get(mat.candidate_id)?;

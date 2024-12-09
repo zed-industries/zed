@@ -11,7 +11,7 @@ impl QuickActionBar {
     pub fn render_toggle_markdown_preview(
         &self,
         workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Option<AnyElement> {
         let mut active_editor_is_markdown = false;
 

@@ -12,7 +12,7 @@ use command_palette_hooks::{
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Global,
-    ParentElement, Render, Styled, Task, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
+    ParentElement, Render, Styled, Task, UpdateGlobal, View, AppContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 
@@ -55,11 +55,11 @@ fn trim_consecutive_whitespaces(input: &str) -> String {
 }
 
 impl CommandPalette {
-    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
         workspace.register_action(|workspace, _: &Toggle, cx| Self::toggle(workspace, "", cx));
     }
 
-    pub fn toggle(workspace: &mut Workspace, query: &str, cx: &mut ViewContext<Workspace>) {
+    pub fn toggle(workspace: &mut Workspace, query: &str, model: &Model<Workspace>, cx: &mut AppContext) {
         let Some(previous_focus_handle) = cx.focused() else {
             return;
         };
@@ -73,7 +73,7 @@ impl CommandPalette {
         previous_focus_handle: FocusHandle,
         telemetry: Arc<Telemetry>,
         query: &str,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         let filter = CommandPaletteFilter::try_global(cx);
 
@@ -107,7 +107,7 @@ impl CommandPalette {
         Self { picker }
     }
 
-    pub fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
+    pub fn set_query(&mut self, query: &str, model: &Model<Self>, cx: &mut AppContext) {
         self.picker
             .update(cx, |picker, cx| picker.set_query(query, cx))
     }
@@ -122,7 +122,7 @@ impl FocusableView for CommandPalette {
 }
 
 impl Render for CommandPalette {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
@@ -187,7 +187,7 @@ impl CommandPaletteDelegate {
         query: String,
         mut commands: Vec<Command>,
         mut matches: Vec<StringMatch>,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) {
         self.updating_matches.take();
 
@@ -253,14 +253,14 @@ impl PickerDelegate for CommandPaletteDelegate {
         self.selected_ix
     }
 
-    fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, _: &Model<Picker>, _: &mut AppContext) {
         self.selected_ix = ix;
     }
 
     fn update_matches(
         &mut self,
         mut query: String,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> gpui::Task<()> {
         let settings = WorkspaceSettings::get_global(cx);
         if let Some(alias) = settings.command_aliases.get(&query) {
@@ -336,7 +336,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         &mut self,
         query: String,
         duration: Duration,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> bool {
         let Some((task, rx)) = self.updating_matches.take() else {
             return true;
@@ -357,13 +357,13 @@ impl PickerDelegate for CommandPaletteDelegate {
         }
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.command_palette
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
     }
 
-    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if self.matches.is_empty() {
             self.dismissed(cx);
             return;
@@ -389,7 +389,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let r#match = self.matches.get(ix)?;
         let command = self.commands.get(r#match.candidate_id)?;

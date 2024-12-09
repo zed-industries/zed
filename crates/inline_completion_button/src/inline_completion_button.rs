@@ -4,7 +4,7 @@ use editor::{scroll::Autoscroll, Editor};
 use fs::Fs;
 use gpui::{
     div, Action, AnchorCorner, AppContext, Asy Entity, IntoElement, ParentElement,
-    Render, Subscription, View, ViewContext, WeakView,
+    Render, Subscription, View, AppContext, WeakView,
 };
 use language::{
     language_settings::{
@@ -46,7 +46,7 @@ enum SupermavenButtonStatus {
 }
 
 impl Render for InlineCompletionButton {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let all_language_settings = all_language_settings(None, cx);
 
         match all_language_settings.inline_completions.provider {
@@ -198,7 +198,7 @@ impl Render for InlineCompletionButton {
 }
 
 impl InlineCompletionButton {
-    pub fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
         }
@@ -215,7 +215,7 @@ impl InlineCompletionButton {
         }
     }
 
-    pub fn build_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+    pub fn build_copilot_start_menu(&mut self, model: &Model<Self>, cx: &mut AppContext) -> View<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(cx, |menu, _| {
             menu.entry("Sign In", None, copilot::initiate_sign_in)
@@ -303,7 +303,7 @@ impl InlineCompletionButton {
         )
     }
 
-    fn build_copilot_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+    fn build_copilot_context_menu(&self, model: &Model<Self>, cx: &mut AppContext) -> View<ContextMenu> {
         ContextMenu::build(cx, |menu, cx| {
             self.build_language_settings_menu(menu, cx)
                 .separator()
@@ -318,7 +318,7 @@ impl InlineCompletionButton {
         })
     }
 
-    fn build_supermaven_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+    fn build_supermaven_context_menu(&self, model: &Model<Self>, cx: &mut AppContext) -> View<ContextMenu> {
         ContextMenu::build(cx, |menu, cx| {
             self.build_language_settings_menu(menu, cx)
                 .separator()
@@ -326,7 +326,7 @@ impl InlineCompletionButton {
         })
     }
 
-    pub fn update_enabled(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+    pub fn update_enabled(&mut self, editor: View<Editor>, model: &Model<Self>, cx: &mut AppContext) {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let suggestion_anchor = editor.selections.newest_anchor().start;
@@ -351,7 +351,7 @@ impl InlineCompletionButton {
 }
 
 impl StatusItemView for InlineCompletionButton {
-    fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+    fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(editor) = item.and_then(|item| item.act_as::<Editor>(cx)) {
             self.editor_subscription = Some((
                 cx.observe(&editor, Self::update_enabled),

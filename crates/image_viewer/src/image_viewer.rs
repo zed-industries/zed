@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ObjectFit, ParentElement,
-    Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    Render, Styled, Task, View, AppContext, VisualContext, WeakView,
 };
 use persistence::IMAGE_VIEWER;
 use theme::Theme;
@@ -31,7 +31,7 @@ impl ImageView {
     pub fn new(
         image_item: Model<ImageItem>,
         project: Model<Project>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         cx.subscribe(&image_item, Self::on_image_event).detach();
         Self {
@@ -45,7 +45,7 @@ impl ImageView {
         &mut self,
         _: Model<ImageItem>,
         event: &ImageItemEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         match event {
             ImageItemEvent::FileHandleChanged | ImageItemEvent::Reloaded => {
@@ -137,7 +137,7 @@ impl Item for ImageView {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Option<View<Self>>
     where
         Self: Sized,
@@ -220,7 +220,7 @@ impl SerializableItem for ImageView {
         workspace: &mut Workspace,
         item_id: ItemId,
         _closing: bool,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
         let image_path = self.image_item.read(cx).file.as_local()?.abs_path(cx);
@@ -247,7 +247,7 @@ impl FocusableView for ImageView {
 }
 
 impl Render for ImageView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let image = self.image_item.read(cx).image.clone();
         let checkered_background = |bounds: Bounds<Pixels>,
                                     _,
@@ -324,7 +324,7 @@ impl ProjectItem for ImageView {
     fn for_project_item(
         project: Model<Project>,
         item: Model<Self::Item>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self
     where
         Self: Sized,

@@ -14,7 +14,7 @@ impl TextStory {
 }
 
 impl Render for TextStory {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         Story::container()
             .child(Story::title("Text"))
             .children(vec![

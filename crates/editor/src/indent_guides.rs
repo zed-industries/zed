@@ -5,7 +5,6 @@ use gpui::{AppContext, Task};
 use language::{language_settings::language_settings, BufferRow};
 use multi_buffer::{MultiBufferIndentGuide, MultiBufferRow};
 use text::{BufferId, LineIndent, Point};
-use ui::ViewContext;
 use util::ResultExt;
 
 use crate::{DisplaySnapshot, Editor};
@@ -35,7 +34,8 @@ impl Editor {
         &self,
         visible_buffer_range: Range<MultiBufferRow>,
         snapshot: &DisplaySnapshot,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) -> Option<Vec<MultiBufferIndentGuide>> {
         let show_indent_guides = self.should_show_indent_guides().unwrap_or_else(|| {
             if let Some(buffer) = self.buffer().read(cx).as_singleton() {
@@ -67,7 +67,8 @@ impl Editor {
         &mut self,
         indent_guides: &[MultiBufferIndentGuide],
         snapshot: &DisplaySnapshot,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) -> Option<HashSet<usize>> {
         let selection = self.selections.newest::<Point>(cx);
         let cursor_row = MultiBufferRow(selection.head().row);

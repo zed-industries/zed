@@ -1,6 +1,6 @@
 use crate::ItemHandle;
 use gpui::{
-    AnyView, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View, ViewContext,
+    AnyView, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, Model,
 };
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
@@ -13,10 +13,10 @@ pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> ToolbarItemLocation;
 
-    fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut ViewContext<Self>) {}
+    fn pane_focus_update(&mut self, _pane_focused: bool, model: &Model<>Self, _cx: &mut AppContext) {}
 }
 
 trait ToolbarItemViewHandle: Send {
@@ -90,7 +90,7 @@ impl Toolbar {
 }
 
 impl Render for Toolbar {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         if !self.has_any_visible_items() {
             return div();
         }
@@ -162,12 +162,12 @@ impl Toolbar {
         }
     }
 
-    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ViewContext<Self>) {
+    pub fn set_can_navigate(&mut self, can_navigate: bool, model: &Model<Self>, cx: &mut AppContext) {
         self.can_navigate = can_navigate;
         cx.notify();
     }
 
-    pub fn add_item<T>(&mut self, item: View<T>, cx: &mut ViewContext<Self>)
+    pub fn add_item<T>(&mut self, item: View<T>, model: &Model<Self>, cx: &mut AppContext)
     where
         T: 'static + ToolbarItemView,
     {
@@ -193,7 +193,7 @@ impl Toolbar {
         cx.notify();
     }
 
-    pub fn set_active_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+    pub fn set_active_item(&mut self, item: Option<&dyn ItemHandle>, model: &Model<Self>, cx: &mut AppContext) {
         self.active_item = item.map(|item| item.boxed_clone());
         self.hidden = self
             .active_item
@@ -210,7 +210,7 @@ impl Toolbar {
         }
     }
 
-    pub fn focus_changed(&mut self, focused: bool, cx: &mut ViewContext<Self>) {
+    pub fn focus_changed(&mut self, focused: bool, model: &Model<Self>, cx: &mut AppContext) {
         for (toolbar_item, _) in self.items.iter_mut() {
             toolbar_item.focus_changed(focused, cx);
         }

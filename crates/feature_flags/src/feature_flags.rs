@@ -97,23 +97,24 @@ impl FeatureFlag for AutoCommand {
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
-        F: Fn(bool, &mut V, &mut ViewContext<V>) + Send + Sync + 'static;
+        F: Fn(bool, &mut V, &Model<V>, &mut AppContext) + Send + Sync + 'static;
 }
 
-impl<V> FeatureFlagViewExt<V> for ViewContext<'_, V>
-where
-    V: 'static,
-{
-    fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
-    where
-        F: Fn(bool, &mut V, &mut ViewContext<V>) + 'static,
-    {
-        self.observe_global::<FeatureFlags>(move |v, cx| {
-            let feature_flags = cx.global::<FeatureFlags>();
-            callback(feature_flags.has_flag::<T>(), v, cx);
-        })
-    }
-}
+// todo! restore this
+// impl<V> FeatureFlagViewExt<V> for Model<V>
+// where
+//     V: 'static,
+// {
+//     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
+//     where
+//         F: Fn(bool, &mut V, &Model<V>, &mut AppContext) + 'static,
+//     {
+//         self.observe_global::<FeatureFlags>(move |v, cx| {
+//             let feature_flags = cx.global::<FeatureFlags>();
+//             callback(feature_flags.has_flag::<T>(), v, cx);
+//         })
+//     }
+// }
 
 pub trait FeatureFlagAppExt {
     fn wait_for_flag<T: FeatureFlag>(&mut self) -> WaitForFlag;

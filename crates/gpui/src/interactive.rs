@@ -366,11 +366,7 @@ impl ExternalPaths {
     pub fn paths(&self) -> &[PathBuf] {
         &self.0
     }
-}
-
-// impl Render for ExternalPaths {
-//     fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-//         // the platform will render icons for the dragged files
+    AppContext
 //         Empty
 //     }
 // }

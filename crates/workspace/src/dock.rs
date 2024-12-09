@@ -6,7 +6,7 @@ use gpui::{
     deferred, div, px, Action, AnchorCorner, AnyView, AppContext, Axis, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, MouseDownEvent,
     MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView,
+    AppContext, VisualContext, WeakView,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -30,9 +30,9 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn persistent_name() -> &'static str;
     fn position(&self, window: &Window, cx: &AppContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
-    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
+    fn set_position(&mut self, position: DockPosition, model: &Model<Self>, cx: &mut AppContext);
     fn size(&self, window: &Window, cx: &AppContext) -> Pixels;
-    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>);
+    fn set_size(&mut self, size: Option<Pixels>, model: &Model<Self>, cx: &mut AppContext);
     fn icon(&self, window: &Window, cx: &AppContext) -> Option<ui::IconName>;
     fn icon_tooltip(&self, window: &Window, cx: &AppContext) -> Option<&'static str>;
     fn toggle_action(&self) -> Box<dyn Action>;
@@ -45,8 +45,8 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn starts_open(&self, _window: &Window, cx: &AppContext) -> bool {
         false
     }
-    fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
-    fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
+    fn set_zoomed(&mut self, _zoomed: bool, model: &Model<>Self, _cx: &mut AppContext) {}
+    fn set_active(&mut self, _active: bool, model: &Model<>Self, _cx: &mut AppContext) {}
     fn pane(&self) -> Option<View<Pane>> {
         None
     }
@@ -223,10 +223,10 @@ pub struct PanelButtons {
 }
 
 impl Dock {
-    pub fn new(position: DockPosition, cx: &mut ViewContext<Workspace>) -> View<Self> {
+    pub fn new(position: DockPosition, model: &Model<Workspace>, cx: &mut AppContext) -> View<Self> {
         let focus_handle = cx.focus_handle();
         let workspace = cx.view().clone();
-        let dock = cx.new_view(|cx: &mut ViewContext<Self>| {
+        let dock = cx.new_view(|model: &Model<Self>, cx: &mut AppContext| {
             let focus_subscription = cx.on_focus(&focus_handle, |dock, cx| {
                 if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
                     active_entry.panel.focus_handle(cx).focus(cx)
@@ -335,7 +335,7 @@ impl Dock {
         self.active_panel_index
     }
 
-    pub(crate) fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
+    pub(crate) fn set_open(&mut self, open: bool, model: &Model<Self>, cx: &mut AppContext) {
         if open != self.is_open {
             self.is_open = open;
             if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
@@ -346,7 +346,7 @@ impl Dock {
         }
     }
 
-    pub fn set_panel_zoomed(&mut self, panel: &AnyView, zoomed: bool, cx: &mut ViewContext<Self>) {
+    pub fn set_panel_zoomed(&mut self, panel: &AnyView, zoomed: bool, model: &Model<Self>, cx: &mut AppContext) {
         for entry in &mut self.panel_entries {
             if entry.panel.panel_id() == panel.entity_id() {
                 if zoomed != entry.panel.is_zoomed(cx) {
@@ -360,7 +360,7 @@ impl Dock {
         cx.notify();
     }
 
-    pub fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn zoom_out(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         for entry in &mut self.panel_entries {
             if entry.panel.is_zoomed(cx) {
                 entry.panel.set_zoomed(false, cx);
@@ -372,7 +372,7 @@ impl Dock {
         &mut self,
         panel: View<T>,
         workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
@@ -479,7 +479,7 @@ impl Dock {
         cx.notify()
     }
 
-    pub fn restore_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    pub fn restore_state(&mut self, model: &Model<Self>, cx: &mut AppContext) -> bool {
         if let Some(serialized) = self.serialized_dock.clone() {
             if let Some(active_panel) = serialized.active_panel {
                 if let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx) {
@@ -498,7 +498,7 @@ impl Dock {
         false
     }
 
-    pub fn remove_panel<T: Panel>(&mut self, panel: &View<T>, cx: &mut ViewContext<Self>) {
+    pub fn remove_panel<T: Panel>(&mut self, panel: &View<T>, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(panel_ix) = self
             .panel_entries
             .iter()
@@ -523,7 +523,7 @@ impl Dock {
         self.panel_entries.len()
     }
 
-    pub fn activate_panel(&mut self, panel_ix: usize, cx: &mut ViewContext<Self>) {
+    pub fn activate_panel(&mut self, panel_ix: usize, model: &Model<Self>, cx: &mut AppContext) {
         if panel_ix != self.active_panel_index {
             if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
                 active_panel.panel.set_active(false, cx);
@@ -586,7 +586,7 @@ impl Dock {
         }
     }
 
-    pub fn resize_active_panel(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
+    pub fn resize_active_panel(&mut self, size: Option<Pixels>, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(entry) = self.panel_entries.get_mut(self.active_panel_index) {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
 
@@ -626,7 +626,7 @@ impl Dock {
 }
 
 impl Render for Dock {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context();
         if let Some(entry) = self.visible_entry() {
             let size = entry.panel.size(cx);
@@ -725,14 +725,14 @@ impl Render for Dock {
 }
 
 impl PanelButtons {
-    pub fn new(dock: View<Dock>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(dock: View<Dock>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
         Self { dock }
     }
 }
 
 impl Render for PanelButtons {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let dock = self.dock.read(cx);
         let active_index = dock.active_panel_index;
         let is_open = dock.is_open;
@@ -821,7 +821,7 @@ impl StatusItemView for PanelButtons {
     fn set_active_pane_item(
         &mut self,
         _active_pane_item: Option<&dyn crate::ItemHandle>,
-        _cx: &mut ViewContext<Self>,
+        model: &Model<>Self, _cx: &mut AppContext,
     ) {
         // Nothing to do, panel buttons don't depend on the active center item
     }
@@ -830,7 +830,7 @@ impl StatusItemView for PanelButtons {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::*;
-    use gpui::{actions, div, ViewContext};
+    use gpui::{actions, div};
 
     pub struct TestPanel {
         pub position: DockPosition,
@@ -860,7 +860,7 @@ pub mod test {
     }
 
     impl Render for TestPanel {
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
             div().id("test").track_focus(&self.focus_handle(cx))
         }
     }
@@ -878,7 +878,7 @@ pub mod test {
             true
         }
 
-        fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+        fn set_position(&mut self, position: DockPosition, model: &Model<Self>, cx: &mut AppContext) {
             self.position = position;
             cx.update_global::<SettingsStore, _>(|_, _| {});
         }
@@ -887,7 +887,7 @@ pub mod test {
             self.size
         }
 
-        fn set_size(&mut self, size: Option<Pixels>, _: &mut ViewContext<Self>) {
+        fn set_size(&mut self, size: Option<Pixels>, _: &Model<Self>, _: &mut AppContext) {
             self.size = size.unwrap_or(px(300.));
         }
 
@@ -907,11 +907,11 @@ pub mod test {
             self.zoomed
         }
 
-        fn set_zoomed(&mut self, zoomed: bool, _cx: &mut ViewContext<Self>) {
+        fn set_zoomed(&mut self, zoomed: bool, model: &Model<>Self, _cx: &mut AppContext) {
             self.zoomed = zoomed;
         }
 
-        fn set_active(&mut self, active: bool, _cx: &mut ViewContext<Self>) {
+        fn set_active(&mut self, active: bool, model: &Model<>Self, _cx: &mut AppContext) {
             self.active = active;
         }
     }

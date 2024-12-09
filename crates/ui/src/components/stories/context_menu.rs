@@ -20,7 +20,7 @@ fn build_menu(window: &mut gpui::Window, cx: &mut gpui::AppContext, header: impl
 pub struct ContextMenuStory;
 
 impl Render for ContextMenuStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         Story::container()
             .on_action(|_: &PrintCurrentDate, _| {
                 println!("printing unix time!");

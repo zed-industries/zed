@@ -33,7 +33,7 @@ enum Row {
 }
 
 impl ProjectIndexDebugView {
-    pub fn new(index: Model<ProjectIndex>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(index: Model<ProjectIndex>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let mut this = Self {
             rows: Vec::new(),
             list_scroll_handle: UniformListScrollHandle::new(),
@@ -47,7 +47,7 @@ impl ProjectIndexDebugView {
         this
     }
 
-    fn update_rows(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_rows(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let worktree_indices = self.index.read(cx).worktree_indices(cx);
         cx.spawn(|this, mut cx| async move {
             let mut rows = Vec::new();
@@ -83,7 +83,7 @@ impl ProjectIndexDebugView {
         &mut self,
         worktree_id: WorktreeId,
         file_path: Arc<Path>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Option<()> {
         let project_index = self.index.read(cx);
         let fs = project_index.fs().clone();
@@ -136,7 +136,7 @@ impl ProjectIndexDebugView {
         None
     }
 
-    fn render_chunk(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_chunk(&mut self, ix: usize, model: &Model<Self>, cx: &mut AppContext) -> AnyElement {
         let buffer_font = ThemeSettings::get_global(cx).buffer_font.clone();
         let Some(state) = &self.selected_path else {
             return div().into_any();
@@ -196,7 +196,7 @@ impl ProjectIndexDebugView {
 }
 
 impl Render for ProjectIndexDebugView {
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         if let Some(selected_path) = self.selected_path.as_ref() {
             v_flex()
                 .child(
@@ -286,7 +286,7 @@ impl Item for ProjectIndexDebugView {
     fn clone_on_split(
         &self,
         _: Option<workspace::WorkspaceId>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Option<View<Self>>
     where
         Self: Sized,

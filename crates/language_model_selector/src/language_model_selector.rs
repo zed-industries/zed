@@ -73,7 +73,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         self.selected_index = ix.min(self.filtered_models.len().saturating_sub(1));
         cx.notify();
     }
@@ -82,7 +82,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         "Select a model...".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(&mut self, query: String, model: &Model<Picker>, cx: &mut AppContext) -> Task<()> {
         let all_models = self.all_models.clone();
 
         let llm_registry = LanguageModelRegistry::global(cx);
@@ -137,7 +137,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if let Some(model_info) = self.filtered_models.get(self.selected_index) {
             let model = model_info.model.clone();
             (self.on_model_changed)(model.clone(), cx);
@@ -158,9 +158,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, model: &Model<>Picker, _cx: &mut AppContext) {}
 
-    fn render_header(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+    fn render_header(&self, model: &Model<Picker>, cx: &mut AppContext) -> Option<AnyElement> {
         let configured_models_count = LanguageModelRegistry::global(cx)
             .read(cx)
             .providers()
@@ -187,7 +187,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         use feature_flags::FeatureFlagAppExt;
         let show_badges = cx.has_flag::<ZedPro>();
@@ -245,7 +245,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         )
     }
 
-    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+    fn render_footer(&self, model: &Model<Picker>, cx: &mut AppContext) -> Option<gpui::AnyElement> {
         use feature_flags::FeatureFlagAppExt;
 
         let plan = proto::Plan::ZedPro;

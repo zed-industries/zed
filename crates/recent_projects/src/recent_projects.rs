@@ -7,7 +7,7 @@ use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    Subscription, Task, View, ViewContext, WeakView,
+    Subscription, Task, View, AppContext, WeakView,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -47,7 +47,7 @@ pub struct RecentProjects {
 impl ModalView for RecentProjects {}
 
 impl RecentProjects {
-    fn new(delegate: RecentProjectsDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
+    fn new(delegate: RecentProjectsDelegate, rem_width: f32, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let picker = cx.new_view(|cx| {
             // We want to use a list when we render paths, because the items can have different heights (multiple paths).
             if delegate.render_paths {
@@ -81,7 +81,7 @@ impl RecentProjects {
         }
     }
 
-    fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
+    fn register(workspace: &mut Workspace, model: &Model<>Workspace, _cx: &mut AppContext) {
         workspace.register_action(|workspace, open_recent: &OpenRecent, cx| {
             let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
                 Self::open(workspace, open_recent.create_new_window, cx);
@@ -99,7 +99,7 @@ impl RecentProjects {
     pub fn open(
         workspace: &mut Workspace,
         create_new_window: bool,
-        cx: &mut ViewContext<Workspace>,
+        model: &Model<Workspace>, cx: &mut AppContext,
     ) {
         let weak = cx.view().downgrade();
         workspace.toggle_modal(cx, |cx| {
@@ -119,7 +119,7 @@ impl FocusableView for RecentProjects {
 }
 
 impl Render for RecentProjects {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .w(rems(self.rem_width))
             .child(self.picker.clone())
@@ -194,14 +194,14 @@ impl PickerDelegate for RecentProjectsDelegate {
         self.selected_match_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, model: &Model<>Picker, _cx: &mut AppContext) {
         self.selected_match_index = ix;
     }
 
     fn update_matches(
         &mut self,
         query: String,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> gpui::Task<()> {
         let query = query.trim_start();
         let smart_case = query.chars().any(|c| c.is_uppercase());
@@ -255,7 +255,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         Task::ready(())
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if let Some((selected_match, workspace)) = self
             .matches
             .get(self.selected_index())
@@ -343,7 +343,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         }
     }
 
-    fn dismissed(&mut self, _: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, _: &Model<Picker>, _: &mut AppContext) {}
 
     fn no_matches_text(
         &self,
@@ -361,7 +361,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let hit = self.matches.get(ix)?;
 
@@ -457,7 +457,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         )
     }
 
-    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+    fn render_footer(&self, model: &Model<Picker>, cx: &mut AppContext) -> Option<AnyElement> {
         Some(
             h_flex()
                 .w_full()
@@ -531,7 +531,7 @@ fn highlights_for_path(
     )
 }
 impl RecentProjectsDelegate {
-    fn delete_recent_project(&self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn delete_recent_project(&self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         if let Some(selected_match) = self.matches.get(ix) {
             let (workspace_id, _) = self.workspaces[selected_match.candidate_id];
             cx.spawn(move |this, mut cx| async move {
@@ -554,7 +554,7 @@ impl RecentProjectsDelegate {
     fn is_current_workspace(
         &self,
         workspace_id: WorkspaceId,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> bool {
         if let Some(workspace) = self.workspace.upgrade() {
             let workspace = workspace.read(cx);
@@ -571,7 +571,7 @@ struct MatchTooltip {
 }
 
 impl Render for MatchTooltip {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         tooltip_container(cx, |div, _| {
             self.highlighted_location.render_paths_children(div)
         })

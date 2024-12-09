@@ -42,7 +42,7 @@ use gpui::{
 };
 use language::Buffer;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
-use ui::{div, prelude::*, v_flex, IntoElement, Styled, Tooltip, ViewContext};
+use ui::{div, prelude::*, v_flex, IntoElement, Styled, Tooltip};
 
 mod image;
 use image::ImageView;
@@ -141,7 +141,7 @@ impl Output {
     fn render_output_controls<V: OutputContent + 'static>(
         v: View<V>,
         workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<ExecutionView>,
+        model: &Model<ExecutionView>, cx: &mut AppContext,
     ) -> Option<AnyElement> {
         if !v.has_clipboard_content(cx) && !v.has_buffer_content(cx) {
             return None;
@@ -213,7 +213,7 @@ impl Output {
         &self,
 
         workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<ExecutionView>,
+        model: &Model<ExecutionView>, cx: &mut AppContext,
     ) -> impl IntoElement {
         let content = match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
@@ -330,7 +330,7 @@ impl ExecutionView {
     pub fn new(
         status: ExecutionStatus,
         workspace: WeakView<Workspace>,
-        _cx: &mut ViewContext<Self>,
+        model: &Model<>Self, _cx: &mut AppContext,
     ) -> Self {
         Self {
             workspace,
@@ -340,7 +340,7 @@ impl ExecutionView {
     }
 
     /// Accept a Jupyter message belonging to this execution
-    pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
+    pub fn push_message(&mut self, message: &JupyterMessageContent, model: &Model<Self>, cx: &mut AppContext) {
         let output: Output = match message {
             JupyterMessageContent::ExecuteResult(result) => Output::new(
                 &result.data,
@@ -421,7 +421,7 @@ impl ExecutionView {
         &mut self,
         data: &MimeBundle,
         display_id: &str,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         let mut any = false;
 
@@ -439,7 +439,7 @@ impl ExecutionView {
         }
     }
 
-    fn apply_terminal_text(&mut self, text: &str, cx: &mut ViewContext<Self>) -> Option<Output> {
+    fn apply_terminal_text(&mut self, text: &str, model: &Model<Self>, cx: &mut AppContext) -> Option<Output> {
         if let Some(last_output) = self.outputs.last_mut() {
             if let Output::Stream {
                 content: last_stream,
@@ -462,7 +462,7 @@ impl ExecutionView {
 }
 
 impl Render for ExecutionView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let status = match &self.status {
             ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel...")
                 .color(Color::Muted)

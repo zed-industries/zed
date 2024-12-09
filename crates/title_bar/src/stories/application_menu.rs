@@ -18,7 +18,7 @@ impl ApplicationMenuStory {
 }
 
 impl Render for ApplicationMenuStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<ApplicationMenu>())
             .child(StorySection::new().child(StoryItem::new(

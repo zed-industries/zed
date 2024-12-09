@@ -3,8 +3,8 @@ pub mod cursor_position;
 use cursor_position::LineIndicatorFormat;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
-    div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
+    div, prelude::*, AnyWindowHandle, AppContext, AppContext, DismissEvent, EventEmitter,
+    FocusHandle, FocusableView, Render, SharedString, Styled, Subscription, View, VisualContext,
 };
 use settings::Settings;
 use text::{Bias, Point};
@@ -38,7 +38,7 @@ impl EventEmitter<DismissEvent> for GoToLine {}
 enum GoToLineRowHighlights {}
 
 impl GoToLine {
-    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+    fn register(editor: &mut Editor, model: &Model<Editor>, cx: &mut AppContext) {
         let handle = cx.view().downgrade();
         editor
             .register_action(move |_: &editor::actions::ToggleGoToLine, cx| {
@@ -55,7 +55,7 @@ impl GoToLine {
             .detach();
     }
 
-    pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(active_editor: View<Editor>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let cursor =
             active_editor.update(cx, |editor, cx| editor.selections.last::<Point>(cx).head());
 
@@ -103,7 +103,8 @@ impl GoToLine {
         &mut self,
         _: View<Editor>,
         event: &editor::EditorEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             editor::EditorEvent::Blurred => cx.emit(DismissEvent),
@@ -112,7 +113,7 @@ impl GoToLine {
         }
     }
 
-    fn highlight_current_line(&mut self, cx: &mut ViewContext<Self>) {
+    fn highlight_current_line(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(point) = self.point_from_query(cx) {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
@@ -133,7 +134,7 @@ impl GoToLine {
         }
     }
 
-    fn point_from_query(&self, cx: &ViewContext<Self>) -> Option<Point> {
+    fn point_from_query(&self, window: &Model<Self>, cx: &AppContext) -> Option<Point> {
         let (row, column) = self.line_column_from_query(cx);
         Some(Point::new(
             row?.saturating_sub(1),
@@ -141,7 +142,11 @@ impl GoToLine {
         ))
     }
 
-    fn line_column_from_query(&self, cx: &ViewContext<Self>) -> (Option<u32>, Option<u32>) {
+    fn line_column_from_query(
+        &self,
+        window: &Model<Self>,
+        cx: &AppContext,
+    ) -> (Option<u32>, Option<u32>) {
         let input = self.line_editor.read(cx).text(cx);
         let mut components = input
             .splitn(2, FILE_ROW_COLUMN_DELIMITER)
@@ -152,11 +157,11 @@ impl GoToLine {
         (row, column)
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         cx.emit(DismissEvent);
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(point) = self.point_from_query(cx) {
             self.active_editor.update(cx, |editor, cx| {
                 let snapshot = editor.snapshot(cx).display_snapshot;
@@ -175,7 +180,7 @@ impl GoToLine {
 }
 
 impl Render for GoToLine {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let mut help_text = self.current_text.clone();
         let query = self.line_column_from_query(cx);
         if let Some(line) = query.0 {

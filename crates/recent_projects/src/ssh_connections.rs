@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ActiveTheme, Color, Icon, IconName, IconSize, InteractiveElement, IntoElement,
-    Label, LabelCommon, Styled, ViewContext, VisualContext,
+    prelude::*, ActiveTheme, AppContext, Color, Icon, IconName, IconSize, InteractiveElement,
+    IntoElement, Label, LabelCommon, Styled, VisualContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -149,7 +149,8 @@ pub struct SshConnectionModal {
 impl SshPrompt {
     pub(crate) fn new(
         connection_options: &SshConnectionOptions,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let connection_string = connection_options.connection_string().into();
         let nickname = connection_options.nickname.clone().map(|s| s.into());
@@ -172,7 +173,8 @@ impl SshPrompt {
         &mut self,
         prompt: String,
         tx: oneshot::Sender<Result<String>>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let theme = ThemeSettings::get_global(cx);
 
@@ -208,12 +210,12 @@ impl SshPrompt {
         cx.notify();
     }
 
-    pub fn set_status(&mut self, status: Option<String>, cx: &mut ViewContext<Self>) {
+    pub fn set_status(&mut self, status: Option<String>, model: &Model<Self>, cx: &mut AppContext) {
         self.status_message = status.map(|s| s.into());
         cx.notify();
     }
 
-    pub fn confirm(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn confirm(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some((_, tx)) = self.prompt.take() {
             self.status_message = Some("Connecting".into());
             self.editor.update(cx, |editor, cx| {
@@ -225,7 +227,7 @@ impl SshPrompt {
 }
 
 impl Render for SshPrompt {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let cx = cx.window_context();
 
         v_flex()
@@ -273,7 +275,8 @@ impl SshConnectionModal {
     pub(crate) fn new(
         connection_options: &SshConnectionOptions,
         paths: Vec<PathBuf>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         Self {
             prompt: cx.new_view(|cx| SshPrompt::new(connection_options, cx)),
@@ -282,16 +285,16 @@ impl SshConnectionModal {
         }
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
         self.prompt.update(cx, |prompt, cx| prompt.confirm(cx))
     }
 
-    pub fn finished(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn finished(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.finished = true;
         cx.emit(DismissEvent);
     }
 
-    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn dismiss(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(tx) = self
             .prompt
             .update(cx, |prompt, _cx| prompt.cancellation.take())
@@ -357,7 +360,7 @@ impl RenderOnce for SshConnectionHeader {
 }
 
 impl Render for SshConnectionModal {
-    fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl ui::IntoElement {
         let nickname = self.prompt.read(cx).nickname.clone();
         let connection_string = self.prompt.read(cx).connection_string.clone();
 
@@ -402,7 +405,11 @@ impl FocusableView for SshConnectionModal {
 impl EventEmitter<DismissEvent> for SshConnectionModal {}
 
 impl ModalView for SshConnectionModal {
-    fn on_before_dismiss(&mut self, _: &mut ViewContext<Self>) -> workspace::DismissDecision {
+    fn on_before_dismiss(
+        &mut self,
+        _: &Model<Self>,
+        _: &mut AppContext,
+    ) -> workspace::DismissDecision {
         return workspace::DismissDecision::Dismiss(self.finished);
     }
 

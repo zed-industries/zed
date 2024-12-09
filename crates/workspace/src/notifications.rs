@@ -1,9 +1,8 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
 use gpui::{
-    svg, AnyView, AppContext, Asy ClipboardItem, DismissEvent, Entity, EntityId,
-    EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext,
-    VisualContext,
+    svg, AnyView, AppContext, ClipboardItem, DismissEvent, Entity, EntityId, EventEmitter, Global,
+    Model, PromptLevel, Render, ScrollHandle, Task, View, VisualContext,
 };
 use language::DiagnosticSeverity;
 
@@ -97,7 +96,8 @@ impl Workspace {
     pub fn has_shown_notification_once<V: Notification>(
         &self,
         id: &NotificationId,
-        cx: &ViewContext<Self>,
+        window: &Model<Self>,
+        cx: &AppContext,
     ) -> bool {
         cx.global::<NotificationTracker>()
             .get(&TypeId::of::<V>())
@@ -108,8 +108,9 @@ impl Workspace {
     pub fn show_notification_once<V: Notification>(
         &mut self,
         id: NotificationId,
-        cx: &mut ViewContext<Self>,
-        build_notification: impl FnOnce(&mut ViewContext<Self>) -> View<V>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+        build_notification: impl FnOnce(&Model<Self>, &mut AppContext) -> View<V>,
     ) {
         if !self.has_shown_notification_once::<V>(&id, cx) {
             let tracker = cx.global_mut::<NotificationTracker>();
@@ -131,8 +132,9 @@ impl Workspace {
     pub fn show_notification<V: Notification>(
         &mut self,
         id: NotificationId,
-        cx: &mut ViewContext<Self>,
-        build_notification: impl FnOnce(&mut ViewContext<Self>) -> View<V>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+        build_notification: impl FnOnce(&Model<Self>, &mut AppContext) -> View<V>,
     ) {
         self.dismiss_notification_internal(&id, cx);
 
@@ -148,7 +150,7 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn show_error<E>(&mut self, err: &E, cx: &mut ViewContext<Self>)
+    pub fn show_error<E>(&mut self, err: &E, model: &Model<Self>, cx: &mut AppContext)
     where
         E: std::fmt::Debug + std::fmt::Display,
     {
@@ -161,7 +163,7 @@ impl Workspace {
         );
     }
 
-    pub fn show_portal_error(&mut self, err: String, cx: &mut ViewContext<Self>) {
+    pub fn show_portal_error(&mut self, err: String, model: &Model<Self>, cx: &mut AppContext) {
         struct PortalError;
 
         self.show_notification(NotificationId::unique::<PortalError>(), cx, |cx| {
@@ -174,11 +176,16 @@ impl Workspace {
         });
     }
 
-    pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
+    pub fn dismiss_notification(
+        &mut self,
+        id: &NotificationId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.dismiss_notification_internal(id, cx)
     }
 
-    pub fn show_toast(&mut self, toast: Toast, cx: &mut ViewContext<Self>) {
+    pub fn show_toast(&mut self, toast: Toast, model: &Model<Self>, cx: &mut AppContext) {
         self.dismiss_notification(&toast.id, cx);
         self.show_notification(toast.id.clone(), cx, |cx| {
             cx.new_view(|_cx| match toast.on_click.as_ref() {
@@ -206,16 +213,21 @@ impl Workspace {
         }
     }
 
-    pub fn dismiss_toast(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
+    pub fn dismiss_toast(&mut self, id: &NotificationId, model: &Model<Self>, cx: &mut AppContext) {
         self.dismiss_notification(id, cx);
     }
 
-    pub fn clear_all_notifications(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn clear_all_notifications(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.notifications.clear();
         cx.notify();
     }
 
-    fn dismiss_notification_internal(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
+    fn dismiss_notification_internal(
+        &mut self,
+        id: &NotificationId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.notifications.retain(|(existing_id, _)| {
             if existing_id == id {
                 cx.notify();
@@ -261,7 +273,7 @@ impl LanguageServerPrompt {
 }
 
 impl Render for LanguageServerPrompt {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let Some(request) = &self.request else {
             return div().id("language_server_prompt_notification");
         };
@@ -390,7 +402,7 @@ impl ErrorMessagePrompt {
 }
 
 impl Render for ErrorMessagePrompt {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .id("error_message_prompt_notification")
             .occlude()
@@ -444,8 +456,8 @@ impl EventEmitter<DismissEvent> for ErrorMessagePrompt {}
 
 pub mod simple_message_notification {
     use gpui::{
-        div, DismissEvent, EventEmitter, InteractiveElement, ParentElement, Render, SharedString,
-        StatefulInteractiveElement, Styled, ViewContext,
+        div, DismissEvent, EventEmitter, InteractiveElement, Model, ParentElement, Render,
+        SharedString, StatefulInteractiveElement, Styled,
     };
     use std::sync::Arc;
     use ui::prelude::*;
@@ -453,10 +465,10 @@ pub mod simple_message_notification {
 
     pub struct MessageNotification {
         message: SharedString,
-        on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
+        on_click: Option<Arc<dyn Fn(&Model<Self>, &mut AppContext)>>,
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
-        secondary_on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
+        secondary_on_click: Option<Arc<dyn Fn(&Model<Self>, &mut AppContext)>>,
     }
 
     impl EventEmitter<DismissEvent> for MessageNotification {}
@@ -485,7 +497,7 @@ pub mod simple_message_notification {
 
         pub fn on_click<F>(mut self, on_click: F) -> Self
         where
-            F: 'static + Fn(&mut ViewContext<Self>),
+            F: 'static + Fn(&Model<Self>, &mut AppContext),
         {
             self.on_click = Some(Arc::new(on_click));
             self
@@ -501,19 +513,19 @@ pub mod simple_message_notification {
 
         pub fn on_secondary_click<F>(mut self, on_click: F) -> Self
         where
-            F: 'static + Fn(&mut ViewContext<Self>),
+            F: 'static + Fn(&Model<Self>, &mut AppContext),
         {
             self.secondary_on_click = Some(Arc::new(on_click));
             self
         }
 
-        pub fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+        pub fn dismiss(&mut self, model: &Model<Self>, cx: &mut AppContext) {
             cx.emit(DismissEvent);
         }
     }
 
     impl Render for MessageNotification {
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
             v_flex()
                 .elevation_3(cx)
                 .p_4()
@@ -563,7 +575,8 @@ pub trait NotifyResultExt {
     fn notify_err(
         self,
         workspace: &mut Workspace,
-        cx: &mut ViewContext<Workspace>,
+        model: &Model<Workspace>,
+        cx: &mut AppContext,
     ) -> Option<Self::Ok>;
 
     fn notify_async_err(
@@ -579,7 +592,12 @@ where
 {
     type Ok = T;
 
-    fn notify_err(self, workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Option<T> {
+    fn notify_err(
+        self,
+        workspace: &mut Workspace,
+        model: &Model<Workspace>,
+        cx: &mut AppContext,
+    ) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(err) => {

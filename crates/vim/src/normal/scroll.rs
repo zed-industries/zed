@@ -4,7 +4,7 @@ use editor::{
     scroll::ScrollAmount,
     DisplayPoint, Editor, EditorSettings,
 };
-use gpui::{actions, ViewContext};
+use gpui::actions;
 use language::Bias;
 use settings::Settings;
 
@@ -13,7 +13,7 @@ actions!(
     [LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown]
 );
 
-pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
     Vim::action(editor, cx, |vim, _: &LineDown, cx| {
         vim.scroll(false, cx, |c| ScrollAmount::Line(c.unwrap_or(1.)))
     });
@@ -50,7 +50,8 @@ impl Vim {
     fn scroll(
         &mut self,
         move_cursor: bool,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
         by: fn(c: Option<f32>) -> ScrollAmount,
     ) {
         let amount = by(Vim::take_count(cx).map(|c| c as f32));
@@ -64,7 +65,8 @@ fn scroll_editor(
     editor: &mut Editor,
     preserve_cursor_position: bool,
     amount: &ScrollAmount,
-    cx: &mut ViewContext<Editor>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
 ) {
     let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
     let old_top_anchor = editor.scroll_manager.anchor().anchor;

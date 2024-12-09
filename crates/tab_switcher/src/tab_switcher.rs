@@ -4,9 +4,9 @@ mod tab_switcher_tests;
 use collections::HashMap;
 use editor::items::entry_git_aware_label_color;
 use gpui::{
-    actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Model, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseUpEvent, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, impl_actions, rems, Action, AnyElement, AppContext, AppContext, DismissEvent,
+    EntityId, EventEmitter, FocusHandle, FocusableView, Model, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseUpEvent, ParentElement, Render, Styled, Task, View, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -44,7 +44,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl TabSwitcher {
-    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
         workspace.register_action(|workspace, action: &Toggle, cx| {
             let Some(tab_switcher) = workspace.active_modal::<Self>(cx) else {
                 Self::open(action, workspace, cx);
@@ -59,7 +59,12 @@ impl TabSwitcher {
         });
     }
 
-    fn open(action: &Toggle, workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    fn open(
+        action: &Toggle,
+        workspace: &mut Workspace,
+        model: &Model<Workspace>,
+        cx: &mut AppContext,
+    ) {
         let mut weak_pane = workspace.active_pane().downgrade();
         for dock in [
             workspace.left_dock(),
@@ -87,7 +92,7 @@ impl TabSwitcher {
         });
     }
 
-    fn new(delegate: TabSwitcherDelegate, cx: &mut ViewContext<Self>) -> Self {
+    fn new(delegate: TabSwitcherDelegate, model: &Model<Self>, cx: &mut AppContext) -> Self {
         Self {
             picker: cx.new_view(|cx| Picker::nonsearchable_uniform_list(delegate, cx)),
             init_modifiers: cx.modifiers().modified().then_some(cx.modifiers()),
@@ -97,7 +102,8 @@ impl TabSwitcher {
     fn handle_modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let Some(init_modifiers) = self.init_modifiers else {
             return;
@@ -112,7 +118,12 @@ impl TabSwitcher {
         }
     }
 
-    fn handle_close_selected_item(&mut self, _: &CloseSelectedItem, cx: &mut ViewContext<Self>) {
+    fn handle_close_selected_item(
+        &mut self,
+        _: &CloseSelectedItem,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.picker.update(cx, |picker, cx| {
             picker
                 .delegate
@@ -130,7 +141,7 @@ impl FocusableView for TabSwitcher {
 }
 
 impl Render for TabSwitcher {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .key_context("TabSwitcher")
             .w(rems(PANEL_WIDTH_REMS))
@@ -162,7 +173,8 @@ impl TabSwitcherDelegate {
         action: &Toggle,
         tab_switcher: WeakView<TabSwitcher>,
         pane: WeakView<Pane>,
-        cx: &mut ViewContext<TabSwitcher>,
+        model: &Model<TabSwitcher>,
+        cx: &mut AppContext,
     ) -> Self {
         Self::subscribe_to_updates(&pane, cx);
         Self {
@@ -175,7 +187,11 @@ impl TabSwitcherDelegate {
         }
     }
 
-    fn subscribe_to_updates(pane: &WeakView<Pane>, cx: &mut ViewContext<TabSwitcher>) {
+    fn subscribe_to_updates(
+        pane: &WeakView<Pane>,
+        model: &Model<TabSwitcher>,
+        cx: &mut AppContext,
+    ) {
         let Some(pane) = pane.upgrade() else {
             return;
         };
@@ -250,11 +266,7 @@ impl TabSwitcherDelegate {
             .map(|tab_match| tab_match.item.item_id())
     }
 
-    fn select_item(
-        &mut self,
-        item_id: EntityId,
-        cx: &mut ViewContext<'_, Picker<TabSwitcherDelegate>>,
-    ) {
+    fn select_item(&mut self, item_id: EntityId, model: &Model<_>, cx: &mut AppContext) {
         let selected_idx = self
             .matches
             .iter()
@@ -263,7 +275,7 @@ impl TabSwitcherDelegate {
         self.set_selected_index(selected_idx, cx);
     }
 
-    fn close_item_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Picker<TabSwitcherDelegate>>) {
+    fn close_item_at(&mut self, ix: usize, model: &Model<_>, cx: &mut AppContext) {
         let Some(tab_match) = self.matches.get(ix) else {
             return;
         };
@@ -300,7 +312,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         self.selected_index = ix;
         cx.notify();
     }
@@ -312,13 +324,14 @@ impl PickerDelegate for TabSwitcherDelegate {
     fn update_matches(
         &mut self,
         _raw_query: String,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) -> Task<()> {
         self.update_matches(cx);
         Task::ready(())
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<TabSwitcherDelegate>>) {
+    fn confirm(&mut self, _secondary: bool, model: &Model<Picker>, cx: &mut AppContext) {
         let Some(pane) = self.pane.upgrade() else {
             return;
         };
@@ -330,7 +343,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         });
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<TabSwitcherDelegate>>) {
+    fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.tab_switcher
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
@@ -340,7 +353,8 @@ impl PickerDelegate for TabSwitcherDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let tab_match = self
             .matches

@@ -11,8 +11,9 @@ use editor::{
     EditorEvent,
 };
 use gpui::{
-    actions, AnyView, AppContext, ClipboardItem, Entity as _, EventEmitter, FocusableView, Model,
-    Pixels, Point, Render, Subscription, Task, View, ViewContext, VisualContext as _, WeakView,
+    actions, AnyView, AppContext, AppContext, ClipboardItem, Entity as _, EventEmitter,
+    FocusableView, Model, Pixels, Point, Render, Subscription, Task, View, VisualContext as _,
+    WeakView,
 };
 use project::Project;
 use rpc::proto::ChannelVisibility;
@@ -174,7 +175,8 @@ impl ChannelView {
         workspace: WeakView<Workspace>,
         channel_store: Model<ChannelStore>,
         channel_buffer: Model<ChannelBuffer>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
         let this = cx.view().downgrade();
@@ -216,7 +218,8 @@ impl ChannelView {
         &mut self,
         position: String,
         first_attempt: bool,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let position = Channel::slug(&position).to_lowercase();
         let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
@@ -256,14 +259,19 @@ impl ChannelView {
         ));
     }
 
-    fn copy_link(&mut self, _: &CopyLink, cx: &mut ViewContext<Self>) {
+    fn copy_link(&mut self, _: &CopyLink, model: &Model<Self>, cx: &mut AppContext) {
         let position = self
             .editor
             .update(cx, |editor, cx| editor.selections.newest_display(cx).start);
         self.copy_link_for_position(position, cx)
     }
 
-    fn copy_link_for_position(&self, position: DisplayPoint, cx: &mut ViewContext<Self>) {
+    fn copy_link_for_position(
+        &self,
+        position: DisplayPoint,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
 
         let mut closest_heading = None;
@@ -306,7 +314,8 @@ impl ChannelView {
         &mut self,
         _: Model<ChannelBuffer>,
         event: &ChannelBufferEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             ChannelBufferEvent::Disconnected => self.editor.update(cx, |editor, cx| {
@@ -338,7 +347,7 @@ impl ChannelView {
         }
     }
 
-    fn acknowledge_buffer_version(&mut self, cx: &mut ViewContext<ChannelView>) {
+    fn acknowledge_buffer_version(&mut self, model: &Model<ChannelView>, cx: &mut AppContext) {
         self.channel_store.update(cx, |store, cx| {
             let channel_buffer = self.channel_buffer.read(cx);
             store.acknowledge_notes_version(
@@ -357,7 +366,7 @@ impl ChannelView {
 impl EventEmitter<EditorEvent> for ChannelView {}
 
 impl Render for ChannelView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         div()
             .size_full()
             .on_action(cx.listener(Self::copy_link))
@@ -444,7 +453,8 @@ impl Item for ChannelView {
     fn clone_on_split(
         &self,
         _: Option<WorkspaceId>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<View<Self>> {
         Some(cx.new_view(|cx| {
             Self::new(
@@ -461,16 +471,21 @@ impl Item for ChannelView {
         false
     }
 
-    fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {
+    fn navigate(&mut self, data: Box<dyn Any>, model: &Model<Self>, cx: &mut AppContext) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
-    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+    fn deactivated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.editor.update(cx, Item::deactivated)
     }
 
-    fn set_nav_history(&mut self, history: ItemNavHistory, cx: &mut ViewContext<Self>) {
+    fn set_nav_history(
+        &mut self,
+        history: ItemNavHistory,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.editor
             .update(cx, |editor, cx| Item::set_nav_history(editor, history, cx))
     }
@@ -583,14 +598,20 @@ impl FollowableItem for ChannelView {
         &mut self,
         project: &Model<Project>,
         message: proto::update_view::Variant,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> gpui::Task<anyhow::Result<()>> {
         self.editor.update(cx, |editor, cx| {
             editor.apply_update_proto(project, message, cx)
         })
     }
 
-    fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>) {
+    fn set_leader_peer_id(
+        &mut self,
+        leader_peer_id: Option<PeerId>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.editor.update(cx, |editor, cx| {
             editor.set_leader_peer_id(leader_peer_id, cx)
         })

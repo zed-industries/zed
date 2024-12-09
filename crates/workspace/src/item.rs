@@ -14,7 +14,7 @@ use client::{
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    Font, HighlightStyle, Model, Pixels, Point, SharedString, Task, View, ViewContext, WeakView,
+    Font, HighlightStyle, Model, Pixels, Point, SharedString, Task, View, AppContext, WeakView,
 
 };
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -212,10 +212,10 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
 
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
 
-    fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
-    fn discarded(&self, _project: Model<Project>, _cx: &mut ViewContext<Self>) {}
-    fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
-    fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
+    fn deactivated(&mut self, _: &Model<Self>, _: &mut AppContext) {}
+    fn discarded(&self, _project: Model<Project>, model: &Model<>Self, _cx: &mut AppContext) {}
+    fn workspace_deactivated(&mut self, _: &Model<Self>, _: &mut AppContext) {}
+    fn navigate(&mut self, _: Box<dyn Any>, _: &Model<Self>, _: &mut AppContext) -> bool {
         false
     }
     fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
@@ -239,11 +239,11 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
     }
-    fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
+    fn set_nav_history(&mut self, _: ItemNavHistory, _: &Model<Self>, _: &mut AppContext) {}
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _: &mut ViewContext<Self>,
+        _: &Model<Self>, _: &mut AppContext,
     ) -> Option<View<Self>>
     where
         Self: Sized,
@@ -266,7 +266,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         &mut self,
         _format: bool,
         _project: Model<Project>,
-        _cx: &mut ViewContext<Self>,
+        model: &Model<>Self, _cx: &mut AppContext,
     ) -> Task<Result<()>> {
         unimplemented!("save() must be implemented if can_save() returns true")
     }
@@ -274,14 +274,14 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         &mut self,
         _project: Model<Project>,
         _path: ProjectPath,
-        _cx: &mut ViewContext<Self>,
+        model: &Model<>Self, _cx: &mut AppContext,
     ) -> Task<Result<()>> {
         unimplemented!("save_as() must be implemented if can_save() returns true")
     }
     fn reload(
         &mut self,
         _project: Model<Project>,
-        _cx: &mut ViewContext<Self>,
+        model: &Model<>Self, _cx: &mut AppContext,
     ) -> Task<Result<()>> {
         unimplemented!("reload() must be implemented if can_save() returns true")
     }
@@ -311,7 +311,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
 
-    fn added_to_workspace(&mut self, _workspace: &mut Workspace, _cx: &mut ViewContext<Self>) {}
+    fn added_to_workspace(&mut self, _workspace: &mut Workspace, model: &Model<>Self, _cx: &mut AppContext) {}
 
     fn show_toolbar(&self) -> bool {
         true
@@ -350,7 +350,7 @@ pub trait SerializableItem: Item {
         workspace: &mut Workspace,
         item_id: ItemId,
         closing: bool,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Option<Task<Result<()>>>;
 
     fn should_serialize(&self, event: &Self::Event) -> bool;
@@ -436,7 +436,7 @@ pub trait ItemHandle: 'static + Send {
         &self,
         workspace: &mut Workspace,
         pane: View<Pane>,
-        cx: &mut ViewContext<Workspace>,
+        model: &Model<Workspace>, cx: &mut AppContext,
     );
     fn deactivated(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext);
     fn discarded(
@@ -655,7 +655,7 @@ impl<T: Item> ItemHandle for View<T> {
         &self,
         workspace: &mut Workspace,
         pane: View<Pane>,
-        cx: &mut ViewContext<Workspace>,
+        model: &Model<Workspace>, cx: &mut AppContext,
     ) {
         let weak_item = self.downgrade();
         let history = pane.read(cx).nav_history_for_item(self);
@@ -979,7 +979,7 @@ pub trait ProjectItem: Item {
     fn for_project_item(
         project: Model<Project>,
         item: Model<Self::Item>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self
     where
         Self: Sized;
@@ -1017,10 +1017,10 @@ pub trait FollowableItem: Item {
         &mut self,
         project: &Model<Project>,
         message: proto::update_view::Variant,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Task<Result<()>>;
     fn is_project_item(&self, window: &Window, cx: &AppContext) -> bool;
-    fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
+    fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, model: &Model<Self>, cx: &mut AppContext);
     fn dedup(&self, existing: &Self, window: &Window, cx: &AppContext) -> Option<Dedup>;
 }
 
@@ -1144,7 +1144,7 @@ pub mod test {
     use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
-        InteractiveElement, IntoElement, Model, Render, SharedString, Task, View, ViewContext,
+        InteractiveElement, IntoElement, Model, Render, SharedString, Task, Model,
         VisualContext, WeakView,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
@@ -1223,7 +1223,7 @@ pub mod test {
     }
 
     impl TestItem {
-        pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        pub fn new(model: &Model<Self>, cx: &mut AppContext) -> Self {
             Self {
                 state: String::new(),
                 label: String::new(),
@@ -1243,7 +1243,7 @@ pub mod test {
             }
         }
 
-        pub fn new_deserialized(id: WorkspaceId, cx: &mut ViewContext<Self>) -> Self {
+        pub fn new_deserialized(id: WorkspaceId, model: &Model<Self>, cx: &mut AppContext) -> Self {
             let mut this = Self::new(cx);
             this.workspace_id = Some(id);
             this
@@ -1283,12 +1283,12 @@ pub mod test {
             self
         }
 
-        pub fn set_state(&mut self, state: String, cx: &mut ViewContext<Self>) {
+        pub fn set_state(&mut self, state: String, model: &Model<Self>, cx: &mut AppContext) {
             self.push_to_nav_history(cx);
             self.state = state;
         }
 
-        fn push_to_nav_history(&mut self, cx: &mut ViewContext<Self>) {
+        fn push_to_nav_history(&mut self, model: &Model<Self>, cx: &mut AppContext) {
             if let Some(history) = &mut self.nav_history {
                 history.push(Some(Box::new(self.state.clone())), cx);
             }
@@ -1296,7 +1296,7 @@ pub mod test {
     }
 
     impl Render for TestItem {
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
             gpui::div().track_focus(&self.focus_handle(cx))
         }
     }
@@ -1350,11 +1350,11 @@ pub mod test {
             self.is_singleton
         }
 
-        fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
+        fn set_nav_history(&mut self, history: ItemNavHistory, _: &Model<Self>, _: &mut AppContext) {
             self.nav_history = Some(history);
         }
 
-        fn navigate(&mut self, state: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
+        fn navigate(&mut self, state: Box<dyn Any>, _: &Model<Self>, _: &mut AppContext) -> bool {
             let state = *state.downcast::<String>().unwrap_or_default();
             if state != self.state {
                 self.state = state;
@@ -1364,14 +1364,14 @@ pub mod test {
             }
         }
 
-        fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+        fn deactivated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
             self.push_to_nav_history(cx);
         }
 
         fn clone_on_split(
             &self,
             _workspace_id: Option<WorkspaceId>,
-            cx: &mut ViewContext<Self>,
+            model: &Model<Self>, cx: &mut AppContext,
         ) -> Option<View<Self>>
         where
             Self: Sized,
@@ -1415,7 +1415,7 @@ pub mod test {
             &mut self,
             _: bool,
             _: Model<Project>,
-            _: &mut ViewContext<Self>,
+            _: &Model<Self>, _: &mut AppContext,
         ) -> Task<anyhow::Result<()>> {
             self.save_count += 1;
             self.is_dirty = false;
@@ -1426,7 +1426,7 @@ pub mod test {
             &mut self,
             _: Model<Project>,
             _: ProjectPath,
-            _: &mut ViewContext<Self>,
+            _: &Model<Self>, _: &mut AppContext,
         ) -> Task<anyhow::Result<()>> {
             self.save_as_count += 1;
             self.is_dirty = false;
@@ -1436,7 +1436,7 @@ pub mod test {
         fn reload(
             &mut self,
             _: Model<Project>,
-            _: &mut ViewContext<Self>,
+            _: &Model<Self>, _: &mut AppContext,
         ) -> Task<anyhow::Result<()>> {
             self.reload_count += 1;
             self.is_dirty = false;
@@ -1474,7 +1474,7 @@ pub mod test {
             _workspace: &mut Workspace,
             _item_id: ItemId,
             _closing: bool,
-            _cx: &mut ViewContext<Self>,
+            model: &Model<>Self, _cx: &mut AppContext,
         ) -> Option<Task<anyhow::Result<()>>> {
             if let Some(serialize) = self.serialize.take() {
                 let result = serialize();

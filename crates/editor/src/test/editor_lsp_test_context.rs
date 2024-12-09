@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{View, ViewContext, VisualTestContext};
+use gpui::{AppContext, View, VisualTestContext};
 use indoc::indoc;
 use language::{
     point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
@@ -307,7 +307,7 @@ impl EditorLspTestContext {
 
     pub fn update_workspace<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        F: FnOnce(&mut Workspace, &Model<Workspace>, &mut AppContext) -> T,
     {
         self.workspace.update(&mut self.cx.cx, update)
     }

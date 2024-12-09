@@ -16,8 +16,8 @@ pub(crate) enum Head {
 impl Head {
     pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
-        edit_handler: impl FnMut(&mut V, View<Editor>, &EditorEvent, &mut ViewContext<'_, V>) + 'static,
-        cx: &mut ViewContext<V>,
+        edit_handler: impl FnMut(&mut V, View<Editor>, &EditorEvent,&Model<'>,  &mut AppContext) + 'static,
+        model: &Model<V>, cx: &mut AppContext,
     ) -> Self {
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
@@ -29,8 +29,8 @@ impl Head {
     }
 
     pub fn empty<V: 'static>(
-        blur_handler: impl FnMut(&mut V, &mut ViewContext<'_, V>) + 'static,
-        cx: &mut ViewContext<V>,
+        blur_handler: impl FnMut(&mut V,&Model<'>,  &mut AppContext) + 'static,
+        model: &Model<V>, cx: &mut AppContext,
     ) -> Self {
         let head = cx.new_view(EmptyHead::new);
         cx.on_blur(&head.focus_handle(cx), blur_handler).detach();
@@ -44,7 +44,7 @@ pub(crate) struct EmptyHead {
 }
 
 impl EmptyHead {
-    fn new(cx: &mut ViewContext<Self>) -> Self {
+    fn new(model: &Model<Self>, cx: &mut AppContext) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
         }
@@ -52,7 +52,7 @@ impl EmptyHead {
 }
 
 impl Render for EmptyHead {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         div().track_focus(&self.focus_handle(cx))
     }
 }

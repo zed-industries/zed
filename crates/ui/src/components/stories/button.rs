@@ -7,7 +7,7 @@ use crate::{Button, ButtonStyle};
 pub struct ButtonStory;
 
 impl Render for ButtonStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<Button>())
             .child(Story::label("Default"))

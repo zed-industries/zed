@@ -8,7 +8,7 @@ use crate::{
     Vim,
 };
 use editor::Editor;
-use gpui::{actions, Action, ViewContext};
+use gpui::{actions, Action};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -45,7 +45,7 @@ fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
     }
 }
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
     Vim::action(editor, cx, |vim, _: &EndRepeat, cx| {
         Vim::globals(cx).dot_replaying = false;
         vim.switch_mode(Mode::Normal, false, cx)
@@ -154,7 +154,12 @@ impl Replayer {
 }
 
 impl Vim {
-    pub(crate) fn record_register(&mut self, register: char, cx: &mut ViewContext<Self>) {
+    pub(crate) fn record_register(
+        &mut self,
+        register: char,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let globals = Vim::globals(cx);
         globals.recording_register = Some(register);
         globals.recordings.remove(&register);
@@ -162,7 +167,12 @@ impl Vim {
         self.clear_operator(cx)
     }
 
-    pub(crate) fn replay_register(&mut self, mut register: char, cx: &mut ViewContext<Self>) {
+    pub(crate) fn replay_register(
+        &mut self,
+        mut register: char,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let mut count = Vim::take_count(cx).unwrap_or(1);
         self.clear_operator(cx);
 
@@ -188,7 +198,12 @@ impl Vim {
         replayer.replay(repeated_actions, cx);
     }
 
-    pub(crate) fn repeat(&mut self, from_insert_mode: bool, cx: &mut ViewContext<Self>) {
+    pub(crate) fn repeat(
+        &mut self,
+        from_insert_mode: bool,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let count = Vim::take_count(cx);
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();

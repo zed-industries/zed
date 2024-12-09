@@ -21,7 +21,7 @@ pub struct MessageEditor {
 }
 
 impl MessageEditor {
-    pub fn new(thread: Model<Thread>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(thread: Model<Thread>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         Self {
             thread,
             editor: cx.new_view(|cx| {
@@ -35,14 +35,14 @@ impl MessageEditor {
         }
     }
 
-    fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
+    fn chat(&mut self, _: &Chat, model: &Model<Self>, cx: &mut AppContext) {
         self.send_to_model(RequestKind::Chat, cx);
     }
 
     fn send_to_model(
         &mut self,
         request_kind: RequestKind,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Option<()> {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
@@ -93,7 +93,7 @@ impl FocusableView for MessageEditor {
 }
 
 impl Render for MessageEditor {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
         let focus_handle = self.editor.focus_handle(cx);

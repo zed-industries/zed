@@ -337,7 +337,7 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(state: gpui::Model<State>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
@@ -372,7 +372,7 @@ impl ConfigurationView {
         }
     }
 
-    fn save_api_key(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn save_api_key(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
         let api_key = self.api_key_editor.read(cx).text(cx);
         if api_key.is_empty() {
             return;
@@ -389,7 +389,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn reset_api_key(&mut self, cx: &mut ViewContext<Self>) {
+    fn reset_api_key(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.api_key_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
 
@@ -404,7 +404,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_api_key_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_api_key_editor(&self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: cx.theme().colors().text,
@@ -432,13 +432,13 @@ impl ConfigurationView {
         )
     }
 
-    fn should_render_editor(&self, cx: &mut ViewContext<Self>) -> bool {
+    fn should_render_editor(&self, model: &Model<Self>, cx: &mut AppContext) -> bool {
         !self.state.read(cx).is_authenticated()
     }
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         const GOOGLE_CONSOLE_URL: &str = "https://aistudio.google.com/app/apikey";
         const INSTRUCTIONS: [&str; 3] = [
             "To use Zed's assistant with Google AI, you need to add an API key. Follow these steps:",

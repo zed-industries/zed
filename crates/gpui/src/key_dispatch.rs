@@ -7,16 +7,7 @@
 ///
 /// ```rust
 /// actions!(editor,[Undo, Redo]);;
-///
-/// impl Editor {
-///   fn undo(&mut self, _: &Undo, _cx: &mut ViewContext<Self>) { ... }
-///   fn redo(&mut self, _: &Redo, _cx: &mut ViewContext<Self>) { ... }
-/// }
-///
-/// impl Render for Editor {
-///   fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-///     div()
-///       .track_focus(&self.focus_handle(cx))
+AppContext
 ///       .keymap_context("Editor")
 ///       .on_action(cx.listener(Editor::undo))
 ///       .on_action(cx.listener(Editor::redo))

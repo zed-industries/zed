@@ -517,7 +517,7 @@ struct PromptEditor {
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let status = &self.codegen.read(cx).status;
         let buttons = match status {
             CodegenStatus::Idle => {
@@ -713,7 +713,7 @@ impl PromptEditor {
         assistant_panel: Option<&View<AssistantPanel>>,
         workspace: Option<WeakView<Workspace>>,
         fs: Arc<dyn Fs>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         let prompt_editor = cx.new_view(|cx| {
             let mut editor = Editor::new(
@@ -767,7 +767,7 @@ impl PromptEditor {
         format!("Generate…{context_keybinding} • ↓↑ for history")
     }
 
-    fn subscribe_to_editor(&mut self, cx: &mut ViewContext<Self>) {
+    fn subscribe_to_editor(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.editor_subscriptions.clear();
         self.editor_subscriptions
             .push(cx.observe(&self.editor, Self::handle_prompt_editor_changed));
@@ -779,7 +779,7 @@ impl PromptEditor {
         self.editor.read(cx).text(cx)
     }
 
-    fn count_lines(&mut self, cx: &mut ViewContext<Self>) {
+    fn count_lines(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let height_in_lines = cmp::max(
             2, // Make the editor at least two lines tall, to account for padding and buttons.
             cmp::min(
@@ -799,13 +799,13 @@ impl PromptEditor {
         &mut self,
         _: View<AssistantPanel>,
         event: &AssistantPanelEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         let AssistantPanelEvent::ContextEdited { .. } = event;
         self.count_tokens(cx);
     }
 
-    fn count_tokens(&mut self, cx: &mut ViewContext<Self>) {
+    fn count_tokens(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let assist_id = self.id;
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
@@ -825,7 +825,7 @@ impl PromptEditor {
         })
     }
 
-    fn handle_prompt_editor_changed(&mut self, _: View<Editor>, cx: &mut ViewContext<Self>) {
+    fn handle_prompt_editor_changed(&mut self, _: View<Editor>, model: &Model<Self>, cx: &mut AppContext) {
         self.count_lines(cx);
     }
 
@@ -833,7 +833,7 @@ impl PromptEditor {
         &mut self,
         _: View<Editor>,
         event: &EditorEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         match event {
             EditorEvent::Edited { .. } => {
@@ -856,7 +856,7 @@ impl PromptEditor {
         }
     }
 
-    fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
+    fn handle_codegen_changed(&mut self, _: Model<Codegen>, model: &Model<Self>, cx: &mut AppContext) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
                 self.editor
@@ -874,7 +874,7 @@ impl PromptEditor {
         }
     }
 
-    fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
                 cx.emit(PromptEditorEvent::CancelRequested);
@@ -885,7 +885,7 @@ impl PromptEditor {
         }
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
                 if !self.editor.read(cx).text(cx).trim().is_empty() {
@@ -908,13 +908,13 @@ impl PromptEditor {
         }
     }
 
-    fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
+    fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, model: &Model<Self>, cx: &mut AppContext) {
         if matches!(self.codegen.read(cx).status, CodegenStatus::Done) {
             cx.emit(PromptEditorEvent::ConfirmRequested { execute: true });
         }
     }
 
-    fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+    fn move_up(&mut self, _: &MoveUp, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(ix) = self.prompt_history_ix {
             if ix > 0 {
                 self.prompt_history_ix = Some(ix - 1);
@@ -934,7 +934,7 @@ impl PromptEditor {
         }
     }
 
-    fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
+    fn move_down(&mut self, _: &MoveDown, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(ix) = self.prompt_history_ix {
             if ix < self.prompt_history.len() - 1 {
                 self.prompt_history_ix = Some(ix + 1);
@@ -954,7 +954,7 @@ impl PromptEditor {
         }
     }
 
-    fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+    fn render_token_count(&self, model: &Model<Self>, cx: &mut AppContext) -> Option<impl IntoElement> {
         let model = LanguageModelRegistry::read_global(cx).active_model()?;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
@@ -1011,7 +1011,7 @@ impl PromptEditor {
         Some(token_count)
     }
 
-    fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_prompt_editor(&self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.editor.read(cx).read_only(cx) {

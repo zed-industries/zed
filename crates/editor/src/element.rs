@@ -31,11 +31,10 @@ use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
+    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length, Model,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, View, ViewContext,
-    WeakView,
+    StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakView,
 };
 use gpui::{ClickEvent, Subscription};
 use itertools::Itertools;
@@ -489,7 +488,8 @@ impl EditorElement {
         event: &ModifiersChangedEvent,
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         let mouse_position = cx.mouse_position();
         if !text_hitbox.is_hovered(cx) {
@@ -511,7 +511,8 @@ impl EditorElement {
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         if cx.default_prevented() {
             return;
@@ -594,7 +595,8 @@ impl EditorElement {
         event: &MouseDownEvent,
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         if !text_hitbox.is_hovered(cx) {
             return;
@@ -615,7 +617,8 @@ impl EditorElement {
         event: &MouseDownEvent,
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         if !text_hitbox.is_hovered(cx) || cx.default_prevented() {
             return;
@@ -640,7 +643,8 @@ impl EditorElement {
         event: &MouseUpEvent,
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         let end_selection = editor.has_pending_selection();
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
@@ -696,7 +700,8 @@ impl EditorElement {
         event: &MouseMoveEvent,
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         if !editor.has_pending_selection() {
             return;
@@ -740,7 +745,8 @@ impl EditorElement {
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(cx);
@@ -776,7 +782,8 @@ impl EditorElement {
         editor: &mut Editor,
         point: DisplayPoint,
         position_map: &PositionMap,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         let snapshot = &position_map.snapshot;
         let Some(hub) = editor.collaboration_hub() else {
@@ -6454,7 +6461,7 @@ pub fn register_action<T: Action>(
     view: &View<Editor>,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
-    listener: impl Fn(&mut Editor, &T, &mut ViewContext<Editor>) + 'static,
+    listener: impl Fn(&mut Editor, &T, &Model<Editor>, &mut AppContext) + 'static,
 ) {
     let view = view.clone();
     cx.on_action(TypeId::of::<T>(), move |action, phase, cx| {
@@ -6473,7 +6480,8 @@ fn compute_auto_height_layout(
     max_line_number_width: Pixels,
     known_dimensions: Size<Option<Pixels>>,
     available_width: AvailableSpace,
-    cx: &mut ViewContext<Editor>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
 ) -> Option<Size<Pixels>> {
     let width = known_dimensions.width.or({
         if let AvailableSpace::Definite(available_width) = available_width {

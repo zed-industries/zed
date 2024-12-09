@@ -8,7 +8,7 @@ use gpui::{
     prelude::{FluentBuilder as _, IntoElement},
     px, rgb, size, AsyncAppContext, Bounds, InteractiveElement, KeyBinding, Menu, MenuItem,
     ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
-    StatefulInteractiveElement as _, Styled, Task, View, ViewContext, VisualContext, WindowBounds,
+    StatefulInteractiveElement as _, Styled, Task, View, AppContext, VisualContext, WindowBounds,
     WindowHandle, WindowOptions,
 };
 #[cfg(not(target_os = "windows"))]
@@ -167,7 +167,7 @@ impl LivekitWindow {
         .unwrap()
     }
 
-    fn handle_room_event(&mut self, event: RoomEvent, cx: &mut ViewContext<Self>) {
+    fn handle_room_event(&mut self, event: RoomEvent, model: &Model<Self>, cx: &mut AppContext) {
         eprintln!("event: {event:?}");
 
         match event {
@@ -264,7 +264,7 @@ impl LivekitWindow {
         }
     }
 
-    fn toggle_mute(&mut self, cx: &mut ViewContext<Self>) {
+    fn toggle_mute(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(track) = &self.microphone_track {
             if track.is_muted() {
                 track.unmute();
@@ -296,7 +296,7 @@ impl LivekitWindow {
         }
     }
 
-    fn toggle_screen_share(&mut self, cx: &mut ViewContext<Self>) {
+    fn toggle_screen_share(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(track) = self.screen_share_track.take() {
             self.screen_share_stream.take();
             let participant = self.room.local_participant();
@@ -337,7 +337,7 @@ impl LivekitWindow {
     fn toggle_remote_audio_for_participant(
         &mut self,
         identity: &ParticipantIdentity,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Option<()> {
         let participant = self.remote_participants.iter().find_map(|(id, state)| {
             if id == identity {
@@ -355,7 +355,7 @@ impl LivekitWindow {
 
 #[cfg(not(windows))]
 impl Render for LivekitWindow {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         fn button() -> gpui::Div {
             div()
                 .w(px(180.0))

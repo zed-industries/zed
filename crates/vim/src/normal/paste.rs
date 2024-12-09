@@ -1,7 +1,7 @@
 use std::cmp;
 
 use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
-use gpui::{impl_actions, ViewContext};
+use gpui::impl_actions;
 use language::{Bias, SelectionGoal};
 use serde::Deserialize;
 
@@ -22,7 +22,7 @@ pub struct Paste {
 impl_actions!(vim, [Paste]);
 
 impl Vim {
-    pub fn paste(&mut self, action: &Paste, cx: &mut ViewContext<Self>) {
+    pub fn paste(&mut self, action: &Paste, model: &Model<Self>, cx: &mut AppContext) {
         self.record_current_action(cx);
         self.store_visual_marks(cx);
         let count = Vim::take_count(cx).unwrap_or(1);

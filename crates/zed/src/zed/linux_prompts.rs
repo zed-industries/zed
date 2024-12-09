@@ -1,7 +1,7 @@
 use gpui::{
     div, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
     IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Refineable, Render,
-    RenderablePromptHandle, Styled, TextStyleRefinement, View, ViewContext, VisualContext,
+    RenderablePromptHandle, Styled, TextStyleRefinement, View, AppContext, VisualContext,
 };
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
@@ -68,27 +68,27 @@ pub struct FallbackPromptRenderer {
 }
 
 impl FallbackPromptRenderer {
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
         cx.emit(PromptResponse(self.active_action_id));
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(ix) = self.actions.iter().position(|a| a == "Cancel") {
             cx.emit(PromptResponse(ix));
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
+    fn select_first(&mut self, _: &menu::SelectFirst, model: &Model<Self>, cx: &mut AppContext) {
         self.active_action_id = self.actions.len().saturating_sub(1);
         cx.notify();
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
+    fn select_last(&mut self, _: &menu::SelectLast, model: &Model<Self>, cx: &mut AppContext) {
         self.active_action_id = 0;
         cx.notify();
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+    fn select_next(&mut self, _: &menu::SelectNext, model: &Model<Self>, cx: &mut AppContext) {
         if self.active_action_id > 0 {
             self.active_action_id -= 1;
         } else {
@@ -97,14 +97,14 @@ impl FallbackPromptRenderer {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &menu::SelectPrev, model: &Model<Self>, cx: &mut AppContext) {
         self.active_action_id = (self.active_action_id + 1) % self.actions.len();
         cx.notify();
     }
 }
 
 impl Render for FallbackPromptRenderer {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let font_family = settings.ui_font.family.clone();
         let prompt = v_flex()

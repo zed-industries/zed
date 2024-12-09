@@ -5,7 +5,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusableView,
     InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, Task,
-    View, ViewContext, VisualContext, WeakView,
+    View, AppContext, VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
@@ -100,7 +100,7 @@ impl TasksModal {
         task_store: Model<TaskStore>,
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         let picker = cx.new_view(|cx| {
             Picker::uniform_list(
@@ -119,7 +119,7 @@ impl TasksModal {
 }
 
 impl Render for TasksModal {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
+    fn render(&mut self, _: &Model<Self>, _: &mut AppContext) -> impl gpui::prelude::IntoElement {
         v_flex()
             .key_context("TasksModal")
             .w(rems(34.))
@@ -148,7 +148,7 @@ impl PickerDelegate for TasksModalDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<picker::Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, model: &Model<>picker, _cx: &mut AppContext) {
         self.selected_index = ix;
     }
 
@@ -159,7 +159,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        cx: &mut ViewContext<picker::Picker<Self>>,
+        model: &Model<picker>, cx: &mut AppContext,
     ) -> Task<()> {
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
@@ -245,7 +245,7 @@ impl PickerDelegate for TasksModalDelegate {
         })
     }
 
-    fn confirm(&mut self, omit_history_entry: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
+    fn confirm(&mut self, omit_history_entry: bool, model: &Model<picker>, cx: &mut AppContext) {
         let current_match_index = self.selected_index();
         let task = self
             .matches
@@ -268,7 +268,7 @@ impl PickerDelegate for TasksModalDelegate {
         cx.emit(DismissEvent);
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<picker::Picker<Self>>) {
+    fn dismissed(&mut self, model: &Model<picker>, cx: &mut AppContext) {
         cx.emit(DismissEvent);
     }
 
@@ -276,7 +276,7 @@ impl PickerDelegate for TasksModalDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<picker::Picker<Self>>,
+        model: &Model<picker>, cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
@@ -386,7 +386,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn confirm_completion(
         &mut self,
         _: String,
-        _: &mut ViewContext<Picker<Self>>,
+        _: &Model<Picker>, _: &mut AppContext,
     ) -> Option<String> {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
@@ -394,7 +394,7 @@ impl PickerDelegate for TasksModalDelegate {
         Some(task.resolved.as_ref()?.command_label.clone())
     }
 
-    fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm_input(&mut self, omit_history_entry: bool, model: &Model<Picker>, cx: &mut AppContext) {
         let Some((task_source_kind, task)) = self.spawn_oneshot() else {
             return;
         };
@@ -413,7 +413,7 @@ impl PickerDelegate for TasksModalDelegate {
             Vec::new()
         }
     }
-    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+    fn render_footer(&self, model: &Model<Picker>, cx: &mut AppContext) -> Option<gpui::AnyElement> {
         let is_recent_selected = self.divider_index >= Some(self.selected_index);
         let current_modifiers = cx.modifiers();
         let left_button = if self

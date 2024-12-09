@@ -10,8 +10,8 @@ use editor::actions::{
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
+    Action, AnchorCorner, AppContext, ClickEvent, ElementId, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, ParentElement, Render, Styled, Subscription, View, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
@@ -38,7 +38,8 @@ impl QuickActionBar {
     pub fn new(
         buffer_search_bar: View<BufferSearchBar>,
         workspace: &Workspace,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let mut this = Self {
             _inlay_hints_enabled_subscription: None,
@@ -61,7 +62,7 @@ impl QuickActionBar {
             .and_then(|item| item.downcast::<Editor>())
     }
 
-    fn apply_settings(&mut self, cx: &mut ViewContext<Self>) {
+    fn apply_settings(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let new_show = EditorSettings::get_global(cx).toolbar.quick_actions;
         if new_show != self.show {
             self.show = new_show;
@@ -81,7 +82,7 @@ impl QuickActionBar {
 }
 
 impl Render for QuickActionBar {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };
@@ -395,7 +396,8 @@ impl ToolbarItemView for QuickActionBar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> ToolbarItemLocation {
         self.active_item = active_pane_item.map(ItemHandle::boxed_clone);
         if let Some(active_item) = active_pane_item {

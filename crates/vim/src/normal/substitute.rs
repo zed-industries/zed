@@ -1,12 +1,12 @@
 use editor::{movement, Editor};
-use gpui::{actions, ViewContext};
+use gpui::actions;
 use language::Point;
 
 use crate::{motion::Motion, Mode, Vim};
 
 actions!(vim, [Substitute, SubstituteLine]);
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
     Vim::action(editor, cx, |vim, _: &Substitute, cx| {
         vim.start_recording(cx);
         let count = Vim::take_count(cx);
@@ -28,7 +28,8 @@ impl Vim {
         &mut self,
         count: Option<usize>,
         line_mode: bool,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.store_visual_marks(cx);
         self.update_editor(cx, |vim, editor, cx| {

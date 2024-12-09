@@ -185,7 +185,7 @@ impl MarkdownExample {
 }
 
 impl Render for MarkdownExample {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         div()
             .id("markdown-example")
             .debug_selector(|| "foo".into())

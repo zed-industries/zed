@@ -4,14 +4,14 @@ use crate::{
     Vim,
 };
 use editor::{display_map::ToDisplayPoint, Bias, Editor, ToPoint};
-use gpui::{actions, ViewContext};
+use gpui::actions;
 use language::Point;
 use std::ops::Range;
 use std::sync::Arc;
 
 actions!(vim, [ToggleReplace, UndoReplace]);
 
-pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
     Vim::action(editor, cx, |vim, _: &ToggleReplace, cx| {
         vim.replacements = vec![];
         vim.start_recording(cx);
@@ -28,7 +28,12 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 }
 
 impl Vim {
-    pub(crate) fn multi_replace(&mut self, text: Arc<str>, cx: &mut ViewContext<Self>) {
+    pub(crate) fn multi_replace(
+        &mut self,
+        text: Arc<str>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -68,7 +73,12 @@ impl Vim {
         });
     }
 
-    fn undo_replace(&mut self, maybe_times: Option<usize>, cx: &mut ViewContext<Self>) {
+    fn undo_replace(
+        &mut self,
+        maybe_times: Option<usize>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);

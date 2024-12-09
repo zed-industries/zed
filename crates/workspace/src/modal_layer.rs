@@ -7,7 +7,7 @@ pub enum DismissDecision {
 }
 
 pub trait ModalView: ManagedView {
-    fn on_before_dismiss(&mut self, _: &mut ViewContext<Self>) -> DismissDecision {
+    fn on_before_dismiss(&mut self, _: &Model<Self>, _: &mut AppContext) -> DismissDecision {
         DismissDecision::Dismiss(true)
     }
 
@@ -70,10 +70,10 @@ impl ModalLayer {
         }
     }
 
-    pub fn toggle_modal<V, B>(&mut self, cx: &mut ViewContext<Self>, build_view: B)
+    pub fn toggle_modal<V, B>(&mut self, model: &Model<Self>, cx: &mut AppContext, build_view: B)
     where
         V: ModalView,
-        B: FnOnce(&mut ViewContext<V>) -> V,
+        B: FnOnce(&Model<V>, &mut AppContext) -> V,
     {
         if let Some(active_modal) = &self.active_modal {
             let is_close = active_modal.modal.view().downcast::<V>().is_ok();
@@ -86,7 +86,7 @@ impl ModalLayer {
         self.show_modal(new_modal, cx);
     }
 
-    fn show_modal<V>(&mut self, new_modal: View<V>, cx: &mut ViewContext<Self>)
+    fn show_modal<V>(&mut self, new_modal: View<V>, model: &Model<Self>, cx: &mut AppContext)
     where
         V: ModalView,
     {
@@ -112,7 +112,7 @@ impl ModalLayer {
         cx.notify();
     }
 
-    fn hide_modal(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    fn hide_modal(&mut self, model: &Model<Self>, cx: &mut AppContext) -> bool {
         let Some(active_modal) = self.active_modal.as_mut() else {
             self.dismiss_on_focus_lost = false;
             return false;
@@ -156,7 +156,7 @@ impl ModalLayer {
 }
 
 impl Render for ModalLayer {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let Some(active_modal) = &self.active_modal else {
             return div();
         };

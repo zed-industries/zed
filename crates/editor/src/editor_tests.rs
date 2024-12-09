@@ -6687,7 +6687,7 @@ async fn test_snippet_placeholder_choices(cx: &mut gpui::TestAppContext) {
             .insert_snippet(&insertion_ranges, snippet, cx)
             .unwrap();
 
-        fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text: &str) {
+        fn assert(editor: &mut Editor, model: &Model<Editor>, cx: &mut AppContext, marked_text: &str) {
             let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
             assert_eq!(editor.text(cx), expected_text);
             assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
@@ -6728,7 +6728,7 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
             .insert_snippet(&insertion_ranges, snippet, cx)
             .unwrap();
 
-        fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text: &str) {
+        fn assert(editor: &mut Editor, model: &Model<Editor>, cx: &mut AppContext, marked_text: &str) {
             let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
             assert_eq!(editor.text(cx), expected_text);
             assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
@@ -13891,7 +13891,7 @@ fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     point..point
 }
 
-fn assert_selection_ranges(marked_text: &str, view: &mut Editor, cx: &mut ViewContext<Editor>) {
+fn assert_selection_ranges(marked_text: &str, view: &mut Editor, model: &Model<Editor>, cx: &mut AppContext) {
     let (text, ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(view.text(cx), text);
     assert_eq!(

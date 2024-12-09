@@ -13,9 +13,9 @@ use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
-    actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
-    Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    actions, div, px, Action, AnyElement, AppContext, AppContext, Decorations, Element,
+    InteractiveElement, Interactivity, IntoElement, Model, MouseButton, ParentElement, Render,
+    Stateful, StatefulInteractiveElement, Styled, Subscription, View, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
 use rpc::proto;
@@ -72,7 +72,7 @@ pub struct TitleBar {
 }
 
 impl Render for TitleBar {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let close_action = Box::new(workspace::CloseWindow);
         let height = Self::height(cx);
         let supported_controls = cx.window_controls();
@@ -207,7 +207,8 @@ impl TitleBar {
     pub fn new(
         id: impl Into<ElementId>,
         workspace: &Workspace,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
@@ -264,7 +265,11 @@ impl TitleBar {
         self
     }
 
-    fn render_ssh_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+    fn render_ssh_project_host(
+        &self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<AnyElement> {
         let options = self.project.read(cx).ssh_connection_options(cx)?;
         let host: SharedString = options.connection_string().into();
 
@@ -329,7 +334,11 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+    pub fn render_project_host(
+        &self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<AnyElement> {
         if self.project.read(cx).is_via_ssh() {
             return self.render_ssh_project_host(cx);
         }
@@ -380,7 +389,11 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_name(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    pub fn render_project_name(
+        &self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let name = {
             let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -419,7 +432,11 @@ impl TitleBar {
             }))
     }
 
-    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+    pub fn render_project_branch(
+        &self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {
@@ -455,7 +472,7 @@ impl TitleBar {
         )
     }
 
-    fn window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
+    fn window_activation_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if cx.is_window_active() {
             ActiveCall::global(cx)
                 .update(cx, |call, cx| call.set_location(Some(&self.project), cx))
@@ -472,11 +489,11 @@ impl TitleBar {
             .ok();
     }
 
-    fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
+    fn active_call_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         cx.notify();
     }
 
-    fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
+    fn share_project(&mut self, _: &ShareProject, model: &Model<Self>, cx: &mut AppContext) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
@@ -484,7 +501,7 @@ impl TitleBar {
             .detach_and_log_err(cx);
     }
 
-    fn unshare_project(&mut self, _: &UnshareProject, cx: &mut ViewContext<Self>) {
+    fn unshare_project(&mut self, _: &UnshareProject, model: &Model<Self>, cx: &mut AppContext) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
@@ -495,7 +512,8 @@ impl TitleBar {
     fn render_connection_status(
         &self,
         status: &client::Status,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<AnyElement> {
         match status {
             client::Status::ConnectionError
@@ -540,7 +558,7 @@ impl TitleBar {
         }
     }
 
-    pub fn render_sign_in_button(&mut self, _: &mut ViewContext<Self>) -> Button {
+    pub fn render_sign_in_button(&mut self, _: &Model<Self>, _: &mut AppContext) -> Button {
         let client = self.client.clone();
         Button::new("sign_in", "Sign in")
             .label_size(LabelSize::Small)
@@ -556,7 +574,11 @@ impl TitleBar {
             })
     }
 
-    pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    pub fn render_user_menu_button(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> impl Element {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
             let plan = user_store.current_plan();

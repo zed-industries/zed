@@ -111,7 +111,7 @@ impl IncomingCallNotification {
 }
 
 impl Render for IncomingCallNotification {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(cx);
 
         div().size_full().font(ui_font).child(

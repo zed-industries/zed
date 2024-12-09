@@ -22,9 +22,9 @@ use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
-    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem,
-    PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, View, ViewContext,
-    VisualContext, WindowKind, WindowOptions,
+    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, Model,
+    PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, VisualContext, WindowKind,
+    WindowOptions,
 };
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -459,19 +459,19 @@ pub fn initialize_workspace(
             .register_action(
                 move |workspace: &mut Workspace,
                       _: &zed_actions::OpenTelemetryLog,
-                      cx: &mut ViewContext<Workspace>| {
+                      model: &Model<Workspace>, cx: &mut AppContext| {
                     open_telemetry_log_file(workspace, cx);
                 },
             )
             .register_action(
                 move |_: &mut Workspace,
                       _: &zed_actions::OpenKeymap,
-                      cx: &mut ViewContext<Workspace>| {
+                      model: &Model<Workspace>, cx: &mut AppContext| {
                     open_settings_file(paths::keymap_file(), || settings::initial_keymap_content().as_ref().into(), cx);
                 },
             )
             .register_action(
-                move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
+                move |_: &mut Workspace, _: &OpenSettings, model: &Model<Workspace>, cx: &mut AppContext| {
                     open_settings_file(
                         paths::settings_file(),
                         || settings::initial_user_settings_content().as_ref().into(),
@@ -480,12 +480,12 @@ pub fn initialize_workspace(
                 },
             )
             .register_action(
-                |_: &mut Workspace, _: &OpenAccountSettings, cx: &mut ViewContext<Workspace>| {
+                |_: &mut Workspace, _: &OpenAccountSettings, model: &Model<Workspace>, cx: &mut AppContext| {
                     cx.open_url(&zed_urls::account_url(cx));
                 },
             )
             .register_action(
-                move |_: &mut Workspace, _: &OpenTasks, cx: &mut ViewContext<Workspace>| {
+                move |_: &mut Workspace, _: &OpenTasks, model: &Model<Workspace>, cx: &mut AppContext| {
                     open_settings_file(
                         paths::tasks_file(),
                         || settings::initial_tasks_content().as_ref().into(),
@@ -498,7 +498,7 @@ pub fn initialize_workspace(
             .register_action(
                 move |workspace: &mut Workspace,
                       _: &zed_actions::OpenDefaultKeymap,
-                      cx: &mut ViewContext<Workspace>| {
+                      model: &Model<Workspace>, cx: &mut AppContext| {
                     open_bundled_file(
                         workspace,
                         settings::default_keymap(),
@@ -511,7 +511,7 @@ pub fn initialize_workspace(
             .register_action(
                 move |workspace: &mut Workspace,
                       _: &OpenDefaultSettings,
-                      cx: &mut ViewContext<Workspace>| {
+                      model: &Model<Workspace>, cx: &mut AppContext| {
                     open_bundled_file(
                         workspace,
                         settings::default_settings(),
@@ -524,35 +524,35 @@ pub fn initialize_workspace(
             .register_action(
                 |workspace: &mut Workspace,
                  _: &project_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
+                 model: &Model<Workspace>, cx: &mut AppContext| {
                     workspace.toggle_panel_focus::<ProjectPanel>(cx);
                 },
             )
             .register_action(
                 |workspace: &mut Workspace,
                  _: &outline_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
+                 model: &Model<Workspace>, cx: &mut AppContext| {
                     workspace.toggle_panel_focus::<OutlinePanel>(cx);
                 },
             )
             .register_action(
                 |workspace: &mut Workspace,
                  _: &collab_ui::collab_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
+                 model: &Model<Workspace>, cx: &mut AppContext| {
                     workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(cx);
                 },
             )
             .register_action(
                 |workspace: &mut Workspace,
                  _: &collab_ui::chat_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
+                 model: &Model<Workspace>, cx: &mut AppContext| {
                     workspace.toggle_panel_focus::<collab_ui::chat_panel::ChatPanel>(cx);
                 },
             )
             .register_action(
                 |workspace: &mut Workspace,
                  _: &collab_ui::notification_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
+                 model: &Model<Workspace>, cx: &mut AppContext| {
                     workspace
                         .toggle_panel_focus::<collab_ui::notification_panel::NotificationPanel>(cx);
                 },
@@ -560,7 +560,7 @@ pub fn initialize_workspace(
             .register_action(
                 |workspace: &mut Workspace,
                  _: &terminal_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
+                 model: &Model<Workspace>, cx: &mut AppContext| {
                     workspace.toggle_panel_focus::<TerminalPanel>(cx);
                 },
             )
@@ -634,7 +634,12 @@ fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
     .detach();
 }
 
-fn initialize_pane(workspace: &Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
+fn initialize_pane(
+    workspace: &Workspace,
+    pane: &View<Pane>,
+    model: &Model<Workspace>,
+    cx: &mut AppContext,
+) {
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
             let multibuffer_hint = cx.new_view(|_| MultibufferHint::new());
@@ -662,7 +667,7 @@ fn initialize_pane(workspace: &Workspace, pane: &View<Pane>, cx: &mut ViewContex
     });
 }
 
-fn about(_: &mut Workspace, _: &zed_actions::About, cx: &mut gpui::ViewContext<Workspace>) {
+fn about(_: &mut Workspace, _: &zed_actions::About, model: &Model<Workspace>, cx: &mut AppContext) {
     let release_channel = ReleaseChannel::global(cx).display_name();
     let version = env!("CARGO_PKG_VERSION");
     let message = format!("{release_channel} {version}");
@@ -736,7 +741,7 @@ fn quit(_: &Quit, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
-fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+fn open_log_file(workspace: &mut Workspace, model: &Model<Workspace>, cx: &mut AppContext) {
     const MAX_LINES: usize = 1000;
     workspace
         .with_local_workspace(cx, move |workspace, cx| {
@@ -912,7 +917,8 @@ pub fn load_default_keymap(cx: &mut AppContext) {
 pub fn open_new_ssh_project_from_project(
     workspace: &mut Workspace,
     paths: Vec<PathBuf>,
-    cx: &mut ViewContext<Workspace>,
+    model: &Model<Workspace>,
+    cx: &mut AppContext,
 ) -> Task<anyhow::Result<()>> {
     let app_state = workspace.app_state().clone();
     let Some(ssh_client) = workspace.project().read(cx).ssh_client() else {
@@ -938,7 +944,8 @@ pub fn open_new_ssh_project_from_project(
 fn open_project_settings_file(
     workspace: &mut Workspace,
     _: &OpenProjectSettings,
-    cx: &mut ViewContext<Workspace>,
+    model: &Model<Workspace>,
+    cx: &mut AppContext,
 ) {
     open_local_file(
         workspace,
@@ -951,7 +958,8 @@ fn open_project_settings_file(
 fn open_project_tasks_file(
     workspace: &mut Workspace,
     _: &OpenProjectTasks,
-    cx: &mut ViewContext<Workspace>,
+    model: &Model<Workspace>,
+    cx: &mut AppContext,
 ) {
     open_local_file(
         workspace,
@@ -965,7 +973,8 @@ fn open_local_file(
     workspace: &mut Workspace,
     settings_relative_path: &'static Path,
     initial_contents: Cow<'static, str>,
-    cx: &mut ViewContext<Workspace>,
+    model: &Model<Workspace>,
+    cx: &mut AppContext,
 ) {
     let project = workspace.project().clone();
     let worktree = project
@@ -1030,7 +1039,11 @@ fn open_local_file(
     }
 }
 
-fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+fn open_telemetry_log_file(
+    workspace: &mut Workspace,
+    model: &Model<Workspace>,
+    cx: &mut AppContext,
+) {
     workspace.with_local_workspace(cx, move |workspace, cx| {
         let app_state = workspace.app_state().clone();
         cx.spawn(|workspace, mut cx| async move {
@@ -1084,7 +1097,8 @@ fn open_bundled_file(
     text: Cow<'static, str>,
     title: &'static str,
     language: &'static str,
-    cx: &mut ViewContext<Workspace>,
+    model: &Model<Workspace>,
+    cx: &mut AppContext,
 ) {
     let language = workspace.app_state().languages.language_for_name(language);
     cx.spawn(|workspace, mut cx| async move {
@@ -1121,7 +1135,8 @@ fn open_bundled_file(
 fn open_settings_file(
     abs_path: &'static Path,
     default_content: impl FnOnce() -> Rope + Send + 'static,
-    cx: &mut ViewContext<Workspace>,
+    model: &Model<Workspace>,
+    cx: &mut AppContext,
 ) {
     cx.spawn(|workspace, mut cx| async move {
         let (worktree_creation_task, settings_open_task) = workspace

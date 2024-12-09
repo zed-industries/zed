@@ -12,8 +12,8 @@ use gpui::ClipboardItem;
 use gpui::Task;
 use gpui::WeakView;
 use gpui::{
-    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    PromptLevel, ScrollHandle, View, ViewContext,
+    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, Model,
+    PromptLevel, ScrollHandle,
 };
 use picker::Picker;
 use project::Project;
@@ -121,7 +121,8 @@ impl ProjectPicker {
         connection: SshConnectionOptions,
         project: Model<Project>,
         workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<RemoteServerProjects>,
+        model: &Model<RemoteServerProjects>,
+        cx: &mut AppContext,
     ) -> View<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
@@ -230,7 +231,7 @@ impl ProjectPicker {
 }
 
 impl gpui::Render for ProjectPicker {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .child(
                 SshConnectionHeader {
@@ -314,7 +315,7 @@ impl Mode {
     }
 }
 impl RemoteServerProjects {
-    pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    pub fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
         workspace.register_action(|workspace, _: &OpenRemote, cx| {
             let handle = cx.view().downgrade();
             workspace.toggle_modal(cx, |cx| Self::new(cx, handle))
@@ -328,7 +329,7 @@ impl RemoteServerProjects {
         })
     }
 
-    pub fn new(cx: &mut ViewContext<Self>, workspace: WeakView<Workspace>) -> Self {
+    pub fn new(model: &Model<Self>, cx: &mut AppContext, workspace: WeakView<Workspace>) -> Self {
         let focus_handle = cx.focus_handle();
 
         let mut base_style = cx.text_style();
@@ -349,7 +350,8 @@ impl RemoteServerProjects {
         ix: usize,
         connection_options: remote::SshConnectionOptions,
         project: Model<Project>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
         workspace: WeakView<Workspace>,
     ) -> Self {
         let mut this = Self::new(cx, workspace.clone());
@@ -365,7 +367,12 @@ impl RemoteServerProjects {
         this
     }
 
-    fn create_ssh_server(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+    fn create_ssh_server(
+        &mut self,
+        editor: View<Editor>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let input = get_text(&editor, cx);
         if input.is_empty() {
             return;
@@ -442,7 +449,8 @@ impl RemoteServerProjects {
     fn view_server_options(
         &mut self,
         (server_index, connection): (usize, SshConnection),
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.mode = Mode::ViewServerOptions(ViewServerOptionsState {
             server_index,
@@ -457,7 +465,8 @@ impl RemoteServerProjects {
         &mut self,
         ix: usize,
         ssh_connection: SshConnection,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -536,7 +545,7 @@ impl RemoteServerProjects {
         })
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
         match &self.mode {
             Mode::Default(_) | Mode::ViewServerOptions(_) => {}
             Mode::ProjectPicker(_) => {}
@@ -566,7 +575,7 @@ impl RemoteServerProjects {
         }
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         match &self.mode {
             Mode::Default(_) => cx.emit(DismissEvent),
             Mode::CreateRemoteServer(state) if state.ssh_prompt.is_some() => {
@@ -591,7 +600,8 @@ impl RemoteServerProjects {
         &mut self,
         ix: usize,
         ssh_server: ProjectEntry,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> impl IntoElement {
         let (main_label, aux_label) = if let Some(nickname) = ssh_server.connection.nickname.clone()
         {
@@ -715,7 +725,8 @@ impl RemoteServerProjects {
         server: &ProjectEntry,
         ix: usize,
         (navigation, project): &(NavigableEntry, SshProject),
-        cx: &ViewContext<Self>,
+        window: &Model<Self>,
+        cx: &AppContext,
     ) -> impl IntoElement {
         let server = server.clone();
         let element_id_base = SharedString::from(format!("remote-project-{server_ix}"));
@@ -724,7 +735,7 @@ impl RemoteServerProjects {
 
         let callback = Arc::new({
             let project = project.clone();
-            move |this: &mut Self, cx: &mut ViewContext<Self>| {
+            move |this: &mut Self, model: &Model<Self>, cx: &mut AppContext| {
                 let Some(app_state) = this
                     .workspace
                     .update(cx, |workspace, _| workspace.app_state().clone())
@@ -804,7 +815,8 @@ impl RemoteServerProjects {
 
     fn update_settings_file(
         &mut self,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
         f: impl FnOnce(&mut RemoteSettingsContent, &AppContext) + Send + Sync + 'static,
     ) {
         let Some(fs) = self
@@ -817,7 +829,7 @@ impl RemoteServerProjects {
         update_settings_file::<SshSettings>(fs, cx, move |setting, cx| f(setting, cx));
     }
 
-    fn delete_ssh_server(&mut self, server: usize, cx: &mut ViewContext<Self>) {
+    fn delete_ssh_server(&mut self, server: usize, model: &Model<Self>, cx: &mut AppContext) {
         self.update_settings_file(cx, move |setting, _| {
             if let Some(connections) = setting.ssh_connections.as_mut() {
                 connections.remove(server);
@@ -829,7 +841,8 @@ impl RemoteServerProjects {
         &mut self,
         server: usize,
         project: &SshProject,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let project = project.clone();
         self.update_settings_file(cx, move |setting, _| {
@@ -846,7 +859,8 @@ impl RemoteServerProjects {
     fn add_ssh_server(
         &mut self,
         connection_options: remote::SshConnectionOptions,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.update_settings_file(cx, move |setting, _| {
             setting
@@ -867,7 +881,8 @@ impl RemoteServerProjects {
     fn render_create_remote_server(
         &self,
         state: &CreateRemoteServer,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> impl IntoElement {
         let ssh_prompt = state.ssh_prompt.clone();
 
@@ -946,7 +961,8 @@ impl RemoteServerProjects {
             connection,
             entries,
         }: ViewServerOptionsState,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> impl IntoElement {
         let connection_string = connection.host.clone();
 
@@ -1173,7 +1189,8 @@ impl RemoteServerProjects {
     fn render_edit_nickname(
         &self,
         state: &EditNicknameState,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> impl IntoElement {
         let Some(connection) = SshSettings::get_global(cx)
             .ssh_connections()
@@ -1210,7 +1227,8 @@ impl RemoteServerProjects {
     fn render_default(
         &mut self,
         mut state: DefaultState,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> impl IntoElement {
         if SshSettings::get_global(cx)
             .ssh_connections
@@ -1364,7 +1382,7 @@ impl FocusableView for RemoteServerProjects {
 impl EventEmitter<DismissEvent> for RemoteServerProjects {}
 
 impl Render for RemoteServerProjects {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         div()
             .elevation_3(cx)
             .w(rems(34.))

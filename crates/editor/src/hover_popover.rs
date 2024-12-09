@@ -6,9 +6,9 @@ use crate::{
     Hover, RangeToAnchorExt,
 };
 use gpui::{
-    div, px, AnyElement, Asy FontWeight, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, ScrollHandle, Size, Stateful, StatefulInteractiveElement,
-    StyleRefinement, Styled, Task, TextStyleRefinement, View, ViewContext,
+    div, px, AnyElement, FontWeight, Hsla, InteractiveElement, IntoElement, Model, MouseButton,
+    ParentElement, Pixels, ScrollHandle, Size, Stateful, StatefulInteractiveElement,
+    StyleRefinement, Styled, Task, TextStyleRefinement,
 };
 use itertools::Itertools;
 use language::{Diagnostic, DiagnosticEntry, Language, LanguageRegistry};
@@ -31,14 +31,19 @@ pub const MIN_POPOVER_LINE_HEIGHT: Pixels = px(4.);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
-pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
+pub fn hover(editor: &mut Editor, _: &Hover, model: &Model<Editor>, cx: &mut AppContext) {
     let head = editor.selections.newest_anchor().head();
     show_hover(editor, head, true, cx);
 }
 
 /// The internal hover action dispatches between `show_hover` or `hide_hover`
 /// depending on whether a point to hover over is provided.
-pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, cx: &mut ViewContext<Editor>) {
+pub fn hover_at(
+    editor: &mut Editor,
+    anchor: Option<Anchor>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
+) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
         if show_keyboard_hover(editor, cx) {
             return;
@@ -51,7 +56,11 @@ pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, cx: &mut ViewContex
     }
 }
 
-pub fn show_keyboard_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
+pub fn show_keyboard_hover(
+    editor: &mut Editor,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
+) -> bool {
     let info_popovers = editor.hover_state.info_popovers.clone();
     for p in info_popovers {
         let keyboard_grace = p.keyboard_grace.borrow();
@@ -104,7 +113,12 @@ pub fn find_hovered_hint_part(
     None
 }
 
-pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut ViewContext<Editor>) {
+pub fn hover_at_inlay(
+    editor: &mut Editor,
+    inlay_hover: InlayHover,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
+) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
         if editor.pending_rename.is_some() {
             return;
@@ -172,7 +186,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
 /// Hides the type information popup.
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
-pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
+pub fn hide_hover(editor: &mut Editor, model: &Model<Editor>, cx: &mut AppContext) -> bool {
     let info_popovers = editor.hover_state.info_popovers.drain(..);
     let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
     let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
@@ -196,7 +210,8 @@ fn show_hover(
     editor: &mut Editor,
     anchor: Anchor,
     ignore_timeout: bool,
-    cx: &mut ViewContext<Editor>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
 ) -> Option<()> {
     if editor.pending_rename.is_some() {
         return None;
@@ -621,7 +636,8 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
         // If there is a diagnostic, position the popovers based on that.
         // Otherwise use the start of the hover range
@@ -664,7 +680,7 @@ impl HoverState {
         Some((point, elements))
     }
 
-    pub fn focused(&self, cx: &mut ViewContext<Editor>) -> bool {
+    pub fn focused(&self, model: &Model<Editor>, cx: &mut AppContext) -> bool {
         let mut hover_popover_is_focused = false;
         for info_popover in &self.info_popovers {
             if let Some(markdown_view) = &info_popover.parsed_content {
@@ -698,7 +714,8 @@ impl InfoPopover {
     pub(crate) fn render(
         &mut self,
         max_size: Size<Pixels>,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut d = div()
@@ -730,7 +747,7 @@ impl InfoPopover {
         d.into_any_element()
     }
 
-    pub fn scroll(&self, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {
+    pub fn scroll(&self, amount: &ScrollAmount, model: &Model<Editor>, cx: &mut AppContext) {
         let mut current = self.scroll_handle.offset();
         current.y -= amount.pixels(
             cx.line_height(),
@@ -739,7 +756,11 @@ impl InfoPopover {
         cx.notify();
         self.scroll_handle.set_offset(current);
     }
-    fn render_vertical_scrollbar(&self, cx: &mut ViewContext<Editor>) -> Stateful<Div> {
+    fn render_vertical_scrollbar(
+        &self,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
+    ) -> Stateful<Div> {
         div()
             .occlude()
             .id("info-popover-vertical-scroll")
@@ -785,7 +806,12 @@ pub struct DiagnosticPopover {
 }
 
 impl DiagnosticPopover {
-    pub fn render(&self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
+    pub fn render(
+        &self,
+        max_size: Size<Pixels>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
+    ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut markdown_div = div().py_1().px_2();
         if let Some(markdown) = &self.parsed_content {

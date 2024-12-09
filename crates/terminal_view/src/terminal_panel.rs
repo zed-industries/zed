@@ -14,7 +14,7 @@ use futures::future::join_all;
 use gpui::{
     actions, Action, AnchorCorner, AnyView, AppContext, Asy EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
-    Styled, Task, View, ViewContext, VisualContext, WeakView,
+    Styled, Task, View, AppContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
 use project::{terminals::TerminalKind, Fs, Project, ProjectEntryId};
@@ -49,7 +49,7 @@ actions!(terminal_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
-        |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
@@ -82,7 +82,7 @@ pub struct TerminalPanel {
 }
 
 impl TerminalPanel {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(workspace: &Workspace, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let project = workspace.project();
         let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), false, cx);
         let center = PaneGroup::new(pane.clone());
@@ -106,7 +106,7 @@ impl TerminalPanel {
         terminal_panel
     }
 
-    pub fn asssistant_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
+    pub fn asssistant_enabled(&mut self, enabled: bool, model: &Model<Self>, cx: &mut AppContext) {
         self.assistant_enabled = enabled;
         if enabled {
             let focus_handle = self
@@ -127,7 +127,7 @@ impl TerminalPanel {
         }
     }
 
-    fn apply_tab_bar_buttons(&self, terminal_pane: &View<Pane>, cx: &mut ViewContext<Self>) {
+    fn apply_tab_bar_buttons(&self, terminal_pane: &View<Pane>, model: &Model<Self>, cx: &mut AppContext) {
         let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
@@ -292,7 +292,7 @@ impl TerminalPanel {
         &mut self,
         pane: View<Pane>,
         event: &pane::Event,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         match event {
             pane::Event::ActivateItem { .. } => self.serialize(cx),
@@ -369,7 +369,7 @@ impl TerminalPanel {
 
     fn new_pane_with_cloned_active_terminal(
         &mut self,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Task<Option<View<Pane>>> {
         let Some(workspace) = self.workspace.clone().upgrade() else {
             return Task::ready(None);
@@ -432,7 +432,7 @@ impl TerminalPanel {
     pub fn open_terminal(
         workspace: &mut Workspace,
         action: &workspace::OpenTerminal,
-        cx: &mut ViewContext<Workspace>,
+        model: &Model<Workspace>, cx: &mut AppContext,
     ) {
         let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
@@ -449,7 +449,7 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
-    fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
+    fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, model: &Model<Self>, cx: &mut AppContext) {
         let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
         let Some((shell, mut user_args)) = (match spawn_in_terminal.shell.clone() {
@@ -606,7 +606,7 @@ impl TerminalPanel {
     pub fn spawn_in_new_terminal(
         &mut self,
         spawn_task: SpawnInTerminal,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Task<Result<Model<Terminal>>> {
         let reveal = spawn_task.reveal;
         self.add_terminal(TerminalKind::Task(spawn_task), reveal, cx)
@@ -616,7 +616,7 @@ impl TerminalPanel {
     fn new_terminal(
         workspace: &mut Workspace,
         _: &workspace::NewTerminal,
-        cx: &mut ViewContext<Workspace>,
+        model: &Model<Workspace>, cx: &mut AppContext,
     ) {
         let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
@@ -674,7 +674,7 @@ impl TerminalPanel {
         &mut self,
         kind: TerminalKind,
         reveal_strategy: RevealStrategy,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Task<Result<Model<Terminal>>> {
         if !self.enabled {
             return Task::ready(Err(anyhow::anyhow!(
@@ -727,7 +727,7 @@ impl TerminalPanel {
         })
     }
 
-    fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+    fn serialize(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let height = self.height;
         let width = self.width;
         self.pending_serialization = cx.spawn(|terminal_panel, mut cx| async move {
@@ -773,7 +773,7 @@ impl TerminalPanel {
         task_pane: View<Pane>,
         terminal_item_index: usize,
         terminal_to_replace: View<TerminalView>,
-        cx: &mut ViewContext<'_, Self>,
+        model: &Model<_>, cx: &mut AppContext,
     ) -> Task<Option<()>> {
         let reveal = spawn_task.reveal;
         let window = cx.window_handle();
@@ -847,7 +847,7 @@ pub fn new_terminal_pane(
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     zoomed: bool,
-    cx: &mut ViewContext<TerminalPanel>,
+    model: &Model<TerminalPanel>, cx: &mut AppContext,
 ) -> View<Pane> {
     let is_local = project.read(cx).is_local();
     let terminal_panel = cx.view().clone();
@@ -1005,7 +1005,7 @@ async fn wait_for_terminals_tasks(
     let _: Vec<()> = join_all(pending_tasks).await;
 }
 
-fn add_paths_to_terminal(pane: &mut Pane, paths: &[PathBuf], cx: &mut ViewContext<'_, Pane>) {
+fn add_paths_to_terminal(pane: &mut Pane, paths: &[PathBuf], model: &Model<_>, cx: &mut AppContext) {
     if let Some(terminal_view) = pane
         .active_item()
         .and_then(|item| item.downcast::<TerminalView>())
@@ -1024,7 +1024,7 @@ fn add_paths_to_terminal(pane: &mut Pane, paths: &[PathBuf], cx: &mut ViewContex
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 impl Render for TerminalPanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let mut registrar = DivRegistrar::new(
             |panel, cx| {
                 panel
@@ -1160,7 +1160,7 @@ impl Panel for TerminalPanel {
         true
     }
 
-    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+    fn set_position(&mut self, position: DockPosition, model: &Model<Self>, cx: &mut AppContext) {
         settings::update_settings_file::<TerminalSettings>(
             self.fs.clone(),
             cx,
@@ -1185,7 +1185,7 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, model: &Model<Self>, cx: &mut AppContext) {
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
@@ -1198,7 +1198,7 @@ impl Panel for TerminalPanel {
         self.active_pane.read(cx).is_zoomed()
     }
 
-    fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
+    fn set_zoomed(&mut self, zoomed: bool, model: &Model<Self>, cx: &mut AppContext) {
         for pane in self.center.panes() {
             pane.update(cx, |pane, cx| {
                 pane.set_zoomed(zoomed, cx);
@@ -1207,7 +1207,7 @@ impl Panel for TerminalPanel {
         cx.notify();
     }
 
-    fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+    fn set_active(&mut self, active: bool, model: &Model<Self>, cx: &mut AppContext) {
         if !active || !self.has_no_terminals(cx) {
             return;
         }
@@ -1267,7 +1267,7 @@ struct InlineAssistTabBarButton {
 }
 
 impl Render for InlineAssistTabBarButton {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         IconButton::new("terminal_inline_assistant", IconName::ZedAssistant)
             .icon_size(IconSize::Small)

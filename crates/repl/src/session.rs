@@ -18,7 +18,7 @@ use editor::{
 };
 use futures::FutureExt as _;
 use gpui::{
-    div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
+    div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, AppContext, WeakView,
 };
 use language::Point;
 use project::Fs;
@@ -58,7 +58,7 @@ impl EditorBlock {
         code_range: Range<Anchor>,
         status: ExecutionStatus,
         on_close: CloseBlockFn,
-        cx: &mut ViewContext<Session>,
+        model: &Model<Session>, cx: &mut AppContext,
     ) -> anyhow::Result<Self> {
         let editor = editor
             .upgrade()
@@ -111,7 +111,7 @@ impl EditorBlock {
         })
     }
 
-    fn handle_message(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Session>) {
+    fn handle_message(&mut self, message: &JupyterMessage, model: &Model<Session>, cx: &mut AppContext) {
         self.execution_view.update(cx, |execution_view, cx| {
             execution_view.push_message(&message.content, cx);
         });
@@ -197,7 +197,7 @@ impl Session {
         fs: Arc<dyn Fs>,
         telemetry: Arc<Telemetry>,
         kernel_specification: KernelSpecification,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         let subscription = match editor.upgrade() {
             Some(editor) => {
@@ -229,7 +229,7 @@ impl Session {
         session
     }
 
-    fn start_kernel(&mut self, cx: &mut ViewContext<Self>) {
+    fn start_kernel(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let kernel_language = self.kernel_specification.language();
         let entity_id = self.editor.entity_id();
         let working_directory = self
@@ -289,7 +289,7 @@ impl Session {
         cx.notify();
     }
 
-    pub fn kernel_errored(&mut self, error_message: String, cx: &mut ViewContext<Self>) {
+    pub fn kernel_errored(&mut self, error_message: String, model: &Model<Self>, cx: &mut AppContext) {
         self.kernel(Kernel::ErroredLaunch(error_message.clone()), cx);
 
         self.blocks.values().for_each(|block| {
@@ -313,7 +313,7 @@ impl Session {
         &mut self,
         buffer: Model<MultiBuffer>,
         event: &multi_buffer::Event,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         if let multi_buffer::Event::Edited { .. } = event {
             let snapshot = buffer.read(cx).snapshot(cx);
@@ -340,7 +340,7 @@ impl Session {
         }
     }
 
-    fn send(&mut self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
+    fn send(&mut self, message: JupyterMessage, model: &Model<>Self, _cx: &mut AppContext) -> anyhow::Result<()> {
         if let Kernel::RunningKernel(kernel) = &mut self.kernel {
             kernel.request_tx().try_send(message).ok();
         }
@@ -348,7 +348,7 @@ impl Session {
         anyhow::Ok(())
     }
 
-    pub fn clear_outputs(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn clear_outputs(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let blocks_to_remove: HashSet<CustomBlockId> =
             self.blocks.values().map(|block| block.block_id).collect();
 
@@ -367,7 +367,7 @@ impl Session {
         anchor_range: Range<Anchor>,
         next_cell: Option<Anchor>,
         move_down: bool,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         let Some(editor) = self.editor.upgrade() else {
             return;
@@ -480,7 +480,7 @@ impl Session {
         }
     }
 
-    pub fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
+    pub fn route(&mut self, message: &JupyterMessage, model: &Model<Self>, cx: &mut AppContext) {
         let parent_message_id = match message.parent_header.as_ref() {
             Some(header) => &header.msg_id,
             None => return,
@@ -524,7 +524,7 @@ impl Session {
         }
     }
 
-    pub fn interrupt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn interrupt(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         match &mut self.kernel {
             Kernel::RunningKernel(_kernel) => {
                 self.send(InterruptRequest {}.into(), cx).ok();
@@ -536,7 +536,7 @@ impl Session {
         }
     }
 
-    pub fn kernel(&mut self, kernel: Kernel, cx: &mut ViewContext<Self>) {
+    pub fn kernel(&mut self, kernel: Kernel, model: &Model<Self>, cx: &mut AppContext) {
         if let Kernel::Shutdown = kernel {
             cx.emit(SessionEvent::Shutdown(self.editor.clone()));
         }
@@ -553,7 +553,7 @@ impl Session {
         self.kernel = kernel;
     }
 
-    pub fn shutdown(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn shutdown(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let kernel = std::mem::replace(&mut self.kernel, Kernel::ShuttingDown);
 
         match kernel {
@@ -587,7 +587,7 @@ impl Session {
         cx.notify();
     }
 
-    pub fn restart(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn restart(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let kernel = std::mem::replace(&mut self.kernel, Kernel::Restarting);
 
         match kernel {
@@ -637,7 +637,7 @@ pub enum SessionEvent {
 impl EventEmitter<SessionEvent> for Session {}
 
 impl Render for Session {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let (status_text, interrupt_button) = match &self.kernel {
             Kernel::RunningKernel(kernel) => (
                 kernel

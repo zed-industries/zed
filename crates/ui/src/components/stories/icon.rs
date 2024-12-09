@@ -8,7 +8,7 @@ use crate::{Icon, IconName};
 pub struct IconStory;
 
 impl Render for IconStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         let icons = IconName::iter();
 
         Story::container()

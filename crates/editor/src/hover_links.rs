@@ -5,7 +5,7 @@ use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
 };
-use gpui::{px, AppContext, Asy Model, Modifiers, Task, ViewContext};
+use gpui::{px, AppContext, Model, Modifiers, Task};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
@@ -117,7 +117,8 @@ impl Editor {
         point_for_position: PointForPosition,
         snapshot: &EditorSnapshot,
         modifiers: Modifiers,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
         let hovered_link_modifier = match multi_cursor_setting {
@@ -152,7 +153,7 @@ impl Editor {
         }
     }
 
-    pub(crate) fn hide_hovered_link(&mut self, cx: &mut ViewContext<Self>) {
+    pub(crate) fn hide_hovered_link(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.hovered_link_state.take();
         self.clear_highlights::<HoveredLinkState>(cx);
     }
@@ -161,7 +162,8 @@ impl Editor {
         &mut self,
         point: PointForPosition,
         modifiers: Modifiers,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, cx);
         cx.spawn(|editor, mut cx| async move {
@@ -182,7 +184,12 @@ impl Editor {
         .detach();
     }
 
-    pub fn scroll_hover(&mut self, amount: &ScrollAmount, cx: &mut ViewContext<Self>) -> bool {
+    pub fn scroll_hover(
+        &mut self,
+        amount: &ScrollAmount,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> bool {
         let selection = self.selections.newest_anchor().head();
         let snapshot = self.snapshot(cx);
 
@@ -201,7 +208,8 @@ impl Editor {
         &mut self,
         point: PointForPosition,
         modifiers: Modifiers,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<Navigated>> {
         if let Some(hovered_link_state) = self.hovered_link_state.take() {
             self.hide_hovered_link(cx);
@@ -266,7 +274,8 @@ pub fn update_inlay_link_and_hover_points(
     editor: &mut Editor,
     secondary_held: bool,
     shift_held: bool,
-    cx: &mut ViewContext<'_, Editor>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
 ) {
     let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
         Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))
@@ -440,7 +449,8 @@ pub fn show_link_definition(
     editor: &mut Editor,
     trigger_point: TriggerPoint,
     snapshot: &EditorSnapshot,
-    cx: &mut ViewContext<Editor>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
 ) {
     let preferred_kind = match trigger_point {
         TriggerPoint::Text(_) if !shift_held => GotoDefinitionKind::Symbol,

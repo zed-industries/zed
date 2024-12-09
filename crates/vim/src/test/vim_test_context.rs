@@ -88,7 +88,7 @@ impl VimTestContext {
     pub fn update_view<F, T, R>(&mut self, view: View<T>, update: F) -> R
     where
         T: 'static,
-        F: FnOnce(&mut T, &mut ViewContext<T>) -> R + 'static,
+        F: FnOnce(&mut T, &Model<T>, &mut AppContext) -> R + 'static,
     {
         let window = self.window;
         self.update_window(window, move |_, cx| view.update(cx, update))
@@ -97,7 +97,7 @@ impl VimTestContext {
 
     pub fn workspace<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        F: FnOnce(&mut Workspace, &Model<Workspace>, &mut AppContext) -> T,
     {
         self.cx.update_workspace(update)
     }

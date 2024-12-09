@@ -19,7 +19,7 @@ pub enum RemoteVideoTrackViewEvent {
 }
 
 impl RemoteVideoTrackView {
-    pub fn new(track: RemoteVideoTrack, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(track: RemoteVideoTrack, model: &Model<Self>, cx: &mut AppContext) -> Self {
         cx.focus_handle();
         let frames = super::play_remote_video_track(&track);
 
@@ -58,7 +58,7 @@ impl RemoteVideoTrackView {
         }
     }
 
-    pub fn clone(&self, cx: &mut ViewContext<Self>) -> View<Self> {
+    pub fn clone(&self, model: &Model<Self>, cx: &mut AppContext) -> View<Self> {
         cx.new_view(|cx| Self::new(self.track.clone(), cx))
     }
 }
@@ -66,7 +66,7 @@ impl RemoteVideoTrackView {
 impl EventEmitter<RemoteVideoTrackViewEvent> for RemoteVideoTrackView {}
 
 impl Render for RemoteVideoTrackView {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         #[cfg(target_os = "macos")]
         if let Some(latest_frame) = &self.latest_frame {
             use gpui::Styled as _;

@@ -3,10 +3,10 @@ use std::sync::Arc;
 use collections::HashMap;
 use editor::Editor;
 use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent};
+use gpui::{AppContext, Model};
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::LazyLock;
-use ui::ViewContext;
 
 use crate::{state::Operator, Vim, VimSettings};
 
@@ -16,7 +16,7 @@ mod default;
 struct Literal(String, char);
 impl_actions!(vim, [Literal]);
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
     Vim::action(editor, cx, Vim::literal)
 }
 
@@ -49,7 +49,8 @@ impl Vim {
         &mut self,
         first_char: char,
         second_char: char,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let text = lookup_digraph(first_char, second_char, cx);
 
@@ -61,7 +62,7 @@ impl Vim {
         }
     }
 
-    fn literal(&mut self, action: &Literal, cx: &mut ViewContext<Self>) {
+    fn literal(&mut self, action: &Literal, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(Operator::Literal { prefix }) = self.active_operator() {
             if let Some(prefix) = prefix {
                 if let Some(keystroke) = Keystroke::parse(&action.0).ok() {
@@ -80,7 +81,8 @@ impl Vim {
         &mut self,
         keystroke_event: &KeystrokeEvent,
         prefix: String,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         // handled by handle_literal_input
         if keystroke_event.keystroke.key_char.is_some() {
@@ -108,7 +110,8 @@ impl Vim {
         &mut self,
         mut prefix: String,
         text: &str,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let first = prefix.chars().next();
         let next = text.chars().next().unwrap_or(' ');
@@ -189,7 +192,13 @@ impl Vim {
         );
     }
 
-    fn insert_literal(&mut self, ch: Option<char>, suffix: &str, cx: &mut ViewContext<Self>) {
+    fn insert_literal(
+        &mut self,
+        ch: Option<char>,
+        suffix: &str,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.pop_operator(cx);
         let mut text = String::new();
         if let Some(c) = ch {

@@ -1,6 +1,6 @@
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
-use gpui::{AppContext, Task as AsyncTask, ViewContext};
+use gpui::{AppContext, Task as AsyncTask};
 use modal::TasksModal;
 use project::{Location, WorktreeId};
 use task::TaskId;
@@ -15,7 +15,7 @@ pub use modal::{Rerun, Spawn};
 pub fn init(cx: &mut AppContext) {
     settings::TaskSettings::register(cx);
     cx.observe_new_views(
-        |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext| {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, cx| {
@@ -87,14 +87,19 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
+fn spawn_task_or_modal(
+    workspace: &mut Workspace,
+    action: &Spawn,
+    model: &Model<Workspace>,
+    cx: &mut AppContext,
+) {
     match &action.task_name {
         Some(name) => spawn_task_with_name(name.clone(), cx).detach_and_log_err(cx),
         None => toggle_modal(workspace, cx).detach(),
     }
 }
 
-fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) -> AsyncTask<()> {
+fn toggle_modal(workspace: &mut Workspace, model: &Model<_>, cx: &mut AppContext) -> AsyncTask<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
     let can_open_modal = workspace.project().update(cx, |project, cx| {
@@ -119,7 +124,8 @@ fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) 
 
 fn spawn_task_with_name(
     name: String,
-    cx: &mut ViewContext<Workspace>,
+    model: &Model<Workspace>,
+    cx: &mut AppContext,
 ) -> AsyncTask<anyhow::Result<()>> {
     cx.spawn(|workspace, mut cx| async move {
         let context_task =

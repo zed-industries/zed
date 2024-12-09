@@ -1,9 +1,9 @@
 use editor::{scroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
-    actions, div, rems, uniform_list, AppContext, Div, EventEmitter, FocusHandle, FocusableView,
-    Hsla, InteractiveElement, IntoElement, Model, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ParentElement, Render, ScrollStrategy, SharedString, Styled, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView,
+    actions, div, rems, uniform_list, AppContext, AppContext, Div, EventEmitter, FocusHandle,
+    FocusableView, Hsla, InteractiveElement, IntoElement, Model, MouseButton, MouseDownEvent,
+    MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
+    UniformListScrollHandle, View, VisualContext, WeakView,
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
@@ -61,7 +61,8 @@ impl SyntaxTreeView {
     pub fn new(
         workspace_handle: WeakView<Workspace>,
         active_item: Option<Box<dyn ItemHandle>>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let mut this = Self {
             workspace_handle: workspace_handle.clone(),
@@ -87,7 +88,8 @@ impl SyntaxTreeView {
     fn workspace_updated(
         &mut self,
         active_item: Option<Box<dyn ItemHandle>>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(item) = active_item {
             if item.item_id() != cx.entity_id() {
@@ -98,7 +100,7 @@ impl SyntaxTreeView {
         }
     }
 
-    fn set_editor(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+    fn set_editor(&mut self, editor: View<Editor>, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(state) = &self.editor {
             if state.editor == editor {
                 return;
@@ -125,7 +127,12 @@ impl SyntaxTreeView {
         self.editor_updated(true, cx);
     }
 
-    fn editor_updated(&mut self, did_reparse: bool, cx: &mut ViewContext<Self>) -> Option<()> {
+    fn editor_updated(
+        &mut self,
+        did_reparse: bool,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<()> {
         // Find which excerpt the cursor is in, and the position within that excerpted buffer.
         let editor_state = self.editor.as_mut()?;
         let (buffer, range, excerpt_id) = editor_state.editor.update(cx, |editor, cx| {
@@ -209,8 +216,9 @@ impl SyntaxTreeView {
     fn update_editor_with_range_for_descendant_ix(
         &self,
         descendant_ix: usize,
-        cx: &mut ViewContext<Self>,
-        mut f: impl FnMut(&mut Editor, Range<Anchor>, &mut ViewContext<Editor>),
+        model: &Model<Self>,
+        cx: &mut AppContext,
+        mut f: impl FnMut(&mut Editor, Range<Anchor>, &Model<Editor>, &mut AppContext),
     ) -> Option<()> {
         let editor_state = self.editor.as_ref()?;
         let buffer_state = editor_state.active_buffer.as_ref()?;
@@ -273,7 +281,7 @@ impl SyntaxTreeView {
 }
 
 impl Render for SyntaxTreeView {
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let mut rendered = div().flex_1();
 
         if let Some(layer) = self
@@ -393,7 +401,8 @@ impl Item for SyntaxTreeView {
     fn clone_on_split(
         &self,
         _: Option<workspace::WorkspaceId>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<View<Self>>
     where
         Self: Sized,
@@ -422,7 +431,11 @@ impl SyntaxTreeToolbarItemView {
         }
     }
 
-    fn render_menu(&mut self, cx: &mut ViewContext<'_, Self>) -> Option<PopoverMenu<ContextMenu>> {
+    fn render_menu(
+        &mut self,
+        model: &Model<_>,
+        cx: &mut AppContext,
+    ) -> Option<PopoverMenu<ContextMenu>> {
         let tree_view = self.tree_view.as_ref()?;
         let tree_view = tree_view.read(cx);
 
@@ -457,7 +470,12 @@ impl SyntaxTreeToolbarItemView {
         )
     }
 
-    fn select_layer(&mut self, layer_ix: usize, cx: &mut ViewContext<Self>) -> Option<()> {
+    fn select_layer(
+        &mut self,
+        layer_ix: usize,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<()> {
         let tree_view = self.tree_view.as_ref()?;
         tree_view.update(cx, |view, cx| {
             let editor_state = view.editor.as_mut()?;
@@ -492,7 +510,7 @@ fn format_node_range(node: Node) -> String {
 }
 
 impl Render for SyntaxTreeToolbarItemView {
-    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<_>, cx: &mut AppContext) -> impl IntoElement {
         self.render_menu(cx)
             .unwrap_or_else(|| PopoverMenu::new("Empty Syntax Tree"))
     }
@@ -504,7 +522,8 @@ impl ToolbarItemView for SyntaxTreeToolbarItemView {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> ToolbarItemLocation {
         if let Some(item) = active_pane_item {
             if let Some(view) = item.downcast::<SyntaxTreeView>() {

@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use gpui::{View, ViewContext};
+use gpui::{AppContext, Model};
 use language::Language;
 use url::Url;
 
@@ -16,7 +16,8 @@ fn is_c_language(language: &Language) -> bool {
 pub fn switch_source_header(
     editor: &mut Editor,
     _: &SwitchSourceHeader,
-    cx: &mut ViewContext<'_, Editor>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
 ) {
     let Some(project) = &editor.project else {
         return;

@@ -5,7 +5,7 @@ use assistant_slash_command::AfterCompletion;
 pub use assistant_slash_command::{SlashCommand, SlashCommandOutput};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{AppContext, Model, Task, ViewContext, WeakView};
+use gpui::{AppContext, AppContext, Model, Task, WeakView};
 use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
 use parking_lot::{Mutex, RwLock};
 use project::CompletionIntent;
@@ -262,7 +262,8 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         buffer: &Model<Buffer>,
         buffer_position: Anchor,
         _: editor::CompletionContext,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<project::Completion>>> {
         let Some((name, arguments, command_range, last_argument_range)) =
             buffer.update(cx, |buffer, _cx| {
@@ -329,7 +330,8 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         _: Model<Buffer>,
         _: Vec<usize>,
         _: Arc<RwLock<Box<[project::Completion]>>>,
-        _: &mut ViewContext<Editor>,
+        _: &Model<Editor>,
+        _: &mut AppContext,
     ) -> Task<Result<bool>> {
         Task::ready(Ok(true))
     }
@@ -339,7 +341,8 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         _: Model<Buffer>,
         _: project::Completion,
         _: bool,
-        _: &mut ViewContext<Editor>,
+        _: &Model<Editor>,
+        _: &mut AppContext,
     ) -> Task<Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
     }
@@ -350,7 +353,8 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) -> bool {
         let buffer = buffer.read(cx);
         let position = position.to_point(buffer);

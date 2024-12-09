@@ -41,7 +41,7 @@ impl<'a, T: &Model<'>, 'static> AppContext {
     }
 
     /// Arranges for the given function to be called whenever [`Model::notify`] or
-    /// [`ViewContext::notify`](crate::ViewContext::notify) is called with the given model or view.
+    /// [`Model::notify`](crate::Model::notify) is called with the given model or view.
     pub fn observe<W, E>(
         &mut self,
         entity: &E,

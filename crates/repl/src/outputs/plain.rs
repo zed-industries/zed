@@ -246,7 +246,7 @@ impl Render for TerminalOutput {
     /// Converts the current terminal state into a renderable GPUI element. It handles
     /// the layout of the terminal grid, calculates the dimensions of the output, and
     /// creates a canvas element that paints the terminal cells and background rectangles.
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let text_style = text_style(cx);
         let text_system = cx.text_system();
 

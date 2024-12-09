@@ -24,9 +24,9 @@ use futures::{
     join, SinkExt, Stream, StreamExt,
 };
 use gpui::{
-    anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, WeakView,
+    anchored, deferred, point, AnyElement, AppContext, AppContext, ClickEvent, CursorStyle,
+    EventEmitter, FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model,
+    Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -1469,7 +1469,7 @@ pub struct TokenCounts {
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let gutter_dimensions = *self.gutter_dimensions.lock();
         let codegen = self.codegen.read(cx);
 
@@ -1695,7 +1695,8 @@ impl PromptEditor {
         assistant_panel: Option<&View<AssistantPanel>>,
         workspace: Option<WeakView<Workspace>>,
         fs: Arc<dyn Fs>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let prompt_editor = cx.new_view(|cx| {
             let mut editor = Editor::new(
@@ -1747,7 +1748,7 @@ impl PromptEditor {
         this
     }
 
-    fn subscribe_to_editor(&mut self, cx: &mut ViewContext<Self>) {
+    fn subscribe_to_editor(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.editor_subscriptions.clear();
         self.editor_subscriptions
             .push(cx.subscribe(&self.editor, Self::handle_prompt_editor_events));
@@ -1756,14 +1757,15 @@ impl PromptEditor {
     fn set_show_cursor_when_unfocused(
         &mut self,
         show_cursor_when_unfocused: bool,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.editor.update(cx, |editor, cx| {
             editor.set_show_cursor_when_unfocused(show_cursor_when_unfocused, cx)
         });
     }
 
-    fn unlink(&mut self, cx: &mut ViewContext<Self>) {
+    fn unlink(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let prompt = self.prompt(cx);
         let focus = self.editor.focus_handle(cx).contains_focused(cx);
         self.editor = cx.new_view(|cx| {
@@ -1798,7 +1800,12 @@ impl PromptEditor {
         self.editor.read(cx).text(cx)
     }
 
-    fn toggle_rate_limit_notice(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn toggle_rate_limit_notice(
+        &mut self,
+        _: &ClickEvent,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.show_rate_limit_notice = !self.show_rate_limit_notice;
         if self.show_rate_limit_notice {
             cx.focus_view(&self.editor);
@@ -1810,7 +1817,8 @@ impl PromptEditor {
         &mut self,
         _: View<Editor>,
         event: &EditorEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let EditorEvent::BufferEdited { .. } = event {
             self.count_tokens(cx);
@@ -1821,13 +1829,14 @@ impl PromptEditor {
         &mut self,
         _: View<AssistantPanel>,
         event: &AssistantPanelEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let AssistantPanelEvent::ContextEdited { .. } = event;
         self.count_tokens(cx);
     }
 
-    fn count_tokens(&mut self, cx: &mut ViewContext<Self>) {
+    fn count_tokens(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let assist_id = self.id;
         self.pending_token_count = cx.spawn(|this, mut cx| async move {
             cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -1852,7 +1861,8 @@ impl PromptEditor {
         &mut self,
         _: View<Editor>,
         event: &EditorEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         match event {
             EditorEvent::Edited { .. } => {
@@ -1895,7 +1905,12 @@ impl PromptEditor {
         }
     }
 
-    fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
+    fn handle_codegen_changed(
+        &mut self,
+        _: Model<Codegen>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         match self.codegen.read(cx).status(cx) {
             CodegenStatus::Idle => {
                 self.editor
@@ -1926,7 +1941,7 @@ impl PromptEditor {
         }
     }
 
-    fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         match self.codegen.read(cx).status(cx) {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
                 cx.emit(PromptEditorEvent::CancelRequested);
@@ -1937,7 +1952,7 @@ impl PromptEditor {
         }
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
         match self.codegen.read(cx).status(cx) {
             CodegenStatus::Idle => {
                 cx.emit(PromptEditorEvent::StartRequested);
@@ -1958,7 +1973,7 @@ impl PromptEditor {
         }
     }
 
-    fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+    fn move_up(&mut self, _: &MoveUp, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(ix) = self.prompt_history_ix {
             if ix > 0 {
                 self.prompt_history_ix = Some(ix - 1);
@@ -1978,7 +1993,7 @@ impl PromptEditor {
         }
     }
 
-    fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
+    fn move_down(&mut self, _: &MoveDown, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(ix) = self.prompt_history_ix {
             if ix < self.prompt_history.len() - 1 {
                 self.prompt_history_ix = Some(ix + 1);
@@ -1998,17 +2013,22 @@ impl PromptEditor {
         }
     }
 
-    fn cycle_prev(&mut self, _: &CyclePreviousInlineAssist, cx: &mut ViewContext<Self>) {
+    fn cycle_prev(
+        &mut self,
+        _: &CyclePreviousInlineAssist,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.codegen
             .update(cx, |codegen, cx| codegen.cycle_prev(cx));
     }
 
-    fn cycle_next(&mut self, _: &CycleNextInlineAssist, cx: &mut ViewContext<Self>) {
+    fn cycle_next(&mut self, _: &CycleNextInlineAssist, model: &Model<Self>, cx: &mut AppContext) {
         self.codegen
             .update(cx, |codegen, cx| codegen.cycle_next(cx));
     }
 
-    fn render_cycle_controls(&self, cx: &ViewContext<Self>) -> AnyElement {
+    fn render_cycle_controls(&self, window: &Model<Self>, cx: &AppContext) -> AnyElement {
         let codegen = self.codegen.read(cx);
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
@@ -2116,7 +2136,11 @@ impl PromptEditor {
             .into_any_element()
     }
 
-    fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+    fn render_token_count(
+        &self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Option<impl IntoElement> {
         let model = LanguageModelRegistry::read_global(cx).active_model()?;
         let token_counts = self.token_counts?;
         let max_token_count = model.max_token_count();
@@ -2176,7 +2200,7 @@ impl PromptEditor {
         Some(token_count)
     }
 
-    fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_prompt_editor(&self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.editor.read(cx).read_only(cx) {
@@ -2202,7 +2226,11 @@ impl PromptEditor {
         )
     }
 
-    fn render_rate_limit_notice(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_rate_limit_notice(
+        &self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         Popover::new().child(
             v_flex()
                 .occlude()
@@ -3203,7 +3231,8 @@ impl CodegenAlternative {
     fn apply_edits(
         &mut self,
         edits: impl IntoIterator<Item = (Range<Anchor>, String)>,
-        model: &Model<CodegenAlternative>, cx: &mut AppContext,
+        model: &Model<CodegenAlternative>,
+        cx: &mut AppContext,
     ) {
         let transaction = self.buffer.update(cx, |buffer, cx| {
             // Avoid grouping assistant edits with user edits.

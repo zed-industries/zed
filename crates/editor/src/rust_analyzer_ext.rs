@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Context as _;
-use gpui::{Context, View, ViewContext, VisualContext};
+use gpui::{AppContext, Context, View, VisualContext};
 use language::Language;
 use multi_buffer::MultiBuffer;
 use project::lsp_ext_command::ExpandMacro;
@@ -37,7 +37,8 @@ pub fn apply_related_actions(
 pub fn expand_macro_recursively(
     editor: &mut Editor,
     _: &ExpandMacroRecursively,
-    cx: &mut ViewContext<'_, Editor>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
 ) {
     if editor.selections.count() == 0 {
         return;
@@ -102,7 +103,7 @@ pub fn expand_macro_recursively(
     .detach_and_log_err(cx);
 }
 
-pub fn open_docs(editor: &mut Editor, _: &OpenDocs, cx: &mut ViewContext<'_, Editor>) {
+pub fn open_docs(editor: &mut Editor, _: &OpenDocs, model: &Model<Editor>, cx: &mut AppContext) {
     if editor.selections.count() == 0 {
         return;
     }

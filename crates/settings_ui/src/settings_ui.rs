@@ -64,7 +64,7 @@ pub struct SettingsPage {
 }
 
 impl SettingsPage {
-    pub fn new(_workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
+    pub fn new(_workspace: &Workspace, model: &Model<Workspace>, cx: &mut AppContext) -> View<Self> {
         cx.new_view(|cx| Self {
             focus_handle: cx.focus_handle(),
         })
@@ -100,7 +100,7 @@ impl Item for SettingsPage {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .p_4()
             .size_full()

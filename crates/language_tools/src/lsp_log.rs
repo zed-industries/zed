@@ -4,8 +4,8 @@ use editor::{actions::MoveToEnd, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     actions, div, AnchorCorner, AppContext, Context, EventEmitter, FocusHandle, FocusableView,
-    IntoElement, Model, ParentElement, Render, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakModel,
+    IntoElement, Model, Model, ParentElement, Render, Styled, Subscription, VisualContext,
+    WeakModel,
 };
 use language::LanguageServerId;
 use lsp::{
@@ -614,7 +614,8 @@ impl LspLogView {
     pub fn new(
         project: Model<Project>,
         log_store: Model<LogStore>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let server_id = log_store
             .read(cx)
@@ -706,7 +707,8 @@ impl LspLogView {
 
     fn editor_for_logs(
         log_contents: String,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> (View<Editor>, Vec<Subscription>) {
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::multi_line(cx);
@@ -718,13 +720,13 @@ impl LspLogView {
         });
         let editor_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &EditorEvent, cx: &mut ViewContext<'_, LspLogView>| {
+            |_, _, event: &EditorEvent, model: &Model<_>, cx: &mut AppContext| {
                 cx.emit(event.clone())
             },
         );
         let search_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &SearchEvent, cx: &mut ViewContext<'_, LspLogView>| {
+            |_, _, event: &SearchEvent, model: &Model<_>, cx: &mut AppContext| {
                 cx.emit(event.clone())
             },
         );
@@ -733,7 +735,8 @@ impl LspLogView {
 
     fn editor_for_capabilities(
         capabilities: ServerCapabilities,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> (View<Editor>, Vec<Subscription>) {
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::multi_line(cx);
@@ -745,13 +748,13 @@ impl LspLogView {
         });
         let editor_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &EditorEvent, cx: &mut ViewContext<'_, LspLogView>| {
+            |_, _, event: &EditorEvent, model: &Model<_>, cx: &mut AppContext| {
                 cx.emit(event.clone())
             },
         );
         let search_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &SearchEvent, cx: &mut ViewContext<'_, LspLogView>| {
+            |_, _, event: &SearchEvent, model: &Model<_>, cx: &mut AppContext| {
                 cx.emit(event.clone())
             },
         );
@@ -818,7 +821,12 @@ impl LspLogView {
         Some(rows)
     }
 
-    fn show_logs_for_server(&mut self, server_id: LanguageServerId, cx: &mut ViewContext<Self>) {
+    fn show_logs_for_server(
+        &mut self,
+        server_id: LanguageServerId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let typ = self
             .log_store
             .read_with(cx, |v, _| {
@@ -845,7 +853,8 @@ impl LspLogView {
         &self,
         server_id: LanguageServerId,
         level: MessageType,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let log_contents = self.log_store.update(cx, |this, _| {
             if let Some(state) = this.get_language_server_state(server_id) {
@@ -866,7 +875,12 @@ impl LspLogView {
         cx.focus(&self.focus_handle);
     }
 
-    fn show_trace_for_server(&mut self, server_id: LanguageServerId, cx: &mut ViewContext<Self>) {
+    fn show_trace_for_server(
+        &mut self,
+        server_id: LanguageServerId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let log_contents = self
             .log_store
             .read(cx)
@@ -886,7 +900,8 @@ impl LspLogView {
     fn show_rpc_trace_for_server(
         &mut self,
         server_id: LanguageServerId,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let rpc_log = self.log_store.update(cx, |log_store, _| {
             log_store
@@ -929,7 +944,8 @@ impl LspLogView {
         &mut self,
         server_id: LanguageServerId,
         enabled: bool,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.log_store.update(cx, |log_store, _| {
             if enabled {
@@ -948,7 +964,8 @@ impl LspLogView {
         &self,
         server_id: LanguageServerId,
         level: TraceValue,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(server) = self.project.read(cx).language_server_for_id(server_id, cx) {
             self.log_store.update(cx, |this, _| {
@@ -966,7 +983,8 @@ impl LspLogView {
     fn show_capabilities_for_server(
         &mut self,
         server_id: LanguageServerId,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let capabilities = self.log_store.read(cx).server_capabilities(server_id);
 
@@ -1003,7 +1021,7 @@ fn log_contents<T: Message>(lines: &VecDeque<T>, cmp: <T as Message>::Level) -> 
 }
 
 impl Render for LspLogView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         self.editor
             .update(cx, |editor, cx| editor.render(cx).into_any_element())
     }
@@ -1037,7 +1055,8 @@ impl Item for LspLogView {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<View<Self>>
     where
         Self: Sized,
@@ -1060,16 +1079,21 @@ impl Item for LspLogView {
 impl SearchableItem for LspLogView {
     type Match = <Editor as SearchableItem>::Match;
 
-    fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
+    fn clear_matches(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.editor.update(cx, |e, cx| e.clear_matches(cx))
     }
 
-    fn update_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
+    fn update_matches(
+        &mut self,
+        matches: &[Self::Match],
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.editor
             .update(cx, |e, cx| e.update_matches(matches, cx))
     }
 
-    fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
+    fn query_suggestion(&mut self, model: &Model<Self>, cx: &mut AppContext) -> String {
         self.editor.update(cx, |e, cx| e.query_suggestion(cx))
     }
 
@@ -1077,13 +1101,19 @@ impl SearchableItem for LspLogView {
         &mut self,
         index: usize,
         matches: &[Self::Match],
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.editor
             .update(cx, |e, cx| e.activate_match(index, matches, cx))
     }
 
-    fn select_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
+    fn select_matches(
+        &mut self,
+        matches: &[Self::Match],
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.editor
             .update(cx, |e, cx| e.select_matches(matches, cx))
     }
@@ -1091,12 +1121,13 @@ impl SearchableItem for LspLogView {
     fn find_matches(
         &mut self,
         query: Arc<project::search::SearchQuery>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> gpui::Task<Vec<Self::Match>> {
         self.editor.update(cx, |e, cx| e.find_matches(query, cx))
     }
 
-    fn replace(&mut self, _: &Self::Match, _: &SearchQuery, _: &mut ViewContext<Self>) {
+    fn replace(&mut self, _: &Self::Match, _: &SearchQuery, _: &Model<Self>, _: &mut AppContext) {
         // Since LSP Log is read-only, it doesn't make sense to support replace operation.
     }
     fn supported_options() -> workspace::searchable::SearchOptions {
@@ -1112,7 +1143,8 @@ impl SearchableItem for LspLogView {
     fn active_match_index(
         &mut self,
         matches: &[Self::Match],
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<usize> {
         self.editor
             .update(cx, |e, cx| e.active_match_index(matches, cx))
@@ -1125,7 +1157,8 @@ impl ToolbarItemView for LspLogToolbarItemView {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> workspace::ToolbarItemLocation {
         if let Some(item) = active_pane_item {
             if let Some(log_view) = item.downcast::<LspLogView>() {
@@ -1143,7 +1176,7 @@ impl ToolbarItemView for LspLogToolbarItemView {
 }
 
 impl Render for LspLogToolbarItemView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let Some(log_view) = self.log_view.clone() else {
             return div();
         };
@@ -1435,7 +1468,8 @@ impl LspLogToolbarItemView {
         &mut self,
         id: LanguageServerId,
         enabled: bool,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(log_view) = &self.log_view {
             log_view.update(cx, |log_view, cx| {

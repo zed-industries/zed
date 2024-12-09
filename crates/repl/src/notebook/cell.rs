@@ -244,7 +244,7 @@ pub trait RenderableCell: Render {
     fn source(&self) -> &String;
     fn selected(&self) -> bool;
     fn set_selected(&mut self, selected: bool) -> &mut Self;
-    fn selected_bg_color(&self, cx: &ViewContext<Self>) -> Hsla {
+    fn selected_bg_color(&self, window: &Model<Self>, cx: &AppContext) -> Hsla {
         if self.selected() {
             let mut color = cx.theme().colors().icon_accent;
             color.fade_out(0.9);
@@ -254,14 +254,15 @@ pub trait RenderableCell: Render {
             cx.theme().colors().tab_bar_background
         }
     }
-    fn control(&self, _cx: &ViewContext<Self>) -> Option<CellControl> {
+    fn control(&self, window: &Model<Self>, _cx: &AppContext) -> Option<CellControl> {
         None
     }
 
     fn cell_position_spacer(
         &self,
         is_first: bool,
-        cx: &ViewContext<Self>,
+        window: &Model<Self>,
+        cx: &AppContext,
     ) -> Option<impl IntoElement> {
         let cell_position = self.cell_position();
 
@@ -274,7 +275,7 @@ pub trait RenderableCell: Render {
         }
     }
 
-    fn gutter(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+    fn gutter(&self, window: &Model<Self>, cx: &AppContext) -> impl IntoElement {
         let is_selected = self.selected();
 
         div()
@@ -322,7 +323,7 @@ pub trait RenderableCell: Render {
 pub trait RunnableCell: RenderableCell {
     fn execution_count(&self) -> Option<i32>;
     fn set_execution_count(&mut self, count: i32) -> &mut Self;
-    fn run(&mut self, cx: &mut ViewContext<Self>) -> ();
+    fn run(&mut self, model: &Model<Self>, cx: &mut AppContext) -> ();
 }
 
 pub struct MarkdownCell {
@@ -364,7 +365,7 @@ impl RenderableCell for MarkdownCell {
         self
     }
 
-    fn control(&self, _: &ViewContext<Self>) -> Option<CellControl> {
+    fn control(&self, _: &Model<Self>, AppContext) -> Option<CellControl> {
         None
     }
 
@@ -379,7 +380,7 @@ impl RenderableCell for MarkdownCell {
 }
 
 impl Render for MarkdownCell {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let Some(parsed) = self.parsed_markdown.as_ref() else {
             return div();
         };
@@ -452,7 +453,7 @@ impl CodeCell {
         }
     }
 
-    pub fn gutter_output(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+    pub fn gutter_output(&self, window: &Model<Self>, cx: &AppContext) -> impl IntoElement {
         let is_selected = self.selected();
 
         div()
@@ -513,7 +514,7 @@ impl RenderableCell for CodeCell {
         &self.source
     }
 
-    fn control(&self, cx: &ViewContext<Self>) -> Option<CellControl> {
+    fn control(&self, window: &Model<Self>, cx: &AppContext) -> Option<CellControl> {
         let cell_control = if self.has_outputs() {
             CellControl::new("rerun-cell", CellControlType::RerunCell)
         } else {
@@ -544,7 +545,7 @@ impl RenderableCell for CodeCell {
 }
 
 impl RunnableCell for CodeCell {
-    fn run(&mut self, cx: &mut ViewContext<Self>) {
+    fn run(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         println!("Running code cell: {}", self.id);
     }
 
@@ -560,7 +561,7 @@ impl RunnableCell for CodeCell {
 }
 
 impl Render for CodeCell {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .size_full()
             // TODO: Move base cell render into trait impl so we don't have to repeat this
@@ -707,7 +708,7 @@ impl RenderableCell for RawCell {
 }
 
 impl Render for RawCell {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .size_full()
             // TODO: Move base cell render into trait impl so we don't have to repeat this

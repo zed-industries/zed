@@ -101,7 +101,7 @@ impl WindowFocusEvent {
     }
 }
 
-/// This is provided when subscribing for `ViewContext::on_focus_out` events.
+/// This is provided when subscribing for `Window::on_focus_out` events.
 pub struct FocusOutEvent {
     /// A weak focus handle representing what was blurred.
     pub blurred: WeakFocusHandle,

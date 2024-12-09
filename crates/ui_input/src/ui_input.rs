@@ -88,7 +88,7 @@ impl TextField {
         self
     }
 
-    pub fn set_disabled(&mut self, disabled: bool, cx: &mut ViewContext<Self>) {
+    pub fn set_disabled(&mut self, disabled: bool, model: &Model<Self>, cx: &mut AppContext) {
         self.disabled = disabled;
         self.editor
             .update(cx, |editor, _| editor.set_read_only(disabled))
@@ -100,7 +100,7 @@ impl TextField {
 }
 
 impl Render for TextField {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let theme_color = cx.theme().colors();
 

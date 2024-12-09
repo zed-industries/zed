@@ -9,7 +9,7 @@ use std::sync::Arc;
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
-    div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowBounds,
+    div, px, size, AnyView, AppContext, Bounds, Render, AppContext, VisualContext, WindowBounds,
     WindowOptions,
 };
 use log::LevelFilter;
@@ -118,7 +118,7 @@ impl StoryWrapper {
 }
 
 impl Render for StoryWrapper {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         div()
             .flex()
             .flex_col()

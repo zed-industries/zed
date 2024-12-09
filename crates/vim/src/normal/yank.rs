@@ -8,7 +8,6 @@ use crate::{
 };
 use collections::HashMap;
 use editor::{ClipboardSelection, Editor};
-use gpui::ViewContext;
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use settings::Settings;
@@ -20,7 +19,8 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
@@ -46,7 +46,13 @@ impl Vim {
         self.exit_temporary_normal(cx);
     }
 
-    pub fn yank_object(&mut self, object: Object, around: bool, cx: &mut ViewContext<Self>) {
+    pub fn yank_object(
+        &mut self,
+        object: Object,
+        around: bool,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -74,7 +80,8 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         self.copy_ranges(
             editor,
@@ -94,7 +101,8 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         self.copy_ranges(
             editor,
@@ -116,7 +124,8 @@ impl Vim {
         linewise: bool,
         is_yank: bool,
         selections: Vec<Range<Point>>,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         let buffer = editor.buffer().read(cx).snapshot(cx);
         let mut text = String::new();

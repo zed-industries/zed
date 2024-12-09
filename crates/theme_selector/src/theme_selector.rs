@@ -3,7 +3,7 @@ use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, UpdateGlobal, View,
-    ViewContext, VisualContext, WeakView,
+    AppContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};
@@ -18,14 +18,14 @@ actions!(theme_selector, [Reload]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
-        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace, model: &Model<>Workspace, _cx: &mut AppContext| {
             workspace.register_action(toggle);
         },
     )
     .detach();
 }
 
-pub fn toggle(workspace: &mut Workspace, toggle: &Toggle, cx: &mut ViewContext<Workspace>) {
+pub fn toggle(workspace: &mut Workspace, toggle: &Toggle, model: &Model<Workspace>, cx: &mut AppContext) {
     let fs = workspace.app_state().fs.clone();
     let telemetry = workspace.client().telemetry().clone();
     workspace.toggle_modal(cx, |cx| {
@@ -55,13 +55,13 @@ impl FocusableView for ThemeSelector {
 }
 
 impl Render for ThemeSelector {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
 
 impl ThemeSelector {
-    pub fn new(delegate: ThemeSelectorDelegate, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(delegate: ThemeSelectorDelegate, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
         Self { picker }
     }
@@ -84,7 +84,7 @@ impl ThemeSelectorDelegate {
         fs: Arc<dyn Fs>,
         telemetry: Arc<Telemetry>,
         themes_filter: Option<&Vec<String>>,
-        cx: &mut ViewContext<ThemeSelector>,
+        model: &Model<ThemeSelector>, cx: &mut AppContext,
     ) -> Self {
         let original_theme = cx.theme().clone();
 
@@ -131,7 +131,7 @@ impl ThemeSelectorDelegate {
         this
     }
 
-    fn show_selected_theme(&mut self, cx: &mut ViewContext<Picker<ThemeSelectorDelegate>>) {
+    fn show_selected_theme(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             let registry = ThemeRegistry::global(cx);
             match registry.get(&mat.string) {
@@ -176,7 +176,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         self.matches.len()
     }
 
-    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<ThemeSelectorDelegate>>) {
+    fn confirm(&mut self, _: bool, model: &Model<Picker>, cx: &mut AppContext) {
         self.selection_completed = true;
 
         let theme_name = cx.theme().name.clone();
@@ -197,7 +197,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
             .ok();
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<ThemeSelectorDelegate>>) {
+    fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         if !self.selection_completed {
             Self::set_theme(self.original_theme.clone(), cx);
             self.selection_completed = true;
@@ -215,7 +215,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        cx: &mut ViewContext<Picker<ThemeSelectorDelegate>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) {
         self.selected_index = ix;
         self.show_selected_theme(cx);
@@ -224,7 +224,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        cx: &mut ViewContext<Picker<ThemeSelectorDelegate>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> gpui::Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self
@@ -278,7 +278,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<>Picker, _cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let theme_match = &self.matches[ix];
 

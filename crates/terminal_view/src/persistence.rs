@@ -6,7 +6,7 @@ use gpui::{AsyncA, Model, Task, View, WeakView};
 use project::{terminals::TerminalKind, Project};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use ui::{Pixels, ViewContext, VisualContext as _};
+use ui::{AppContext, Pixels, VisualContext as _};
 use util::ResultExt as _;
 
 use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
@@ -151,7 +151,8 @@ fn populate_pane_items(
     pane: &mut Pane,
     items: Vec<View<TerminalView>>,
     active_item: Option<u64>,
-    cx: &mut ViewContext<'_, Pane>,
+    model: &Model<_>,
+    cx: &mut AppContext,
 ) {
     let mut item_index = pane.items_len();
     for item in items {

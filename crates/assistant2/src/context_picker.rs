@@ -46,7 +46,7 @@ impl PickerDelegate for ContextPickerDelegate {
         self.selected_ix
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         self.selected_ix = ix.min(self.filtered_entries.len().saturating_sub(1));
         cx.notify();
     }
@@ -55,7 +55,7 @@ impl PickerDelegate for ContextPickerDelegate {
         "Select a context source…".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(&mut self, query: String, model: &Model<Picker>, cx: &mut AppContext) -> Task<()> {
         let all_commands = self.all_entries.clone();
         cx.spawn(|this, mut cx| async move {
             let filtered_commands = cx
@@ -86,7 +86,7 @@ impl PickerDelegate for ContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if let Some(entry) = self.filtered_entries.get(self.selected_ix) {
             self.message_editor
                 .update(cx, |_message_editor, _cx| {
@@ -97,7 +97,7 @@ impl PickerDelegate for ContextPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, model: &Model<>Picker, _cx: &mut AppContext) {}
 
     fn editor_position(&self) -> PickerEditorPosition {
         PickerEditorPosition::End
@@ -107,7 +107,7 @@ impl PickerDelegate for ContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<>Picker, _cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let entry = self.filtered_entries.get(ix)?;
 

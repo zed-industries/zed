@@ -34,7 +34,7 @@ impl ActiveThread {
         workspace: WeakView<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         let subscriptions = vec![
             cx.observe(&thread, |_, _, cx| cx.notify()),
@@ -82,7 +82,7 @@ impl ActiveThread {
         self.last_error.take();
     }
 
-    fn push_message(&mut self, id: &MessageId, text: String, cx: &mut ViewContext<Self>) {
+    fn push_message(&mut self, id: &MessageId, text: String, model: &Model<Self>, cx: &mut AppContext) {
         let old_len = self.messages.len();
         self.messages.push(*id);
         self.list_state.splice(old_len..old_len, 1);
@@ -136,7 +136,7 @@ impl ActiveThread {
         &mut self,
         _: Model<Thread>,
         event: &ThreadEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         match event {
             ThreadEvent::ShowError(error) => {
@@ -192,7 +192,7 @@ impl ActiveThread {
         }
     }
 
-    fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_message(&self, ix: usize, model: &Model<Self>, cx: &mut AppContext) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();
@@ -236,7 +236,7 @@ impl ActiveThread {
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         list(self.list_state.clone()).flex_1()
     }
 }

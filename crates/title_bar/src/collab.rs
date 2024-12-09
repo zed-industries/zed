@@ -96,7 +96,11 @@ fn render_color_ribbon(color: Hsla) -> impl Element {
 }
 
 impl TitleBar {
-    pub(crate) fn render_collaborator_list(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    pub(crate) fn render_collaborator_list(
+        &self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let room = ActiveCall::global(cx).read(cx).room().cloned();
         let current_user = self.user_store.read(cx).current_user();
         let client = self.client.clone();
@@ -203,7 +207,8 @@ impl TitleBar {
         room: &Room,
         project_id: Option<u64>,
         current_user: &Arc<User>,
-        cx: &ViewContext<Self>,
+        window: &Model<Self>,
+        cx: &AppContext,
     ) -> Option<Div> {
         if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
             return None;
@@ -281,7 +286,11 @@ impl TitleBar {
         )
     }
 
-    pub(crate) fn render_call_controls(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
+    pub(crate) fn render_call_controls(
+        &self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Vec<AnyElement> {
         let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() else {
             return Vec::new();
         };

@@ -4,8 +4,8 @@ use anyhow::Result;
 use assistant_tool::ToolWorkingSet;
 use client::zed_urls;
 use gpui::{
-    prelude::*, px, svg, Action, AnyElement, AppContext, Asy EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Model, Pixels, Task, View, ViewContext, WeakView,
+    prelude::*, px, svg, Action, AnyElement, AppContext, EventEmitter,
+    FocusHandle, FocusableView, FontWeight, Model, Pixels, Task, View, AppContext, WeakView,
 
 };
 use language::LanguageRegistry;
@@ -25,7 +25,7 @@ use crate::{NewThread, OpenHistory, ToggleFocus, ToggleModelSelector};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
-        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace, model: &Model<>Workspace, _cx: &mut AppContext| {
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
                 workspace.toggle_panel_focus::<AssistantPanel>(cx);
             });
@@ -76,7 +76,7 @@ impl AssistantPanel {
         workspace: &Workspace,
         thread_store: Model<ThreadStore>,
         tools: Arc<ToolWorkingSet>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let language_registry = workspace.project().read(cx).languages().clone();
@@ -111,7 +111,7 @@ impl AssistantPanel {
         self.local_timezone
     }
 
-    fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
+    fn new_thread(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let thread = self
             .thread_store
             .update(cx, |this, cx| this.create_thread(cx));
@@ -130,7 +130,7 @@ impl AssistantPanel {
         self.message_editor.focus_handle(cx).focus(cx);
     }
 
-    pub(crate) fn open_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
+    pub(crate) fn open_thread(&mut self, thread_id: &ThreadId, model: &Model<Self>, cx: &mut AppContext) {
         let Some(thread) = self
             .thread_store
             .update(cx, |this, cx| this.open_thread(thread_id, cx))
@@ -152,7 +152,7 @@ impl AssistantPanel {
         self.message_editor.focus_handle(cx).focus(cx);
     }
 
-    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
+    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, model: &Model<Self>, cx: &mut AppContext) {
         self.thread_store
             .update(cx, |this, cx| this.delete_thread(thread_id, cx));
     }
@@ -182,15 +182,15 @@ impl Panel for AssistantPanel {
         true
     }
 
-    fn set_position(&mut self, _position: DockPosition, _cx: &mut ViewContext<Self>) {}
+    fn set_position(&mut self, _position: DockPosition, model: &Model<>Self, _cx: &mut AppContext) {}
 
     fn size(&self, _window: &Window, cx: &AppContext) -> Pixels {
         px(640.)
     }
 
-    fn set_size(&mut self, _size: Option<Pixels>, _cx: &mut ViewContext<Self>) {}
+    fn set_size(&mut self, _size: Option<Pixels>, model: &Model<>Self, _cx: &mut AppContext) {}
 
-    fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
+    fn set_active(&mut self, _active: bool, model: &Model<>Self, _cx: &mut AppContext) {}
 
     fn remote_id() -> Option<proto::PanelId> {
         Some(proto::PanelId::AssistantPanel)
@@ -210,7 +210,7 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-    fn render_toolbar(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
         h_flex()
@@ -281,7 +281,7 @@ impl AssistantPanel {
             )
     }
 
-    fn render_language_model_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_language_model_selector(&self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
 
@@ -332,7 +332,7 @@ impl AssistantPanel {
         )
     }
 
-    fn render_active_thread_or_empty_state(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_active_thread_or_empty_state(&self, model: &Model<Self>, cx: &mut AppContext) -> AnyElement {
         if self.thread.read(cx).is_empty() {
             return self.render_thread_empty_state(cx).into_any_element();
         }
@@ -340,7 +340,7 @@ impl AssistantPanel {
         self.thread.clone().into_any()
     }
 
-    fn render_thread_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_thread_empty_state(&self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let recent_threads = self
             .thread_store
             .update(cx, |this, cx| this.recent_threads(3, cx));
@@ -432,7 +432,7 @@ impl AssistantPanel {
             })
     }
 
-    fn render_last_error(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+    fn render_last_error(&self, model: &Model<Self>, cx: &mut AppContext) -> Option<AnyElement> {
         let last_error = self.thread.read(cx).last_error()?;
 
         Some(
@@ -458,7 +458,7 @@ impl AssistantPanel {
         )
     }
 
-    fn render_payment_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_payment_required_error(&self, model: &Model<Self>, cx: &mut AppContext) -> AnyElement {
         const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
 
         v_flex()
@@ -504,7 +504,7 @@ impl AssistantPanel {
             .into_any()
     }
 
-    fn render_max_monthly_spend_reached_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_max_monthly_spend_reached_error(&self, model: &Model<Self>, cx: &mut AppContext) -> AnyElement {
         const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
 
         v_flex()
@@ -555,7 +555,7 @@ impl AssistantPanel {
     fn render_error_message(
         &self,
         error_message: &SharedString,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> AnyElement {
         v_flex()
             .gap_0p5()
@@ -595,7 +595,7 @@ impl AssistantPanel {
 }
 
 impl Render for AssistantPanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .key_context("AssistantPanel2")
             .justify_between()

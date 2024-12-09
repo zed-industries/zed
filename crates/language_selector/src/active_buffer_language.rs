@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::{div, IntoElement, ParentElement, Render, Subscription, View, ViewContext, WeakView};
+use gpui::{div, IntoElement, ParentElement, Render, Subscription, View, AppContext, WeakView};
 use language::LanguageName;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
@@ -21,7 +21,7 @@ impl ActiveBufferLanguage {
         }
     }
 
-    fn update_language(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+    fn update_language(&mut self, editor: View<Editor>, model: &Model<Self>, cx: &mut AppContext) {
         self.active_language = Some(None);
 
         let editor = editor.read(cx);
@@ -36,7 +36,7 @@ impl ActiveBufferLanguage {
 }
 
 impl Render for ActiveBufferLanguage {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         div().when_some(self.active_language.as_ref(), |el, active_language| {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()
@@ -64,7 +64,8 @@ impl StatusItemView for ActiveBufferLanguage {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             self._observe_active_editor = Some(cx.observe(&editor, Self::update_language));

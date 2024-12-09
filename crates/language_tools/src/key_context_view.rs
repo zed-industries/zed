@@ -8,7 +8,7 @@ use settings::get_key_equivalents;
 use ui::{
     div, h_flex, px, v_flex, ButtonCommon, Clickable, FluentBuilder, InteractiveElement, Label,
     LabelCommon, LabelSize, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    ViewContext, VisualContext,
+    AppContext, VisualContext,
 };
 use ui::{Button, ButtonStyle};
 use workspace::Item;
@@ -36,7 +36,7 @@ struct KeyContextView {
 }
 
 impl KeyContextView {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(model: &Model<Self>, cx: &mut AppContext) -> Self {
         let sub1 = cx.observe_keystrokes(|this, e, cx| {
             let mut pending = this.pending_keystrokes.take().unwrap_or_default();
             pending.push(e.keystroke.clone());
@@ -115,7 +115,7 @@ impl FocusableView for KeyContextView {
     }
 }
 impl KeyContextView {
-    fn set_context_stack(&mut self, stack: Vec<KeyContext>, cx: &mut ViewContext<Self>) {
+    fn set_context_stack(&mut self, stack: Vec<KeyContext>, model: &Model<Self>, cx: &mut AppContext) {
         self.context_stack = stack;
         cx.notify()
     }
@@ -156,7 +156,7 @@ impl Item for KeyContextView {
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Option<gpui::View<Self>>
     where
         Self: Sized,
@@ -166,7 +166,7 @@ impl Item for KeyContextView {
 }
 
 impl Render for KeyContextView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl ui::IntoElement {
         use itertools::Itertools;
         let key_equivalents = get_key_equivalents(cx.keyboard_layout());
         v_flex()

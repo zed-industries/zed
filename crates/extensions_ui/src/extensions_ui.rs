@@ -14,9 +14,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, Action, AppContext, ClipboardItem, EventEmitter, Flatten, FocusableView,
-    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView,
+    actions, uniform_list, Action, AppContext, AppContext, ClipboardItem, EventEmitter, Flatten,
+    FocusableView, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    UniformListScrollHandle, View, VisualContext, WeakView,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -196,8 +196,8 @@ pub struct ExtensionsPage {
 }
 
 impl ExtensionsPage {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
-        cx.new_view(|cx: &mut ViewContext<Self>| {
+    pub fn new(workspace: &Workspace, model: &Model<Workspace>, cx: &mut AppContext) -> View<Self> {
+        cx.new_view(|model: &Model<Self>, cx: &mut AppContext| {
             let store = ExtensionStore::global(cx);
             let workspace_handle = workspace.weak_handle();
             let subscriptions = [
@@ -242,7 +242,8 @@ impl ExtensionsPage {
         &mut self,
         workspace: WeakView<Workspace>,
         extension_id: &str,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let extension_store = ExtensionStore::global(cx).read(cx);
         let themes = extension_store
@@ -264,7 +265,7 @@ impl ExtensionsPage {
     }
 
     /// Returns whether a dev extension currently exists for the extension with the given ID.
-    fn dev_extension_exists(extension_id: &str, cx: &mut ViewContext<Self>) -> bool {
+    fn dev_extension_exists(extension_id: &str, model: &Model<Self>, cx: &mut AppContext) -> bool {
         let extension_store = ExtensionStore::global(cx).read(cx);
 
         extension_store
@@ -272,7 +273,11 @@ impl ExtensionsPage {
             .any(|dev_extension| dev_extension.id.as_ref() == extension_id)
     }
 
-    fn extension_status(extension_id: &str, cx: &mut ViewContext<Self>) -> ExtensionStatus {
+    fn extension_status(
+        extension_id: &str,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> ExtensionStatus {
         let extension_store = ExtensionStore::global(cx).read(cx);
 
         match extension_store.outstanding_operations().get(extension_id) {
@@ -286,7 +291,7 @@ impl ExtensionsPage {
         }
     }
 
-    fn filter_extension_entries(&mut self, cx: &mut ViewContext<Self>) {
+    fn filter_extension_entries(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.filtered_remote_extension_indices.clear();
         self.filtered_remote_extension_indices.extend(
             self.remote_extension_entries
@@ -309,7 +314,12 @@ impl ExtensionsPage {
         cx.notify();
     }
 
-    fn fetch_extensions(&mut self, search: Option<String>, cx: &mut ViewContext<Self>) {
+    fn fetch_extensions(
+        &mut self,
+        search: Option<String>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.is_fetching_extensions = true;
         cx.notify();
 
@@ -368,7 +378,8 @@ impl ExtensionsPage {
     fn render_extensions(
         &mut self,
         range: Range<usize>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Vec<ExtensionCard> {
         let dev_extension_entries_len = if self.filter.include_dev_extensions() {
             self.dev_extension_entries.len()
@@ -393,7 +404,8 @@ impl ExtensionsPage {
     fn render_dev_extension(
         &self,
         extension: &ExtensionManifest,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> ExtensionCard {
         let status = Self::extension_status(&extension.id, cx);
 
@@ -501,7 +513,8 @@ impl ExtensionsPage {
     fn render_remote_extension(
         &self,
         extension: &ExtensionMetadata,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> ExtensionCard {
         let this = cx.view().clone();
         let status = Self::extension_status(&extension.id, cx);
@@ -658,7 +671,12 @@ impl ExtensionsPage {
         context_menu
     }
 
-    fn show_extension_version_list(&mut self, extension_id: Arc<str>, cx: &mut ViewContext<Self>) {
+    fn show_extension_version_list(
+        &mut self,
+        extension_id: Arc<str>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -697,7 +715,8 @@ impl ExtensionsPage {
         extension: &ExtensionMetadata,
         status: &ExtensionStatus,
         has_dev_extension: bool,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> (Button, Option<Button>) {
         let is_compatible =
             extension_host::is_version_compatible(ReleaseChannel::global(cx), extension);
@@ -797,7 +816,7 @@ impl ExtensionsPage {
         }
     }
 
-    fn render_search(&self, cx: &mut ViewContext<Self>) -> Div {
+    fn render_search(&self, model: &Model<Self>, cx: &mut AppContext) -> Div {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
 
@@ -822,7 +841,12 @@ impl ExtensionsPage {
         )
     }
 
-    fn render_text_input(&self, editor: &View<Editor>, cx: &ViewContext<Self>) -> impl IntoElement {
+    fn render_text_input(
+        &self,
+        editor: &View<Editor>,
+        window: &Model<Self>,
+        cx: &AppContext,
+    ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if editor.read(cx).read_only(cx) {
@@ -854,7 +878,8 @@ impl ExtensionsPage {
         &mut self,
         _: View<Editor>,
         event: &editor::EditorEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
@@ -863,7 +888,7 @@ impl ExtensionsPage {
         }
     }
 
-    fn fetch_extensions_debounced(&mut self, cx: &mut ViewContext<'_, ExtensionsPage>) {
+    fn fetch_extensions_debounced(&mut self, model: &Model<_>, cx: &mut AppContext) {
         self.extension_fetch_task = Some(cx.spawn(|this, mut cx| async move {
             let search = this
                 .update(&mut cx, |this, cx| this.search_query(cx))
@@ -898,7 +923,7 @@ impl ExtensionsPage {
         }
     }
 
-    fn render_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_empty_state(&self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
 
         let message = if self.is_fetching_extensions {
@@ -935,7 +960,8 @@ impl ExtensionsPage {
     fn update_settings<T: Settings>(
         &mut self,
         selection: &Selection,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
         callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
     ) {
         if let Some(workspace) = self.workspace.upgrade() {
@@ -953,7 +979,7 @@ impl ExtensionsPage {
         }
     }
 
-    fn refresh_feature_upsells(&mut self, cx: &mut ViewContext<Self>) {
+    fn refresh_feature_upsells(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let Some(search) = self.search_query(cx) else {
             self.upsells.clear();
             return;
@@ -977,7 +1003,7 @@ impl ExtensionsPage {
         }
     }
 
-    fn render_feature_upsells(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_feature_upsells(&self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let upsells_count = self.upsells.len();
 
         v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
@@ -1053,7 +1079,7 @@ impl ExtensionsPage {
 }
 
 impl Render for ExtensionsPage {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -1181,7 +1207,8 @@ impl Item for ExtensionsPage {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _: &mut ViewContext<Self>,
+        _: &Model<Self>,
+        _: &mut AppContext,
     ) -> Option<View<Self>> {
         None
     }

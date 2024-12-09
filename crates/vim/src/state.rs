@@ -15,7 +15,7 @@ use gpui::{
 use language::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use ui::{SharedString, ViewContext};
+use ui::SharedString;
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -218,7 +218,8 @@ impl VimGlobals {
         register: Option<char>,
         is_yank: bool,
         linewise: bool,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) {
         if let Some(register) = register {
             let lower = register.to_lowercase().next().unwrap_or(register);
@@ -292,7 +293,8 @@ impl VimGlobals {
         &mut self,
         register: Option<char>,
         editor: Option<&mut Editor>,
-        cx: &mut ViewContext<Editor>,
+        model: &Model<Editor>,
+        cx: &mut AppContext,
     ) -> Option<Register> {
         let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
@@ -337,7 +339,7 @@ impl VimGlobals {
         }
     }
 
-    fn system_clipboard_is_newer(&self, cx: &ViewContext<Editor>) -> bool {
+    fn system_clipboard_is_newer(&self, window: &Model<Editor>, cx: &AppContext) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
             if let Some(last_state) = &self.last_yank {
                 Some(last_state.as_ref()) != item.text().as_deref()

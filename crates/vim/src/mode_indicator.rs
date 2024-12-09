@@ -1,4 +1,4 @@
-use gpui::{div, Element, Render, Subscription, View, ViewContext, WeakView};
+use gpui::{div, Element, Render, Subscription, View, AppContext, WeakView};
 use itertools::Itertools;
 use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
@@ -13,7 +13,7 @@ pub struct ModeIndicator {
 
 impl ModeIndicator {
     /// Construct a new mode indicator in this window.
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(model: &Model<Self>, cx: &mut AppContext) -> Self {
         cx.observe_pending_input(|this, cx| {
             this.update_pending_keys(cx);
             cx.notify();
@@ -47,7 +47,7 @@ impl ModeIndicator {
         }
     }
 
-    fn update_pending_keys(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_pending_keys(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.pending_keys = cx.pending_input_keystrokes().map(|keystrokes| {
             keystrokes
                 .iter()
@@ -60,7 +60,7 @@ impl ModeIndicator {
         self.vim.as_ref().and_then(|vim| vim.upgrade())
     }
 
-    fn current_operators_description(&self, vim: View<Vim>, cx: &mut ViewContext<Self>) -> String {
+    fn current_operators_description(&self, vim: View<Vim>, model: &Model<Self>, cx: &mut AppContext) -> String {
         let recording = Vim::globals(cx)
             .recording_register
             .map(|reg| format!("recording @{reg} "))
@@ -90,7 +90,7 @@ impl ModeIndicator {
 }
 
 impl Render for ModeIndicator {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let vim = self.vim();
         let Some(vim) = vim else {
             return div().into_any();
@@ -119,7 +119,7 @@ impl StatusItemView for ModeIndicator {
     fn set_active_pane_item(
         &mut self,
         _active_pane_item: Option<&dyn ItemHandle>,
-        _cx: &mut ViewContext<Self>,
+        model: &Model<>Self, _cx: &mut AppContext,
     ) {
     }
 }

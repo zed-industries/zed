@@ -6,8 +6,7 @@ use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, svg, Action, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    
+    ParentElement, Render, Styled, Subscription, Task, View, AppContext, VisualContext, WeakView,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -69,7 +68,7 @@ pub struct WelcomePage {
 }
 
 impl Render for WelcomePage {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -342,7 +341,7 @@ impl Render for WelcomePage {
 }
 
 impl WelcomePage {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
+    pub fn new(workspace: &Workspace, model: &Model<Workspace>, cx: &mut AppContext) -> View<Self> {
         let this = cx.new_view(|cx| {
             cx.on_release(|this: &mut Self, _, _| {
                 this.telemetry
@@ -372,7 +371,7 @@ impl WelcomePage {
     fn update_settings<T: Settings>(
         &mut self,
         selection: &Selection,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
         callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
     ) {
         if let Some(workspace) = self.workspace.upgrade() {
@@ -417,7 +416,7 @@ impl Item for WelcomePage {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Option<View<Self>> {
         Some(cx.new_view(|cx| WelcomePage {
             focus_handle: cx.focus_handle(),

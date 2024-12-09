@@ -7,8 +7,8 @@ use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
-    div, surface, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
+    div, surface, AppContext, AppContext, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, ParentElement, Render, SharedString, Styled, Task, View, VisualContext,
 };
 use std::sync::{Arc, Weak};
 use ui::{prelude::*, Icon, IconName};
@@ -32,7 +32,8 @@ impl SharedScreen {
         track: Arc<RemoteVideoTrack>,
         peer_id: PeerId,
         user: Arc<User>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         cx.focus_handle();
         let mut frames = track.frames();
@@ -65,7 +66,7 @@ impl FocusableView for SharedScreen {
     }
 }
 impl Render for SharedScreen {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         div()
             .bg(cx.theme().colors().editor_background)
             .track_focus(&self.focus)
@@ -86,7 +87,7 @@ impl Item for SharedScreen {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
-    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+    fn deactivated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(nav_history) = self.nav_history.as_mut() {
             nav_history.push::<()>(None, cx);
         }
@@ -104,14 +105,15 @@ impl Item for SharedScreen {
         None
     }
 
-    fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
+    fn set_nav_history(&mut self, history: ItemNavHistory, _: &Model<Self>, _: &mut AppContext) {
         self.nav_history = Some(history);
     }
 
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<View<Self>> {
         let track = self.track.upgrade()?;
         Some(cx.new_view(|cx| Self::new(track, self.peer_id, self.user.clone(), cx)))

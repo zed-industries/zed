@@ -20,7 +20,7 @@ use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
     h_flex, relative, tooltip_container, v_flex, Checkbox, Clickable, Color, FluentBuilder,
     IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview,
-    Selection, StatefulInteractiveElement, StyledExt, StyledImage, ViewContext, VisibleOnHover,
+    Selection, StatefulInteractiveElement, StyledExt, StyledImage, AppContext, VisibleOnHover,
     VisualContext as _,
 };
 use workspace::Workspace;
@@ -586,7 +586,7 @@ impl InteractiveMarkdownElementTooltip {
 }
 
 impl Render for InteractiveMarkdownElementTooltip {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         tooltip_container(cx, |el, _| {
             let secondary_modifier = Keystroke {
                 modifiers: Modifiers::secondary_key(),

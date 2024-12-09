@@ -5,7 +5,7 @@ pub struct ApplicationMenu {
 }
 
 impl ApplicationMenu {
-    pub fn new(_: &mut ViewContext<Self>) -> Self {
+    pub fn new(_: &Model<Self>, _: &mut AppContext) -> Self {
         Self {
             context_menu_handle: PopoverMenuHandle::default(),
         }
@@ -13,7 +13,7 @@ impl ApplicationMenu {
 }
 
 impl Render for ApplicationMenu {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         PopoverMenu::new("application-menu")
             .menu(move |cx| {
                 ContextMenu::build(cx, move |menu, cx| {

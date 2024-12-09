@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use editor::{scroll::Autoscroll, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
-use gpui::{impl_actions, ViewContext};
+use gpui::impl_actions;
 use language::{Bias, Point};
 use serde::Deserialize;
 
@@ -23,7 +23,7 @@ struct Decrement {
 
 impl_actions!(vim, [Increment, Decrement]);
 
-pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
     Vim::action(editor, cx, |vim, action: &Increment, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
@@ -39,7 +39,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 }
 
 impl Vim {
-    fn increment(&mut self, mut delta: i64, step: i32, cx: &mut ViewContext<Self>) {
+    fn increment(&mut self, mut delta: i64, step: i32, model: &Model<Self>, cx: &mut AppContext) {
         self.store_visual_marks(cx);
         self.update_editor(cx, |vim, editor, cx| {
             let mut edits = Vec::new();

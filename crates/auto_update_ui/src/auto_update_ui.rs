@@ -2,7 +2,7 @@ mod update_notification;
 
 use auto_update::AutoUpdater;
 use editor::{Editor, MultiBuffer};
-use gpui::{actions, prelude::*, AppContext, SharedString, View, ViewContext};
+use gpui::{actions, prelude::*, AppContext, Model, SharedString, View};
 use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use release_channel::{AppVersion, ReleaseChannel};
@@ -31,7 +31,11 @@ struct ReleaseNotesBody {
     release_notes: String,
 }
 
-fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+fn view_release_notes_locally(
+    workspace: &mut Workspace,
+    model: &Model<Workspace>,
+    cx: &mut AppContext,
+) {
     let release_channel = ReleaseChannel::global(cx);
 
     let url = match release_channel {
@@ -117,7 +121,7 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
         .detach();
 }
 
-pub fn notify_of_any_new_update(cx: &mut ViewContext<Workspace>) -> Option<()> {
+pub fn notify_of_any_new_update(model: &Model<Workspace>, cx: &mut AppContext) -> Option<()> {
     let updater = AutoUpdater::get(cx)?;
     let version = updater.read(cx).current_version();
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);

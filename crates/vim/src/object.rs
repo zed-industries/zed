@@ -13,7 +13,7 @@ use editor::{
 
 use itertools::Itertools;
 
-use gpui::{actions, impl_actions, ViewContext};
+use gpui::{actions, impl_actions};
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
@@ -75,7 +75,7 @@ actions!(
     ]
 );
 
-pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
     Vim::action(
         editor,
         cx,
@@ -139,7 +139,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 }
 
 impl Vim {
-    fn object(&mut self, object: Object, cx: &mut ViewContext<Self>) {
+    fn object(&mut self, object: Object, model: &Model<Self>, cx: &mut AppContext) {
         match self.mode {
             Mode::Normal => self.normal_object(object, cx),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => self.visual_object(object, cx),

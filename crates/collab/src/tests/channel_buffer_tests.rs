@@ -9,7 +9,7 @@ use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
-use gpui::{BackgroundExecutor, Model, TestAppContext, ViewContext};
+use gpui::{AppContext, BackgroundExecutor, Model, Model, TestAppContext};
 use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 use serde_json::json;
 use std::ops::Range;
@@ -294,7 +294,8 @@ async fn test_channel_notes_participant_indices(
 fn assert_remote_selections(
     editor: &mut Editor,
     expected_selections: &[(Option<ParticipantIndex>, Range<usize>)],
-    cx: &mut ViewContext<Editor>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
 ) {
     let snapshot = editor.snapshot(cx);
     let range = Anchor::min()..Anchor::max();

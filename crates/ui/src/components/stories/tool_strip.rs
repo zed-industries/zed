@@ -6,7 +6,7 @@ use crate::{prelude::*, ToolStrip, Tooltip};
 pub struct ToolStripStory;
 
 impl Render for ToolStripStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<ToolStrip>())
             .child(

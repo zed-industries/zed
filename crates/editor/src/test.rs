@@ -5,7 +5,7 @@ use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
 };
-use gpui::{Context, Font, FontFeatures, FontStyle, FontWeight, Model, Pixels, ViewContext};
+use gpui::{Context, Font, FontFeatures, FontStyle, FontWeight, Model, Pixels};
 use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};
 
@@ -57,7 +57,12 @@ pub fn marked_display_snapshot(
     (snapshot, markers)
 }
 
-pub fn select_ranges(editor: &mut Editor, marked_text: &str, cx: &mut ViewContext<Editor>) {
+pub fn select_ranges(
+    editor: &mut Editor,
+    marked_text: &str,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
+) {
     let (unmarked_text, text_ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), unmarked_text);
     editor.change_selections(None, cx, |s| s.select_ranges(text_ranges));
@@ -67,7 +72,8 @@ pub fn select_ranges(editor: &mut Editor, marked_text: &str, cx: &mut ViewContex
 pub fn assert_text_with_selections(
     editor: &mut Editor,
     marked_text: &str,
-    cx: &mut ViewContext<Editor>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
 ) {
     let (unmarked_text, text_ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), unmarked_text);
@@ -77,14 +83,19 @@ pub fn assert_text_with_selections(
 // RA thinks this is dead code even though it is used in a whole lot of tests
 #[allow(dead_code)]
 #[cfg(any(test, feature = "test-support"))]
-pub(crate) fn build_editor(buffer: Model<MultiBuffer>, cx: &mut ViewContext<Editor>) -> Editor {
+pub(crate) fn build_editor(
+    buffer: Model<MultiBuffer>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
+) -> Editor {
     Editor::new(EditorMode::Full, buffer, None, true, cx)
 }
 
 pub(crate) fn build_editor_with_project(
     project: Model<Project>,
     buffer: Model<MultiBuffer>,
-    cx: &mut ViewContext<Editor>,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
 ) -> Editor {
     Editor::new(EditorMode::Full, buffer, Some(project), true, cx)
 }

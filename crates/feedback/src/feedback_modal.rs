@@ -7,8 +7,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
 use gpui::{
-    div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    PromptLevel, Render, Task, View, ViewContext,
+    div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, Model,
+    PromptLevel, Render, Task,
 };
 use http_client::HttpClient;
 use language::Buffer;
@@ -86,7 +86,7 @@ impl FocusableView for FeedbackModal {
 impl EventEmitter<DismissEvent> for FeedbackModal {}
 
 impl ModalView for FeedbackModal {
-    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> DismissDecision {
+    fn on_before_dismiss(&mut self, model: &Model<Self>, cx: &mut AppContext) -> DismissDecision {
         self.update_email_in_store(cx);
 
         if self.dismiss_modal {
@@ -116,7 +116,7 @@ impl ModalView for FeedbackModal {
 }
 
 impl FeedbackModal {
-    pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    pub fn register(workspace: &mut Workspace, model: &Model<Workspace>, cx: &mut AppContext) {
         let _handle = cx.view().downgrade();
         workspace.register_action(move |workspace, _: &GiveFeedback, cx| {
             workspace
@@ -154,7 +154,8 @@ impl FeedbackModal {
         system_specs: SystemSpecs,
         project: Model<Project>,
         buffer: Model<Buffer>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         let email_address_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
@@ -206,7 +207,7 @@ impl FeedbackModal {
         }
     }
 
-    pub fn submit(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
+    pub fn submit(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<anyhow::Result<()>> {
         let feedback_text = self.feedback_editor.read(cx).text(cx).trim().to_string();
         let email = self.email_address_editor.read(cx).text_option(cx);
 
@@ -312,7 +313,7 @@ impl FeedbackModal {
         Ok(())
     }
 
-    fn update_submission_state(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_submission_state(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if self.awaiting_submission() {
             return;
         }
@@ -343,7 +344,7 @@ impl FeedbackModal {
         }
     }
 
-    fn update_email_in_store(&self, cx: &mut ViewContext<Self>) {
+    fn update_email_in_store(&self, model: &Model<Self>, cx: &mut AppContext) {
         let email = self.email_address_editor.read(cx).text_option(cx);
 
         cx.spawn(|_, _| async move {
@@ -395,13 +396,13 @@ impl FeedbackModal {
         matches!(self.submission_state, Some(SubmissionState::CanSubmit))
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         cx.emit(DismissEvent)
     }
 }
 
 impl Render for FeedbackModal {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         self.update_submission_state(cx);
 
         let submit_button_text = if self.awaiting_submission() {

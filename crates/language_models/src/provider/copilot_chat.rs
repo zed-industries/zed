@@ -25,7 +25,7 @@ use strum::IntoEnumIterator;
 use ui::{
     div, h_flex, v_flex, Button, ButtonCommon, Clickable, Color, Context, FixedWidth, Icon,
     IconName, IconPosition, IconSize, IntoElement, Label, LabelCommon, ParentElement, Styled,
-    ViewContext, VisualContext, 
+    AppContext, VisualContext, 
 };
 
 use super::anthropic::count_anthropic_tokens;
@@ -303,7 +303,7 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    pub fn new(state: Model<State>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(state: Model<State>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let copilot = Copilot::global(cx);
 
         Self {
@@ -320,7 +320,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         if self.state.read(cx).is_authenticated(cx) {
             const LABEL: &str = "Authorized.";
             h_flex()

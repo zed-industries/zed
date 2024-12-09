@@ -1,6 +1,6 @@
 use gpui::{
-    div, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
-    SemanticVersion, StatefulInteractiveElement, Styled, ViewContext, WeakView,
+    div, AppContext, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ParentElement,
+    Render, SemanticVersion, StatefulInteractiveElement, Styled, WeakView,
 };
 use menu::Cancel;
 use release_channel::ReleaseChannel;
@@ -18,7 +18,7 @@ pub struct UpdateNotification {
 impl EventEmitter<DismissEvent> for UpdateNotification {}
 
 impl Render for UpdateNotification {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let app_name = ReleaseChannel::global(cx).display_name();
 
         v_flex()
@@ -62,7 +62,7 @@ impl UpdateNotification {
         Self { version, workspace }
     }
 
-    pub fn dismiss(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+    pub fn dismiss(&mut self, _: &Cancel, model: &Model<Self>, cx: &mut AppContext) {
         cx.emit(DismissEvent);
     }
 }

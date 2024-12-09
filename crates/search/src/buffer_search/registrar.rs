@@ -1,4 +1,5 @@
-use gpui::{div, Action, Div, InteractiveElement, View, ViewContext};
+use gpui::{div, Action, Div, InteractiveElement, Model};
+use ui::AppContext;
 use workspace::Workspace;
 
 use crate::BufferSearchBar;
@@ -8,22 +9,32 @@ pub trait SearchActionsRegistrar {
     fn register_handler<A: Action>(&mut self, callback: impl ActionExecutor<A>);
 }
 
-type SearchBarActionCallback<A> = fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>);
+type SearchBarActionCallback<A> =
+    fn(&mut BufferSearchBar, &A, &Model<BufferSearchBar>, &mut AppContext);
 
 type GetSearchBar<T> =
-    for<'a, 'b> fn(&'a T, &'a mut ViewContext<'b, T>) -> Option<View<BufferSearchBar>>;
+    for<'a, 'b, 'c> fn(&'a T, &'b Model<T>, &'c mut AppContext) -> Option<View<BufferSearchBar>>;
 
 /// Registers search actions on a div that can be taken out.
-pub struct DivRegistrar<'a, 'b, T: 'static> {
+pub struct DivRegistrar<'a, 'b, 'c, T: 'static> {
     div: Option<Div>,
-    cx: &'a mut ViewContext<'b, T>,
+    model: &'a Model<T>,
+    window: &'b mut Window,
+    cx: &'c mut AppContext,
     search_getter: GetSearchBar<T>,
 }
 
-impl<'a, 'b, T: 'static> DivRegistrar<'a, 'b, T> {
-    pub fn new(search_getter: GetSearchBar<T>, cx: &'a mut ViewContext<'b, T>) -> Self {
+impl<'a, 'b, 'c, T: 'static> DivRegistrar<'a, 'b, 'c, T> {
+    pub fn new(
+        search_getter: GetSearchBar<T>,
+        window: &'a mut Window,
+        model: &'a Model<T>,
+        cx: &'b mut AppContext,
+    ) -> Self {
         Self {
             div: Some(div()),
+            model,
+            window,
             cx,
             search_getter,
         }
@@ -94,7 +105,8 @@ pub trait ActionExecutor<A: Action>: 'static + Clone {
         &self,
         search_bar: &mut BufferSearchBar,
         action: &A,
-        cx: &mut ViewContext<BufferSearchBar>,
+        model: &Model<BufferSearchBar>,
+        cx: &mut AppContext,
     ) -> DidHandleAction;
 }
 
@@ -111,7 +123,8 @@ impl<A: Action> ActionExecutor<A> for ForDismissed<A> {
         &self,
         search_bar: &mut BufferSearchBar,
         action: &A,
-        cx: &mut ViewContext<BufferSearchBar>,
+        model: &Model<BufferSearchBar>,
+        cx: &mut AppContext,
     ) -> DidHandleAction {
         if search_bar.is_dismissed() {
             self.0(search_bar, action, cx);
@@ -135,7 +148,8 @@ impl<A: Action> ActionExecutor<A> for ForDeployed<A> {
         &self,
         search_bar: &mut BufferSearchBar,
         action: &A,
-        cx: &mut ViewContext<BufferSearchBar>,
+        model: &Model<BufferSearchBar>,
+        cx: &mut AppContext,
     ) -> DidHandleAction {
         if search_bar.is_dismissed() || search_bar.active_searchable_item.is_none() {
             false
@@ -160,7 +174,8 @@ impl<A: Action> ActionExecutor<A> for WithResults<A> {
         &self,
         search_bar: &mut BufferSearchBar,
         action: &A,
-        cx: &mut ViewContext<BufferSearchBar>,
+        model: &Model<BufferSearchBar>,
+        cx: &mut AppContext,
     ) -> DidHandleAction {
         if search_bar.active_match_index.is_some() {
             self.0(search_bar, action, cx);

@@ -73,7 +73,7 @@ impl PickerDelegate for SlashCommandDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         self.selected_index = ix.min(self.filtered_commands.len().saturating_sub(1));
         cx.notify();
     }
@@ -82,7 +82,7 @@ impl PickerDelegate for SlashCommandDelegate {
         "Select a command...".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(&mut self, query: String, model: &Model<Picker>, cx: &mut AppContext) -> Task<()> {
         let all_commands = self.all_commands.clone();
         cx.spawn(|this, mut cx| async move {
             let filtered_commands = cx
@@ -139,7 +139,7 @@ impl PickerDelegate for SlashCommandDelegate {
         ret
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if let Some(command) = self.filtered_commands.get(self.selected_index) {
             match command {
                 SlashCommandEntry::Info(info) => {
@@ -157,7 +157,7 @@ impl PickerDelegate for SlashCommandDelegate {
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, model: &Model<>Picker, _cx: &mut AppContext) {}
 
     fn editor_position(&self) -> PickerEditorPosition {
         PickerEditorPosition::End
@@ -167,7 +167,7 @@ impl PickerDelegate for SlashCommandDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>, cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let command_info = self.filtered_commands.get(ix)?;
 

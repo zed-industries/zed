@@ -14,9 +14,9 @@ use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    actions, Action, AnyElement, AppContext, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, KeyContext, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    Styled, Task, View, ViewContext, VisualContext, WeakView,
+    Styled, Task, View, VisualContext, WeakView,
 };
 use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
@@ -45,7 +45,11 @@ use workspace::{
 actions!(file_finder, [SelectPrev, ToggleMenu]);
 
 impl ModalView for FileFinder {
-    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> workspace::DismissDecision {
+    fn on_before_dismiss(
+        &mut self,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> workspace::DismissDecision {
         let submenu_focused = self.picker.update(cx, |picker, cx| {
             picker.delegate.popover_menu_handle.is_focused(cx)
         });
@@ -71,7 +75,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl FileFinder {
-    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
         workspace.register_action(|workspace, action: &workspace::ToggleFileFinder, cx| {
             let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
                 Self::open(workspace, action.separate_history, cx).detach();
@@ -90,7 +94,8 @@ impl FileFinder {
     fn open(
         workspace: &mut Workspace,
         separate_history: bool,
-        cx: &mut ViewContext<Workspace>,
+        model: &Model<Workspace>,
+        cx: &mut AppContext,
     ) -> Task<()> {
         let project = workspace.project().read(cx);
         let fs = project.fs();
@@ -155,7 +160,7 @@ impl FileFinder {
         })
     }
 
-    fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
+    fn new(delegate: FileFinderDelegate, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
@@ -171,7 +176,8 @@ impl FileFinder {
     fn handle_modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         let Some(init_modifiers) = self.init_modifiers.take() else {
             return;
@@ -184,12 +190,12 @@ impl FileFinder {
         }
     }
 
-    fn handle_select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+    fn handle_select_prev(&mut self, _: &SelectPrev, model: &Model<Self>, cx: &mut AppContext) {
         self.init_modifiers = Some(cx.modifiers());
         cx.dispatch_action(Box::new(menu::SelectPrev));
     }
 
-    fn handle_toggle_menu(&mut self, _: &ToggleMenu, cx: &mut ViewContext<Self>) {
+    fn handle_toggle_menu(&mut self, _: &ToggleMenu, model: &Model<Self>, cx: &mut AppContext) {
         self.picker.update(cx, |picker, cx| {
             let menu_handle = &picker.delegate.popover_menu_handle;
             if menu_handle.is_deployed() {
@@ -200,26 +206,42 @@ impl FileFinder {
         });
     }
 
-    fn go_to_file_split_left(&mut self, _: &pane::SplitLeft, cx: &mut ViewContext<Self>) {
+    fn go_to_file_split_left(
+        &mut self,
+        _: &pane::SplitLeft,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.go_to_file_split_inner(SplitDirection::Left, cx)
     }
 
-    fn go_to_file_split_right(&mut self, _: &pane::SplitRight, cx: &mut ViewContext<Self>) {
+    fn go_to_file_split_right(
+        &mut self,
+        _: &pane::SplitRight,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.go_to_file_split_inner(SplitDirection::Right, cx)
     }
 
-    fn go_to_file_split_up(&mut self, _: &pane::SplitUp, cx: &mut ViewContext<Self>) {
+    fn go_to_file_split_up(&mut self, _: &pane::SplitUp, model: &Model<Self>, cx: &mut AppContext) {
         self.go_to_file_split_inner(SplitDirection::Up, cx)
     }
 
-    fn go_to_file_split_down(&mut self, _: &pane::SplitDown, cx: &mut ViewContext<Self>) {
+    fn go_to_file_split_down(
+        &mut self,
+        _: &pane::SplitDown,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.go_to_file_split_inner(SplitDirection::Down, cx)
     }
 
     fn go_to_file_split_inner(
         &mut self,
         split_direction: SplitDirection,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) {
         self.picker.update(cx, |picker, cx| {
             let delegate = &mut picker.delegate;
@@ -249,7 +271,8 @@ impl FileFinder {
 
     pub fn modal_max_width(
         width_setting: Option<FileFinderWidth>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Pixels {
         let window_width = cx.viewport_size().width;
         let small_width = Pixels(545.);
@@ -273,7 +296,7 @@ impl FocusableView for FileFinder {
 }
 
 impl Render for FileFinder {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let key_context = self.picker.read(cx).delegate.key_context(cx);
 
         let file_finder_settings = FileFinderSettings::get_global(cx);
@@ -620,7 +643,8 @@ impl FileFinderDelegate {
         currently_opened_path: Option<FoundPath>,
         history_items: Vec<FoundPath>,
         separate_history: bool,
-        cx: &mut ViewContext<FileFinder>,
+        model: &Model<FileFinder>,
+        cx: &mut AppContext,
     ) -> Self {
         Self::subscribe_to_updates(&project, cx);
         Self {
@@ -644,7 +668,11 @@ impl FileFinderDelegate {
         }
     }
 
-    fn subscribe_to_updates(project: &Model<Project>, cx: &mut ViewContext<FileFinder>) {
+    fn subscribe_to_updates(
+        project: &Model<Project>,
+        model: &Model<FileFinder>,
+        cx: &mut AppContext,
+    ) {
         cx.subscribe(project, |file_finder, _, event, cx| {
             match event {
                 project::Event::WorktreeUpdatedEntries(_, _)
@@ -661,7 +689,8 @@ impl FileFinderDelegate {
     fn spawn_search(
         &mut self,
         query: FileSearchQuery,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) -> Task<()> {
         let relative_to = self
             .currently_opened_path
@@ -722,7 +751,8 @@ impl FileFinderDelegate {
         did_cancel: bool,
         query: FileSearchQuery,
         matches: impl IntoIterator<Item = ProjectPanelOrdMatch>,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
@@ -884,7 +914,8 @@ impl FileFinderDelegate {
     fn lookup_absolute_path(
         &self,
         query: FileSearchQuery,
-        cx: &mut ViewContext<'_, Picker<Self>>,
+        model: &Model<_>,
+        cx: &mut AppContext,
     ) -> Task<()> {
         cx.spawn(|picker, mut cx| async move {
             let Some(project) = picker
@@ -979,7 +1010,7 @@ impl PickerDelegate for FileFinderDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, model: &Model<Picker>, cx: &mut AppContext) {
         self.has_changed_selected_index = true;
         self.selected_index = ix;
         cx.notify();
@@ -1006,7 +1037,8 @@ impl PickerDelegate for FileFinderDelegate {
     fn update_matches(
         &mut self,
         raw_query: String,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) -> Task<()> {
         let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
@@ -1064,14 +1096,15 @@ impl PickerDelegate for FileFinderDelegate {
         }
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<FileFinderDelegate>>) {
+    fn confirm(&mut self, secondary: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             if let Some(workspace) = self.workspace.upgrade() {
                 let open_task = workspace.update(cx, move |workspace, cx| {
                     let split_or_open =
                         |workspace: &mut Workspace,
                          project_path,
-                         cx: &mut ViewContext<Workspace>| {
+                         model: &Model<Workspace>,
+                         cx: &mut AppContext| {
                             let allow_preview =
                                 PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
                             if secondary {
@@ -1182,7 +1215,7 @@ impl PickerDelegate for FileFinderDelegate {
         }
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<FileFinderDelegate>>) {
+    fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.file_finder
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
@@ -1192,7 +1225,8 @@ impl PickerDelegate for FileFinderDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
 
@@ -1243,7 +1277,7 @@ impl PickerDelegate for FileFinderDelegate {
         )
     }
 
-    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+    fn render_footer(&self, model: &Model<Picker>, cx: &mut AppContext) -> Option<AnyElement> {
         let context = self.focus_handle.clone();
         Some(
             h_flex()

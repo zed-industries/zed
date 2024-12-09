@@ -1,11 +1,14 @@
-use gpui::ViewContext;
 use language::CursorShape;
 
 use crate::{Editor, RangeToAnchorExt};
 
 enum MatchingBracketHighlight {}
 
-pub fn refresh_matching_bracket_highlights(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+pub fn refresh_matching_bracket_highlights(
+    editor: &mut Editor,
+    model: &Model<Editor>,
+    cx: &mut AppContext,
+) {
     editor.clear_background_highlights::<MatchingBracketHighlight>(cx);
 
     let newest_selection = editor.selections.newest::<usize>(cx);

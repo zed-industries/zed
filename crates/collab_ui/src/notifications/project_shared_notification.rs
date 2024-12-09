@@ -101,14 +101,14 @@ impl ProjectSharedNotification {
         }
     }
 
-    fn join(&mut self, cx: &mut ViewContext<Self>) {
+    fn join(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(app_state) = self.app_state.upgrade() {
             workspace::join_in_room_project(self.project_id, self.owner.id, app_state, cx)
                 .detach_and_log_err(cx);
         }
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+    fn dismiss(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(active_room) =
             ActiveCall::global(cx).read_with(cx, |call, _| call.room().cloned())
         {
@@ -122,7 +122,7 @@ impl ProjectSharedNotification {
 }
 
 impl Render for ProjectSharedNotification {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(cx);
 
         div().size_full().font(ui_font).child(

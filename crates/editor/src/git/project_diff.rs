@@ -23,8 +23,8 @@ use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
 use text::{OffsetRangeExt, ToPoint};
 use theme::ActiveTheme;
 use ui::{
-    div, h_flex, Color, Context, FluentBuilder, Icon, IconName, IntoElement, Label, LabelCommon,
-    ParentElement, SharedString, Styled, ViewContext, VisualContext,
+    div, h_flex, AppContext, Color, Context, FluentBuilder, Icon, IconName, IntoElement, Label,
+    LabelCommon, ParentElement, SharedString, Styled, VisualContext,
 };
 use util::{paths::compare_paths, ResultExt};
 use workspace::{
@@ -63,11 +63,16 @@ struct Changes {
 }
 
 impl ProjectDiffEditor {
-    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
         workspace.register_action(Self::deploy);
     }
 
-    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
+    fn deploy(
+        workspace: &mut Workspace,
+        _: &Deploy,
+        model: &Model<Workspace>,
+        cx: &mut AppContext,
+    ) {
         if !cx.is_staff() {
             return;
         }
@@ -85,7 +90,8 @@ impl ProjectDiffEditor {
     fn new(
         project: Model<Project>,
         workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Self {
         // TODO diff change subscriptions. For that, needed:
         // * `-20/+50` stats retrieval: some background process that reacts on file changes
@@ -172,7 +178,7 @@ impl ProjectDiffEditor {
         new_self
     }
 
-    fn schedule_rescan_all(&mut self, cx: &mut ViewContext<Self>) {
+    fn schedule_rescan_all(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let mut current_worktrees = HashSet::<WorktreeId>::default();
         for worktree in self.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree_id = worktree.read(cx).id();
@@ -188,7 +194,12 @@ impl ProjectDiffEditor {
             .retain(|worktree_id, _| current_worktrees.contains(worktree_id));
     }
 
-    fn schedule_worktree_rescan(&mut self, id: WorktreeId, cx: &mut ViewContext<Self>) {
+    fn schedule_worktree_rescan(
+        &mut self,
+        id: WorktreeId,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         let project = self.project.clone();
         self.worktree_rescans.insert(
             id,
@@ -329,7 +340,8 @@ impl ProjectDiffEditor {
         worktree_id: WorktreeId,
         new_changes: HashMap<ProjectEntryId, Changes>,
         new_entry_order: Vec<(ProjectPath, ProjectEntryId)>,
-        cx: &mut ViewContext<ProjectDiffEditor>,
+        model: &Model<ProjectDiffEditor>,
+        cx: &mut AppContext,
     ) {
         if let Some(current_order) = self.entry_order.get(&worktree_id) {
             let current_entries = self.buffer_changes.entry(worktree_id).or_default();
@@ -917,11 +929,11 @@ impl Item for ProjectDiffEditor {
         Editor::to_item_events(event, f)
     }
 
-    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+    fn deactivated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.editor.update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {
+    fn navigate(&mut self, data: Box<dyn Any>, model: &Model<Self>, cx: &mut AppContext) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
@@ -990,7 +1002,12 @@ impl Item for ProjectDiffEditor {
         false
     }
 
-    fn set_nav_history(&mut self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) {
+    fn set_nav_history(
+        &mut self,
+        nav_history: ItemNavHistory,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.editor.update(cx, |editor, _| {
             editor.set_nav_history(Some(nav_history));
         });
@@ -999,7 +1016,8 @@ impl Item for ProjectDiffEditor {
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Option<View<Self>>
     where
         Self: Sized,
@@ -1025,7 +1043,8 @@ impl Item for ProjectDiffEditor {
         &mut self,
         format: bool,
         project: Model<Project>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<()>> {
         self.editor.save(format, project, cx)
     }
@@ -1034,7 +1053,8 @@ impl Item for ProjectDiffEditor {
         &mut self,
         _: Model<Project>,
         _: ProjectPath,
-        _: &mut ViewContext<Self>,
+        _: &Model<Self>,
+        _: &mut AppContext,
     ) -> Task<anyhow::Result<()>> {
         unreachable!()
     }
@@ -1042,7 +1062,8 @@ impl Item for ProjectDiffEditor {
     fn reload(
         &mut self,
         project: Model<Project>,
-        cx: &mut ViewContext<Self>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<()>> {
         self.editor.reload(project, cx)
     }
@@ -1070,14 +1091,19 @@ impl Item for ProjectDiffEditor {
         self.editor.breadcrumbs(theme, cx)
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.editor
             .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
     }
 }
 
 impl Render for ProjectDiffEditor {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let child = if self.buffer_changes.is_empty() {
             div()
                 .bg(cx.theme().colors().editor_background)
