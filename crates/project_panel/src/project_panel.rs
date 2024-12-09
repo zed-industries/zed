@@ -36,7 +36,8 @@ use project::{
     WorktreeId,
 };
 use project_panel_settings::{
-    ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
+    ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowFileNumbers,
+    ShowIndentGuides,
 };
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -3201,7 +3202,7 @@ impl ProjectPanel {
             _ => (item_colors.default, item_colors.default),
         };
 
-        let line_number = self.get_line_number(worktree_id, entry_id, true);
+        let file_number = self.get_file_number(worktree_id, entry_id, settings.show_file_numbers);
 
         div()
             .id(entry_id.to_proto() as usize)
@@ -3355,7 +3356,7 @@ impl ProjectPanel {
                 h_flex()
                     .child(
                         div().px(px(8.)).w(px(40.)).child(
-                            Label::new(format!("{}", line_number.unwrap_or(0)))
+                            Label::new(format!("{}", file_number.unwrap_or(0)))
                                 .color(filename_text_color),
                         ),
                     )
@@ -3825,38 +3826,37 @@ impl ProjectPanel {
         None
     }
 
-    fn get_line_number(
+    fn get_file_number(
         &self,
         worktree_id: WorktreeId,
         entry_id: ProjectEntryId,
-        relative: bool,
+        variant: ShowFileNumbers,
     ) -> Option<usize> {
         let entry_line_number = self
             .index_for_entry(entry_id, worktree_id)
             .unwrap_or_default()
             .2;
-        if relative {
-            let selection_line_number = if let Some(selection) = self.selection {
-                self.index_for_selection(selection).unwrap_or_default().2
-            } else {
-                0
-            };
-            return Some(
-                selection_line_number.max(entry_line_number)
-                    - selection_line_number.min(entry_line_number),
-            );
-        } else {
-            return Some(entry_line_number);
+
+        match variant {
+            ShowFileNumbers::Relative => {
+                let selection_line_number = if let Some(selection) = self.selection {
+                    self.index_for_selection(selection).unwrap_or_default().2
+                } else {
+                    0
+                };
+                return Some(
+                    selection_line_number.max(entry_line_number)
+                        - selection_line_number.min(entry_line_number),
+                );
+            }
+            ShowFileNumbers::Absolute => Some(entry_line_number),
+            ShowFileNumbers::Off => None,
         }
     }
 
     fn go_to_numbered_file(&mut self, file_number: usize, cx: &mut ViewContext<Self>) {
-        // Line numbers start at 1 in the UI
-        if file_number == 0 {
-            return;
-        }
+        let variant = ProjectPanelSettings::get_global(cx).show_file_numbers;
 
-        // Calculate total entries and validate input
         let total_entries: usize = self
             .visible_entries
             .iter()
@@ -3867,18 +3867,29 @@ impl ProjectPanel {
             return;
         }
 
+        let file_index = match variant {
+            ShowFileNumbers::Absolute => file_number,
+            ShowFileNumbers::Relative => {
+                let selection_line_number = if let Some(selection) = self.selection {
+                    self.index_for_selection(selection).unwrap_or_default().2
+                } else {
+                    0
+                };
+                selection_line_number.max(file_number) - selection_line_number.min(file_number)
+            }
+            ShowFileNumbers::Off => return,
+        };
+
         // Get the entry at the specified index (subtract 1 because UI numbers start at 1)
-        if let Some((_, entry)) = self.entry_at_index(file_number - 1) {
+        if let Some((_, entry)) = self.entry_at_index(file_index) {
             if entry.kind.is_file() {
                 // Open the file
                 self.open_entry(entry.id, true, false, cx);
-
-                // Ensure the entry is visible in the project panel
-                self.autoscroll(cx);
-                cx.notify();
-            } else {
+            } else if entry.kind.is_dir() {
+                self.toggle_expanded(entry.id, cx);
             }
-        } else {
+            self.autoscroll(cx);
+            cx.notify();
         }
     }
 }
