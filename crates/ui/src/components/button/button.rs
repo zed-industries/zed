@@ -1,7 +1,6 @@
 #![allow(missing_docs)]
 use gpui::{AnyElement, AnyView, DefiniteLength};
 
-use crate::traits::component::ComponentElement;
 use crate::{
     prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding, TintColor,
 };

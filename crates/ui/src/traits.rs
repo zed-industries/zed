@@ -1,5 +1,4 @@
 pub mod clickable;
-pub mod component;
 pub mod disableable;
 pub mod fixed;
 pub mod selectable;
