@@ -431,13 +431,25 @@ impl BladeRenderer {
     }
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
+        self.update_drawable_size_impl(size, false);
+    }
+
+    /// Like `update_drawable_size` but skips the check that the size has changed. This is useful in
+    /// cases like restoring a window from minimization where the size is the same but the
+    /// renderer's swap chain needs to be recreated.
+    #[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
+    pub fn update_drawable_size_even_if_unchanged(&mut self, size: Size<DevicePixels>) {
+        self.update_drawable_size_impl(size, true);
+    }
+
+    fn update_drawable_size_impl(&mut self, size: Size<DevicePixels>, always_resize: bool) {
         let gpu_size = gpu::Extent {
             width: size.width.0 as u32,
             height: size.height.0 as u32,
             depth: 1,
         };
 
-        if gpu_size != self.surface_config.size {
+        if always_resize || gpu_size != self.surface_config.size {
             self.wait_for_gpu();
             self.surface_config.size = gpu_size;
             self.gpu.resize(self.surface_config);
