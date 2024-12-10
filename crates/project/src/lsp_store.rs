@@ -132,7 +132,7 @@ impl FormatTrigger {
     }
 }
 
-pub(crate) struct LocalLspStore {
+pub struct LocalLspStore {
     worktree_store: Model<WorktreeStore>,
     http_client: Arc<dyn HttpClient>,
     environment: Model<ProjectEnvironment>,
@@ -1942,14 +1942,14 @@ impl LspStore {
         }
     }
 
-    pub(crate) fn as_local(&self) -> Option<&LocalLspStore> {
+    pub fn as_local(&self) -> Option<&LocalLspStore> {
         match &self.mode {
             LspStoreMode::Local(local_lsp_store) => Some(local_lsp_store),
             _ => None,
         }
     }
 
-    pub(crate) fn as_local_mut(&mut self) -> Option<&mut LocalLspStore> {
+    pub fn as_local_mut(&mut self) -> Option<&mut LocalLspStore> {
         match &mut self.mode {
             LspStoreMode::Local(local_lsp_store) => Some(local_lsp_store),
             _ => None,
