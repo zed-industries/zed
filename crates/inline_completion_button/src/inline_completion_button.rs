@@ -1,7 +1,7 @@
 use anyhow::Result;
 use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
-use feature_flags::FeatureFlagAppExt;
+use feature_flags::{FeatureFlagAppExt, ZetaFeatureFlag};
 use fs::Fs;
 use gpui::{
     div, Action, AnchorCorner, AppContext, AsyncWindowContext, Entity, IntoElement, ParentElement,
@@ -199,7 +199,7 @@ impl Render for InlineCompletionButton {
             }
 
             InlineCompletionProvider::Zeta => {
-                if !cx.is_staff() {
+                if !cx.has_flag::<ZetaFeatureFlag>() {
                     return div();
                 }
 
