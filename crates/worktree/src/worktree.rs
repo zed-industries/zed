@@ -458,7 +458,12 @@ impl Worktree {
                 visible,
                 settings,
             };
-            worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
+            worktree.start_background_scanner(
+                scan_requests_rx,
+                path_prefixes_to_scan_rx,
+                model,
+                cx,
+            );
             Worktree::Local(worktree)
         })
     }
@@ -676,8 +681,8 @@ impl Worktree {
         Fut: 'static + Send + Future<Output = bool>,
     {
         match self {
-            Worktree::Local(this) => this.observe_updates(project_id, cx, callback),
-            Worktree::Remote(this) => this.observe_updates(project_id, cx, callback),
+            Worktree::Local(this) => this.observe_updates(project_id, model, cx, callback),
+            Worktree::Remote(this) => this.observe_updates(project_id, model, cx, callback),
         }
     }
 
@@ -707,7 +712,7 @@ impl Worktree {
         cx: &AppContext,
     ) -> Task<Result<LoadedFile>> {
         match self {
-            Worktree::Local(this) => this.load_file(path, cx),
+            Worktree::Local(this) => this.load_file(path, model, cx),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
             }
@@ -761,7 +766,7 @@ impl Worktree {
         cx: &AppContext,
     ) -> Task<Result<Arc<File>>> {
         match self {
-            Worktree::Local(this) => this.write_file(path, text, line_ending, cx),
+            Worktree::Local(this) => this.write_file(path, text, line_ending, model, cx),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktree can't yet write files")))
             }
@@ -778,7 +783,7 @@ impl Worktree {
         let path = path.into();
         let worktree_id = self.id();
         match self {
-            Worktree::Local(this) => this.create_entry(path, is_directory, cx),
+            Worktree::Local(this) => this.create_entry(path, is_directory, model, cx),
             Worktree::Remote(this) => {
                 let project_id = this.project_id;
                 let request = this.client.request(proto::CreateProjectEntry {
@@ -822,8 +827,8 @@ impl Worktree {
         cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         let task = match self {
-            Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
-            Worktree::Remote(this) => this.delete_entry(entry_id, trash, cx),
+            Worktree::Local(this) => this.delete_entry(entry_id, trash, model, cx),
+            Worktree::Remote(this) => this.delete_entry(entry_id, trash, model, cx),
         }?;
 
         let entry = match self {
@@ -859,8 +864,8 @@ impl Worktree {
     ) -> Task<Result<CreatedEntry>> {
         let new_path = new_path.into();
         match self {
-            Worktree::Local(this) => this.rename_entry(entry_id, new_path, cx),
-            Worktree::Remote(this) => this.rename_entry(entry_id, new_path, cx),
+            Worktree::Local(this) => this.rename_entry(entry_id, new_path, model, cx),
+            Worktree::Remote(this) => this.rename_entry(entry_id, new_path, model, cx),
         }
     }
 
@@ -961,7 +966,7 @@ impl Worktree {
         let (scan_id, entry) = this.update(&mut cx, |this, model, cx| {
             (
                 this.scan_id(),
-                this.create_entry(PathBuf::from(request.path), request.is_directory, cx),
+                this.create_entry(PathBuf::from(request.path), request.is_directory, model, cx),
             )
         })?;
         Ok(proto::ProjectEntryResponse {
@@ -1507,6 +1512,7 @@ impl LocalWorktree {
                     refreshes.push(this.as_local_mut().unwrap().refresh_entry(
                         refresh_full_path.into(),
                         None,
+                        model,
                         cx,
                     ));
                 }

@@ -513,7 +513,7 @@ impl Render for ConfigurationView {
 
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
-        } else if self.should_render_editor(cx) {
+        } else if self.should_render_editor(model, cx) {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
@@ -538,7 +538,7 @@ impl Render for ConfigurationView {
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
                         .rounded_md()
-                        .child(self.render_api_key_editor(cx)),
+                        .child(self.render_api_key_editor(model, cx)),
                 )
                 .child(
                     Label::new(

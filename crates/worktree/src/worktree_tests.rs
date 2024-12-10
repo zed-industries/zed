@@ -461,7 +461,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let loaded = tree
         .update(cx, |tree, model, cx| {
-            tree.load_file("one/node_modules/b/b1.js".as_ref(), cx)
+            tree.load_file("one/node_modules/b/b1.js".as_ref(), model, cx)
         })
         .await
         .unwrap();
@@ -501,7 +501,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let loaded = tree
         .update(cx, |tree, model, cx| {
-            tree.load_file("one/node_modules/a/a2.js".as_ref(), cx)
+            tree.load_file("one/node_modules/a/a2.js".as_ref(), model, cx)
         })
         .await
         .unwrap();
@@ -862,7 +862,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
     tree.flush_fs_events(cx).await;
 
     tree.update(cx, |tree, model, cx| {
-        tree.write_file(
+        treemodel, .write_file(
             Path::new("tracked-dir/file.txt"),
             "hello".into(),
             Default::default(),
@@ -872,7 +872,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
     .await
     .unwrap();
     tree.update(cx, |tree, model, cx| {
-        tree.write_file(
+        treemodel, .write_file(
             Path::new("ignored-dir/file.txt"),
             "world".into(),
             Default::default(),
@@ -1399,7 +1399,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
     let snapshot1 = tree.update(cx, |tree, model, cx| {
         let tree = tree.as_local_mut().unwrap();
         let snapshot = Arc::new(Mutex::new(tree.snapshot()));
-        tree.observe_updates(0, cx, {
+        tree.observe_updates(0, model, cx, {
             let snapshot = snapshot.clone();
             let settings = tree.settings().clone();
             move |update| {
@@ -1417,7 +1417,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         .update(cx, |tree, model, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/e".as_ref(), true, cx)
+                .create_entry("a/e".as_ref(), true, model, cx)
         })
         .await
         .unwrap()
@@ -1536,7 +1536,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, model, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/b/c/d.txt".as_ref(), false, cx)
+                .create_entry("a/b/c/d.txt".as_ref(), false, model, cx)
         })
         .await
         .unwrap()
@@ -1570,7 +1570,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, model, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/b/c/d.txt".as_ref(), false, cx)
+                .create_entry("a/b/c/d.txt".as_ref(), false, model, cx)
         })
         .await
         .unwrap()
@@ -1590,7 +1590,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, model, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/b/c/e.txt".as_ref(), false, cx)
+                .create_entry("a/b/c/e.txt".as_ref(), false, model, cx)
         })
         .await
         .unwrap()
@@ -1608,7 +1608,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, model, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("d/e/f/g.txt".as_ref(), false, cx)
+                .create_entry("d/e/f/g.txt".as_ref(), false, model, cx)
         })
         .await
         .unwrap()
@@ -1659,9 +1659,9 @@ async fn test_random_worktree_operations_during_initial_scan(
     let mut snapshots = vec![worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot())];
     let updates = Arc::new(Mutex::new(Vec::new()));
     worktree.update(cx, |tree, model, cx| {
-        check_worktree_change_events(tree, cx);
+        check_worktree_change_events(tree, model, cx);
 
-        tree.as_local_mut().unwrap().observe_updates(0, cx, {
+        tree.as_local_mut().unwrap().observe_updates(0, model, cx, {
             let updates = updates.clone();
             move |update| {
                 updates.lock().push(update);
@@ -1673,7 +1673,7 @@ async fn test_random_worktree_operations_during_initial_scan(
     for _ in 0..operations {
         worktree
             .update(cx, |worktree, model, cx| {
-                randomly_mutate_worktree(worktree, &mut rng, cx)
+                randomly_mutate_worktree(worktree, &mut rng, model, cx)
             })
             .await
             .log_err();
@@ -1751,9 +1751,9 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
     let updates = Arc::new(Mutex::new(Vec::new()));
     worktree.update(cx, |tree, model, cx| {
-        check_worktree_change_events(tree, cx);
+        check_worktree_change_events(tree, model, cx);
 
-        tree.as_local_mut().unwrap().observe_updates(0, cx, {
+        tree.as_local_mut().unwrap().observe_updates(0, model, cx, {
             let updates = updates.clone();
             move |update| {
                 updates.lock().push(update);
@@ -1775,7 +1775,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         if rng.gen_bool(0.2) {
             worktree
                 .update(cx, |worktree, model, cx| {
-                    randomly_mutate_worktree(worktree, &mut rng, cx)
+                    randomly_mutate_worktree(worktree, &mut rng, model, cx)
                 })
                 .await
                 .log_err();
@@ -1880,7 +1880,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 // all changes to the worktree's snapshot.
 fn check_worktree_change_events(tree: &mut Worktree, model: &Model<Worktree>, cx: &mut AppContext) {
     let mut entries = tree.entries(true, 0).cloned().collect::<Vec<_>>();
-    cx.subscribe(&cx.handle(), move |tree, _, event, _| {
+    cx.subscribe(model, move |tree, _, event, _| {
         if let Event::UpdatedEntries(changes) = event {
             for (path, _, change_type) in changes.iter() {
                 let entry = tree.entry_for_path(path).cloned();
@@ -1928,7 +1928,7 @@ fn randomly_mutate_worktree(
     match rng.gen_range(0_u32..100) {
         0..=33 if entry.path.as_ref() != Path::new("") => {
             log::info!("deleting entry {:?} ({})", entry.path, entry.id.0);
-            worktree.delete_entry(entry.id, false, cx).unwrap()
+            worktree.delete_entry(entry.id, false, model, cx).unwrap()
         }
         ..=66 if entry.path.as_ref() != Path::new("") => {
             let other_entry = snapshot.entries(false, 0).choose(rng).unwrap();
@@ -1948,7 +1948,7 @@ fn randomly_mutate_worktree(
                 entry.id.0,
                 new_path
             );
-            let task = worktree.rename_entry(entry.id, new_path, cx);
+            let task = worktree.rename_entry(entry.id, new_path, model, cx);
             cx.background_executor().spawn(async move {
                 task.await?.to_included().unwrap();
                 Ok(())
@@ -1963,15 +1963,20 @@ fn randomly_mutate_worktree(
                     if is_dir { "dir" } else { "file" },
                     child_path,
                 );
-                let task = worktree.create_entry(child_path, is_dir, cx);
+                let task = worktree.create_entry(child_path, is_dir, model, cx);
                 cx.background_executor().spawn(async move {
                     task.await?;
                     Ok(())
                 })
             } else {
                 log::info!("overwriting file {:?} ({})", entry.path, entry.id.0);
-                let task =
-                    worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx);
+                let task = worktree.write_file(
+                    entry.path.clone(),
+                    "".into(),
+                    Default::default(),
+                    model,
+                    cx,
+                );
                 cx.background_executor().spawn(async move {
                     task.await?;
                     Ok(())

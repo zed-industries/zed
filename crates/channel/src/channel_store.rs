@@ -932,7 +932,7 @@ impl ChannelStore {
             if let OpenedModelHandle::Open(chat) = chat {
                 if let Some(chat) = chat.upgrade() {
                     chat.update(cx, |chat, model, cx| {
-                        chat.rejoin(cx);
+                        chat.rejoin(model, cx);
                     });
                 }
             }
@@ -997,7 +997,7 @@ impl ChannelStore {
                                                 .into_iter()
                                                 .map(language::proto::deserialize_operation)
                                                 .collect::<Result<Vec<_>>>()?;
-                                        buffer.apply_ops(incoming_operations, cx);
+                                        buffer.apply_ops(incoming_operations, model, cx);
                                         anyhow::Ok(outgoing_operations)
                                     })
                                     .log_err();
@@ -1023,7 +1023,7 @@ impl ChannelStore {
                                 }
                             }
 
-                            channel_buffer.disconnect(cx);
+                            channel_buffer.disconnect(model, cx);
                             false
                         })
                     }

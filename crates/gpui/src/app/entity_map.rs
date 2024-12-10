@@ -454,6 +454,60 @@ impl<T: 'static> Model<T> {
         app.notify(Some(self.entity_id))
     }
 
+    /// Creates a closure that binds to this model and executes the given function.
+    ///
+    /// This method takes a function that operates on the model and returns a new function
+    /// that can be called with just an `AppContext`. This is useful for creating callbacks
+    /// that need to interact with the model but don't have direct access to it.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that takes a mutable reference to the model (`&mut T`), a reference to the model handle (`&Model<T>`),
+    ///   and a reference to the `AppContext`.
+    ///
+    /// # Returns
+    ///
+    /// A new closure that takes a mutable reference to the `AppContext` and returns the result of `f`.
+    pub fn bind<R>(
+        &self,
+        f: impl Fn(&mut T, &Model<T>, &AppContext) -> R + 'static,
+    ) -> impl Fn(&mut AppContext) -> R {
+        let model = self.clone();
+        move |cx: &mut AppContext| model.update(cx, |this, model, cx| f(this, model, cx))
+    }
+
+    /// Creates a closure that binds to this model and executes the given function within a specific window.
+    ///
+    /// This method takes a reference to a Window and a function that operates on the model, the Window, and the AppContext.
+    /// It returns a new function that can be called with just a Window and an AppContext. This is useful for creating
+    /// callbacks that need to interact with both the model and a specific window.
+    ///
+    /// # Arguments
+    ///
+    /// * `window` - A reference to the Window in which the function will be executed.
+    /// * `f` - A closure that takes a mutable reference to the model (`&mut T`), a reference to the model handle (`&Model<T>`),
+    ///   a mutable reference to the Window, and a mutable reference to the AppContext.
+    ///
+    /// # Returns
+    ///
+    /// A new closure that takes a mutable reference to the Window and a mutable reference to the AppContext,
+    /// and returns the result of `f`.
+    pub fn bind_in_window<R>(
+        &self,
+        window: &Window,
+        f: impl Fn(&mut T, &Model<T>, &mut Window, &mut AppContext) -> R + 'static,
+    ) -> impl Fn(&mut Window, &mut AppContext) -> R {
+        let model = self.clone();
+        let window_handle = window.handle();
+        move |window: &mut Window, cx: &mut AppContext| {
+            if window.handle() == window_handle {
+                model.update(cx, |this, model, cx| f(this, model, window, cx))
+            } else {
+                panic!("Window mismatch in bind_in_window")
+            }
+        }
+    }
+
     /// Spawn the future returned by the given function.
     /// The function is provided a weak handle to this model and a context that can be held across await points.
     /// The returned task must be held or detached.

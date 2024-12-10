@@ -6,9 +6,10 @@
 use gpui::{
     actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
-    px, rgb, size, AppContext, AsyncAppContext, Bounds, Context, InteractiveElement, KeyBinding,
-    Menu, MenuItem, Model, ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
-    StatefulInteractiveElement as _, Styled, Task, WindowBounds, WindowHandle, WindowOptions,
+    px, rgb, size, AppContext, AsyncAppContext, Bounds, Context, Flatten, InteractiveElement,
+    KeyBinding, Menu, MenuItem, Model, ParentElement, Pixels, Render, ScreenCaptureStream,
+    SharedString, StatefulInteractiveElement as _, Styled, Task, WindowBounds, WindowHandle,
+    WindowOptions,
 };
 #[cfg(not(target_os = "windows"))]
 use livekit_client::{
@@ -139,12 +140,19 @@ impl LivekitWindow {
                     ..Default::default()
                 },
                 |model, window, cx| {
+                    let on_event =
+                        model.bind_in_window(window, |this: &mut Self, model, window, app| {
+                            this.handle_room_event(event, model, window, cx)
+                        });
+
                     let _events_task = model.spawn(cx, |this, mut cx| async move {
                         while let Some(event) = events.recv().await {
-                            this.update(&mut cx, |this: &mut LivekitWindow, model, cx| {
-                                this.handle_room_event(event, model, cx)
-                            })
-                            .ok();
+                            x.window
+                                .update(&mut cx, |window, cx| {
+                                    this.update(cx, |this: &mut LivekitWindow, model, cx| {})
+                                        .ok();
+                                })
+                                .ok();
                         }
                     });
 

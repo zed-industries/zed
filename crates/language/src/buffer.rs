@@ -532,7 +532,7 @@ pub struct ChunkRenderer {
 }
 
 pub struct ChunkRendererContext<'a, 'b> {
-    pub window: &'a mut Window,
+    pub window: &'a mut gpui::Window,
     pub context: &'b mut AppContext,
     pub max_width: Pixels,
 }
@@ -613,7 +613,11 @@ impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, model: &Model<Self>, cx: &AppContext) -> Self {
         Self::build(
-            TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
+            TextBuffer::new(
+                0,
+                model.entity_id().as_non_zero_u64().into(),
+                base_text.into(),
+            ),
             None,
             Capability::ReadWrite,
         )
@@ -629,7 +633,7 @@ impl Buffer {
         Self::build(
             TextBuffer::new_normalized(
                 0,
-                cx.entity_id().as_non_zero_u64().into(),
+                model.entity_id().as_non_zero_u64().into(),
                 line_ending,
                 base_text_normalized,
             ),
@@ -823,7 +827,7 @@ impl Buffer {
                 language: self.language.clone(),
                 has_conflict: self.has_conflict,
                 has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
-                _subscriptions: vec![cx.subscribe(&this, Self::on_base_buffer_event)],
+                _subscriptions: vec![model.subscribe(&this, cx, Self::on_base_buffer_event)],
                 ..Self::build(self.text.branch(), self.file.clone(), self.capability())
             };
             if let Some(language_registry) = self.language_registry() {
@@ -923,11 +927,11 @@ impl Buffer {
             }
         }
 
-        self.apply_ops([operation.clone()], cx);
+        self.apply_ops([operation.clone()], model, cx);
 
         if let Some(timestamp) = operation_to_undo {
             let counts = [(timestamp, u32::MAX)].into_iter().collect();
-            self.undo_operations(counts, cx);
+            self.undo_operations(counts, model, cx);
         }
     }
 
@@ -1014,7 +1018,7 @@ impl Buffer {
     /// This method is called to signal that the buffer has been discarded.
     pub fn discarded(&self, model: &Model<Self>, cx: &mut AppContext) {
         model.emit(cx, BufferEvent::Discarded);
-        model.notify(modelcx);
+        model.notify(cx);
     }
 
     /// Reloads the contents of the buffer from disk.
@@ -1041,10 +1045,10 @@ impl Buffer {
             this.update(&mut cx, |this, model, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
-                    this.apply_diff(diff, cx);
+                    this.apply_diff(diff, model, cx);
                     tx.send(this.finalize_last_transaction().cloned()).ok();
                     this.has_conflict = false;
-                    this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
+                    this.did_reload(this.version(), this.line_ending(), new_mtime, model, cx);
                 } else {
                     if !diff.edits.is_empty()
                         || this
@@ -1055,7 +1059,13 @@ impl Buffer {
                         this.has_conflict = true;
                     }
 
-                    this.did_reload(prev_version, this.line_ending(), this.saved_mtime, cx);
+                    this.did_reload(
+                        prev_version,
+                        this.line_ending(),
+                        this.saved_mtime,
+                        model,
+                        cx,
+                    );
                 }
 
                 this.reload_task.take();
@@ -1079,7 +1089,7 @@ impl Buffer {
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
         model.emit(cx, BufferEvent::Reloaded);
-        model.notify(modelcx);
+        model.notify(cx);
     }
 
     /// Updates the [`File`] backing this buffer. This should be called when
@@ -1117,7 +1127,7 @@ impl Buffer {
                 model.emit(cx, BufferEvent::DirtyChanged);
             }
             model.emit(cx, BufferEvent::FileHandleChanged);
-            model.notify(modelcx);
+            model.notify(cx);
         }
     }
 
@@ -1221,34 +1231,35 @@ impl Buffer {
             .block_with_timeout(self.sync_parse_timeout, parse_task)
         {
             Ok(new_syntax_snapshot) => {
-                self.did_finish_parsing(new_syntax_snapshot, cx);
+                self.did_finish_parsing(new_syntax_snapshot, model, cx);
             }
             Err(parse_task) => {
                 self.parsing_in_background = true;
-                cx.spawn(move |this, mut cx| async move {
-                    let new_syntax_map = parse_task.await;
-                    this.update(&mut cx, move |this, cx| {
-                        let grammar_changed =
-                            this.language.as_ref().map_or(true, |current_language| {
-                                !Arc::ptr_eq(&language, current_language)
-                            });
-                        let language_registry_changed = new_syntax_map
-                            .contains_unknown_injections()
-                            && language_registry.map_or(false, |registry| {
-                                registry.version() != new_syntax_map.language_registry_version()
-                            });
-                        let parse_again = language_registry_changed
-                            || grammar_changed
-                            || this.version.changed_since(&parsed_version);
-                        this.did_finish_parsing(new_syntax_map, cx);
-                        this.parsing_in_background = false;
-                        if parse_again {
-                            this.reparse(cx);
-                        }
+                model
+                    .spawn(cx, move |this, mut cx| async move {
+                        let new_syntax_map = parse_task.await;
+                        this.update(&mut cx, move |this, model, cx| {
+                            let grammar_changed =
+                                this.language.as_ref().map_or(true, |current_language| {
+                                    !Arc::ptr_eq(&language, current_language)
+                                });
+                            let language_registry_changed = new_syntax_map
+                                .contains_unknown_injections()
+                                && language_registry.map_or(false, |registry| {
+                                    registry.version() != new_syntax_map.language_registry_version()
+                                });
+                            let parse_again = language_registry_changed
+                                || grammar_changed
+                                || this.version.changed_since(&parsed_version);
+                            this.did_finish_parsing(new_syntax_map, model, cx);
+                            this.parsing_in_background = false;
+                            if parse_again {
+                                this.reparse(model, cx);
+                            }
+                        })
+                        .ok();
                     })
-                    .ok();
-                })
-                .detach();
+                    .detach();
             }
         }
     }
@@ -1264,7 +1275,7 @@ impl Buffer {
         self.request_autoindent(model, cx);
         self.parse_status.0.send(ParseStatus::Idle).unwrap();
         model.emit(cx, BufferEvent::Reparsed);
-        model.notify(modelcx);
+        model.notify(cx);
     }
 
     pub fn parse_status(&self) -> watch::Receiver<ParseStatus> {
@@ -1285,7 +1296,7 @@ impl Buffer {
             diagnostics: diagnostics.iter().cloned().collect(),
             lamport_timestamp,
         };
-        self.apply_diagnostic_update(server_id, diagnostics, lamport_timestamp, cx);
+        self.apply_diagnostic_update(server_id, diagnostics, lamport_timestamp, model, cx);
         self.send_operation(op, true, model, cx);
     }
 
@@ -1296,12 +1307,12 @@ impl Buffer {
                 .background_executor()
                 .block_with_timeout(Duration::from_micros(500), indent_sizes)
             {
-                Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
+                Ok(indent_sizes) => self.apply_autoindents(indent_sizes, model, cx),
                 Err(indent_sizes) => {
                     self.pending_autoindent = Some(model.spawn(cx, |this, mut cx| async move {
                         let indent_sizes = indent_sizes.await;
                         this.update(&mut cx, |this, model, cx| {
-                            this.apply_autoindents(indent_sizes, cx);
+                            this.apply_autoindents(indent_sizes, model, cx);
                         })
                         .ok();
                     }));
@@ -1697,7 +1708,7 @@ impl Buffer {
         self.start_transaction();
         self.text.set_line_ending(diff.line_ending);
         self.edit(adjusted_edits, None, model, cx);
-        self.end_transaction(cx)
+        self.end_transaction(model, cx)
     }
 
     fn has_unsaved_edits(&self) -> bool {
@@ -1775,7 +1786,7 @@ impl Buffer {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Option<TransactionId> {
-        self.end_transaction_at(Instant::now(), cx)
+        self.end_transaction_at(Instant::now(), model, cx)
     }
 
     /// Terminates the current transaction, providing the current time. Subsequent transactions
@@ -1795,7 +1806,7 @@ impl Buffer {
             false
         };
         if let Some((transaction_id, start_version)) = self.text.end_transaction_at(now) {
-            self.did_edit(&start_version, was_dirty, cx);
+            self.did_edit(&start_version, was_dirty, model, cx);
             Some(transaction_id)
         } else {
             None
@@ -1886,7 +1897,7 @@ impl Buffer {
             cx,
         );
         self.non_text_state_update_count += 1;
-        model.notify(modelcx);
+        model.notify(cx);
     }
 
     /// Clears the selections, so that other replicas of the buffer do not see any selections for
@@ -1897,7 +1908,7 @@ impl Buffer {
             .get(&self.text.replica_id())
             .map_or(true, |set| !set.selections.is_empty())
         {
-            self.set_active_selections(Arc::default(), false, Default::default(), cx);
+            self.set_active_selections(Arc::default(), false, Default::default(), model, cx);
         }
     }
 
@@ -2068,7 +2079,7 @@ impl Buffer {
         if was_dirty != self.is_dirty() {
             model.emit(cx, BufferEvent::DirtyChanged);
         }
-        model.notify(modelcx);
+        model.notify(cx);
     }
 
     pub fn autoindent_ranges<I, T>(&mut self, ranges: I, model: &Model<Self>, cx: &mut AppContext)
@@ -2172,7 +2183,7 @@ impl Buffer {
                 Operation::Buffer(op) => Some(op),
                 _ => {
                     if self.can_apply_op(&op) {
-                        self.apply_op(op, cx);
+                        self.apply_op(op, model, cx);
                     } else {
                         deferred_ops.push(op);
                     }
@@ -2186,7 +2197,7 @@ impl Buffer {
         self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(model, cx);
-        self.did_edit(&old_version, was_dirty, cx);
+        self.did_edit(&old_version, was_dirty, model, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
         model.notify(cx);
@@ -2196,7 +2207,7 @@ impl Buffer {
         let mut deferred_ops = Vec::new();
         for op in self.deferred_ops.drain().iter().cloned() {
             if self.can_apply_op(&op) {
-                self.apply_op(op, cx);
+                self.apply_op(op, model, cx);
             } else {
                 deferred_ops.push(op);
             }
@@ -2242,7 +2253,7 @@ impl Buffer {
                     server_id,
                     DiagnosticSet::from_sorted_entries(diagnostic_set.iter().cloned(), &snapshot),
                     lamport_timestamp,
-                    window,
+                    model,
                     cx,
                 );
             }
@@ -2316,7 +2327,7 @@ impl Buffer {
             self.diagnostics_timestamp = lamport_timestamp;
             self.non_text_state_update_count += 1;
             self.text.lamport_clock.observe(lamport_timestamp);
-            model.notify(modelcx);
+            model.notify(cx);
             model.emit(cx, BufferEvent::DiagnosticsUpdated);
         }
     }
@@ -2328,10 +2339,13 @@ impl Buffer {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        model.emit(cx, BufferEvent::Operation {
-            operation,
-            is_local,
-        });
+        model.emit(
+            cx,
+            BufferEvent::Operation {
+                operation,
+                is_local,
+            },
+        );
     }
 
     /// Removes the selections for a given peer.
@@ -2347,7 +2361,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.undo() {
             self.send_operation(Operation::Buffer(operation), true, model, cx);
-            self.did_edit(&old_version, was_dirty, cx);
+            self.did_edit(&old_version, was_dirty, model, cx);
             Some(transaction_id)
         } else {
             None
@@ -2365,7 +2379,7 @@ impl Buffer {
         let old_version = self.version.clone();
         if let Some(operation) = self.text.undo_transaction(transaction_id) {
             self.send_operation(Operation::Buffer(operation), true, model, cx);
-            self.did_edit(&old_version, was_dirty, cx);
+            self.did_edit(&old_version, was_dirty, model, cx);
             true
         } else {
             false
@@ -2388,7 +2402,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), true, model, cx);
         }
         if undone {
-            self.did_edit(&old_version, was_dirty, cx)
+            self.did_edit(&old_version, was_dirty, model, cx)
         }
         undone
     }
@@ -2403,7 +2417,7 @@ impl Buffer {
         let operation = self.text.undo_operations(counts);
         let old_version = self.version.clone();
         self.send_operation(Operation::Buffer(operation), true, model, cx);
-        self.did_edit(&old_version, was_dirty, cx);
+        self.did_edit(&old_version, was_dirty, model, cx);
     }
 
     /// Manually redoes a specific transaction in the buffer's redo history.
@@ -2413,7 +2427,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.redo() {
             self.send_operation(Operation::Buffer(operation), true, model, cx);
-            self.did_edit(&old_version, was_dirty, cx);
+            self.did_edit(&old_version, was_dirty, model, cx);
             Some(transaction_id)
         } else {
             None
@@ -2436,7 +2450,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), true, model, cx);
         }
         if redone {
-            self.did_edit(&old_version, was_dirty, cx)
+            self.did_edit(&old_version, was_dirty, model, cx)
         }
         redone
     }
@@ -2473,7 +2487,7 @@ impl Buffer {
             model,
             cx,
         );
-        model.notify(modelcx);
+        model.notify(cx);
     }
 
     /// Returns a list of strings which trigger a completion menu for this language.
@@ -2506,7 +2520,7 @@ impl Buffer {
         cx: &mut AppContext,
     ) {
         let edits = self.edits_for_marked_text(marked_string);
-        self.edit(edits, autoindent_mode, cx);
+        self.edit(edits, autoindent_mode, model, cx);
     }
 
     pub fn set_group_interval(&mut self, group_interval: Duration) {
@@ -2558,9 +2572,9 @@ impl Buffer {
         if !ops.is_empty() {
             for op in ops {
                 self.send_operation(Operation::Buffer(op), true, model, cx);
-                self.did_edit(&old_version, was_dirty, cx);
+                self.did_edit(&old_version, was_dirty, model, cx);
             }
-
+        }
     }
 }
 

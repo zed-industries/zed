@@ -132,7 +132,7 @@ impl ChannelChat {
                 last_acknowledged_id: None,
                 rng: StdRng::from_entropy(),
                 first_loaded_message_id: None,
-                _subscription: subscription.set_model(&cx.handle(), &mut cx.to_async()),
+                _subscription: subscription.set_model(model, &mut cx.to_async()),
             }
         })?;
         Self::handle_loaded_messages(
@@ -382,7 +382,7 @@ impl ChannelChat {
                     .ok();
                 self.last_acknowledged_id = Some(latest_message_id);
                 self.channel_store.update(cx, |store, model, cx| {
-                    store.acknowledge_message_id(self.channel_id, latest_message_id, cx);
+                    store.acknowledge_message_id(self.channel_id, latest_message_id, model, cx);
                 });
             }
         }
@@ -439,9 +439,9 @@ impl ChannelChat {
         this.update(cx, |this, model, cx| {
             this.first_loaded_message_id = first_loaded_message_id.and_then(|msg_id| msg_id.into());
             this.loaded_all_messages = loaded_all_messages;
-            this.insert_messages(loaded_messages, cx);
+            this.insert_messages(loaded_messages, model, cx);
             if let Some(loaded_ancestors) = loaded_ancestors {
-                this.insert_messages(loaded_ancestors, cx);
+                this.insert_messages(loaded_ancestors, model, cx);
             }
         })?;
 
@@ -551,7 +551,7 @@ impl ChannelChat {
 
         let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;
         this.update(&mut cx, |this, model, cx| {
-            this.insert_messages(SumTree::from_item(message, &()), cx);
+            this.insert_messages(SumTree::from_item(message, &()), model, cx);
             model.emit(
                 cx,
                 ChannelChatEvent::NewMessage {
@@ -761,7 +761,7 @@ impl ChannelMessage {
     ) -> Result<Self> {
         let sender = user_store
             .update(cx, |user_store, model, cx| {
-                user_store.get_user(message.sender_id, cx)
+                user_store.get_user(message.sender_id, model, cx)
             })?
             .await?;
 

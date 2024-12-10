@@ -862,7 +862,7 @@ impl Project {
             };
 
             let ssh = ssh.read(cx);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, model);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
@@ -1612,7 +1612,7 @@ impl Project {
         self.client_subscriptions.extend([
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&cx.handle(), &mut cx.to_async()),
+                .set_model(model, &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
                 .set_model(&self.worktree_store, &mut cx.to_async()),
@@ -3816,7 +3816,7 @@ impl Project {
             if this.is_local() || this.is_via_ssh() {
                 this.unshare(cx)?;
             } else {
-                this.disconnected_from_host(cx);
+                this.disconnected_from_host(model, cx);
             }
             Ok(())
         })?

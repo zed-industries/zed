@@ -618,7 +618,7 @@ impl AppState {
         let clock = Arc::new(clock::FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
-        let session = cx.new_model(|model, cx| AppSession::new(Session::test(), cx));
+        let session = cx.new_model(|model, cx| AppSession::new(Session::test(), model, cx));
         let user_store = cx.new_model(|model, cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|model, cx| WorkspaceStore::new(client.clone(), cx));
 
@@ -1842,7 +1842,7 @@ impl Workspace {
 
     fn save_all(&mut self, action: &SaveAll, model: &Model<Self>, cx: &mut AppContext) {
         self.save_all_internal(action.save_intent.unwrap_or(SaveIntent::SaveAll), cx)
-            .detach_and_log_err(model, cx);
+            .detach_and_log_err(cx);
     }
 
     fn send_keystrokes(
@@ -2393,7 +2393,7 @@ impl Workspace {
 
         if focus_center {
             self.active_pane
-                .update(cx, |pane, model, cx| pane.focus(cx))
+                .update(cx, |pane, model, cx| pane.focus(window, cx))
         }
 
         model.notify(cx);
@@ -2487,7 +2487,7 @@ impl Workspace {
 
                 if focus_center {
                     self.active_pane
-                        .update(cx, |pane, model, cx| pane.focus(cx))
+                        .update(cx, |pane, model, cx| pane.focus(window, cx))
                 }
 
                 result_panel = panel;
@@ -2541,7 +2541,7 @@ impl Workspace {
             dock.update(cx, |dock, model, cx| {
                 if Some(dock.position()) != dock_to_reveal {
                     if let Some(panel) = dock.active_panel() {
-                        if panel.is_zoomed(cx) {
+                        if panel.is_zoomed(window, cx) {
                             focus_center |= panel.focus_handle(cx).contains_focused(cx);
                             dock.set_open(false, model, cx);
                         }
@@ -2552,7 +2552,7 @@ impl Workspace {
 
         if focus_center {
             self.active_pane
-                .update(cx, |pane, model, cx| pane.focus(cx))
+                .update(cx, |pane, model, cx| pane.focus(window, cx))
         }
 
         if self.zoomed_position != dock_to_reveal {
@@ -2880,7 +2880,7 @@ impl Workspace {
         T: ProjectItem,
     {
         if let Some(item) = self.find_project_item(&pane, &project_item, cx) {
-            self.activate_item(&item, activate_pane, focus_item, cx);
+            self.activate_item(&item, activate_pane, focus_item, model, cx);
             return item;
         }
 
@@ -2917,7 +2917,9 @@ impl Workspace {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
+        if let Some(shared_screen) =
+            self.shared_screen_for_peer(peer_id, &self.active_pane, model, cx)
+        {
             self.active_pane.update(cx, |pane, model, cx| {
                 pane.add_item(Box::new(shared_screen), false, true, None, model, cx)
             });
@@ -2939,7 +2941,7 @@ impl Workspace {
         });
         if let Some((pane, ix)) = result {
             pane.update(cx, |pane, model, cx| {
-                pane.activate_item(ix, activate_pane, focus_item, cx)
+                pane.activate_item(ix, activate_pane, focus_item, model, cx)
             });
             true
         } else {
@@ -3238,7 +3240,7 @@ impl Workspace {
             pane::Event::ZoomIn => {
                 if pane == self.active_pane {
                     pane.update(cx, |pane, model, cx| pane.set_zoomed(true, model, cx));
-                    if pane.read(cx).has_focus(cx) {
+                    if pane.read(cx).has_focus(window, cx) {
                         self.zoomed = Some(pane.downgrade().into());
                         self.zoomed_position = None;
                         model.emit(cx, Event::ZoomChanged);
@@ -3724,7 +3726,7 @@ impl Workspace {
 
         let item_handle = item.to_followable_item_handle(cx)?;
         let id = item_handle.remote_id(&self.app_state.client, cx)?;
-        let variant = item_handle.to_state_proto(cx)?;
+        let variant = item_handle.to_state_proto(model, cx)?;
 
         if item_handle.is_project_item(cx)
             && (follower_project_id.is_none()
@@ -3789,7 +3791,7 @@ impl Workspace {
                 })??;
 
                 if should_add_view {
-                    Self::add_view_from_leader(this.clone(), leader_id, &view, cx).await?
+                    Self::add_view_from_leader(this.clone(), leader_id, &view, model, cx).await?
                 }
             }
             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
@@ -3814,7 +3816,8 @@ impl Workspace {
 
                 if should_add_view {
                     if let Some(view) = update_active_view.view {
-                        Self::add_view_from_leader(this.clone(), leader_id, &view, cx).await?
+                        Self::add_view_from_leader(this.clone(), leader_id, &view, model, cx)
+                            .await?
                     }
                 }
             }
@@ -3885,7 +3888,7 @@ impl Workspace {
             }
 
             let task = cx.update(|cx| {
-                FollowableViewRegistry::from_state_proto(this.clone(), id, variant, cx)
+                FollowableViewRegistry::from_state_proto(this.clone(), id, variant, model, cx)
             })?;
 
             let Some(task) = task else {
@@ -3899,7 +3902,7 @@ impl Workspace {
                 let mut item_to_remove = None;
                 for (ix, item) in pane.items().enumerate() {
                     if let Some(item) = item.to_followable_item_handle(cx) {
-                        match new_item.dedup(item.as_ref(), cx) {
+                        match new_item.dedup(item.as_ref(), model, cx) {
                             Some(item::Dedup::KeepExisting) => {
                                 new_item =
                                     item.boxed_clone().to_followable_item_handle(cx).unwrap();
@@ -3925,7 +3928,7 @@ impl Workspace {
 
         this.update(cx, |this, model, cx| {
             let state = this.follower_states.get_mut(&leader_id)?;
-            item.set_leader_peer_id(Some(leader_id), cx);
+            item.set_leader_peer_id(Some(leader_id), model, cx);
             state.items_by_leader_view_id.insert(
                 id,
                 FollowerView {
@@ -3951,18 +3954,18 @@ impl Workspace {
             let (active_item, panel_id) = self.active_item_for_followers(model, cx);
 
             if let Some(item) = active_item {
-                if item.focus_handle(cx).contains_focused(cx) {
+                if item.focus_handle(model, cx).contains_focused(cx) {
                     let leader_id = self
                         .pane_for(&*item)
                         .and_then(|pane| self.leader_for_pane(&pane));
 
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         let id = item
-                            .remote_id(&self.app_state.client, cx)
+                            .remote_id(&self.app_state.client, model, cx)
                             .map(|id| id.to_proto());
 
                         if let Some(id) = id.clone() {
-                            if let Some(variant) = item.to_state_proto(cx) {
+                            if let Some(variant) = item.to_state_proto(model, cx) {
                                 let view = Some(proto::View {
                                     id: Some(id.clone()),
                                     leader_id,
@@ -4006,7 +4009,7 @@ impl Workspace {
         for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
             if dock.focus_handle(cx).contains_focused(cx) {
                 if let Some(panel) = dock.read(cx).active_panel() {
-                    if let Some(pane) = panel.pane(cx) {
+                    if let Some(pane) = panel.pane(model, cx) {
                         if let Some(item) = pane.read(cx).active_item() {
                             active_item = Some(item);
                             panel_id = panel.remote_id();
@@ -4089,22 +4092,24 @@ impl Workspace {
         let mut item_to_activate = None;
         if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
             if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
-                if leader_in_this_project || !item.view.is_project_item(cx) {
+                if leader_in_this_project || !item.view.is_project_item(window, cx) {
                     item_to_activate = Some((item.location, item.view.boxed_clone()));
                 }
             }
         } else if let Some(shared_screen) =
-            self.shared_screen_for_peer(leader_id, &state.center_pane, cx)
+            self.shared_screen_for_peer(leader_id, &state.center_pane, model, cx)
         {
             item_to_activate = Some((None, Box::new(shared_screen)));
         }
 
         let (panel_id, item) = item_to_activate?;
 
-        let mut transfer_focus = state.center_pane.read(cx).has_focus(cx);
+        let mut transfer_focus = state.center_pane.read(cx).has_focus(window, cx);
         let pane;
         if let Some(panel_id) = panel_id {
-            pane = self.activate_panel_for_proto_id(panel_id, cx)?.pane(cx)?;
+            pane = self
+                .activate_panel_for_proto_id(panel_id, model, cx)?
+                .pane(cx)?;
             let state = self.follower_states.get_mut(&leader_id)?;
             state.dock_pane = Some(pane.clone());
         } else {
@@ -4162,7 +4167,7 @@ impl Workspace {
             }
         }
 
-        Some(cx.new_model(|model, cx| SharedScreen::new(track, peer_id, user.clone(), cx)))
+        Some(cx.new_model(|model, cx| SharedScreen::new(track, peer_id, user.clone(), model, cx)))
     }
 
     pub fn on_window_activation_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
@@ -4185,8 +4190,8 @@ impl Workspace {
                             item.workspace_settings(cx).autosave,
                             AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
                         ) {
-                            Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
-                                .detach_and_log_err(model, cx);
+                            Pane::autosave_item(item.as_ref(), self.project.clone(), model, cx)
+                                .detach_and_log_err(cx);
                         }
                     }
                 });
@@ -4208,7 +4213,7 @@ impl Workspace {
         match event {
             call::room::Event::ParticipantLocationChanged { participant_id }
             | call::room::Event::RemoteVideoTracksChanged { participant_id } => {
-                self.leader_updated(*participant_id, cx);
+                self.leader_updated(*participant_id, model, cx);
             }
             _ => {}
         }
@@ -4237,7 +4242,7 @@ impl Workspace {
         match member {
             Member::Axis(PaneAxis { members, .. }) => {
                 for child in members.iter() {
-                    self.remove_panes(child.clone(), cx)
+                    self.remove_panes(child.clone(), model, cx)
                 }
             }
             Member::Pane(pane) => {
@@ -4252,7 +4257,7 @@ impl Workspace {
         cx: &mut gpui::AppContext,
     ) -> Task<()> {
         self.session_id.take();
-        self.serialize_workspace_internal(cx)
+        self.serialize_workspace_internal(model, cx)
     }
 
     fn force_remove_pane(
@@ -4264,12 +4269,12 @@ impl Workspace {
     ) {
         self.panes.retain(|p| p != pane);
         if let Some(focus_on) = focus_on {
-            focus_on.update(cx, |pane, model, cx| pane.focus(cx));
+            focus_on.update(cx, |pane, model, cx| pane.focus(window, cx));
         } else {
             self.panes
                 .last()
                 .unwrap()
-                .update(cx, |pane, model, cx| pane.focus(cx));
+                .update(cx, |pane, model, cx| pane.focus(window, cx));
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
@@ -4284,7 +4289,7 @@ impl Workspace {
                     .timer(Duration::from_millis(100))
                     .await;
                 this.update(&mut cx, |this, model, cx| {
-                    this.serialize_workspace_internal(cx).detach();
+                    this.serialize_workspace_internal(model, cx).detach();
                     this._schedule_serialize.take();
                 })
                 .log_err();
@@ -4322,7 +4327,7 @@ impl Workspace {
                             })
                         })
                         .collect::<Vec<_>>(),
-                    pane.has_focus(cx),
+                    pane.has_focus(window, cx),
                     pane.pinned_count(),
                 )
             };
@@ -4345,12 +4350,12 @@ impl Workspace {
                     axis: SerializedAxis(*axis),
                     children: members
                         .iter()
-                        .map(|member| build_serialized_pane_group(member, cx))
+                        .map(|member| build_serialized_pane_group(member, model, cx))
                         .collect::<Vec<_>>(),
                     flexes: Some(flexes.lock().clone()),
                 },
                 Member::Pane(pane_handle) => {
-                    SerializedPaneGroup::Pane(serialize_pane_handle(pane_handle, cx))
+                    SerializedPaneGroup::Pane(serialize_pane_handle(pane_handle, model, cx))
                 }
             }
         }
@@ -4367,7 +4372,7 @@ impl Workspace {
                 .map(|panel| panel.persistent_name().to_string());
             let left_dock_zoom = left_dock
                 .active_panel()
-                .map(|panel| panel.is_zoomed(cx))
+                .map(|panel| panel.is_zoomed(window, cx))
                 .unwrap_or(false);
 
             let right_dock = this.right_dock.read(cx);
@@ -4377,7 +4382,7 @@ impl Workspace {
                 .map(|panel| panel.persistent_name().to_string());
             let right_dock_zoom = right_dock
                 .active_panel()
-                .map(|panel| panel.is_zoomed(cx))
+                .map(|panel| panel.is_zoomed(window, cx))
                 .unwrap_or(false);
 
             let bottom_dock = this.bottom_dock.read(cx);
@@ -4387,7 +4392,7 @@ impl Workspace {
                 .map(|panel| panel.persistent_name().to_string());
             let bottom_dock_zoom = bottom_dock
                 .active_panel()
-                .map(|panel| panel.is_zoomed(cx))
+                .map(|panel| panel.is_zoomed(window, cx))
                 .unwrap_or(false);
 
             DockStructure {
@@ -4422,7 +4427,7 @@ impl Workspace {
         };
 
         if let Some(location) = location {
-            let center_group = build_serialized_pane_group(&self.center.root, cx);
+            let center_group = build_serialized_pane_group(&self.center.root, model, cx);
             let docks = build_serialized_docks(self, cx);
             let window_bounds = Some(SerializedWindowBounds(cx.window_bounds()));
             let serialized_workspace = SerializedWorkspace {
@@ -4569,7 +4574,7 @@ impl Workspace {
                 {
                     dock.update(cx, |dock, model, cx| {
                         dock.serialized_dock = Some(serialized_dock.clone());
-                        dock.restore_state(model, cx);
+                        dock.restore_state(cx);
                     });
                 }
 
@@ -4661,12 +4666,12 @@ impl Workspace {
             }))
             .on_action(
                 cx.listener(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
-                    workspace.toggle_dock(DockPosition::Right, cx);
+                    workspace.toggle_dock(DockPosition::Right, model, cx);
                 }),
             )
             .on_action(
                 cx.listener(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
-                    workspace.toggle_dock(DockPosition::Bottom, cx);
+                    workspace.toggle_dock(DockPosition::Bottom, model, cx);
                 }),
             )
             .on_action(
@@ -4695,8 +4700,9 @@ impl Workspace {
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
 
-        let workspace_store = cx.new_model(|model, cx| WorkspaceStore::new(client.clone(), cx));
-        let session = cx.new_model(|model, cx| AppSession::new(Session::test(), cx));
+        let workspace_store =
+            cx.new_model(|model, cx| WorkspaceStore::new(client.clone(), model, cx));
+        let session = cx.new_model(|model, cx| AppSession::new(Session::test(), model, cx));
         cx.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
@@ -4708,10 +4714,10 @@ impl Workspace {
             node_runtime: NodeRuntime::unavailable(),
             session,
         });
-        let workspace = Self::new(Default::default(), project, app_state, cx);
+        let workspace = Self::new(Default::default(), project, app_state, model, cx);
         workspace
             .active_pane
-            .update(cx, |pane, model, cx| pane.focus(cx));
+            .update(cx, |pane, model, cx| pane.focus(window));
         workspace
     }
 
@@ -5117,7 +5123,7 @@ impl Render for Workspace {
                                 })
                                 .when(self.zoomed.is_none(), |this| {
                                     this.on_drag_move(cx.listener(
-                                        |workspace, e: &DragMoveEvent<DraggedDock>, cx| {
+                                        |workspace, e: &DragMoveEvent<DraggedDock>, window, cx| {
                                             match e.drag(cx).0 {
                                                 DockPosition::Left => {
                                                     resize_left_dock(
@@ -6428,7 +6434,7 @@ fn move_all_items(
         // This automatically removes duplicate items in the pane
         to_pane.update(cx, |destination, model, cx| {
             destination.add_item(item_handle, true, true, None, model, cx);
-            destination.focus(cx)
+            destination.focus(window, cx)
         });
     }
 }
@@ -6462,7 +6468,7 @@ pub fn move_item(
     // This automatically removes duplicate items in the pane
     destination.update(cx, |destination, model, cx| {
         destination.add_item(item_handle, true, true, Some(destination_index), cx);
-        destination.focus(cx)
+        destination.focus(window, cx)
     });
 }
 

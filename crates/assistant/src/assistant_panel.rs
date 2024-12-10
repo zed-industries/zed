@@ -1177,7 +1177,7 @@ impl AssistantPanel {
         }
 
         panel.update(cx, |this, model, cx| {
-            this.show_configuration_tab(cx);
+            this.show_configuration_tab(model, cx);
         })
     }
 
@@ -1291,7 +1291,7 @@ impl AssistantPanel {
         if let Some(existing_context) = existing_context {
             return model.spawn(cx, |this, mut cx| async move {
                 this.update(&mut cx, |this, model, cx| {
-                    this.show_context(existing_context, cx)
+                    this.show_context(existing_context, model, cx)
                 })
             });
         }
@@ -1341,7 +1341,7 @@ impl AssistantPanel {
         if let Some(existing_context) = existing_context {
             return model.spawn(cx, |this, mut cx| async move {
                 this.update(&mut cx, |this, model, cx| {
-                    this.show_context(existing_context.clone(), cx)
+                    this.show_context(existing_context.clone(), model, cx)
                 })?;
                 Ok(existing_context)
             });
@@ -1408,7 +1408,7 @@ impl AssistantPanel {
             assistant_panel
                 .context_store
                 .update(cx, |context_store, model, cx| {
-                    context_store.restart_context_servers(cx);
+                    context_store.restart_context_servers(model, cx);
                 });
         });
     }
@@ -1510,7 +1510,7 @@ impl Panel for AssistantPanel {
 
     fn set_zoomed(&mut self, zoomed: bool, model: &Model<Self>, cx: &mut AppContext) {
         self.pane
-            .update(cx, |pane, model, cx| pane.set_zoomed(zoomed, cx));
+            .update(cx, |pane, model, cx| pane.set_zoomed(zoomed, model, cx));
     }
 
     fn set_active(&mut self, active: bool, model: &Model<Self>, cx: &mut AppContext) {
@@ -1702,7 +1702,7 @@ impl ContextEditor {
     fn insert_default_prompt(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let command_name = DefaultSlashCommand.name();
         self.editor.update(cx, |editor, model, cx| {
-            editor.insert(&format!("/{command_name}\n\n"), cx)
+            editor.insert(&format!("/{command_name}\n\n"), model, cx)
         });
         let command = self.context.update(cx, |context, model, cx| {
             context.reparse(model, cx);
@@ -1779,6 +1779,7 @@ impl ContextEditor {
             self.editor.update(cx, |editor, model, cx| {
                 editor.change_selections(
                     Some(Autoscroll::Strategy(AutoscrollStrategy::Fit)),
+                    model,
                     cx,
                     |selections| selections.select_ranges([new_selection]),
                 );
@@ -1832,7 +1833,7 @@ impl ContextEditor {
     pub fn insert_command(&mut self, name: &str, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(command) = self.slash_commands.command(name, cx) {
             self.editor.update(cx, |editor, model, cx| {
-                editor.transact(cx, |editor, cx| {
+                editor.transact(model, cx, |editor, cx| {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.try_cancel());
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     let newest_cursor = editor.selections.newest::<Point>(cx).head();
@@ -1976,7 +1977,7 @@ impl ContextEditor {
             ContextEvent::StreamedCompletion => {
                 self.editor.update(cx, |editor, model, cx| {
                     if let Some(scroll_position) = self.scroll_position {
-                        let snapshot = editor.snapshot(cx);
+                        let snapshot = editor.snapshot(model, cx);
                         let cursor_point = scroll_position.cursor.to_display_point(&snapshot);
                         let scroll_top =
                             cursor_point.row().as_f32() - scroll_position.offset_before_cursor.y;
@@ -2058,10 +2059,10 @@ impl ContextEditor {
                         })
                         .collect::<Vec<_>>();
 
-                    let crease_ids = editor.insert_creases(creases, cx);
+                    let crease_ids = editor.insert_creases(creases, model, cx);
 
                     for buffer_row in buffer_rows_to_fold.into_iter().rev() {
-                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                        editor.fold_at(&FoldAt { buffer_row }, model, cx);
                     }
 
                     self.pending_tool_use_creases.extend(
@@ -2084,6 +2085,7 @@ impl ContextEditor {
                         removed
                             .iter()
                             .filter_map(|range| self.pending_slash_command_creases.remove(range)),
+                        model,
                         cx,
                     );
 
@@ -2155,6 +2157,7 @@ impl ContextEditor {
                                 .unwrap();
                             Crease::inline(start..end, placeholder, render_toggle, render_trailer)
                         }),
+                        model,
                         cx,
                     );
 
@@ -2231,8 +2234,8 @@ impl ContextEditor {
                         render_trailer,
                     );
 
-                    editor.insert_creases([crease], cx);
-                    editor.fold_at(&FoldAt { buffer_row }, cx);
+                    editor.insert_creases([crease], model, cx);
+                    editor.fold_at(&FoldAt { buffer_row }, model, cx);
                 });
             }
             ContextEvent::Operation(_) => {}
@@ -2305,11 +2308,13 @@ impl ContextEditor {
                         &[start..end],
                         TypeId::of::<PendingSlashCommand>(),
                         false,
+                        model,
                         cx,
                     );
 
                     editor.remove_creases(
                         HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
+                        model,
                         cx,
                     );
                 } else if let hash_map::Entry::Vacant(entry) =
@@ -2331,8 +2336,8 @@ impl ContextEditor {
                         fold_toggle("invoked-slash-command"),
                         |_row, _folded, _cx| Empty.into_any(),
                     );
-                    let crease_ids = editor.insert_creases([crease.clone()], cx);
-                    editor.fold_creases(vec![crease], false, cx);
+                    let crease_ids = editor.insert_creases([crease.clone()], model, cx);
+                    editor.fold_creases(vec![crease], false, model, cx);
                     entry.insert(crease_ids[0]);
                 } else {
                     model.notify(cx)
@@ -2358,7 +2363,7 @@ impl ContextEditor {
         let mut editors_to_close = Vec::new();
 
         self.editor.update(cx, |editor, model, cx| {
-            let snapshot = editor.snapshot(cx);
+            let snapshot = editor.snapshot(model, cx);
             let multibuffer = &snapshot.buffer_snapshot;
             let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
 
@@ -2378,8 +2383,8 @@ impl ContextEditor {
                     removed_crease_ids.push(state.crease_id);
                 }
             }
-            editor.unfold_ranges(&ranges_to_unfold, true, false, cx);
-            editor.remove_creases(removed_crease_ids, cx);
+            editor.unfold_ranges(&ranges_to_unfold, true, false, model, cx);
+            editor.remove_creases(removed_crease_ids, model, cx);
 
             for range in updated {
                 let Some(patch) = self.context.read(cx).patch_for_range(&range, cx).cloned() else {
@@ -2443,7 +2448,7 @@ impl ContextEditor {
                     should_refold =
                         snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
                 } else {
-                    let crease_id = editor.insert_creases([crease.clone()], cx)[0];
+                    let crease_id = editor.insert_creases([crease.clone()], model, cx)[0];
                     self.patches.insert(
                         range.clone(),
                         PatchViewState {
@@ -2457,8 +2462,8 @@ impl ContextEditor {
                 }
 
                 if should_refold {
-                    editor.unfold_ranges(&[patch_start..patch_end], true, false, cx);
-                    editor.fold_creases(vec![crease], false, cx);
+                    editor.unfold_ranges(&[patch_start..patch_end], true, false, model, cx);
+                    editor.fold_creases(vec![crease], false, model, cx);
                 }
             }
         });
@@ -2513,13 +2518,13 @@ impl ContextEditor {
                 );
             }
 
-            editor.insert_creases(creases, cx);
+            editor.insert_creases(creases, model, cx);
 
             if expand_result {
                 buffer_rows_to_fold.clear();
             }
             for buffer_row in buffer_rows_to_fold.into_iter().rev() {
-                editor.fold_at(&FoldAt { buffer_row }, cx);
+                editor.fold_at(&FoldAt { buffer_row }, model, cx);
             }
         });
     }
@@ -2590,7 +2595,7 @@ impl ContextEditor {
                 if let Some(editor) = editor {
                     self.workspace
                         .update(cx, |workspace, model, cx| {
-                            workspace.activate_item(&editor, true, false, cx);
+                            workspace.activate_item(&editor, true, false, model, cx);
                         })
                         .ok();
                 } else {
@@ -2616,7 +2621,7 @@ impl ContextEditor {
                     pane.update(cx, |pane, model, cx| {
                         let item_id = editor.entity_id();
                         if !editor.read(cx).focus_handle(cx).is_focused(window) {
-                            pane.close_item_by_id(item_id, SaveIntent::Skip, cx)
+                            pane.close_item_by_id(item_id, SaveIntent::Skip, model, cx)
                                 .detach_and_log_err(cx);
                         }
                     });
@@ -2701,8 +2706,8 @@ impl ContextEditor {
             if let Some(state) = &mut patch_state.editor {
                 if let Some(editor) = state.editor.upgrade() {
                     editor.update(cx, |editor, model, cx| {
-                        editor.set_title(patch.title.clone(), cx);
-                        editor.reset_locations(locations, cx);
+                        editor.set_title(patch.title.clone(), model, cx);
+                        editor.reset_locations(locations, model, cx);
                         resolved_patch.apply(editor, model, cx);
                     });
 
@@ -2734,7 +2739,7 @@ impl ContextEditor {
         cx: &mut AppContext,
     ) -> Option<ScrollPosition> {
         self.editor.update(cx, |editor, model, cx| {
-            let snapshot = editor.snapshot(cx);
+            let snapshot = editor.snapshot(model, cx);
             let cursor = editor.selections.newest_anchor().head();
             let cursor_row = cursor
                 .to_display_point(&snapshot.display_snapshot)
@@ -3096,7 +3101,7 @@ impl ContextEditor {
         {
             active_editor_view.update(cx, |editor, model, cx| {
                 editor.insert(&text, model, cx);
-                editor.focus(cx);
+                editor.focus(window);
             })
         }
     }
@@ -3474,10 +3479,11 @@ impl ContextEditor {
                             )
                             .with_metadata(metadata.crease.clone())
                         }),
+                        model,
                         cx,
                     );
                     for buffer_row in buffer_rows_to_fold.into_iter().rev() {
-                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                        editor.fold_at(&FoldAt { buffer_row }, model, cx);
                     }
                 }
             });
@@ -3622,7 +3628,7 @@ impl ContextEditor {
     ) -> Option<AnyElement> {
         let snapshot = self
             .editor
-            .update(cx, |editor, model, cx| editor.snapshot(cx));
+            .update(cx, |editor, model, cx| editor.snapshot(model, cx));
         let (excerpt_id, _buffer_id, _) = snapshot.buffer_snapshot.as_singleton().unwrap();
         let excerpt_id = *excerpt_id;
         let anchor = snapshot
@@ -4284,7 +4290,7 @@ fn render_fold_icon_button(
                             .start
                             .to_point(&editor.buffer().read(cx).read(cx));
                         let buffer_row = MultiBufferRow(buffer_start.row);
-                        editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                        editor.unfold_at(&UnfoldAt { buffer_row }, model, cx);
                     })
                     .ok();
             })
@@ -4593,7 +4599,7 @@ impl FollowableItem for ContextEditor {
         })?;
 
         let context_editor = panel.update(cx, |panel, model, cx| {
-            panel.open_remote_context(context_id, cx)
+            panel.open_remote_context(context_id, model, cx)
         });
 
         Some(cx.spawn(|mut cx| async move {
@@ -4939,7 +4945,7 @@ impl ContextHistory {
             .update(cx, |assistant_panel, model, cx| match context {
                 ContextMetadata::Remote(metadata) => {
                     assistant_panel
-                        .open_remote_context(metadata.id.clone(), cx)
+                        .open_remote_context(metadata.id.clone(), model, cx)
                         .detach_and_log_err(cx);
                 }
                 ContextMetadata::Saved(metadata) => {

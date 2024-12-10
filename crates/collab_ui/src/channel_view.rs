@@ -239,7 +239,7 @@ impl ChannelView {
         let position = Channel::slug(&position).to_lowercase();
         let snapshot = self
             .editor
-            .update(cx, |editor, model, cx| editor.snapshot(cx));
+            .update(cx, |editor, model, cx| editor.snapshot(model, cx));
 
         if let Some(outline) = snapshot.buffer_snapshot.outline(None) {
             if let Some(item) = outline
@@ -291,7 +291,7 @@ impl ChannelView {
     ) {
         let snapshot = self
             .editor
-            .update(cx, |editor, model, cx| editor.snapshot(cx));
+            .update(cx, |editor, model, cx| editor.snapshot(model, cx));
 
         let mut closest_heading = None;
 

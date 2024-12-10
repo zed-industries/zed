@@ -285,7 +285,7 @@ impl LogStore {
                 while let Some((server_id, io_kind, message)) = io_rx.next().await {
                     if let Some(this) = this.upgrade() {
                         this.update(&mut cx, |this, model, cx| {
-                            this.on_io(server_id, io_kind, &message, cx);
+                            this.on_io(server_id, io_kind, &message, model, cx);
                         })?;
                     }
                 }
@@ -884,8 +884,8 @@ impl LspLogView {
 
         if let Some(log_contents) = log_contents {
             self.editor.update(cx, move |editor, model, cx| {
-                editor.set_text(log_contents, cx);
-                editor.move_to_end(&MoveToEnd, cx);
+                editor.set_text(log_contents, model, cx);
+                editor.move_to_end(&MoveToEnd, model, cx);
             });
             model.notify(cx);
         }
@@ -1106,7 +1106,8 @@ impl SearchableItem for LspLogView {
     type Match = <Editor as SearchableItem>::Match;
 
     fn clear_matches(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        self.editor.update(cx, |e, model, cx| e.clear_matches(cx))
+        self.editor
+            .update(cx, |e, model, cx| e.clear_matches(model, cx))
     }
 
     fn update_matches(
@@ -1116,12 +1117,12 @@ impl SearchableItem for LspLogView {
         cx: &mut AppContext,
     ) {
         self.editor
-            .update(cx, |e, model, cx| e.update_matches(matches, cx))
+            .update(cx, |e, model, cx| e.update_matches(matches, model, cx))
     }
 
     fn query_suggestion(&mut self, model: &Model<Self>, cx: &mut AppContext) -> String {
         self.editor
-            .update(cx, |e, model, cx| e.query_suggestion(cx))
+            .update(cx, |e, model, cx| e.query_suggestion(model, cx))
     }
 
     fn activate_match(
@@ -1131,8 +1132,9 @@ impl SearchableItem for LspLogView {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.editor
-            .update(cx, |e, model, cx| e.activate_match(index, matches, cx))
+        self.editor.update(cx, |e, model, cx| {
+            e.activate_match(index, matches, model, cx)
+        })
     }
 
     fn select_matches(
@@ -1142,7 +1144,7 @@ impl SearchableItem for LspLogView {
         cx: &mut AppContext,
     ) {
         self.editor
-            .update(cx, |e, model, cx| e.select_matches(matches, cx))
+            .update(cx, |e, model, cx| e.select_matches(matches, model, cx))
     }
 
     fn find_matches(
@@ -1152,7 +1154,7 @@ impl SearchableItem for LspLogView {
         cx: &mut AppContext,
     ) -> gpui::Task<Vec<Self::Match>> {
         self.editor
-            .update(cx, |e, model, cx| e.find_matches(query, cx))
+            .update(cx, |e, model, cx| e.find_matches(query, model, cx))
     }
 
     fn replace(&mut self, _: &Self::Match, _: &SearchQuery, _: &Model<Self>, _: &mut AppContext) {
@@ -1175,7 +1177,7 @@ impl SearchableItem for LspLogView {
         cx: &mut AppContext,
     ) -> Option<usize> {
         self.editor
-            .update(cx, |e, model, cx| e.active_match_index(matches, cx))
+            .update(cx, |e, model, cx| e.active_match_index(matches, model, cx))
     }
 }
 
@@ -1417,7 +1419,7 @@ impl Render for LspLogToolbarItemView {
                                                                         this.current_server_id
                                                                     {
                                                                         this.update_trace_level(
-                                                                            id, option, cx,
+                                                                            id, option, model, cx,
                                                                         );
                                                                     }
                                                                 },
@@ -1484,7 +1486,7 @@ impl Render for LspLogToolbarItemView {
                                                                         this.current_server_id
                                                                     {
                                                                         this.update_log_level(
-                                                                            id, option, cx,
+                                                                            id, option, model, cx,
                                                                         );
                                                                     }
                                                                 },
@@ -1538,12 +1540,12 @@ impl LspLogToolbarItemView {
     ) {
         if let Some(log_view) = &self.log_view {
             log_view.update(cx, |log_view, model, cx| {
-                log_view.toggle_rpc_trace_for_server(id, enabled, cx);
+                log_view.toggle_rpc_trace_for_server(id, enabled, model, cx);
                 if !enabled && Some(id) == log_view.current_server_id {
-                    log_view.show_logs_for_server(id, cx);
+                    log_view.show_logs_for_server(id, model, cx);
                     model.notify(cx);
                 } else if enabled {
-                    log_view.show_rpc_trace_for_server(id, cx);
+                    log_view.show_rpc_trace_for_server(id, model, cx);
                     model.notify(cx);
                 }
                 cx.focus(&log_view.focus_handle);

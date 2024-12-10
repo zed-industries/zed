@@ -131,6 +131,7 @@ impl TitleBar {
                         room,
                         project_id,
                         &current_user,
+                        model,
                         cx,
                     );
 
@@ -359,7 +360,7 @@ impl TitleBar {
                         .on_click(move |_, cx| {
                             ActiveCall::global(cx)
                                 .update(cx, |call, model, cx| call.hang_up(cx))
-                                .detach_and_log_err(model, cx);
+                                .detach_and_log_err(cx);
                         }),
                 )
                 .into_any_element(),

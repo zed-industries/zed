@@ -521,8 +521,7 @@ impl Editor {
         }
 
         if let Some(project) = self.project.clone() {
-            self.save(true, project, model, cx)
-                .detach_and_log_err(model, cx);
+            self.save(true, project, model, cx).detach_and_log_err(cx);
         }
     }
 
@@ -553,8 +552,7 @@ impl Editor {
         });
 
         if let Some(project) = self.project.clone() {
-            self.save(true, project, model, cx)
-                .detach_and_log_err(model, cx);
+            self.save(true, project, model, cx).detach_and_log_err(cx);
         }
     }
 

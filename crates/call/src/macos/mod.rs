@@ -386,10 +386,10 @@ impl ActiveCall {
     }
 
     pub fn hang_up(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<Result<()>> {
-        model.notify(model, cx);
-        self.report_call_event("hang up", model, cx);
+        model.notify(cx);
+        self.report_call_event("hang up", cx);
 
-        Audio::end_call(model, cx);
+        Audio::end_call(cx);
 
         let channel_id = self.channel_id(cx);
         if let Some((room, _)) = self.room.take() {
@@ -421,7 +421,7 @@ impl ActiveCall {
         cx: &mut AppContext,
     ) -> Result<()> {
         if let Some((room, _)) = self.room.as_ref() {
-            self.report_call_event("unshare project", model, cx);
+            self.report_call_event("unshare project", cx;
             room.update(cx, |room, model, cx| {
                 room.unshare_project(project, model, cx)
             })

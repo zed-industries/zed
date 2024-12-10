@@ -81,7 +81,7 @@ impl ChannelBuffer {
                 collaborators: Default::default(),
                 acknowledge_task: None,
                 channel_id: channel.id,
-                subscription: Some(subscription.set_model(&cx.handle(), &mut cx.to_async())),
+                subscription: Some(subscription.set_model(model, &mut cx.to_async())),
                 user_store,
                 channel_store,
             };
@@ -163,7 +163,7 @@ impl ChannelBuffer {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, model, cx| {
-            this.replace_collaborators(message.payload.collaborators, cx);
+            this.replace_collaborators(message.payload.collaborators, model, cx);
             model.emit(cx, ChannelBufferEvent::CollaboratorsChanged);
             model.notify(cx);
         })

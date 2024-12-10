@@ -133,7 +133,7 @@ impl ContextStore {
                     _watch_updates: model.spawn(cx, |this, mut cx| {
                         async move {
                             while events.next().await.is_some() {
-                                this.update(&mut cx, |this, model, cx| this.reload(cx))?
+                                this.update(&mut cx, |this, model, cx| this.reload(model, cx))?
                                     .await
                                     .log_err();
                             }
@@ -152,11 +152,11 @@ impl ContextStore {
                     prompt_builder,
                 };
                 this.handle_project_changed(project.clone(), model, cx);
-                this.synchronize_contexts(cx);
-                this.register_context_server_handlers(cx);
+                this.synchronize_contexts(model, cx);
+                this.register_context_server_handlers(model, cx);
                 this
             })?;
-            this.update(&mut cx, |this, model, cx| this.reload(cx))?
+            this.update(&mut cx, |this, model, cx| this.reload(model, cx))?
                 .await
                 .log_err();
 
@@ -223,7 +223,7 @@ impl ContextStore {
                 return Err(anyhow!("can only create contexts as the host"));
             }
 
-            let context = this.create(cx);
+            let context = this.create(model, cx);
             let context_id = context.read(cx).id().clone();
             model.emit(cx, ContextStoreEvent::ContextCreated(context_id.clone()));
 
@@ -327,7 +327,7 @@ impl ContextStore {
                 .client
                 .subscribe_to_entity(remote_id)
                 .log_err()
-                .map(|subscription| subscription.set_model(&cx.handle(), &mut cx.to_async()));
+                .map(|subscription| subscription.set_model(model, &mut cx.to_async()));
             self.advertise_contexts(cx);
         } else {
             self.client_subscription = None;
@@ -346,7 +346,7 @@ impl ContextStore {
                 self.advertise_contexts(cx);
             }
             project::Event::HostReshared | project::Event::Rejoined => {
-                self.synchronize_contexts(cx);
+                self.synchronize_contexts(model, cx);
             }
             project::Event::DisconnectedFromHost => {
                 self.contexts.retain_mut(|context| {
@@ -438,8 +438,8 @@ impl ContextStore {
                 if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
                     existing_context
                 } else {
-                    this.register_context(&context, cx);
-                    this.synchronize_contexts(cx);
+                    this.register_context(&context, model, cx);
+                    this.synchronize_contexts(model, cx);
                     context
                 }
             })
@@ -491,7 +491,7 @@ impl ContextStore {
                 if let Some(existing_context) = this.loaded_context_for_path(&path, cx) {
                     existing_context
                 } else {
-                    this.register_context(&context, cx);
+                    this.register_context(&context, model, cx);
                     context
                 }
             })
@@ -584,8 +584,8 @@ impl ContextStore {
                 if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
                     existing_context
                 } else {
-                    this.register_context(&context, cx);
-                    this.synchronize_contexts(cx);
+                    this.register_context(&context, model, cx);
+                    this.synchronize_contexts(model, cx);
                     context
                 }
             })

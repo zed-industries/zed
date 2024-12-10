@@ -486,7 +486,7 @@ impl TerminalBuilder {
                 while let Some(event) = self.events_rx.next().await {
                     terminal.update(&mut cx, |terminal, model, cx| {
                         //Process the first event immediately for lowered latency
-                        terminal.process_event(&event, cx);
+                        terminal.process_event(&event, model, cx);
                     })?;
 
                     'outer: loop {
@@ -524,11 +524,11 @@ impl TerminalBuilder {
 
                         terminal.update(&mut cx, |this, model, cx| {
                             if wakeup {
-                                this.process_event(&AlacTermEvent::Wakeup, cx);
+                                this.process_event(&AlacTermEvent::Wakeup, model, cx);
                             }
 
                             for event in events {
-                                this.process_event(&event, cx);
+                                this.process_event(&event, model, cx);
                             }
                         })?;
                         smol::future::yield_now().await;
@@ -968,6 +968,7 @@ impl Terminal {
                                 url_match,
                                 maybe_url_or_path,
                                 is_url,
+                                model,
                                 cx,
                             );
                         }

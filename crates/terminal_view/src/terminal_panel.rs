@@ -652,7 +652,7 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |this, model, cx| {
-                this.add_terminal(kind, RevealStrategy::Always, cx)
+                this.add_terminal(kind, RevealStrategy::Always, model, cx)
             })
             .detach_and_log_err(cx);
     }
@@ -692,7 +692,7 @@ impl TerminalPanel {
         cx: &mut gpui::AppContext,
     ) {
         pane.update(cx, |pane, model, cx| {
-            pane.activate_item(item_index, true, focus, cx)
+            pane.activate_item(item_index, true, focus, model, cx)
         })
     }
 
@@ -926,8 +926,8 @@ pub fn new_terminal_pane(
         let buffer_search_bar = cx.new_model(search::BufferSearchBar::new);
         let breadcrumbs = cx.new_model(|_, _| Breadcrumbs::new());
         pane.toolbar().update(cx, |toolbar, model, cx| {
-            toolbar.add_item(buffer_search_bar, cx);
-            toolbar.add_item(breadcrumbs, cx);
+            toolbar.add_item(buffer_search_bar, model, cx);
+            toolbar.add_item(breadcrumbs, model, cx);
         });
 
         pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
@@ -1251,7 +1251,7 @@ impl Panel for TerminalPanel {
     fn set_zoomed(&mut self, zoomed: bool, model: &Model<Self>, cx: &mut AppContext) {
         for pane in self.center.panes() {
             pane.update(cx, |pane, model, cx| {
-                pane.set_zoomed(zoomed, cx);
+                pane.set_zoomed(zoomed, model, cx);
             })
         }
         model.notify(cx);

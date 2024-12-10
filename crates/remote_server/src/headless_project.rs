@@ -75,12 +75,12 @@ impl HeadlessProject {
 
         let worktree_store = cx.new_model(|model, cx| {
             let mut store = WorktreeStore::local(true, fs.clone());
-            store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            store.shared(SSH_PROJECT_ID, session.clone().into(), model, cx);
             store
         });
         let buffer_store = cx.new_model(|model, cx| {
-            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
-            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            let mut buffer_store = BufferStore::local(worktree_store.clone(), model, cx);
+            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), model, cx);
             buffer_store
         });
         let prettier_store = cx.new_model(|model, cx| {
@@ -111,7 +111,7 @@ impl HeadlessProject {
                 environment.clone(),
                 cx,
             );
-            task_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            task_store.shared(SSH_PROJECT_ID, session.clone().into(), model, cx);
             task_store
         });
         let settings_observer = cx.new_model(|model, cx| {
@@ -121,7 +121,7 @@ impl HeadlessProject {
                 task_store.clone(),
                 cx,
             );
-            observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            observer.shared(SSH_PROJECT_ID, session.clone().into(), model, cx);
             observer
         });
 
@@ -137,7 +137,7 @@ impl HeadlessProject {
                 fs.clone(),
                 cx,
             );
-            lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), model, cx);
             lsp_store
         });
 
@@ -167,7 +167,7 @@ impl HeadlessProject {
 
         session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
-        session.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
+        session.subscribe_to_entity(SSH_PROJECT_ID, model);
         session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);
@@ -371,7 +371,7 @@ impl HeadlessProject {
         cx.spawn(|mut cx| async move {
             this.update(&mut cx, |this, model, cx| {
                 this.worktree_store.update(cx, |worktree_store, model, cx| {
-                    worktree_store.add(&worktree, cx);
+                    worktree_store.add(&worktree, model, cx);
                 });
             })
             .log_err();
@@ -389,7 +389,7 @@ impl HeadlessProject {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         this.update(&mut cx, |this, model, cx| {
             this.worktree_store.update(cx, |worktree_store, model, cx| {
-                worktree_store.remove_worktree(worktree_id, cx);
+                worktree_store.remove_worktree(worktree_id, model, cx);
             });
         })?;
         Ok(proto::Ack {})
