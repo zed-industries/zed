@@ -271,6 +271,7 @@ pub enum Event {
     Rejoined,
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
+    OpenNumberedFile(FileNumber),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
 }
 
@@ -549,6 +550,12 @@ impl DirectoryLister {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq)]
+pub enum FileNumber {
+    Absolute(usize),
+    Relative(usize, bool),
 }
 
 #[cfg(any(test, feature = "test-support"))]
