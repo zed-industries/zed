@@ -18,9 +18,15 @@ use gpui::{
     InteractiveElement, Model, Render, Subscription, Task, View, WeakView,
 };
 use language::{Buffer, BufferRow};
-use multi_buffer::{ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer};
+use multi_buffer::{
+    Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, MultiBufferPoint,
+};
 use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
-use text::{OffsetRangeExt, ToPoint};
+use rand::{
+    distributions::{DistString, Standard},
+    prelude::*,
+};
+use text::{Edit, OffsetRangeExt, ToPoint};
 use theme::ActiveTheme;
 use ui::{
     div, h_flex, Color, Context, FluentBuilder, Icon, IconName, IntoElement, Label, LabelCommon,
@@ -331,6 +337,7 @@ impl ProjectDiffEditor {
         new_entry_order: Vec<(ProjectPath, ProjectEntryId)>,
         cx: &mut ViewContext<ProjectDiffEditor>,
     ) {
+        println!("update_excerpts.................");
         if let Some(current_order) = self.entry_order.get(&worktree_id) {
             let current_entries = self.buffer_changes.entry(worktree_id).or_default();
             let mut new_order_entries = new_entry_order.iter().fuse().peekable();
@@ -1099,8 +1106,11 @@ impl Render for ProjectDiffEditor {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::anyhow;
+    use futures::{prelude::*, stream::FuturesUnordered};
     use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
     use project::buffer_store::BufferChangeSet;
+    use rand::distributions::Alphanumeric;
     use serde_json::json;
     use settings::SettingsStore;
     use std::{
@@ -1108,127 +1118,275 @@ mod tests {
         path::{Path, PathBuf},
     };
 
+    use crate::hunks_for_ranges;
+
     use super::*;
 
-    // TODO finish
-    // #[gpui::test]
-    // async fn randomized_tests(cx: &mut TestAppContext) {
-    //     // Create a new project (how?? temp fs?),
-    //     let fs = FakeFs::new(cx.executor());
-    //     let project = Project::test(fs, [], cx).await;
+    #[gpui::test(iterations = 100)]
+    async fn random_edits(cx: &mut TestAppContext, mut rng: StdRng) {
+        // TODO switch to RandomCharIter from util or the random_edits thing
+        fn line(rng: &mut StdRng) -> String {
+            let len = rng.gen_range(0..20);
+            let mut s = Alphanumeric.sample_string(rng, len);
+            s.push('\n');
+            s
+        }
 
-    //     // create random files with random content
+        fn original_file(rng: &mut StdRng) -> String {
+            let line_count = rng.gen_range(0..10);
+            (0..line_count).map(|_| line(rng)).collect()
+        }
 
-    //     // Commit it into git somehow (technically can do with "real" fs in a temp dir)
-    //     //
-    //     // Apply randomized changes to the project: select a random file, random change and apply to buffers
-    // }
+        fn edit_file(rng: &mut StdRng, old: &str) -> Vec<(Range<usize>, Range<usize>, String)> {
+            let mut old_lines = old.lines().collect::<Vec<_>>().into_iter();
+            let mut edits = Vec::new();
+            let u = rng.gen_range(0..=old_lines.len());
+            let mut old_offset = old_lines
+                .by_ref()
+                .take(u)
+                .map(|line| line.len() + 1)
+                .sum::<usize>();
+            let mut new_offset = old_offset;
+            while old_lines.len() > 0 {
+                let d = rng.gen_range(0..=old_lines.len());
+                let advance = old_lines
+                    .by_ref()
+                    .take(d)
+                    .map(|line| line.len() + 1)
+                    .sum::<usize>();
+                let d_range = old_offset..old_offset + advance;
+                old_offset += advance;
+                let a_min = if d == 0 { 1 } else { 0 };
+                let a = rng.gen_range(a_min..=5);
+                let piece = (0..a).map(|_| line(rng)).collect::<String>();
+                let a_range = new_offset..new_offset + piece.len();
+                new_offset += piece.len();
+                edits.push((d_range, a_range, piece));
+                if old_lines.len() > 0 {
+                    let u = rng.gen_range(1..=old_lines.len());
+                    let advance = old_lines
+                        .by_ref()
+                        .take(u)
+                        .map(|line| line.len() + 1)
+                        .sum::<usize>();
+                    old_offset += advance;
+                    new_offset += advance;
+                }
+            }
+            edits
+        }
 
-    #[gpui::test(iterations = 30)]
-    async fn simple_edit_test(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
-
+        let rng = &mut rng;
+        let originals = HashMap::from_iter([
+            ("file0", original_file(rng)),
+            // ("file1", original_file(rng)),
+            // ("file2", original_file(rng)),
+        ]);
         let fs = fs::FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root",
-            json!({
-                ".git": {},
-                "file_a": "This is file_a",
-                "file_b": "This is file_b",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [Path::new("/root")], cx).await;
+        let mut files = json!(originals);
+        files
+            .as_object_mut()
+            .unwrap()
+            .insert(".git".to_owned(), json!({}));
+        fs.insert_tree("/project", files).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
-        let file_a_editor = workspace
+        let (file_editors, project_diff_editor) = workspace
             .update(cx, |workspace, cx| {
-                let file_a_editor =
-                    workspace.open_abs_path(PathBuf::from("/root/file_a"), true, cx);
+                let file_editors = originals
+                    .keys()
+                    .map(|name| {
+                        workspace.open_abs_path(
+                            PathBuf::from(format!("/project/{}", name)),
+                            true,
+                            cx,
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 ProjectDiffEditor::deploy(workspace, &Deploy, cx);
-                file_a_editor
-            })
-            .unwrap()
-            .await
-            .expect("did not open an item at all")
-            .downcast::<Editor>()
-            .expect("did not open an editor for file_a");
-        let project_diff_editor = workspace
-            .update(cx, |workspace, cx| {
-                workspace
+                let project_diff_editor = workspace
                     .active_pane()
                     .read(cx)
                     .items()
                     .find_map(|item| item.downcast::<ProjectDiffEditor>())
+                    .expect("Didn't open project diff editor");
+                (file_editors, project_diff_editor)
             })
-            .unwrap()
-            .expect("did not find a ProjectDiffEditor");
+            .unwrap();
+        let file_editors = file_editors
+            .into_iter()
+            .collect::<FuturesUnordered<_>>()
+            .map(|result| result?.downcast::<Editor>().ok_or(anyhow!("downcast")))
+            .try_collect::<Vec<_>>()
+            .await
+            .expect("Didn't open file editors");
+
         project_diff_editor.update(cx, |project_diff_editor, cx| {
             assert!(
                 project_diff_editor.editor.read(cx).text(cx).is_empty(),
-                "Should have no changes after opening the diff on no git changes"
+                "Should have no diff before files are edited"
             );
         });
 
-        let old_text = file_a_editor.update(cx, |editor, cx| editor.text(cx));
-        let change = "an edit after git add";
-        file_a_editor
-            .update(cx, |file_a_editor, cx| {
-                file_a_editor.insert(change, cx);
-                file_a_editor.save(false, project.clone(), cx)
-            })
-            .await
-            .expect("failed to save a file");
-        file_a_editor.update(cx, |file_a_editor, cx| {
-            let change_set = cx.new_model(|cx| {
-                BufferChangeSet::new_with_base_text(
-                    old_text.clone(),
-                    file_a_editor
-                        .buffer()
-                        .read(cx)
-                        .as_singleton()
-                        .unwrap()
-                        .read(cx)
-                        .text_snapshot(),
-                    cx,
-                )
-            });
-            file_a_editor
-                .diff_map
-                .add_change_set(change_set.clone(), cx);
-            project.update(cx, |project, cx| {
-                project.buffer_store().update(cx, |buffer_store, cx| {
-                    buffer_store.set_change_set(
-                        file_a_editor
-                            .buffer()
-                            .read(cx)
-                            .as_singleton()
-                            .unwrap()
-                            .read(cx)
-                            .remote_id(),
-                        change_set,
+        let mut all_edits = Vec::new();
+        for editor in &file_editors {
+            let (mut old_text, mut edits) = (String::new(), Vec::new());
+            editor
+                .update(cx, |editor, cx| {
+                    old_text = dbg!(editor.text(cx));
+                    edits = dbg!(edit_file(rng, &old_text));
+                    editor.edit(
+                        edits
+                            .clone()
+                            .into_iter()
+                            .map(|(old, _new, content)| (old, content)),
+                        cx,
                     );
-                });
+                    editor.save(false, project.clone(), cx)
+                })
+                .await
+                .expect("Failed to save edits");
+            let buffer_id = editor.update(cx, |editor, cx| {
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                let snapshot = buffer.text_snapshot();
+                let id = buffer.remote_id();
+                let change_set =
+                    cx.new_model(|cx| BufferChangeSet::new_with_base_text(old_text, snapshot, cx));
+                editor
+                    .diff_map
+                    .add_change_set_with_project(project.clone(), change_set, cx);
+                id
             });
-        });
+            all_edits.extend(edits.into_iter().map(|(old, new, _)| (buffer_id, old, new)));
+        }
+
         fs.set_status_for_repo_via_git_operation(
-            Path::new("/root/.git"),
-            &[(Path::new("file_a"), GitFileStatus::Modified)],
+            Path::new("/project/.git"),
+            &originals
+                .keys()
+                .map(|name| (Path::new(name), GitFileStatus::Modified))
+                .collect::<Vec<_>>(),
         );
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
         project_diff_editor.update(cx, |project_diff_editor, cx| {
-            assert_eq!(
-                // TODO assert it better: extract added text (based on the background changes) and deleted text (based on the deleted blocks added)
-                project_diff_editor.editor.read(cx).text(cx),
-                format!("{change}{old_text}"),
-                "Should have a new change shown in the beginning, and the old text shown as deleted text afterwards"
-            );
+            let mut hunks: Vec<_> = project_diff_editor.editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                hunks_for_ranges(
+                    [MultiBufferPoint::zero()..snapshot.buffer_snapshot.max_point()].into_iter(),
+                    &snapshot,
+                )
+                .into_iter()
+                .map(|hunk| {
+                    let point = MultiBufferPoint::new(hunk.row_range.start.0, 0);
+                    let buffer_snapshot = snapshot
+                        .buffer_snapshot
+                        .excerpt_containing(point..point)
+                        .unwrap()
+                        .buffer();
+                    (
+                        hunk.buffer_id,
+                        hunk.diff_base_byte_range,
+                        hunk.buffer_range.to_offset(buffer_snapshot),
+                    )
+                })
+                .collect()
+            });
+            hunks.sort_by_key(|(buffer_id, old, _)| (*buffer_id, old.start));
+            all_edits.sort_by_key(|(buffer_id, old, _)| (*buffer_id, old.start));
+            pretty_assertions::assert_eq!(hunks, all_edits);
+        });
+    }
+
+    #[gpui::test]
+    async fn repro(cx: &mut TestAppContext) {
+        let old_text = "r4zU3hQFgVh74o\n";
+        let edit = (0..15, "");
+        let new_text = "";
+
+        cx.executor().allow_parking();
+        init_test(cx);
+        let fs = fs::FakeFs::new(cx.executor().clone());
+        fs.insert_tree("/project", json!({".git": {}, "file": old_text}))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+
+        let (editor, project_diff_editor) = workspace
+            .update(cx, |workspace, cx| {
+                let editor = workspace.open_abs_path("/project/file".into(), true, cx);
+                ProjectDiffEditor::deploy(workspace, &Deploy, cx);
+                let project_diff_editor = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<ProjectDiffEditor>())
+                    .expect("Didn't open project diff editor");
+                (editor, project_diff_editor)
+            })
+            .unwrap();
+        let editor = editor
+            .await
+            .and_then(|item| item.downcast::<Editor>().ok_or(anyhow!("downcast")))
+            .unwrap();
+        editor
+            .update(cx, |editor, cx| {
+                editor.edit([edit.clone()], cx);
+                editor.save(false, project.clone(), cx)
+            })
+            .await
+            .expect("failed to save a file");
+        editor.update(cx, |editor, cx| {
+            let change_set = cx.new_model(|cx| {
+                let snapshot = editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap()
+                    .read(cx)
+                    .text_snapshot();
+                assert_eq!(snapshot.text(), new_text);
+                BufferChangeSet::new_with_base_text(old_text.to_owned(), snapshot, cx)
+            });
+            editor
+                .diff_map
+                .add_change_set_with_project(project.clone(), change_set, cx);
+        });
+        fs.set_status_for_repo_via_git_operation(
+            Path::new("/project/.git"),
+            &[(Path::new("file"), GitFileStatus::Modified)],
+        );
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(1000));
+        cx.run_until_parked();
+
+        project_diff_editor.update(cx, |project_diff_editor, cx| {
+            let mut hunks: Vec<_> = project_diff_editor.editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                hunks_for_ranges(
+                    [MultiBufferPoint::zero()..snapshot.buffer_snapshot.max_point()].into_iter(),
+                    &snapshot,
+                )
+                .into_iter()
+                .map(|hunk| {
+                    let point = MultiBufferPoint::new(hunk.row_range.start.0, 0);
+                    let buffer_snapshot = snapshot
+                        .buffer_snapshot
+                        .excerpt_containing(point..point)
+                        .unwrap()
+                        .buffer();
+                    hunk.diff_base_byte_range
+                })
+                .collect()
+            });
+            pretty_assertions::assert_eq!(hunks, [edit.0]);
         });
     }
 

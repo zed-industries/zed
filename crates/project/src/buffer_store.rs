@@ -2198,6 +2198,7 @@ impl BufferChangeSet {
         range: Range<text::Anchor>,
         buffer_snapshot: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = git::diff::DiffHunk> {
+        dbg!("");
         self.diff_to_buffer
             .hunks_intersecting_range(range, buffer_snapshot)
     }

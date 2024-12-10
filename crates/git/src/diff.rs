@@ -69,12 +69,14 @@ pub struct BufferDiff {
 
 impl BufferDiff {
     pub fn new(buffer: &BufferSnapshot) -> BufferDiff {
+        dbg!("BufferDiff::new");
         BufferDiff {
             tree: SumTree::new(buffer),
         }
     }
 
     pub async fn build(diff_base: &str, buffer: &text::BufferSnapshot) -> Self {
+        dbg!("BufferDiff::build");
         let mut tree = SumTree::new(buffer);
 
         let buffer_text = buffer.as_rope().to_string();
@@ -84,7 +86,7 @@ impl BufferDiff {
             let mut divergence = 0;
             for hunk_index in 0..patch.num_hunks() {
                 let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer, &mut divergence);
-                tree.push(hunk, buffer);
+                tree.push(dbg!(hunk), buffer);
             }
         }
 
@@ -141,11 +143,12 @@ impl BufferDiff {
                 end_point.column = 0;
             }
 
-            Some(DiffHunk {
+            let hunk = DiffHunk {
                 row_range: start_point.row..end_point.row,
                 diff_base_byte_range: start_base..end_base,
                 buffer_range: buffer.anchor_before(start_point)..buffer.anchor_after(end_point),
-            })
+            };
+            Some(dbg!(hunk))
         })
     }
 
@@ -187,11 +190,12 @@ impl BufferDiff {
     }
 
     pub async fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
+        dbg!("BufferDiff::update");
         *self = Self::build(&diff_base.to_string(), buffer).await;
     }
 
-    #[cfg(test)]
-    fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk> {
         let start = text.anchor_before(Point::new(0, 0));
         let end = text.anchor_after(Point::new(u32::MAX, u32::MAX));
         self.hunks_intersecting_range(start..end, text)
@@ -225,60 +229,60 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         buffer_row_divergence: &mut i64,
     ) -> InternalDiffHunk {
+        dbg!("BufferDiff::process_patch_hunk");
         let line_item_count = patch.num_lines_in_hunk(hunk_index).unwrap();
         assert!(line_item_count > 0);
 
         let mut first_deletion_buffer_row: Option<u32> = None;
         let mut buffer_row_range: Option<Range<u32>> = None;
         let mut diff_base_byte_range: Option<Range<usize>> = None;
+        let fallback_offset = patch.line_in_hunk(hunk_index, 0).unwrap().content_offset() as usize;
+        let fallback_range = fallback_offset..fallback_offset;
 
         for line_index in 0..line_item_count {
             let line = patch.line_in_hunk(hunk_index, line_index).unwrap();
             let kind = line.origin_value();
             let content_offset = line.content_offset() as isize;
             let content_len = line.content().len() as isize;
+            match kind {
+                GitDiffLineType::Addition => {
+                    *buffer_row_divergence += 1;
+                    let row = line.new_lineno().unwrap().saturating_sub(1);
 
-            if kind == GitDiffLineType::Addition {
-                *buffer_row_divergence += 1;
-                let row = line.new_lineno().unwrap().saturating_sub(1);
-
-                match &mut buffer_row_range {
-                    Some(buffer_row_range) => buffer_row_range.end = row + 1,
-                    None => buffer_row_range = Some(row..row + 1),
+                    match &mut buffer_row_range {
+                        Some(buffer_row_range) => buffer_row_range.end = row + 1,
+                        None => buffer_row_range = Some(row..row + 1),
+                    }
                 }
-            }
+                GitDiffLineType::Deletion => {
+                    let end = content_offset + content_len;
 
-            if kind == GitDiffLineType::Deletion {
-                let end = content_offset + content_len;
+                    match &mut diff_base_byte_range {
+                        Some(head_byte_range) => head_byte_range.end = end as usize,
+                        None => diff_base_byte_range = Some(content_offset as usize..end as usize),
+                    }
 
-                match &mut diff_base_byte_range {
-                    Some(head_byte_range) => head_byte_range.end = end as usize,
-                    None => diff_base_byte_range = Some(content_offset as usize..end as usize),
+                    if first_deletion_buffer_row.is_none() {
+                        let old_row = line.old_lineno().unwrap().saturating_sub(1);
+                        let row = old_row as i64 + *buffer_row_divergence;
+                        first_deletion_buffer_row = Some(row as u32);
+                    }
+
+                    *buffer_row_divergence -= 1;
                 }
-
-                if first_deletion_buffer_row.is_none() {
-                    let old_row = line.old_lineno().unwrap().saturating_sub(1);
-                    let row = old_row as i64 + *buffer_row_divergence;
-                    first_deletion_buffer_row = Some(row as u32);
-                }
-
-                *buffer_row_divergence -= 1;
+                _ => {}
             }
         }
 
-        //unwrap_or deletion without addition
         let buffer_row_range = buffer_row_range.unwrap_or_else(|| {
-            //we cannot have an addition-less hunk without deletion(s) or else there would be no hunk
+            // Pure deletion hunk without addition.
             let row = first_deletion_buffer_row.unwrap();
             row..row
         });
-
-        //unwrap_or addition without deletion
-        let diff_base_byte_range = diff_base_byte_range.unwrap_or(0..0);
-
         let start = Point::new(buffer_row_range.start, 0);
         let end = Point::new(buffer_row_range.end, 0);
         let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
+        let diff_base_byte_range = diff_base_byte_range.unwrap_or(fallback_range);
         InternalDiffHunk {
             buffer_range,
             diff_base_byte_range,

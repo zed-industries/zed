@@ -9,7 +9,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
     MultiBufferSnapshot, ToOffset, ToPoint,
 };
-use project::buffer_store::BufferChangeSet;
+use project::{buffer_store::BufferChangeSet, Project};
 use std::{ops::Range, sync::Arc};
 use sum_tree::TreeMap;
 use text::OffsetRangeExt;
@@ -18,7 +18,7 @@ use ui::{
     ParentElement, PopoverMenu, Styled, Tooltip, ViewContext, VisualContext,
 };
 use util::RangeExt;
-use workspace::Item;
+use workspace::{Item, ItemHandle};
 
 use crate::{
     editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyAllDiffHunks,
@@ -80,6 +80,40 @@ impl DiffMap {
         self.snapshot.clone()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn add_change_set_with_project(
+        &mut self,
+        project: Model<Project>,
+        change_set: Model<BufferChangeSet>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let buffer_id = change_set.read(cx).buffer_id;
+        self.snapshot
+            .0
+            .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
+        Editor::sync_expanded_diff_hunks(self, buffer_id, cx);
+        self.diff_bases.insert(
+            buffer_id,
+            DiffBaseState {
+                last_version: None,
+                _subscription: cx.observe(&change_set, move |editor, change_set, cx| {
+                    editor
+                        .diff_map
+                        .snapshot
+                        .0
+                        .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
+                    Editor::sync_expanded_diff_hunks(&mut editor.diff_map, buffer_id, cx);
+                }),
+                change_set: change_set.clone(),
+            },
+        );
+        project.update(cx, |project, cx| {
+            project.buffer_store().update(cx, |buffer_store, cx| {
+                buffer_store.set_change_set(buffer_id, change_set);
+            });
+        });
+    }
+
     pub fn add_change_set(
         &mut self,
         change_set: Model<BufferChangeSet>,
@@ -137,10 +171,15 @@ impl DiffMapSnapshot {
             .filter_map(move |excerpt| {
                 let buffer = excerpt.buffer();
                 let buffer_id = buffer.remote_id();
-                let diff = self.0.get(&buffer_id)?;
+                let Some(diff) = self.0.get(&buffer_id) else {
+                    eprintln!("boom");
+                    dbg!(&self.0);
+                    return None;
+                };
                 let buffer_range = excerpt.map_range_to_buffer(range.clone());
                 let buffer_range =
                     buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end);
+                dbg!("some hunks");
                 Some(
                     diff.hunks_intersecting_range(buffer_range, excerpt.buffer())
                         .map(move |hunk| {
