@@ -149,6 +149,16 @@ pub struct LocalLspStore {
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     prettier_store: Model<PrettierStore>,
     current_lsp_settings: HashMap<LanguageServerName, LspSettings>,
+    diagnostics: HashMap<
+        WorktreeId,
+        HashMap<
+            Arc<Path>,
+            Vec<(
+                LanguageServerId,
+                Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+            )>,
+        >,
+    >,
     _subscription: gpui::Subscription,
 }
 
@@ -718,16 +728,6 @@ pub struct LspStore {
     next_diagnostic_group_id: usize,
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
-    diagnostics: HashMap<
-        WorktreeId,
-        HashMap<
-            Arc<Path>,
-            Vec<(
-                LanguageServerId,
-                Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
-            )>,
-        >,
-    >,
 }
 
 pub enum LspStoreEvent {
@@ -914,6 +914,7 @@ impl LspStore {
                 _subscription: cx.on_app_quit(|this, cx| {
                     this.as_local_mut().unwrap().shutdown_language_servers(cx)
                 }),
+                diagnostics: Default::default(),
             }),
             last_formatting_failure: None,
             downstream_client: None,
@@ -927,7 +928,6 @@ impl LspStore {
             buffer_snapshots: Default::default(),
             next_diagnostic_group_id: Default::default(),
             diagnostic_summaries: Default::default(),
-            diagnostics: Default::default(),
             active_entry: None,
 
             _maintain_workspace_config,
@@ -986,7 +986,6 @@ impl LspStore {
             buffer_snapshots: Default::default(),
             next_diagnostic_group_id: Default::default(),
             diagnostic_summaries: Default::default(),
-            diagnostics: Default::default(),
             active_entry: None,
             toolchain_store,
             _maintain_workspace_config,
@@ -1128,6 +1127,7 @@ impl LspStore {
         buffer.update(cx, |buffer, _| {
             buffer.set_language_registry(self.languages.clone())
         });
+        self.initialize_buffer_diagnostics(buffer, cx);
 
         cx.subscribe(buffer, |this, buffer, event, cx| {
             this.on_buffer_event(buffer, event, cx);
@@ -3220,7 +3220,13 @@ impl LspStore {
     }
 
     fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
-        self.diagnostics.remove(&id_to_remove);
+        if let Some(local) = self.as_local_mut() {
+            local.diagnostics.remove(&id_to_remove);
+            local.prettier_store.update(cx, |prettier_store, cx| {
+                prettier_store.remove_worktree(id_to_remove, cx);
+            })
+        }
+
         self.diagnostic_summaries.remove(&id_to_remove);
 
         let mut servers_to_remove = HashMap::default();
@@ -3249,12 +3255,6 @@ impl LspStore {
                     .remove(&server_id_to_remove);
             }
             cx.emit(LspStoreEvent::LanguageServerRemoved(server_id_to_remove));
-        }
-
-        if let Some(local) = self.as_local() {
-            local.prettier_store.update(cx, |prettier_store, cx| {
-                prettier_store.remove_worktree(id_to_remove, cx);
-            })
         }
     }
 
@@ -3345,15 +3345,6 @@ impl LspStore {
             };
             let initial_snapshot = buffer.text_snapshot();
             let worktree_id = file.worktree_id(cx);
-
-            if let Some(diagnostics) = self.diagnostics.get(&worktree_id) {
-                for (server_id, diagnostics) in
-                    diagnostics.get(file.path()).cloned().unwrap_or_default()
-                {
-                    self.update_buffer_diagnostics(buffer_handle, server_id, None, diagnostics, cx)
-                        .log_err();
-                }
-            }
 
             if let Some(language) = available_language {
                 for adapter in self.languages.lsp_adapters(&language.name()) {
@@ -3506,8 +3497,13 @@ impl LspStore {
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         _: &mut ModelContext<Worktree>,
     ) -> Result<bool> {
+        let local = match &mut self.mode {
+            LspStoreMode::Local(local_lsp_store) => local_lsp_store,
+            _ => anyhow::bail!("update_worktree_diagnostics called on remote"),
+        };
+
         let summaries_for_tree = self.diagnostic_summaries.entry(worktree_id).or_default();
-        let diagnostics_for_tree = self.diagnostics.entry(worktree_id).or_default();
+        let diagnostics_for_tree = local.diagnostics.entry(worktree_id).or_default();
         let summaries_by_server_id = summaries_for_tree.entry(worktree_path.clone()).or_default();
 
         let old_summary = summaries_by_server_id
@@ -3701,7 +3697,34 @@ impl LspStore {
         })
     }
 
-    pub(crate) fn update_buffer_diagnostics(
+    fn initialize_buffer_diagnostics(
+        &mut self,
+        buffer_handle: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let buffer = buffer_handle.read(cx);
+        let Some(file) = File::from_dyn(buffer.file()) else {
+            return;
+        };
+        if !file.is_local() {
+            return;
+        };
+
+        let Some(diagnostics) = self
+            .as_local()
+            .unwrap()
+            .diagnostics
+            .get(&file.worktree_id(cx))
+        else {
+            return;
+        };
+        for (server_id, diagnostics) in diagnostics.get(file.path()).cloned().unwrap_or_default() {
+            self.update_buffer_diagnostics(buffer_handle, server_id, None, diagnostics, cx)
+                .log_err();
+        }
+    }
+
+    fn update_buffer_diagnostics(
         &mut self,
         buffer: &Model<Buffer>,
         server_id: LanguageServerId,
@@ -5944,94 +5967,78 @@ impl LspStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<WorktreeId>> {
         let key = (worktree_id, adapter_name);
-        if self.mode.is_local() {
-            if let Some(server_id) = self.language_server_ids.remove(&key) {
-                let name = key.1;
-                log::info!("stopping language server {name}");
+        if !self.mode.is_local() {
+            return Task::ready(Vec::new());
+        };
+        let Some(server_id) = self.language_server_ids.remove(&key) else {
+            return Task::ready(Vec::new());
+        };
+        let name = key.1;
+        log::info!("stopping language server {name}");
 
-                // Remove other entries for this language server as well
-                let mut orphaned_worktrees = vec![worktree_id];
-                let other_keys = self.language_server_ids.keys().cloned().collect::<Vec<_>>();
-                for other_key in other_keys {
-                    if self.language_server_ids.get(&other_key) == Some(&server_id) {
-                        self.language_server_ids.remove(&other_key);
-                        orphaned_worktrees.push(other_key.0);
-                    }
-                }
-
-                self.buffer_store.update(cx, |buffer_store, cx| {
-                    for buffer in buffer_store.buffers() {
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.update_diagnostics(
-                                server_id,
-                                DiagnosticSet::new([], buffer),
-                                cx,
-                            );
-                            buffer.set_completion_triggers(server_id, Default::default(), cx);
-                        });
-                    }
-                });
-
-                for (worktree_id, summaries) in self.diagnostic_summaries.iter_mut() {
-                    summaries.retain(|path, summaries_by_server_id| {
-                        if summaries_by_server_id.remove(&server_id).is_some() {
-                            if let Some((client, project_id)) = self.downstream_client.clone() {
-                                client
-                                    .send(proto::UpdateDiagnosticSummary {
-                                        project_id,
-                                        worktree_id: worktree_id.to_proto(),
-                                        summary: Some(proto::DiagnosticSummary {
-                                            path: path.to_string_lossy().to_string(),
-                                            language_server_id: server_id.0 as u64,
-                                            error_count: 0,
-                                            warning_count: 0,
-                                        }),
-                                    })
-                                    .log_err();
-                            }
-                            !summaries_by_server_id.is_empty()
-                        } else {
-                            true
-                        }
-                    });
-                }
-
-                for diagnostics in self.diagnostics.values_mut() {
-                    diagnostics.retain(|_, diagnostics_by_server_id| {
-                        if let Ok(ix) =
-                            diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0)
-                        {
-                            diagnostics_by_server_id.remove(ix);
-                            !diagnostics_by_server_id.is_empty()
-                        } else {
-                            true
-                        }
-                    });
-                }
-
-                self.as_local_mut()
-                    .unwrap()
-                    .language_server_watched_paths
-                    .remove(&server_id);
-                self.language_server_statuses.remove(&server_id);
-                cx.notify();
-
-                let server_state = self
-                    .as_local_mut()
-                    .unwrap()
-                    .language_servers
-                    .remove(&server_id);
-                cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
-                cx.spawn(move |_, cx| async move {
-                    Self::shutdown_language_server(server_state, name, cx).await;
-                    orphaned_worktrees
-                })
-            } else {
-                Task::ready(Vec::new())
+        // Remove other entries for this language server as well
+        let mut orphaned_worktrees = vec![worktree_id];
+        let other_keys = self.language_server_ids.keys().cloned().collect::<Vec<_>>();
+        for other_key in other_keys {
+            if self.language_server_ids.get(&other_key) == Some(&server_id) {
+                self.language_server_ids.remove(&other_key);
+                orphaned_worktrees.push(other_key.0);
             }
-        } else {
-            Task::ready(Vec::new())
         }
+
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            for buffer in buffer_store.buffers() {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.update_diagnostics(server_id, DiagnosticSet::new([], buffer), cx);
+                    buffer.set_completion_triggers(server_id, Default::default(), cx);
+                });
+            }
+        });
+
+        for (worktree_id, summaries) in self.diagnostic_summaries.iter_mut() {
+            summaries.retain(|path, summaries_by_server_id| {
+                if summaries_by_server_id.remove(&server_id).is_some() {
+                    if let Some((client, project_id)) = self.downstream_client.clone() {
+                        client
+                            .send(proto::UpdateDiagnosticSummary {
+                                project_id,
+                                worktree_id: worktree_id.to_proto(),
+                                summary: Some(proto::DiagnosticSummary {
+                                    path: path.to_string_lossy().to_string(),
+                                    language_server_id: server_id.0 as u64,
+                                    error_count: 0,
+                                    warning_count: 0,
+                                }),
+                            })
+                            .log_err();
+                    }
+                    !summaries_by_server_id.is_empty()
+                } else {
+                    true
+                }
+            });
+        }
+
+        self.language_server_statuses.remove(&server_id);
+        let local = self.as_local_mut().unwrap();
+        for diagnostics in local.diagnostics.values_mut() {
+            diagnostics.retain(|_, diagnostics_by_server_id| {
+                if let Ok(ix) = diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                    diagnostics_by_server_id.remove(ix);
+                    !diagnostics_by_server_id.is_empty()
+                } else {
+                    true
+                }
+            });
+        }
+        local.language_server_watched_paths.remove(&server_id);
+        let server_state = local.language_servers.remove(&server_id);
+        cx.notify();
+        cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
+        cx.spawn(move |_, cx| async move {
+            Self::shutdown_language_server(server_state, name, cx).await;
+            orphaned_worktrees
+        })
     }
 
     pub fn restart_language_servers_for_buffers(
