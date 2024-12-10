@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
-use gpui::{AppContext, Context, Global, Model, ModelContext, Subscription, Task};
+use gpui::{actions, AppContext, Context, Global, Model, ModelContext, Subscription, Task};
 use http_client::{HttpClient, Method};
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, OffsetRangeExt,
@@ -33,6 +33,8 @@ const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
+
+actions!(zeta, [ClearHistory]);
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct InlineCompletionId(Uuid);
@@ -153,6 +155,10 @@ impl Zeta {
             cx.set_global(ZetaGlobal(model.clone()));
             model
         })
+    }
+
+    pub fn clear_history(&mut self) {
+        self.events.clear();
     }
 
     fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
