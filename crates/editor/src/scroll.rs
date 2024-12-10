@@ -12,7 +12,9 @@ use crate::{
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
-use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext};
+use gpui::{
+    point, px, Along, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext,
+};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
 use settings::Settings;
@@ -83,6 +85,30 @@ pub fn axis_pair<T: Clone>(horizontal: T, vertical: T) -> AxisPair<T> {
 impl<T: Clone> AxisPair<T> {
     pub fn as_xy(&self) -> (&T, &T) {
         (&self.horizontal, &self.vertical)
+    }
+}
+
+impl<T: Clone> Along for AxisPair<T> {
+    type Unit = T;
+
+    fn along(&self, axis: gpui::Axis) -> Self::Unit {
+        match axis {
+            gpui::Axis::Horizontal => self.horizontal.clone(),
+            gpui::Axis::Vertical => self.vertical.clone(),
+        }
+    }
+
+    fn apply_along(&self, axis: gpui::Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self {
+        match axis {
+            gpui::Axis::Horizontal => Self {
+                horizontal: f(self.horizontal.clone()),
+                vertical: self.vertical.clone(),
+            },
+            gpui::Axis::Vertical => Self {
+                horizontal: self.horizontal.clone(),
+                vertical: f(self.vertical.clone()),
+            },
+        }
     }
 }
 
