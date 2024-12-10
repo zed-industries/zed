@@ -474,7 +474,7 @@ fn for_snowflake(
                 serde_json::to_value(e).unwrap(),
             ),
             Event::InlineCompletionRating(e) => (
-                "Inline Completion Feedback".to_string(),
+                "Inline Completion Rated".to_string(),
                 serde_json::to_value(e).unwrap(),
             ),
             Event::Call(e) => {
