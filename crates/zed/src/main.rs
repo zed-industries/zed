@@ -436,7 +436,7 @@ fn main() {
         audio::init(Assets, cx);
         workspace::init(app_state.clone(), cx);
 
-        go_to_line::init(cx);
+        go_to::init(cx);
         file_finder::init(cx);
         tab_switcher::init(cx);
         outline::init(cx);
