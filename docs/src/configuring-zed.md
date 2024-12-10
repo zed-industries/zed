@@ -435,10 +435,10 @@ List of `string` values
 "current_line_highlight": "all"
 ```
 
-## DocumentHighlight Debounce
+## LSP Highlight Debounce
 
-- Description: Debounce (in milliseconds) before triggering LSP DocumentHighlight when moving cursor.
-- Setting: `document_highlight_debounce`
+- Description: The debounce delay before querying highlights from the language server based on the current cursor location.
+- Setting: `lsp_highlight_debounce`
 - Default: `75`
 
 ## Cursor Blink

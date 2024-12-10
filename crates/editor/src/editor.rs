@@ -5125,7 +5125,7 @@ impl Editor {
         if cursor_buffer != tail_buffer {
             return None;
         }
-        let debounce = EditorSettings::get_global(cx).document_highlight_debounce;
+        let debounce = EditorSettings::get_global(cx).lsp_highlight_debounce;
         self.document_highlights_task = Some(cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .timer(Duration::from_millis(debounce))
