@@ -1819,7 +1819,7 @@ pub struct RemoteLspStore {
 }
 
 #[allow(clippy::large_enum_variant)]
-enum LspStoreMode {
+pub(crate) enum LspStoreMode {
     Local(LocalLspStore),   // ssh host and collab host
     Remote(RemoteLspStore), // collab guest
 }
@@ -1942,14 +1942,14 @@ impl LspStore {
         }
     }
 
-    fn as_local(&self) -> Option<&LocalLspStore> {
+    pub(crate) fn as_local(&self) -> Option<&LocalLspStore> {
         match &self.mode {
             LspStoreMode::Local(local_lsp_store) => Some(local_lsp_store),
             _ => None,
         }
     }
 
-    fn as_local_mut(&mut self) -> Option<&mut LocalLspStore> {
+    pub(crate) fn as_local_mut(&mut self) -> Option<&mut LocalLspStore> {
         match &mut self.mode {
             LspStoreMode::Local(local_lsp_store) => Some(local_lsp_store),
             _ => None,
