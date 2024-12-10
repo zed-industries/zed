@@ -9,7 +9,7 @@ license = "Apache-2.0"
 workspace = true
 
 [lib]
-path = "src/astro.rs"
+path = "src/languages.rs"
 crate-type = ["cdylib"]
 
 [dependencies]

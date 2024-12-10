@@ -10,6 +10,12 @@ repository = "https://github.com/zed-industries/zed"
 name = "Astro Language Server"
 language = "Astro"
 
+[language_servers.astro-typescript]
+name = "Astro TypeScript Server"
+languages = ["TypeScript", "TSX", "JavaScript"]
+language_ids = { "TypeScript" = "typescript", "TSX" = "typescriptreact", "JavaScript" = "javascript" }
+code_action_kinds = ["quickfix", "refactor", "refactor.extract", "source"]
+
 [grammars.astro]
 repository = "https://github.com/virchau13/tree-sitter-astro"
 commit = "4be180759ec13651f72bacee65fa477c64222a1a"
