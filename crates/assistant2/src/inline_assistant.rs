@@ -2,6 +2,7 @@ use crate::{
     assistant_settings::AssistantSettings,
     prompts::PromptBuilder,
     streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff},
+    terminal_inline_assistant::TerminalInlineAssistant,
     CycleNextInlineAssist, CyclePreviousInlineAssist, ToggleInlineAssist,
 };
 use anyhow::{Context as _, Result};
@@ -207,24 +208,16 @@ impl InlineAssistant {
                 .map_or(false, |provider| provider.is_authenticated(cx))
         };
 
-        let handle_assist = |cx: &mut ViewContext<Workspace>| {
-            match inline_assist_target {
-                InlineAssistTarget::Editor(active_editor) => {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        assistant.assist(&active_editor, Some(cx.view().downgrade()), cx)
-                    })
-                }
-                InlineAssistTarget::Terminal(active_terminal) => {
-                    // TerminalInlineAssistant::update_global(cx, |assistant, cx| {
-                    //     assistant.assist(
-                    //         &active_terminal,
-                    //         Some(cx.view().downgrade()),
-                    //         Some(&assistant_panel),
-                    //         initial_prompt,
-                    //         cx,
-                    //     )
-                    // })
-                }
+        let handle_assist = |cx: &mut ViewContext<Workspace>| match inline_assist_target {
+            InlineAssistTarget::Editor(active_editor) => {
+                InlineAssistant::update_global(cx, |assistant, cx| {
+                    assistant.assist(&active_editor, Some(cx.view().downgrade()), cx)
+                })
+            }
+            InlineAssistTarget::Terminal(active_terminal) => {
+                TerminalInlineAssistant::update_global(cx, |assistant, cx| {
+                    assistant.assist(&active_terminal, Some(cx.view().downgrade()), cx)
+                })
             }
         };
 
