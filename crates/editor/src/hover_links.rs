@@ -708,8 +708,8 @@ pub(crate) fn find_url_from_range(
     let start_offset = range.start.to_offset(&snapshot);
     let end_offset = range.end.to_offset(&snapshot);
 
-    let token_start = start_offset.min(end_offset);
-    let token_end = start_offset.max(end_offset);
+    let mut token_start = start_offset.min(end_offset);
+    let mut token_end = start_offset.max(end_offset);
 
     let range_len = token_end - token_start;
 
@@ -717,10 +717,24 @@ pub(crate) fn find_url_from_range(
         return None;
     }
 
+    // Skip leading whitespace
     for ch in snapshot.chars_at(token_start).take(range_len) {
-        if ch.is_whitespace() {
-            return None;
+        if !ch.is_whitespace() {
+            break;
         }
+        token_start += ch.len_utf8();
+    }
+
+    // Skip trailing whitespace
+    for ch in snapshot.reversed_chars_at(token_end).take(range_len) {
+        if !ch.is_whitespace() {
+            break;
+        }
+        token_end -= ch.len_utf8();
+    }
+
+    if token_start >= token_end {
+        return None;
     }
 
     let text = snapshot
