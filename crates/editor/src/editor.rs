@@ -13579,11 +13579,11 @@ pub trait DiagnosticsProvider {
         buffer: &Model<Buffer>,
         position: text::Anchor,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<LspDiagnostics>>>;
+    ) -> Task<Result<Vec<Option<LspDiagnostics>>>>;
 
     fn update_diagnostics(
         &self,
-        diagnostics: Vec<LspDiagnostics>,
+        diagnostics: Vec<Option<LspDiagnostics>>,
         cx: &mut AppContext,
     ) -> Result<()>;
 }
@@ -13940,7 +13940,7 @@ impl DiagnosticsProvider for Model<Project> {
         buffer: &Model<Buffer>,
         position: text::Anchor,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<LspDiagnostics>>> {
+    ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
         self.update(cx, |project, cx| {
             project.document_diagnostics(buffer, position, cx)
         })
@@ -13948,23 +13948,27 @@ impl DiagnosticsProvider for Model<Project> {
 
     fn update_diagnostics(
         &self,
-        diagnostics: Vec<LspDiagnostics>,
+        diagnostics: Vec<Option<LspDiagnostics>>,
         cx: &mut AppContext,
     ) -> Result<()> {
         self.update(cx, |project, cx| {
             diagnostics
-                .into_iter()
-                .map(|diagnostic_set| {
-                    project.update_diagnostics(
+                .iter()
+                .filter_map(|diagnostic_set| match diagnostic_set {
+                    Some(diagnostic_set) => Some(project.update_diagnostics(
                         diagnostic_set.server_id,
                         lsp::PublishDiagnosticsParams {
-                            uri: diagnostic_set.uri.unwrap(),
-                            diagnostics: diagnostic_set.diagnostics.unwrap_or_else(Vec::new),
+                            uri: diagnostic_set.uri.as_ref().unwrap().clone(),
+                            diagnostics: match diagnostic_set.diagnostics.as_ref() {
+                                Some(diagnostics) => diagnostics.clone(),
+                                None => Vec::new(),
+                            },
                             version: None,
                         },
                         &[],
                         cx,
-                    )
+                    )),
+                    None => None,
                 })
                 .collect()
         })
