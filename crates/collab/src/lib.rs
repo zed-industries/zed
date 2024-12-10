@@ -1,7 +1,6 @@
 pub mod api;
 pub mod auth;
 mod cents;
-pub mod clickhouse;
 pub mod db;
 pub mod env;
 pub mod executor;
@@ -151,10 +150,6 @@ pub struct Config {
     pub seed_path: Option<PathBuf>,
     pub database_max_connections: u32,
     pub api_token: String,
-    pub clickhouse_url: Option<String>,
-    pub clickhouse_user: Option<String>,
-    pub clickhouse_password: Option<String>,
-    pub clickhouse_database: Option<String>,
     pub invite_link_prefix: String,
     pub livekit_server: Option<String>,
     pub livekit_key: Option<String>,
@@ -236,10 +231,6 @@ impl Config {
             prediction_api_url: None,
             prediction_api_key: None,
             prediction_model: None,
-            clickhouse_url: None,
-            clickhouse_user: None,
-            clickhouse_password: None,
-            clickhouse_database: None,
             zed_client_checksum_seed: None,
             slack_panics_webhook: None,
             auto_join_channel_id: None,
@@ -289,7 +280,6 @@ pub struct AppState {
     pub stripe_billing: Option<Arc<StripeBilling>>,
     pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
-    pub clickhouse_client: Option<::clickhouse::Client>,
     pub kinesis_client: Option<::aws_sdk_kinesis::Client>,
     pub config: Config,
 }
@@ -343,10 +333,6 @@ impl AppState {
             stripe_client,
             rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
-            clickhouse_client: config
-                .clickhouse_url
-                .as_ref()
-                .and_then(|_| build_clickhouse_client(&config).log_err()),
             kinesis_client: if config.kinesis_access_key.is_some() {
                 build_kinesis_client(&config).await.log_err()
             } else {
@@ -428,32 +414,4 @@ async fn build_kinesis_client(config: &Config) -> anyhow::Result<aws_sdk_kinesis
         .await;
 
     Ok(aws_sdk_kinesis::Client::new(&kinesis_config))
-}
-
-fn build_clickhouse_client(config: &Config) -> anyhow::Result<::clickhouse::Client> {
-    Ok(::clickhouse::Client::default()
-        .with_url(
-            config
-                .clickhouse_url
-                .as_ref()
-                .ok_or_else(|| anyhow!("missing clickhouse_url"))?,
-        )
-        .with_user(
-            config
-                .clickhouse_user
-                .as_ref()
-                .ok_or_else(|| anyhow!("missing clickhouse_user"))?,
-        )
-        .with_password(
-            config
-                .clickhouse_password
-                .as_ref()
-                .ok_or_else(|| anyhow!("missing clickhouse_password"))?,
-        )
-        .with_database(
-            config
-                .clickhouse_database
-                .as_ref()
-                .ok_or_else(|| anyhow!("missing clickhouse_database"))?,
-        ))
 }

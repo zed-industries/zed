@@ -214,26 +214,6 @@ spec:
                 secretKeyRef:
                   name: blob-store
                   key: bucket
-            - name: CLICKHOUSE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: clickhouse
-                  key: url
-            - name: CLICKHOUSE_USER
-              valueFrom:
-                secretKeyRef:
-                  name: clickhouse
-                  key: user
-            - name: CLICKHOUSE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: clickhouse
-                  key: password
-            - name: CLICKHOUSE_DATABASE
-              valueFrom:
-                secretKeyRef:
-                  name: clickhouse
-                  key: database
             - name: SLACK_PANICS_WEBHOOK
               valueFrom:
                 secretKeyRef:
