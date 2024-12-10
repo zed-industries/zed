@@ -561,9 +561,11 @@
     // What to do after closing the current tab.
     //
     // 1. Activate the tab that was open previously (default)
-    //     "History"
-    // 2. Activate the neighbour tab (prefers the right one, if present)
-    //     "Neighbour"
+    //     "history"
+    // 2. Activate the right neighbour tab if present
+    //     "neighbour"
+    // 3. Activate the left neighbour tab if present
+    //     "left_neighbour"
     "activate_on_close": "history",
     /// Which files containing diagnostic errors/warnings to mark in the tabs.
     /// Diagnostics are only shown when file icons are also active.
