@@ -5115,7 +5115,9 @@ fn make_lsp_adapter_delegate(
         let http_client = project.client().http_client().clone();
         project.lsp_store().update(cx, |lsp_store, cx| {
             Ok(Some(LocalLspAdapterDelegate::new(
-                lsp_store,
+                project.languages().clone(),
+                project.environment(),
+                cx.weak_model(),
                 &worktree,
                 http_client,
                 project.fs().clone(),

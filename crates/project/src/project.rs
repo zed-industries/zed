@@ -56,6 +56,7 @@ use lsp::{
     LanguageServerId, LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
+use lsp_store::OpenLspBufferHandle;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 pub use prettier_store::PrettierStore;
@@ -1254,6 +1255,10 @@ impl Project {
         self.buffer_store.read(cx).buffers().collect()
     }
 
+    pub fn environment(&self) -> &Model<ProjectEnvironment> {
+        &self.environment
+    }
+
     pub fn cli_environment(&self, cx: &AppContext) -> Option<HashMap<String, String>> {
         self.environment.read(cx).get_cli_environment()
     }
@@ -1838,6 +1843,27 @@ impl Project {
     ) -> Task<Result<Model<Buffer>>> {
         if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
             self.open_buffer((worktree.read(cx).id(), relative_path), cx)
+        } else {
+            Task::ready(Err(anyhow!("no such path")))
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_local_buffer_with_lsp(
+        &mut self,
+        abs_path: impl AsRef<Path>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(Model<Buffer>, OpenLspBufferHandle)>> {
+        if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
+            let buffer_task = self.open_buffer((worktree.read(cx).id(), relative_path), cx);
+            let lsp_store = self.lsp_store().clone();
+            cx.spawn(|_, mut cx| async move {
+                let buffer = buffer_task.await?;
+                let handle = lsp_store.update(&mut cx, |lsp_store, cx| {
+                    lsp_store.register_buffer_with_language_servers(&buffer, cx)
+                })?;
+                Ok((buffer, handle))
+            })
         } else {
             Task::ready(Err(anyhow!("no such path")))
         }

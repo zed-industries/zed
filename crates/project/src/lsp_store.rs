@@ -25,8 +25,8 @@ use futures::{
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
-    AppContext, AsyncAppContext, BackgroundExecutor, Context, Entity, EventEmitter, Model,
-    ModelContext, PromptLevel, Task, WeakModel,
+    AppContext, AsyncAppContext, Context, Entity, EventEmitter, Model, ModelContext, PromptLevel,
+    Task, WeakModel,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -43,14 +43,12 @@ use language::{
     Unclipped,
 };
 use lsp::{
-    notification::{DidCloseTextDocument, DidOpenTextDocument, DidRenameFiles},
-    CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
-    DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, Edit, FileOperationFilter, FileOperationPatternKind,
-    FileOperationRegistrationOptions, FileRename, FileSystemWatcher, InsertTextFormat,
-    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
-    LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams,
-    ServerHealthStatus, ServerStatus, SymbolKind, TextDocumentIdentifier, TextEdit, Url,
+    notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
+    DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter,
+    FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
+    InsertTextFormat, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
+    LanguageServerId, LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
+    RenameFilesParams, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url,
     WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
@@ -117,7 +115,7 @@ impl FormatTarget {
 
 // proto::RegisterBufferWithLanguageServer {}
 
-pub type OpenLspBufferHandle = Model<()>;
+pub type OpenLspBufferHandle = Model<Model<Buffer>>;
 
 // Currently, formatting operations are represented differently depending on
 // whether they come from a language server or an external command.
@@ -364,7 +362,6 @@ impl LocalLspStore {
         &mut self,
         worktree: &Model<Worktree>,
         language: LanguageName,
-        delegate: LocalLspAdapterDelegate,
         cx: &mut ModelContext<LspStore>,
     ) {
         let root_file = worktree
@@ -411,7 +408,15 @@ impl LocalLspStore {
         }
 
         for adapter in &enabled_lsp_adapters {
-            let delegate = LocalLspAdapterDelegate::for_local(self, &worktree, cx);
+            let delegate = LocalLspAdapterDelegate::new(
+                self.languages.clone(),
+                &self.environment,
+                cx.weak_model(),
+                &worktree,
+                self.http_client.clone(),
+                self.fs.clone(),
+                cx,
+            );
             self.start_language_server(worktree, delegate, adapter.clone(), language.clone(), cx);
         }
 
@@ -1870,60 +1875,61 @@ impl LocalLspStore {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
 
-        if let Some(file) = File::from_dyn(buffer.file()) {
-            if !file.is_local() {
-                return;
-            }
+        let Some(file) = File::from_dyn(buffer.file()) else {
+            return;
+        };
+        if !file.is_local() {
+            return;
+        }
 
-            let abs_path = file.abs_path(cx);
-            let Some(uri) = lsp::Url::from_file_path(&abs_path).log_err() else {
-                return;
+        let abs_path = file.abs_path(cx);
+        let Some(uri) = lsp::Url::from_file_path(&abs_path).log_err() else {
+            return;
+        };
+        let initial_snapshot = buffer.text_snapshot();
+        let worktree_id = file.worktree_id(cx);
+        let worktree = file.worktree.clone();
+
+        let Some(language) = buffer.language().cloned() else {
+            return;
+        };
+        self.start_language_servers(&worktree, language.name(), cx);
+        for adapter in self.languages.lsp_adapters(&language.name()) {
+            let server = self
+                .language_server_ids
+                .get(&(worktree_id, adapter.name.clone()))
+                .and_then(|id| self.language_servers.get(id))
+                .and_then(|server_state| {
+                    if let LanguageServerState::Running { server, .. } = server_state {
+                        Some(server.clone())
+                    } else {
+                        None
+                    }
+                });
+            let server = match server {
+                Some(server) => server,
+                None => continue,
             };
-            let initial_snapshot = buffer.text_snapshot();
-            let worktree_id = file.worktree_id(cx);
-            let language = buffer.language().cloned();
 
-            if let Some(language) = language {
-                for adapter in self.languages.lsp_adapters(&language.name()) {
-                    let server = self
-                        .language_server_ids
-                        .get(&(worktree_id, adapter.name.clone()))
-                        .and_then(|id| self.language_servers.get(id))
-                        .and_then(|server_state| {
-                            if let LanguageServerState::Running { server, .. } = server_state {
-                                Some(server.clone())
-                            } else {
-                                None
-                            }
-                        });
-                    let server = match server {
-                        Some(server) => server,
-                        None => continue,
-                    };
+            server
+                .notify::<lsp::notification::DidOpenTextDocument>(lsp::DidOpenTextDocumentParams {
+                    text_document: lsp::TextDocumentItem::new(
+                        uri.clone(),
+                        adapter.language_id(&language.name()),
+                        0,
+                        initial_snapshot.text(),
+                    ),
+                })
+                .log_err();
 
-                    server
-                        .notify::<lsp::notification::DidOpenTextDocument>(
-                            lsp::DidOpenTextDocumentParams {
-                                text_document: lsp::TextDocumentItem::new(
-                                    uri.clone(),
-                                    adapter.language_id(&language.name()),
-                                    0,
-                                    initial_snapshot.text(),
-                                ),
-                            },
-                        )
-                        .log_err();
-
-                    let snapshot = LspBufferSnapshot {
-                        version: 0,
-                        snapshot: initial_snapshot.clone(),
-                    };
-                    self.buffer_snapshots
-                        .entry(buffer_id)
-                        .or_default()
-                        .insert(server.server_id(), vec![snapshot]);
-                }
-            }
+            let snapshot = LspBufferSnapshot {
+                version: 0,
+                snapshot: initial_snapshot.clone(),
+            };
+            self.buffer_snapshots
+                .entry(buffer_id)
+                .or_default()
+                .insert(server.server_id(), vec![snapshot]);
         }
     }
     pub(crate) fn unregister_old_buffer_from_language_servers(
@@ -1938,7 +1944,7 @@ impl LocalLspStore {
             None => return,
         };
         let file_url = lsp::Url::from_file_path(old_path).unwrap();
-        seter_buffer_from_language_servers(buffer, file_url, cx);
+        self.unregister_buffer_from_language_servers(buffer, file_url, cx);
     }
 
     pub(crate) fn unregister_buffer_from_language_servers(
@@ -3198,14 +3204,14 @@ impl LspStore {
         Ok(())
     }
 
-    fn register_buffer_with_language_server(
+    pub fn register_buffer_with_language_servers(
         &mut self,
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> OpenLspBufferHandle {
         let buffer_id = buffer.read(cx).remote_id();
 
-        let handle = cx.new_model(|_| ());
+        let handle = cx.new_model(|_| buffer.clone());
         let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
             return handle;
         };
@@ -3220,11 +3226,8 @@ impl LspStore {
                 local.register_buffer_with_language_servers(buffer, cx);
             }
 
-            let buffer = buffer.clone();
-            cx.observe_release(&handle, move |this, _, cx| {
-                let Some(local) = this.as_local_mut() else {
-                    return;
-                };
+            cx.observe_release(&handle, move |this, buffer, cx| {
+                let local = this.as_local_mut().unwrap();
                 let Some(refcount) = local.registered_buffers.get_mut(&buffer_id) else {
                     debug_panic!("bad refcounting");
                     return;
@@ -3367,7 +3370,6 @@ impl LspStore {
 
         let worktree_id = if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
-            self.start_language_servers(&worktree, new_language.name(), cx);
 
             Some(worktree.read(cx).id())
         } else {
@@ -3423,7 +3425,7 @@ impl LspStore {
     }
 
     pub fn request_lsp<R: LspCommand>(
-        &self,
+        &mut self,
         buffer_handle: Model<Buffer>,
         server: LanguageServerToQuery,
         request: R,
@@ -3442,6 +3444,7 @@ impl LspStore {
                 cx,
             );
         }
+        let handle = self.register_buffer_with_language_servers(&buffer_handle, cx);
         let buffer = buffer_handle.read(cx);
         let language_server = match server {
             LanguageServerToQuery::Primary => {
@@ -3516,7 +3519,7 @@ impl LspStore {
                     err
                 })?;
 
-                request
+                let response = request
                     .response_from_lsp(
                         response,
                         this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
@@ -3524,7 +3527,9 @@ impl LspStore {
                         language_server.server_id(),
                         cx.clone(),
                     )
-                    .await
+                    .await;
+                drop(handle);
+                response
             });
         }
 
@@ -3616,7 +3621,9 @@ impl LspStore {
 
         // Start all the newly-enabled language servers.
         for (worktree, language) in language_servers_to_start {
-            self.start_language_servers(&worktree, language, cx);
+            self.as_local_mut()
+                .unwrap()
+                .start_language_servers(&worktree, language, cx);
         }
 
         // Restart all language servers with changed initialization options.
@@ -3776,7 +3783,7 @@ impl LspStore {
     }
 
     pub(crate) fn linked_edit(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: Anchor,
         cx: &mut ModelContext<Self>,
@@ -4510,7 +4517,7 @@ impl LspStore {
     }
 
     pub fn signature_help<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -4584,7 +4591,7 @@ impl LspStore {
     }
 
     pub fn hover(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -5034,7 +5041,15 @@ impl LspStore {
                                 .read(cx)
                                 .worktree_for_id(*worktree_id, cx)?;
                             let state = local.language_servers.get(server_id)?;
-                            let delegate = LocalLspAdapterDelegate::for_local(this, &worktree, cx);
+                            let delegate = LocalLspAdapterDelegate::new(
+                                local.languages.clone(),
+                                &local.environment,
+                                cx.weak_model(),
+                                &worktree,
+                                local.http_client.clone(),
+                                local.fs.clone(),
+                                cx,
+                            );
                             match state {
                                 LanguageServerState::Starting(_) => None,
                                 LanguageServerState::Running {
@@ -5493,7 +5508,7 @@ impl LspStore {
     }
 
     fn request_multiple_lsp_locally<P, R>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: Option<P>,
         request: R,
@@ -7102,10 +7117,9 @@ impl LspStore {
             }
 
             this.update(&mut cx, |this, cx| {
-                // Restart the language server for the given worktree.
-                this.start_language_servers(&worktree, language.clone(), cx);
-
                 let local = this.as_local_mut().unwrap();
+                // Restart the language server for the given worktree.
+                local.start_language_servers(&worktree, language.clone(), cx);
 
                 // Lookup new server ids and set them for each of the orphaned worktrees
                 for (affected_worktree_id, language_server_name) in affected_worktrees {
@@ -7359,36 +7373,38 @@ impl LspStore {
                     None => continue,
                 };
 
-                let versions = self
-                    .as_local_mut()
-                    .unwrap()
-                    .buffer_snapshots
-                    .entry(buffer.remote_id())
-                    .or_default()
-                    .entry(server_id)
-                    .or_insert_with(|| {
-                        vec![LspBufferSnapshot {
-                            version: 0,
-                            snapshot: buffer.text_snapshot(),
-                        }]
-                    });
+                let local = self.as_local_mut().unwrap();
 
-                let snapshot = versions.last().unwrap();
-                let version = snapshot.version;
-                let initial_snapshot = &snapshot.snapshot;
-                let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                language_server
-                    .notify::<lsp::notification::DidOpenTextDocument>(
-                        lsp::DidOpenTextDocumentParams {
-                            text_document: lsp::TextDocumentItem::new(
-                                uri,
-                                adapter.language_id(&language.name()),
-                                version,
-                                initial_snapshot.text(),
-                            ),
-                        },
-                    )
-                    .log_err();
+                if local.registered_buffers.contains_key(&buffer.remote_id()) {
+                    let versions = local
+                        .buffer_snapshots
+                        .entry(buffer.remote_id())
+                        .or_default()
+                        .entry(server_id)
+                        .or_insert_with(|| {
+                            vec![LspBufferSnapshot {
+                                version: 0,
+                                snapshot: buffer.text_snapshot(),
+                            }]
+                        });
+
+                    let snapshot = versions.last().unwrap();
+                    let version = snapshot.version;
+                    let initial_snapshot = &snapshot.snapshot;
+                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                    language_server
+                        .notify::<lsp::notification::DidOpenTextDocument>(
+                            lsp::DidOpenTextDocumentParams {
+                                text_document: lsp::TextDocumentItem::new(
+                                    uri,
+                                    adapter.language_id(&language.name()),
+                                    version,
+                                    initial_snapshot.text(),
+                                ),
+                            },
+                        )
+                        .log_err();
+                }
 
                 buffer_handle.update(cx, |buffer, cx| {
                     buffer.set_completion_triggers(
@@ -8278,22 +8294,10 @@ pub struct LocalLspAdapterDelegate {
 }
 
 impl LocalLspAdapterDelegate {
-    fn for_local(
-        lsp_store: &LspStore,
-        worktree: &Model<Worktree>,
-        cx: &mut ModelContext<LspStore>,
-    ) -> Arc<Self> {
-        let local = lsp_store
-            .as_local()
-            .expect("LocalLspAdapterDelegate cannot be constructed on a remote");
-
-        let http_client = local.http_client.clone();
-
-        Self::new(lsp_store, worktree, http_client, local.fs.clone(), cx)
-    }
-
     pub fn new(
-        lsp_store: &LspStore,
+        language_registry: Arc<LanguageRegistry>,
+        environment: &Model<ProjectEnvironment>,
+        lsp_store: WeakModel<LspStore>,
         worktree: &Model<Worktree>,
         http_client: Arc<dyn HttpClient>,
         fs: Arc<dyn Fs>,
@@ -8301,22 +8305,16 @@ impl LocalLspAdapterDelegate {
     ) -> Arc<Self> {
         let worktree_id = worktree.read(cx).id();
         let worktree_abs_path = worktree.read(cx).abs_path();
-        let load_shell_env_task = if let Some(environment) =
-            &lsp_store.as_local().map(|local| local.environment.clone())
-        {
-            environment.update(cx, |env, cx| {
-                env.get_environment(Some(worktree_id), Some(worktree_abs_path), cx)
-            })
-        } else {
-            Task::ready(None).shared()
-        };
+        let load_shell_env_task = environment.update(cx, |env, cx| {
+            env.get_environment(Some(worktree_id), Some(worktree_abs_path), cx)
+        });
 
         Arc::new(Self {
-            lsp_store: cx.weak_model(),
+            lsp_store,
             worktree: worktree.read(cx).snapshot(),
             fs,
             http_client,
-            language_registry: lsp_store.languages.clone(),
+            language_registry,
             load_shell_env_task,
         })
     }
