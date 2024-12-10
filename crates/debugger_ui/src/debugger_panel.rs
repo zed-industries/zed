@@ -3,7 +3,7 @@ use crate::debugger_panel_item::DebugPanelItem;
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use command_palette_hooks::CommandPaletteFilter;
-use dap::client::{DebugAdapterClientId, ThreadStatus};
+use dap::client::DebugAdapterClientId;
 use dap::debugger_settings::DebuggerSettings;
 use dap::messages::{Events, Message};
 use dap::requests::{Request, RunInTerminal, StartDebugging};
@@ -61,6 +61,15 @@ pub struct ThreadState {
     // we update this value only once we stopped,
     // we will use this to indicated if we should show a warning when debugger thread was exited
     pub stopped: bool,
+}
+
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ThreadStatus {
+    #[default]
+    Running,
+    Stopped,
+    Exited,
+    Ended,
 }
 
 pub struct DebugPanel {

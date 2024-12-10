@@ -22,15 +22,6 @@ use task::{DebugAdapterConfig, DebugRequestType};
 
 const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ThreadStatus {
-    #[default]
-    Running,
-    Stopped,
-    Exited,
-    Ended,
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct DebugAdapterClientId(pub usize);
