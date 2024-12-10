@@ -8,6 +8,7 @@ pub mod test;
 
 use futures::Future;
 
+use itertools::Either;
 use regex::Regex;
 use std::sync::OnceLock;
 use std::{
@@ -196,6 +197,35 @@ pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
         result
     } else {
         f()
+    }
+}
+
+pub fn iterate_expanded_and_wrapped_usize_range(
+    range: Range<usize>,
+    additional_before: usize,
+    additional_after: usize,
+    wrap_length: usize,
+) -> impl Iterator<Item = usize> {
+    let start_wraps = range.start < additional_before;
+    let end_wraps = wrap_length < range.end + additional_after;
+    if start_wraps && end_wraps {
+        Either::Left(0..wrap_length)
+    } else if start_wraps {
+        let wrapped_start = (range.start + wrap_length).saturating_sub(additional_before);
+        if wrapped_start <= range.end {
+            Either::Left(0..wrap_length)
+        } else {
+            Either::Right((0..range.end).chain(wrapped_start..wrap_length))
+        }
+    } else if end_wraps {
+        let wrapped_end = range.end + additional_after - wrap_length;
+        if range.start <= wrapped_end {
+            Either::Left(0..wrap_length)
+        } else {
+            Either::Right((0..wrapped_end).chain(range.start..wrap_length))
+        }
+    } else {
+        Either::Left((range.start - additional_before)..(range.end + additional_after))
     }
 }
 
@@ -731,6 +761,42 @@ Line 2
             r#"Line 1
 Line 2
 Line 3"#
+        );
+    }
+
+    #[test]
+    fn test_iterate_expanded_and_wrapped_usize_range() {
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(1..3, 1, 1, 5).collect::<Vec<usize>>(),
+            (0..4).collect::<Vec<usize>>()
+        );
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(1..3, 2, 0, 5).collect::<Vec<usize>>(),
+            ((0..3).chain(4..5)).collect::<Vec<usize>>()
+        );
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(1..3, 3, 0, 5).collect::<Vec<usize>>(),
+            (0..5).collect::<Vec<usize>>()
+        );
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(1..3, 10, 0, 5).collect::<Vec<usize>>(),
+            (0..5).collect::<Vec<usize>>()
+        );
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..3, 0, 3, 5).collect::<Vec<usize>>(),
+            (0..1).chain(2..5).collect::<Vec<usize>>()
+        );
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..3, 0, 4, 5).collect::<Vec<usize>>(),
+            (0..5).collect::<Vec<usize>>()
+        );
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..3, 0, 10, 5).collect::<Vec<usize>>(),
+            (0..5).collect::<Vec<usize>>()
+        );
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..3, 4, 4, 5).collect::<Vec<usize>>(),
+            (0..5).collect::<Vec<usize>>()
         );
     }
 }
