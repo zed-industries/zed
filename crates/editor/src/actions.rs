@@ -259,6 +259,7 @@ gpui::actions!(
         FoldFunctionBodies,
         FoldRecursive,
         FoldSelectedRanges,
+        FoldMultilineComments,
         ToggleFold,
         ToggleFoldRecursive,
         Format,
