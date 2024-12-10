@@ -80,7 +80,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     .detach();
 }
 
-fn clear_zeta_edit_history(action: &zeta::ClearHistory, cx: &mut AppContext) {
+fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut AppContext) {
     if let Some(zeta) = zeta::Zeta::global(cx) {
         zeta.update(cx, |zeta, _| zeta.clear_history());
     }
