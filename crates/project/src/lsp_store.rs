@@ -816,6 +816,101 @@ impl LocalLspStore {
         anyhow::Ok(())
     }
 
+    fn register_buffer_with_language_servers(
+        &mut self,
+        buffer_handle: &Model<Buffer>,
+        language_server_ids: &HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
+        cx: &mut ModelContext<LspStore>,
+    ) {
+        let buffer = buffer_handle.read(cx);
+        let buffer_id = buffer.remote_id();
+
+        if let Some(file) = File::from_dyn(buffer.file()) {
+            if !file.is_local() {
+                return;
+            }
+
+            let abs_path = file.abs_path(cx);
+            let Some(uri) = lsp::Url::from_file_path(&abs_path).log_err() else {
+                return;
+            };
+            let initial_snapshot = buffer.text_snapshot();
+            let worktree_id = file.worktree_id(cx);
+            let Some(languages) = buffer.language_registry() else {
+                return;
+            };
+            let language = buffer.language().cloned();
+
+            if let Some(diagnostics) = self.diagnostics.get(&worktree_id) {
+                for (server_id, diagnostics) in
+                    diagnostics.get(file.path()).cloned().unwrap_or_default()
+                {
+                    self.update_buffer_diagnostics(buffer_handle, server_id, None, diagnostics, cx)
+                        .log_err();
+                }
+            }
+
+            if let Some(language) = language {
+                for adapter in languages.lsp_adapters(&language.name()) {
+                    let server = language_server_ids
+                        .get(&(worktree_id, adapter.name.clone()))
+                        .and_then(|id| self.language_servers.get(id))
+                        .and_then(|server_state| {
+                            if let LanguageServerState::Running { server, .. } = server_state {
+                                Some(server.clone())
+                            } else {
+                                None
+                            }
+                        });
+                    let server = match server {
+                        Some(server) => server,
+                        None => continue,
+                    };
+
+                    server
+                        .notify::<lsp::notification::DidOpenTextDocument>(
+                            lsp::DidOpenTextDocumentParams {
+                                text_document: lsp::TextDocumentItem::new(
+                                    uri.clone(),
+                                    adapter.language_id(&language.name()),
+                                    0,
+                                    initial_snapshot.text(),
+                                ),
+                            },
+                        )
+                        .log_err();
+
+                    buffer_handle.update(cx, |buffer, cx| {
+                        buffer.set_completion_triggers(
+                            server.server_id(),
+                            server
+                                .capabilities()
+                                .completion_provider
+                                .as_ref()
+                                .and_then(|provider| {
+                                    provider
+                                        .trigger_characters
+                                        .as_ref()
+                                        .map(|characters| characters.iter().cloned().collect())
+                                })
+                                .unwrap_or_default(),
+                            cx,
+                        );
+                    });
+
+                    let snapshot = LspBufferSnapshot {
+                        version: 0,
+                        snapshot: initial_snapshot.clone(),
+                    };
+                    self.buffer_snapshots
+                        .entry(buffer_id)
+                        .or_default()
+                        .insert(server.server_id(), vec![snapshot]);
+                }
+            }
+        }
+    }
+
     fn update_buffer_diagnostics(
         &mut self,
         buffer: &Model<Buffer>,
@@ -3840,90 +3935,21 @@ impl LspStore {
             .insert((worktree_id, language_server_name), language_server_id);
     }
 
-    #[track_caller]
     pub(crate) fn register_buffer_with_language_servers(
         &mut self,
         buffer_handle: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) {
-        let available_language = self.detect_language_for_buffer(buffer_handle, cx);
-
-        let buffer = buffer_handle.read(cx);
-        let buffer_id = buffer.remote_id();
-
-        if let Some(file) = File::from_dyn(buffer.file()) {
-            if !file.is_local() {
-                return;
+        self.detect_language_for_buffer(buffer_handle, cx);
+        match &mut self.mode {
+            LspStoreMode::Local(local) => {
+                local.register_buffer_with_language_servers(
+                    buffer_handle,
+                    &self.language_server_ids,
+                    cx,
+                );
             }
-
-            let abs_path = file.abs_path(cx);
-            let Some(uri) = lsp::Url::from_file_path(&abs_path).log_err() else {
-                return;
-            };
-            let initial_snapshot = buffer.text_snapshot();
-            let worktree_id = file.worktree_id(cx);
-
-            if let Some(language) = available_language {
-                for adapter in self.languages.lsp_adapters(&language.name()) {
-                    let server = self
-                        .language_server_ids
-                        .get(&(worktree_id, adapter.name.clone()))
-                        .and_then(|id| self.as_local()?.language_servers.get(id))
-                        .and_then(|server_state| {
-                            if let LanguageServerState::Running { server, .. } = server_state {
-                                Some(server.clone())
-                            } else {
-                                None
-                            }
-                        });
-                    let server = match server {
-                        Some(server) => server,
-                        None => continue,
-                    };
-
-                    server
-                        .notify::<lsp::notification::DidOpenTextDocument>(
-                            lsp::DidOpenTextDocumentParams {
-                                text_document: lsp::TextDocumentItem::new(
-                                    uri.clone(),
-                                    adapter.language_id(&language.name()),
-                                    0,
-                                    initial_snapshot.text(),
-                                ),
-                            },
-                        )
-                        .log_err();
-
-                    buffer_handle.update(cx, |buffer, cx| {
-                        buffer.set_completion_triggers(
-                            server.server_id(),
-                            server
-                                .capabilities()
-                                .completion_provider
-                                .as_ref()
-                                .and_then(|provider| {
-                                    provider
-                                        .trigger_characters
-                                        .as_ref()
-                                        .map(|characters| characters.iter().cloned().collect())
-                                })
-                                .unwrap_or_default(),
-                            cx,
-                        );
-                    });
-
-                    let snapshot = LspBufferSnapshot {
-                        version: 0,
-                        snapshot: initial_snapshot.clone(),
-                    };
-                    self.as_local_mut()
-                        .unwrap()
-                        .buffer_snapshots
-                        .entry(buffer_id)
-                        .or_default()
-                        .insert(server.server_id(), vec![snapshot]);
-                }
-            }
+            _ => {}
         }
     }
 
