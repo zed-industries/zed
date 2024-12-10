@@ -6,6 +6,7 @@ mod message_editor;
 mod thread;
 mod thread_history;
 mod thread_store;
+mod ui;
 
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};

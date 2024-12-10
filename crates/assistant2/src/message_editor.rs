@@ -13,6 +13,7 @@ use ui::{
 use crate::context::Context;
 use crate::context_picker::{ContextPicker, ContextPickerDelegate};
 use crate::thread::{RequestKind, Thread};
+use crate::ui::ContextPill;
 use crate::{Chat, ToggleModelSelector};
 
 pub struct MessageEditor {
@@ -86,9 +87,10 @@ impl MessageEditor {
             editor.clear(cx);
             text
         });
+        let context = self.context.drain(..).collect::<Vec<_>>();
 
         self.thread.update(cx, |thread, cx| {
-            thread.insert_user_message(user_message, cx);
+            thread.insert_user_message(user_message, context, cx);
             let mut request = thread.to_completion_request(request_kind, cx);
 
             if self.use_tools {
@@ -108,15 +110,6 @@ impl MessageEditor {
         });
 
         None
-    }
-
-    fn render_context(&self, context: &Context, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
-            .px_1()
-            .border_1()
-            .border_color(cx.theme().colors().border)
-            .rounded_md()
-            .child(Label::new(context.name.clone()).size(LabelSize::Small))
     }
 
     fn render_language_model_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -203,7 +196,7 @@ impl Render for MessageEditor {
                     .children(
                         self.context
                             .iter()
-                            .map(|context| self.render_context(&context, cx)),
+                            .map(|context| ContextPill::new(context.clone())),
                     ),
             )
             .child({
