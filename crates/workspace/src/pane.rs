@@ -1506,6 +1506,7 @@ impl Pane {
             self.pinned_tab_count -= 1;
         }
         if item_index == self.active_item_index {
+            let left_neighbour_index = || item_index.min(self.items.len()).saturating_sub(1);
             let index_to_activate = match activate_on_close {
                 ActivateOnClose::History => self
                     .activation_history
@@ -1517,7 +1518,7 @@ impl Pane {
                     })
                     // We didn't have a valid activation history entry, so fallback
                     // to activating the item to the left
-                    .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1)),
+                    .unwrap_or_else(left_neighbour_index),
                 ActivateOnClose::Neighbour => {
                     self.activation_history.pop();
                     if item_index + 1 < self.items.len() {
@@ -1525,6 +1526,10 @@ impl Pane {
                     } else {
                         item_index.saturating_sub(1)
                     }
+                }
+                ActivateOnClose::LeftNeighbour => {
+                    self.activation_history.pop();
+                    left_neighbour_index()
                 }
             };
 
@@ -3664,6 +3669,69 @@ mod tests {
         .await
         .unwrap();
         assert_item_labels(&pane, ["A*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_remove_item_ordering_left_neighbour(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update_global::<SettingsStore, ()>(|s, cx| {
+            s.update_user_settings::<ItemSettings>(cx, |s| {
+                s.activate_on_close = Some(ActivateOnClose::LeftNeighbour);
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(1, false, false, cx));
+        add_labeled_item(&pane, "1", false, cx);
+        assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(0, false, false, cx));
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["B*", "C"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["C*"], cx);
     }
 
     #[gpui::test]
