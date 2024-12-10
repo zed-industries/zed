@@ -136,8 +136,8 @@ impl ProjectItem for ImageItem {
             .or_else(|| path.path.extension())
             .and_then(OsStr::to_str)
             .map(str::to_lowercase)
-            .unwrap_or_default()
-            .as_str();
+            .unwrap_or_default();
+        let ext = ext.as_str();
 
         // Only open the item if it's a binary image (no SVGs, etc.)
         // Since we do not have a way to toggle to an editor
