@@ -2846,19 +2846,7 @@ impl Workspace {
         let Some(target_pane) = panes.get(action.0).map(|p| (*p).clone()) else {
             return;
         };
-        if target_pane == source_pane {
-            return;
-        }
-        let Some(active_item) = source_pane.read(cx).active_item() else {
-            return;
-        };
-        source_pane.update(cx, |pane, cx| {
-            let item_id = active_item.item_id();
-            pane.remove_item(item_id, false, true, cx);
-            target_pane.update(cx, |target_pane, cx| {
-                target_pane.add_item(active_item, true, true, Some(target_pane.items_len()), cx);
-            });
-        });
+        source_pane.move_active_item_to(target_pane, true, true, cx);
     }
 
     pub fn activate_next_pane(&mut self, cx: &mut WindowContext) {
@@ -2986,25 +2974,7 @@ impl Workspace {
     ) {
         if let Some(target_pane) = self.find_pane_in_direction(direction, cx) {
             let source_pane = self.active_pane.clone();
-            if target_pane == source_pane {
-                return;
-            }
-            let Some(active_item) = source_pane.read(cx).active_item() else {
-                return;
-            };
-            source_pane.update(cx, |pane, cx| {
-                let item_id = active_item.item_id();
-                pane.remove_item(item_id, false, true, cx);
-                target_pane.update(cx, |target_pane, cx| {
-                    target_pane.add_item(
-                        active_item,
-                        true,
-                        true,
-                        Some(target_pane.items_len()),
-                        cx,
-                    );
-                });
-            });
+            source_pane.move_active_item_to(target_pane, true, true, cx);
         }
     }
 
@@ -5198,6 +5168,46 @@ impl WorkspaceHandle for View<Workspace> {
                 })
             })
             .collect::<Vec<_>>()
+    }
+}
+
+pub trait MovableActiveItem {
+    fn move_active_item_to(
+        &self,
+        target_pane: View<Pane>,
+        focus_target: bool,
+        close_if_empty: bool,
+        cx: &mut WindowContext,
+    );
+}
+
+impl MovableActiveItem for View<Pane> {
+    fn move_active_item_to(
+        &self,
+        target_pane: View<Pane>,
+        focus_target: bool,
+        close_if_empty: bool,
+        cx: &mut WindowContext,
+    ) {
+        if &target_pane == self {
+            return;
+        }
+        let Some(active_item) = self.read(cx).active_item() else {
+            return;
+        };
+        self.update(cx, |pane, cx| {
+            let item_id = active_item.item_id();
+            pane.remove_item(item_id, false, close_if_empty, cx);
+            target_pane.update(cx, |target_pane, cx| {
+                target_pane.add_item(
+                    active_item,
+                    focus_target,
+                    focus_target,
+                    Some(target_pane.items_len()),
+                    cx,
+                );
+            });
+        });
     }
 }
 
