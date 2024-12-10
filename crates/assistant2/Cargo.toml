@@ -58,6 +58,7 @@ smol.workspace = true
 telemetry_events.workspace = true
 terminal_view.workspace = true
 text.workspace = true
+terminal.workspace = true
 theme.workspace = true
 time.workspace = true
 time_format.workspace = true
