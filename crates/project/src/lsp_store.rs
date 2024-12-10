@@ -25,8 +25,8 @@ use futures::{
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
-    AppContext, AsyncAppContext, Entity, EventEmitter, Model, ModelContext, PromptLevel, Task,
-    WeakModel,
+    AppContext, AsyncAppContext, BackgroundExecutor, Context, Entity, EventEmitter, Model,
+    ModelContext, PromptLevel, Task, WeakModel,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -43,12 +43,14 @@ use language::{
     Unclipped,
 };
 use lsp::{
-    notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
-    DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter,
-    FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
-    InsertTextFormat, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
-    LanguageServerId, LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
-    RenameFilesParams, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url,
+    notification::{DidCloseTextDocument, DidOpenTextDocument, DidRenameFiles},
+    CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
+    DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, Edit, FileOperationFilter, FileOperationPatternKind,
+    FileOperationRegistrationOptions, FileRename, FileSystemWatcher, InsertTextFormat,
+    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
+    LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams,
+    ServerHealthStatus, ServerStatus, SymbolKind, TextDocumentIdentifier, TextEdit, Url,
     WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
@@ -72,7 +74,7 @@ use std::{
     ops::{ControlFlow, Range},
     path::{self, Path, PathBuf},
     str,
-    sync::Arc,
+    sync::{atomic::AtomicBool, Arc},
     time::{Duration, Instant},
 };
 use text::{Anchor, BufferId, LineEnding, Point, Selection};
@@ -112,6 +114,10 @@ impl FormatTarget {
         }
     }
 }
+
+// proto::RegisterBufferWithLanguageServer {}
+
+pub type OpenLspBufferHandle = Model<()>;
 
 // Currently, formatting operations are represented differently depending on
 // whether they come from a language server or an external command.
@@ -166,6 +172,7 @@ pub struct LocalLspStore {
     >,
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     _subscription: gpui::Subscription,
+    registered_buffers: HashMap<BufferId, usize>,
 }
 
 impl LocalLspStore {
@@ -1854,21 +1861,29 @@ impl LocalLspStore {
             }
         }
     }
-
-    pub(crate) fn unregister_buffer_from_language_servers(
+    pub(crate) fn unregister_old_buffer_from_language_servers(
         &mut self,
         buffer: &Model<Buffer>,
         old_file: &File,
+
         cx: &mut AppContext,
     ) {
         let old_path = match old_file.as_local() {
             Some(local) => local.abs_path(cx),
             None => return,
         };
+        let file_url = lsp::Url::from_file_path(old_path).unwrap();
+        self.unregister_buffer_from_language_servers(buffer, file_url, cx);
+    }
 
+    pub(crate) fn unregister_buffer_from_language_servers(
+        &mut self,
+        buffer: &Model<Buffer>,
+        file_url: lsp::Url,
+        cx: &mut AppContext,
+    ) {
         buffer.update(cx, |buffer, cx| {
             self.buffer_snapshots.remove(&buffer.remote_id());
-            let file_url = lsp::Url::from_file_path(old_path).unwrap();
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
                 language_server
                     .notify::<lsp::notification::DidCloseTextDocument>(
@@ -2870,6 +2885,7 @@ impl LspStore {
                 _subscription: cx.on_app_quit(|this, cx| {
                     this.as_local_mut().unwrap().shutdown_language_servers(cx)
                 }),
+                registered_buffers: HashMap::default(),
             }),
             last_formatting_failure: None,
             downstream_client: None,
@@ -2964,17 +2980,22 @@ impl LspStore {
                 self.on_buffer_added(buffer, cx).log_err();
             }
             BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
+                let buffer_id = buffer.read(cx).remote_id();
                 if let Some(old_file) = File::from_dyn(old_file.as_ref()) {
                     if let Some(local) = self.as_local_mut() {
                         local.reset_buffer(buffer, old_file, cx);
-                        local.unregister_buffer_from_language_servers(buffer, old_file, cx);
+                        if local.registered_buffers.contains_key(&buffer_id) {
+                            local.unregister_old_buffer_from_language_servers(buffer, old_file, cx);
+                        }
                     }
                 }
 
                 self.detect_language_for_buffer(buffer, cx);
                 if let Some(local) = self.as_local_mut() {
                     local.initialize_buffer(buffer, cx);
-                    local.register_buffer_with_language_servers(buffer, cx);
+                    if local.registered_buffers.contains_key(&buffer_id) {
+                        local.register_buffer_with_language_servers(buffer, cx);
+                    }
                 }
             }
             BufferStoreEvent::BufferDropped(_) => {}
@@ -3090,37 +3111,70 @@ impl LspStore {
         .detach();
 
         self.detect_language_for_buffer(buffer, cx);
-        {
-            let this = &mut *self;
-            if let Some(local) = this.as_local_mut() {
-                local.initialize_buffer(buffer, cx);
-                local.register_buffer_with_language_servers(buffer, cx);
-            }
-        };
-        cx.observe_release(buffer, |this, buffer, cx| {
-            if let Some(file) = File::from_dyn(buffer.file()) {
-                if file.is_local() {
-                    if let Some(local) = this.as_local() {
-                        let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                        for server in local.language_servers_for_buffer(buffer, cx) {
-                            server
-                                .1
-                                .notify::<lsp::notification::DidCloseTextDocument>(
-                                    lsp::DidCloseTextDocumentParams {
-                                        text_document: lsp::TextDocumentIdentifier::new(
-                                            uri.clone(),
-                                        ),
-                                    },
-                                )
-                                .log_err();
-                        }
-                    }
-                }
-            }
-        })
-        .detach();
+        if let Some(local) = self.as_local_mut() {
+            local.initialize_buffer(buffer, cx);
+            // local.register_buffer_with_language_servers(buffer, cx);
+        }
+        // cx.observe_release(buffer, |this, buffer, cx| {
+        //     let Some(file) = File::from_dyn(buffer.file()) else {
+        //         return;
+        //     };
+        //     if !file.is_local() {
+        //         return;
+        //     }
+        //     let Some(local) = this.as_local() else {
+        //         return;
+        //     };
+        //     local.unregister_buffer_from_language_servers(buffer.read(cx).remote_id(), cx);
+        //     self.register_buffers.remove(buffer.remote_id())
+        // })
+        // .detach();
 
         Ok(())
+    }
+
+    fn register_buffer_with_language_server(
+        &mut self,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> OpenLspBufferHandle {
+        let buffer_id = buffer.read(cx).remote_id();
+
+        let handle = cx.new_model(|_| ());
+        let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+            return handle;
+        };
+        if !file.is_local() {
+            return handle;
+        }
+
+        if let Some(local) = self.as_local_mut() {
+            let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
+            *refcount += 1;
+            if *refcount == 1 {
+                local.register_buffer_with_language_servers(buffer, cx);
+            }
+
+            let buffer = buffer.clone();
+            cx.observe_release(&handle, move |this, _, cx| {
+                let Some(local) = this.as_local_mut() else {
+                    return;
+                };
+                let Some(refcount) = local.registered_buffers.get_mut(&buffer_id) else {
+                    debug_panic!("bad refcounting");
+                    return;
+                };
+                *refcount -= 1;
+                if *refcount == 0 {
+                    local.registered_buffers.remove(&buffer_id);
+                    if let Some(file) = File::from_dyn(buffer.read(cx).file()).cloned() {
+                        local.unregister_old_buffer_from_language_servers(&buffer, &file, cx);
+                    }
+                }
+            })
+            .detach();
+        }
+        handle
     }
 
     fn maintain_buffer_languages(
@@ -3146,9 +3200,14 @@ impl LspStore {
                                             .update(cx, |buffer, cx| buffer.set_language(None, cx));
                                         if let Some(local) = this.as_local_mut() {
                                             local.reset_buffer(&buffer, &f, cx);
-                                            local.unregister_buffer_from_language_servers(
-                                                &buffer, &f, cx,
-                                            );
+                                            if local
+                                                .registered_buffers
+                                                .contains_key(&buffer.read(cx).remote_id())
+                                            {
+                                                local.unregister_old_buffer_from_language_servers(
+                                                    &buffer, &f, cx,
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -3174,7 +3233,12 @@ impl LspStore {
                             this.detect_language_for_buffer(&buffer, cx);
                             if let Some(local) = this.as_local_mut() {
                                 local.initialize_buffer(&buffer, cx);
-                                local.register_buffer_with_language_servers(&buffer, cx);
+                                if local
+                                    .registered_buffers
+                                    .contains_key(&buffer.read(cx).remote_id())
+                                {
+                                    local.register_buffer_with_language_servers(&buffer, cx);
+                                }
                             }
                         }
 
@@ -7294,7 +7358,7 @@ impl LspStore {
                 {
                     continue;
                 }
-
+                // didOpen
                 let file = match file.as_local() {
                     Some(file) => file,
                     None => continue,
