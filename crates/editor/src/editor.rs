@@ -132,7 +132,7 @@ use project::{
     lsp_store::{FormatTarget, FormatTrigger},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
-    Project, ProjectItem, ProjectTransaction, TaskSourceKind,
+    LspDiagnostics, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -192,6 +192,8 @@ pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 #[doc(hidden)]
 pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
+#[doc(hidden)]
+pub const DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -658,6 +660,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    tasks_pull_diagnostics_task: Option<Task<()>>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
@@ -1302,6 +1305,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            tasks_pull_diagnostics_task: None,
             linked_edit_ranges: Default::default(),
             previous_search_ranges: None,
             breadcrumb_header: None,
@@ -10158,6 +10162,60 @@ impl Editor {
         }
     }
 
+    fn refresh_diagnostics(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+        let project = self.project.as_ref().map(Model::downgrade);
+        let buffer = self.buffer.read(cx);
+        let newest_selection = self.selections.newest_anchor().clone();
+        let (start_buffer, start) = if let Some(output) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(newest_selection.end, cx)
+        {
+            output
+        } else {
+            return Task::ready(());
+        };
+
+        let (end_buffer, _) =
+            if let Some(output) = buffer.text_anchor_for_position(newest_selection.end, cx) {
+                output
+            } else {
+                return Task::ready(());
+            };
+        if start_buffer != end_buffer {
+            return Task::ready(());
+        }
+
+        cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
+                .await;
+
+            let Some(project) = project.and_then(|p| p.upgrade()) else {
+                return;
+            };
+
+            let Ok(pull_diagnostics_task) = this.update(&mut cx, |_, cx| {
+                project.pull_diagnostics(&start_buffer, start, cx)
+            }) else {
+                return;
+            };
+
+            let diagnostics = cx.background_executor().spawn(pull_diagnostics_task);
+
+            if let Ok(diagnostics) = diagnostics.await {
+                this.update(&mut cx, |editor, cx| {
+                    if project.update_diagnostics(diagnostics, cx).is_ok() {
+                        editor.refresh_active_diagnostics(cx)
+                    } else {
+                        log::error!("Failed to update project diagnostics")
+                    }
+                })
+                .ok();
+            }
+        })
+    }
+
     pub fn set_selections_from_remote(
         &mut self,
         selections: Vec<Selection<Anchor>>,
@@ -11860,7 +11918,9 @@ impl Editor {
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
+                self.tasks_pull_diagnostics_task = Some(self.refresh_diagnostics(cx));
                 self.refresh_active_diagnostics(cx);
+
                 self.refresh_code_actions(cx);
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(cx);
@@ -13116,6 +13176,21 @@ pub trait CodeActionProvider {
     ) -> Task<Result<ProjectTransaction>>;
 }
 
+pub trait DiagnosticsProvider {
+    fn pull_diagnostics(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<LspDiagnostics>>>;
+
+    fn update_diagnostics(
+        &self,
+        diagnostics: Vec<LspDiagnostics>,
+        cx: &mut AppContext,
+    ) -> Result<()>;
+}
+
 impl CodeActionProvider for Model<Project> {
     fn code_actions(
         &self,
@@ -13447,6 +13522,43 @@ impl SemanticsProvider for Model<Project> {
         Some(self.update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), position, new_name, cx)
         }))
+    }
+}
+
+impl DiagnosticsProvider for Model<Project> {
+    fn pull_diagnostics(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        cx: &mut AppContext,
+    ) -> Task<Result<Vec<LspDiagnostics>>> {
+        self.update(cx, |project, cx| {
+            project.document_diagnostics(buffer, position, cx)
+        })
+    }
+
+    fn update_diagnostics(
+        &self,
+        diagnostics: Vec<LspDiagnostics>,
+        cx: &mut AppContext,
+    ) -> Result<()> {
+        self.update(cx, |project, cx| {
+            diagnostics
+                .into_iter()
+                .map(|diagnostic_set| {
+                    project.update_diagnostics(
+                        diagnostic_set.server_id,
+                        lsp::PublishDiagnosticsParams {
+                            uri: diagnostic_set.uri.unwrap(),
+                            diagnostics: diagnostic_set.diagnostics.unwrap_or_else(Vec::new),
+                            version: None,
+                        },
+                        &[],
+                        cx,
+                    )
+                })
+                .collect()
+        })
     }
 }
 
