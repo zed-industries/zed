@@ -13,30 +13,51 @@ path = "src/assistant.rs"
 doctest = false
 
 [dependencies]
+anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
+assets.workspace = true
 assistant_tool.workspace = true
-chrono.workspace = true
+async-watch.workspace = true
 client.workspace = true
+chrono.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 context_server.workspace = true
+db.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
+fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+handlebars.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_model_selector.workspace = true
 language_models.workspace = true
 log.workspace = true
+lsp.workspace = true
 markdown.workspace = true
+menu.workspace = true
+multi_buffer.workspace = true
+ollama = { workspace = true, features = ["schemars"] }
+open_ai = { workspace = true, features = ["schemars"] }
+ordered-float.workspace = true
+paths.workspace = true
+parking_lot.workspace = true
 picker.workspace = true
 project.workspace = true
 proto.workspace = true
+rope.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_json_lenient.workspace = true
 settings.workspace = true
+similar.workspace = true
 smol.workspace = true
+telemetry_events.workspace = true
+terminal_view.workspace = true
+text.workspace = true
 theme.workspace = true
 time.workspace = true
 time_format.workspace = true
@@ -45,3 +66,8 @@ unindent.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+indoc.workspace = true
