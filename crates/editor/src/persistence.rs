@@ -134,6 +134,12 @@ define_connection!(
             ALTER TABLE editors ADD COLUMN mtime_seconds INTEGER DEFAULT NULL;
             ALTER TABLE editors ADD COLUMN mtime_nanos INTEGER DEFAULT NULL;
         ),
+        sql! (
+            CREATE TABLE manual_language_selections(
+                path BLOB NOT NULL PRIMARY KEY,
+                language TEXT NOT NULL
+            ) STRICT;
+        ),
         ];
 );
 
@@ -212,6 +218,27 @@ impl EditorDb {
             statement.exec()
         })
         .await
+    }
+
+    query! {
+        pub fn get_manual_language_selection(path: &Path) -> Result<Option<String>> {
+            SELECT language FROM manual_language_selections
+            WHERE path = ?
+        }
+    }
+
+    query! {
+        pub fn set_manual_language_selection(path: &Path, language: &str) -> Result<()> {
+            INSERT OR REPLACE INTO manual_language_selections (path, language)
+            VALUES (?, ?)
+        }
+    }
+
+    query! {
+        pub fn remove_manual_language_selection(path: &Path) -> Result<()> {
+            DELETE FROM manual_language_selections
+            WHERE path = ?
+        }
     }
 }
 
